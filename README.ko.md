@@ -43,20 +43,20 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 | `proceed` | `robots.txt` 를 읽었고 두 종류의 금지가 모두 없다. 선언된 허용도 접근 보장은 아니다. | low |
 | `unknown` | 선언된 정책을 읽지 못했거나(사유 `robots_unknown`), 호스트명이 정책을 읽지 않는 서브도메인·테넌트 호스트다(사유 `profile_not_read`, apex 호스트로 조회). 허용이 아니라 미상으로 둔다. | low |
 
-`reasons` 는 `next_checks` 에도 나오는 코드다. "공식 경로가 있다"는 `official_paths` 항목에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다. **차단 선언**은 에이전트 UA·검색 크롤러 토큰을 이름으로 지목한 `robots.txt` 그룹이 루트를 금지하는 경우다. **와일드카드 단독 금지**는 루트 금지가 `*` 그룹(`User-agent: *` 와 `Disallow: /`)뿐이고 에이전트 토큰을 지목한 그룹이 없는 파일이다. 차단 선언이 아니며 `robots_wildcard_disallow` 로 보고하고, "에이전트를 허용함"으로 읽지 않는다. `agents_blocked` 는 학습 크롤러를 포함해 루트 금지가 명시된 모든 토큰을 나열하지만 학습 크롤러는 차단 선언으로 세지 않는다. 영어 README 의 예시에서 `Bytespider`(학습 크롤러)는 차단돼 있지만 학습 크롤러는 차단 선언이 아니므로 medium 신뢰도의 공식 경로 행이 적용된다.
+`reasons` 는 `next_checks` 에도 나오는 코드다. "공식 경로가 있다"는 `official_paths` 항목에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다. **차단 선언**은 에이전트 UA·검색 크롤러 토큰을 이름으로 지목한 `robots.txt` 그룹이 루트를 금지하는 경우다. **와일드카드 단독 금지**는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)이 루트를 금지하고, 에이전트 UA·검색 크롤러 토큰 가운데 어떤 그룹도 지목하지 않아 그 와일드카드에 해당하는 토큰이 하나 이상 있으며, 그런 토큰을 지목한 그룹 중 루트를 금지하는 것은 없는(그것은 차단 선언이다) 파일이다. 토큰을 지목해 허용한 그룹이나 학습 크롤러 금지는 이 판정을 바꾸지 않는다. 차단 선언이 아니며 `robots_wildcard_disallow` 로 보고하고, "에이전트를 허용함"으로 읽지 않는다. `agents_blocked` 는 학습 크롤러를 포함해 루트 금지가 명시된 모든 토큰을 나열하지만 학습 크롤러는 차단 선언으로 세지 않는다. 영어 README 의 예시에서 `Bytespider`(학습 크롤러)는 차단돼 있지만 학습 크롤러는 차단 선언이 아니므로 medium 신뢰도의 공식 경로 행이 적용된다.
 
 ## 읽는 것과 절대 하지 않는 것
 
 서비스가 읽는 것(공개 운영에서만, 로컬 개발판은 읽지 않는다):
 
 - **경로 두 개만:** 공개 집계에 적합한 루트 호스트 또는 그 호스트 자신의 `www.` 별칭의 `/robots.txt`(최대 256 KB)와 `/llms.txt`(존재 여부만, 최대 4 KB). 루트 호스트의 `robots.txt` 읽기가 실패하거나, 거절되거나, 다른 곳으로 리디렉션되거나, HTML 페이지가 오면 `https://www.<호스트>/robots.txt` 를 예비로 한 번 읽는다. `llms.txt` 는 `robots.txt` 를 실제로 내준 호스트(`read_host`)에서 읽는다.
-- **해석 결과만 저장한다.** `host_access_profile` 에는 토큰별 규칙, 그룹당 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태만 저장한다. 파일의 나머지는 저장하지 않으며 `llms.txt` 내용은 저장하거나 전달하지 않는다.
+- **해석 결과만 저장한다.** `host_access_profile` 에는 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태만 저장한다. 파일의 나머지는 저장하지 않으며 `llms.txt` 내용은 저장하거나 전달하지 않는다.
 - **공개 집계에 적합한 공개 루트 호스트만** (예: `example.com`, `example.co.uk`). 계정형 하위 도메인은 읽거나 집계하지 않는다.
 - **공개 주소만.** 해석된 모든 주소가 공개(global) IP 여야 하며 연결은 그 주소에 고정한다.
 - **리디렉션은 최대 한 번:** 호스트에서 같은 경로의 자기 `www.` 별칭으로 가는 한 단계만 따른다. 다른 리디렉션은 `redirected` 로 기록하고 따라가지 않는다.
 - **답은 캐시하고 실패는 1시간 뒤 재시도.** 확정된 답(`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`)은 24시간 캐시한다. 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도하며 마지막 확정 답을 덮어쓰지 않는다. 한 번의 시도는 루트 호스트와 그 자신의 `www.` 별칭에 걸쳐 HTTPS 요청을 최대 다섯 번 한다: 루트 `robots.txt`, `www.` 별칭으로 가는 한 단계, `www.` 예비 읽기, `llms.txt`, 그리고 그 한 단계. 시간 제한은 짧고, 요청은 `AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)` UA 로 자신을 밝힌다.
 - **시드 목록은 주 1회.** 공개 시드 목록 [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 의 호스트는 조회되지 않았더라도 검토 크론이 5분마다 기본 10개씩(`AHN_WARM_BATCH`, `0` 이면 끔) 같은 한도 안에서 미리 읽고 약 주 1회 다시 읽는다([`ahn/profile_warm.py`](ahn/profile_warm.py)). 전송 실패는 이미 답이 있던 호스트라도 1시간 뒤 다시 시도한다.
-- **업체 상태**는 검증된 공식 출처만 쓴다: 고정 연결 규칙, 또는 첫 조회에서 확인한 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
+- **업체 상태**는 검증된 공식 출처만 쓴다: 고정 연결 규칙, 또는 첫 조회에서 확인하고 찾을 때까지 하루 한 번까지 다시 확인하는 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
 
 서비스가 절대 하지 않는 것:
 

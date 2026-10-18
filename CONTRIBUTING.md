@@ -26,7 +26,7 @@ The full suite needs Python 3.12 (the version CI uses) and PostgreSQL 17 with a 
 - Without `AHN_TEST_DATABASE_URL`, the database-backed tests are skipped rather than failed, so a passing run without it has not exercised them. Check the skipped count in the summary.
 - [`tests/test_status_upgrade.py`](tests/test_status_upgrade.py) needs a database role with `CREATEDB`: it creates and drops temporary `ahn_upgrade_*` databases, and runs only against a loopback server. The `postgres` superuser in the Docker example has that right.
 
-Tests must not reach real hosts. [`tests/conftest.py`](tests/conftest.py) disables live `robots.txt`/`llms.txt` reads by default; tests that need the access-profile layer pass a stub reader.
+Tests must not reach real hosts. [`tests/conftest.py`](tests/conftest.py) blanks the access-profile layer on the lookup path by default (it stubs `ahn.service.get_profile` to return nothing); it does not intercept `ahn.access_profile` or `ahn.profile_warm`, so tests that exercise those must pass a stub `reader=` and never call the real fetcher.
 
 ## Pull requests
 

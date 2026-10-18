@@ -18,7 +18,7 @@
     <div>
       <h3>{{ 'One call, no account' if lang == 'en' else '계정 없이 호출 한 번' }}</h3>
       <pre class="ledger-code"><code>GET https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&amp;error_class=site_access</code></pre>
-      <p>{{ 'error_class and failure_stage are optional: error_class can change the recommendation, and both tailor next_checks. The host’s pages are never visited; only its robots.txt and llms.txt are read, and the answer is cached for 24 hours (a failed read is retried after an hour).' if lang == 'en' else 'error_class 와 failure_stage 는 선택입니다. error_class 는 recommendation 을 바꿀 수 있고 둘 다 next_checks 를 조정합니다. 호스트의 페이지는 방문하지 않으며 robots.txt 와 llms.txt 만 읽고 그 답을 24시간 캐시합니다(실패한 읽기는 1시간 뒤 다시 시도).' }}</p>
+      <p>{{ 'error_class and failure_stage are optional: error_class can change the recommendation, and both tailor next_checks. The host’s pages are never visited; only its robots.txt and llms.txt are read, and the answer is cached for 24 hours (only a transport failure is retried after an hour; a refusal or redirect is an answer and is cached too).' if lang == 'en' else 'error_class 와 failure_stage 는 선택입니다. error_class 는 recommendation 을 바꿀 수 있고 둘 다 next_checks 를 조정합니다. 호스트의 페이지는 방문하지 않으며 robots.txt 와 llms.txt 만 읽고 그 답을 24시간 캐시합니다(전송 실패만 1시간 뒤 다시 시도하며 거절·리디렉션은 답으로 보고 캐시합니다).' }}</p>
       <h3>MCP</h3>
       <pre class="ledger-code"><code>{"mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}</code></pre>
       <p>{{ 'Tool check_incident is read-only and idempotent; report_observation is optional and governed by your own authority rules.' if lang == 'en' else 'check_incident 도구는 읽기 전용·멱등이고, report_observation 은 선택이며 에이전트 자신의 권한 규칙을 따릅니다.' }}</p>
@@ -55,7 +55,7 @@
     <tr><td><code>hand_off_to_human</code></td><td>{{ 'The step needs the user: human verification or their own sign-in. Do not try to bypass it.' if lang == 'en' else '사람 확인이나 사용자 본인 로그인이 필요한 단계입니다. 우회하지 마세요.' }}</td><td>error_class</td></tr>
     <tr><td><code>wait_provider_incident</code></td><td>{{ 'The provider reports an active incident; compare affected services with your step, then wait or retry later.' if lang == 'en' else '업체가 활성 장애를 발표했습니다. 영향 범위를 현재 단계와 비교한 뒤 대기하거나 나중에 재시도합니다.' }}</td><td>provider_status</td></tr>
     <tr><td><code>proceed</code></td><td>{{ 'No declared block for the listed agents; continue modestly, honor Crawl-delay, expect that CDNs may still challenge you.' if lang == 'en' else '목록의 에이전트에 선언된 차단이 없습니다. 절제해서 진행하고 Crawl-delay 를 지키며 CDN 챌린지 가능성은 남겨 둡니다.' }}</td><td>robots.txt</td></tr>
-    <tr><td><code>unknown</code></td><td>{{ 'No declared policy could be read and no official path is listed; treat the host as unknown, not permissive.' if lang == 'en' else '읽을 수 있는 선언 정책도 등록된 공식 경로도 없습니다. 허용이 아니라 미상으로 취급합니다.' }}</td><td>—</td></tr>
+    <tr><td><code>unknown</code></td><td>{{ 'No official path is listed and the declared layer gives no permission: robots.txt could not be read, the host’s edge refused the read (robots_fetch_refused), or the file disallows the root for every crawler it does not name (robots_wildcard_disallow). Treat the host as unknown, not permissive.' if lang == 'en' else '등록된 공식 경로가 없고 선언 층이 허용을 주지 않습니다: robots.txt 를 읽지 못했거나, 호스트 경계가 읽기를 거절했거나(robots_fetch_refused), 이름을 지목하지 않은 모든 크롤러의 루트를 금지하는 파일(robots_wildcard_disallow)입니다. 허용이 아니라 미상으로 취급합니다.' }}</td><td>robots.txt</td></tr>
   </tbody></table></div>
 </section>
 <section class="ledger-section container" aria-labelledby="ledger-sources">
