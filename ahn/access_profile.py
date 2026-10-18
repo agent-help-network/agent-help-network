@@ -1,9 +1,11 @@
 """Declared agent policy of a public hostname, read from its own robots.txt and llms.txt.
 
-Safety posture: only eligible public apex hosts, only public (global) IP addresses, no
-redirects followed, hard byte caps, at most one read per host per day, and never a probe:
-the two well-known files are the only paths ever requested, and the result is reported as
-DECLARED policy, never as an access guarantee.
+Safety posture: only eligible public apex hosts and their own www. alias, only public (global)
+IP addresses, at most one redirect followed (a single hop from the host to its own www. alias
+for the same path; any other 3xx is recorded as ``redirected`` and not followed), hard byte
+caps, one read attempt per host per cache window (24 hours for a lookup, ERROR_RETRY after a
+transport failure), and never a probe: the two well-known files are the only paths ever
+requested, and the result is reported as DECLARED policy, never as an access guarantee.
 """
 
 from __future__ import annotations

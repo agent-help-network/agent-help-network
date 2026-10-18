@@ -3,8 +3,9 @@
 Run by the review cron a few hosts at a time, so a first lookup of a well-known host finds a
 cached access profile instead of an empty one. Every read goes through
 ``access_profile.get_profile``, which keeps all of its safety limits (eligible public apex
-hosts only, public IPs, no redirects, byte caps, at most one attempt per host per window,
-success or failure). The seed list is public: ``ahn/seed_hosts.txt``.
+hosts and their own www. alias only, public IPs, no redirect beyond one hop to that alias, byte
+caps, at most one attempt per host per window, success or failure). The seed list is public:
+``ahn/seed_hosts.txt``.
 """
 
 from __future__ import annotations
