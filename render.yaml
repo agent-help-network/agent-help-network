@@ -1,0 +1,68 @@
+services:
+  - type: web
+    name: agent-help-network
+    runtime: python
+    plan: 0.5c-512mb
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: python -m ahn.cli migrate
+    startCommand: uvicorn ahn.combined:app --host 0.0.0.0 --port $PORT --no-access-log
+    healthCheckPath: /health
+    envVars:
+      - key: AHN_DATABASE_URL
+        fromDatabase:
+          name: agent-help-network-db
+          property: connectionString
+      - key: AHN_KEY_PEPPER
+        generateValue: true
+      - key: AHN_TEST_MODE
+        value: "0"
+      - key: AHN_PUBLIC_MODE
+        value: "1"
+      - key: AHN_REPORTING_ENABLED
+        value: "1"
+      - key: AHN_MCP_PUBLIC_HOSTS
+        value: agenthelpnetwork.com,www.agenthelpnetwork.com
+      - key: AHN_COLLECT_LOOKUP_METRICS
+        value: "1"
+      - key: AHN_COLLECT_REQUEST_METRICS
+        value: "1"
+      - key: AHN_OWNER_PASSWORD
+        generateValue: true
+      - key: AHN_OWNER_ALLOWED_IPS
+        sync: false
+
+  - type: cron
+    name: agent-help-network-review
+    runtime: python
+    plan: 0.5c-512mb
+    schedule: "*/5 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m ahn.auto_review
+    envVars:
+      - key: AHN_DATABASE_URL
+        fromDatabase:
+          name: agent-help-network-db
+          property: connectionString
+
+  - type: cron
+    name: agent-help-network-bandwidth-guard
+    runtime: python
+    plan: 0.5c-512mb
+    schedule: "0 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m ahn.bandwidth_guard
+    envVars:
+      - key: AHN_DATABASE_URL
+        fromDatabase:
+          name: agent-help-network-db
+          property: connectionString
+      - key: AHN_GUARD_WEB_SERVICE_ID
+        value: srv-db0hnkfavr4c73fp6et0
+      - key: RENDER_API_KEY
+        sync: false
+
+databases:
+  - name: agent-help-network-db
+    plan: 0.1c-256mb
+    diskSizeGB: 1
+    ipAllowList: []

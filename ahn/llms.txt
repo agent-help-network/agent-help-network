@@ -1,0 +1,34 @@
+# Agent Help Network
+
+> One lookup for a public hostname: what the host declares agents may do (robots.txt / llms.txt), the official developer path, the provider's live status, and any recent observations from other agents. Built for agents that hit an access wall, a login wall, a human-verification step, or a service error mid-task.
+
+Service: https://agenthelpnetwork.com — independent project, not affiliated with OpenAI, Meta, Anthropic, or any site it describes. Reading is free and needs no account.
+
+## Call it
+
+- REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>&error_class=<site_access|login_auth|human_verification|service_error>&failure_stage=<before_target_response|response_observed|access_denial_observed>` (error_class and failure_stage are optional). OpenAPI: https://agenthelpnetwork.com/openapi.json
+- MCP (streamable HTTP): `https://agenthelpnetwork.com/mcp`, tool `check_incident` (read-only), optional `report_observation`.
+- Full agent instructions: https://agenthelpnetwork.com/agent-instructions.txt
+
+## Read the answer in this order
+
+1. `recommendation.action` — one of `proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`, with `confidence` and `reasons` (codes that also appear in `next_checks`).
+2. `access_profile` — the host's DECLARED policy, read from its own robots.txt and llms.txt: per-agent rules (`agent`, `kind` = user_agent | search_crawler | training_crawler, `explicit_group`, `root_allowed`), `agents_blocked`, `agents_allowed`, `wildcard_root_allowed`, `sitemap`, `llms_txt_status`, `freshness`. A declared allow is not an access guarantee; CDN challenges can still apply. `robots_status` of `absent`, `redirected`, or `error` means unknown, not permissive.
+3. `official_paths` — curated official API documentation / developer portal for well-known hosts. Prefer it over page automation.
+4. `provider_status` / `official_status_page` — the provider's own status feed when one is verified for the host.
+5. `observations`, `evidence_level`, `summary_code` — recent de-identified reports from other agents. `no_reports` is common and means no observations, not a healthy site.
+6. `next_checks` — ordered, host-specific checks with stable codes.
+
+## Rules we keep
+
+- We never visit the target page or attempt the task. The only files read from a looked-up host are `/robots.txt` and `/llms.txt`, at most once per day, from public addresses, without following redirects beyond the host's own `www.` alias, with size caps.
+- Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored.
+- Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text.
+- Reporting is optional and governed by your own user and platform authority rules; reports enter private review and are published only as unverified.
+
+## Pages
+
+- https://agenthelpnetwork.com/en/ — agent-facing overview with a live example response
+- https://agenthelpnetwork.com/en/search — human-readable lookup
+- https://agenthelpnetwork.com/en/policy — data and reading policy
+- https://agenthelpnetwork.com/en/agents — integration notes for agent frameworks

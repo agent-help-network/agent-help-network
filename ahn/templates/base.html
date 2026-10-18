@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}{{ t.brand }}{% endblock %}</title>
+  {% if public_mode %}
+  <meta name="description" content="{{ 'Agent access profile for a public hostname: declared robots.txt policy for agents, the official API path, provider status, and recent observations. Not an access guarantee.' if lang == 'en' else '공개 호스트명의 에이전트 접근 프로필: 에이전트에 대한 robots.txt 선언 정책, 공식 API 경로, 업체 상태, 최근 관찰. 접근 보장이 아닙니다.' }}">
+  <link rel="canonical" href="https://agenthelpnetwork.com{{ request.url.path }}">
+  {% set alternate_suffix = request.url.path[3:] %}
+  <link rel="alternate" hreflang="en" href="https://agenthelpnetwork.com/en{{ alternate_suffix }}">
+  <link rel="alternate" hreflang="ko" href="https://agenthelpnetwork.com/ko{{ alternate_suffix }}">
+  {% endif %}
+  <link rel="stylesheet" href="/static/site.css?v=10">
+</head>
+<body>
+  {% set other = 'ko' if lang == 'en' else 'en' %}
+  {% set suffix = request.url.path[3:] %}
+  {% set audience = 'human' if page in ('human', 'search', 'detail', 'report') else 'agent' if page in ('home', 'agents', 'connect') else '' %}
+  <a class="skip" href="#main">{{ 'Skip to content' if lang == 'en' else '본문으로 이동' }}</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/{{ lang }}/"><span class="brand-mark" aria-hidden="true">✳</span><span>{{ t.brand }}</span></a>
+      <nav aria-label="{{ 'Main navigation' if lang == 'en' else '주 메뉴' }}">
+        <a href="/{{ lang }}/agents" {% if page == 'agents' %}aria-current="page"{% endif %}>{{ t.nav_agents }}</a>
+        <a href="/{{ lang }}/connect" {% if page == 'connect' %}aria-current="page"{% endif %}>{{ t.nav_connect }}</a>
+        <a href="/{{ lang }}/search" {% if page == 'search' %}aria-current="page"{% endif %}>{{ t.nav_search }}</a>
+        {% if reporting_enabled or public_mode %}<a href="/{{ lang }}/report" {% if page == 'report' %}aria-current="page"{% endif %}>{{ t.nav_report if reporting_enabled else ('Withdraw' if lang == 'en' else '철회') }}</a>{% endif %}
+        <a href="/{{ lang }}/policy" {% if page == 'policy' %}aria-current="page"{% endif %}>{{ t.nav_policy }}</a>
+      </nav>
+      <div class="audience-switch" role="group" aria-label="{{ 'View' if lang == 'en' else '화면' }}"><a href="/{{ lang }}/" class="{{ 'active' if audience == 'agent' else '' }}" {% if page == 'home' %}aria-current="page"{% endif %}>Agent</a><a href="/{{ lang }}/human" class="{{ 'active' if audience == 'human' else '' }}" {% if page == 'human' %}aria-current="page"{% endif %}>Human</a></div>
+    </div>
+  </header>
+  <main id="main">{% block content %}{% endblock %}</main>
+  <footer class="site-footer"><div class="container"><span>{{ t.footer }}</span><div class="footer-links"><a href="/{{ lang }}/disclaimer">{{ t.nav_disclaimer }}</a><a href="/{{ lang }}/policy">{{ t.nav_policy }}</a><a href="/{{ lang }}/terms">{{ t.nav_terms }}</a><a href="/{{ lang }}/support">{{ t.nav_support }}</a><a class="language" href="/{{ other }}{{ suffix }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" lang="{{ other }}" aria-label="{{ '한국어로 보기' if other == 'ko' else 'View in English' }}">{{ '한국어' if other == 'ko' else 'English' }}</a></div></div></footer>
+</body>
+</html>

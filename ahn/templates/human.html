@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Human guide' if lang == 'en' else '사람용 안내' }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="ledger-intro container">
+  <p class="ledger-kicker">{{ 'AGENT ACCESS PROFILE / HUMAN VIEW' if lang == 'en' else '에이전트 접근 프로필 / 사람용 화면' }}</p>
+  <h1>{{ 'See what a host allows agents to do' if lang == 'en' else '호스트가 에이전트에게 허용하는 것을 확인' }}</h1>
+  <p class="ledger-deck">{{ t.hero_text }} {{ 'Search a public hostname to see all of it in one place. It can help you judge a blocked task; it is not a live test of your own access.' if lang == 'en' else '공개 호스트명을 검색하면 이 모든 것을 한곳에서 볼 수 있습니다. 막힌 작업을 판단하는 데 도움이 될 수 있지만 사용자의 접속을 실시간 검사하지는 않습니다.' }}</p>
+  <form class="ledger-search" action="/{{ lang }}/search" method="get"><label for="site_host">{{ 'PUBLIC HOSTNAME' if lang == 'en' else '공개 호스트명' }}</label><div class="ledger-search-row"><input id="site_host" name="site_host" type="text" inputmode="url" autocomplete="off" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'View profile' if lang == 'en' else '프로필 보기' }} ↗</button></div><p>{{ 'No account details, URL paths, or secrets.' if lang == 'en' else '계정 정보·URL 경로·비밀 정보는 입력하지 마세요.' }}</p></form>
+  <p class="ledger-example">{{ 'Example with a connected official feed:' if lang == 'en' else '연결된 공식 상태 피드 예시:' }} <a href="/{{ lang }}/search?site_host=cloudflare.com">cloudflare.com →</a> <span>{{ 'Declared policy and provider statement only; your access is not tested.' if lang == 'en' else '선언된 정책과 업체 발표만 보여주며 사용자의 접속은 검사하지 않습니다.' }}</span></p>
+</section>
+<section class="ledger-section container">
+  <div class="ledger-section-heading"><p class="ledger-kicker">01 / {{ 'INTERPRETATION' if lang == 'en' else '해석' }}</p><h2>{{ 'How to read a result' if lang == 'en' else '결과 읽는 방법' }}</h2></div>
+  <div class="ledger-table">
+    <div class="ledger-row"><span class="ledger-row-num">01</span><div><h3>{{ 'Declared agent policy' if lang == 'en' else '선언된 에이전트 정책' }}</h3><p>{{ 'A table from the host’s own robots.txt: each agent or crawler token, whether the root is allowed, and whether the rule is explicit. “Blocked” here means the site asked that agent not to crawl; it does not mean your agent was blocked, and “allowed” is not a promise of access.' if lang == 'en' else '호스트 자체 robots.txt 로 만든 표입니다. 에이전트·크롤러 토큰별로 루트 허용 여부와 규칙이 명시적인지 보여줍니다. 여기서 “차단”은 사이트가 그 에이전트에게 크롤링하지 말라고 선언했다는 뜻이지 사용자의 에이전트가 막혔다는 뜻이 아니고, “허용”도 접근 약속이 아닙니다.' }}</p></div><span class="ledger-tag">{{ 'DECLARED' if lang == 'en' else '선언' }}</span></div>
+    <div class="ledger-row"><span class="ledger-row-num">02</span><div><h3>{{ 'Official path and provider status' if lang == 'en' else '공식 경로와 업체 상태' }}</h3><p>{{ 'Links to the provider’s public API documentation when we have curated one, and the provider’s own status statement with its source and fetch time. Neither guarantees your login or regional access.' if lang == 'en' else '정리해 둔 경우 업체의 공개 API 문서 링크와, 출처·조회 시각이 붙은 업체 자체 상태 발표입니다. 어느 쪽도 사용자의 로그인이나 지역별 접속을 보증하지 않습니다.' }}</p></div><span class="ledger-tag">{{ 'OFFICIAL' if lang == 'en' else '공식' }}</span></div>
+    <div class="ledger-row"><span class="ledger-row-num">03</span><div><h3>{{ 'Observations and no_reports' if lang == 'en' else '관찰과 no_reports' }}</h3><p>{{ 'A published report describes one attempt and is not independent confirmation of an outage. No matching published report is the normal case: the site’s current status is unknown.' if lang == 'en' else '공개 제보는 하나의 시도를 설명하며 장애를 독립적으로 확인한 것이 아닙니다. 일치하는 공개 제보가 없는 것이 보통이며, 그때 사이트의 현재 상태는 미상입니다.' }}</p></div><span class="ledger-tag">no_reports</span></div>
+  </div>
+</section>
+<section class="ledger-section ledger-section-last container" id="start-agent">
+  <div class="ledger-section-heading"><p class="ledger-kicker">02 / {{ 'AGENT ACCESS' if lang == 'en' else '에이전트 연결' }}</p><h2>{{ 'Give an agent the instructions' if lang == 'en' else '에이전트에 지침 전달' }}</h2></div>
+  <p class="section-copy">{{ 'Paste the prompt below into Muse, dots, or another agent chat. Its stable source is' if lang == 'en' else '아래 프롬프트를 Muse, dots 또는 다른 에이전트 채팅에 붙여 넣을 수 있습니다. 고정 원문:' }} <a href="/agent-instructions.txt">agent-instructions.txt</a>. {{ 'A prompt does not grant web access or lasting memory.' if lang == 'en' else '프롬프트만으로 웹 접근 권한이나 지속 기억이 생기지는 않습니다.' }}</p>
+  <div class="prompt-panel"><label for="agent-start-prompt">{{ 'Starter prompt for an agent' if lang == 'en' else '에이전트용 시작 프롬프트' }}</label><textarea id="agent-start-prompt" readonly rows="13">{{ agent_prompt }}</textarea><div class="prompt-actions"><button type="button" id="copy-agent-prompt" data-copied-label="{{ 'Copied' if lang == 'en' else '복사됨' }}" data-failed-label="{{ 'Select the text and copy it manually' if lang == 'en' else '텍스트를 선택해 직접 복사하세요' }}">{{ 'Copy prompt' if lang == 'en' else '프롬프트 복사' }}</button><span id="prompt-copy-status" role="status" aria-live="polite"></span></div></div>
+  <p class="ledger-footlink"><a href="/{{ lang }}/connect">{{ 'REST and MCP connection details' if lang == 'en' else 'REST 및 MCP 연결 방법' }} →</a>{% if reporting_enabled %} · <a href="/{{ lang }}/report">{{ 'Submit an observed attempt' if lang == 'en' else '관찰한 시도 제보' }} →</a>{% endif %}</p>
+</section>
+<script defer src="/static/prompt.js?v=1"></script>
+{% endblock %}

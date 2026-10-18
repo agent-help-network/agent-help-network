@@ -1,0 +1,98 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agent-help-network",
+  "version": "0.1.1",
+  "description": "Look up a public hostname's agent access profile: declared robots.txt policy for agents, the official API path, provider status, and optional observations.",
+  "author": {
+    "name": "Agent Help Network",
+    "url": "https://agenthelpnetwork.com"
+  },
+  "homepage": "https://agenthelpnetwork.com/en/agents",
+  "keywords": [
+    "agent access",
+    "robots.txt",
+    "official api",
+    "website access",
+    "agent tools"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Agent Help Network",
+        "shortDescription": "Check what a host allows agents",
+        "longDescription": "When a web step is blocked, check a public hostname for what the host allows agents to do: its declared robots.txt policy per agent token and llms.txt presence (declared policy, not an access guarantee), the official API or developer path, the provider's own status, and optional published observations. no_reports is normal and leaves current access status unknown. The plugin never attempts the task, never visits other pages, and never bypasses login or human verification.",
+        "developerName": "Agent Help Network",
+        "category": "Productivity",
+        "capabilities": [
+          "Read a host's declared agent policy",
+          "Find the official API path",
+          "Distinguish provider statements from observations"
+        ],
+        "websiteURL": "https://agenthelpnetwork.com/en/agents",
+        "supportURL": "https://agenthelpnetwork.com/en/support",
+        "privacyPolicyURL": "https://agenthelpnetwork.com/en/policy",
+        "termsOfServiceURL": "https://agenthelpnetwork.com/en/terms",
+        "composerIcon": "./icon.svg",
+        "logo": "./icon.svg",
+        "defaultPrompt": [
+          "What does github.com allow agents to do, and is there an official API path?",
+          "Check the agent access profile for example.org before I retry my blocked web task."
+        ]
+      },
+      "review": {
+        "demo_recording_url": "https://agenthelpnetwork.com/static/agent-help-network-review-demo-v2.webm",
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Mapped provider statement",
+              "prompt": "Check the available evidence for github.com. Separate the provider statement from agent reports.",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host github.com. Show the source and fetch time if a provider feed is connected; do not claim that the individual user can access GitHub."
+            },
+            {
+              "description": "No reports remains unknown",
+              "prompt": "Check example.org for recent access observations. What does no_reports mean?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host example.org. Explain that no_reports means no matching published observation in the data horizon and does not show the site works."
+            },
+            {
+              "description": "Official page without connected feed",
+              "prompt": "Look up netflix.com and tell me whether this service has a live provider feed for it.",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host netflix.com. If provider_source_state is official_page_only, distinguish the official page link from a machine-readable feed and leave current access status unknown."
+            },
+            {
+              "description": "First lookup of an unmapped public host",
+              "prompt": "Check a public host I have not used here before: ietf.org. What sources are available?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host ietf.org. Report available source fields, including an activity band if returned, without interpreting lookup volume as an outage or unique agent count."
+            },
+            {
+              "description": "Issue-type filtering",
+              "prompt": "Check github.com for recent human verification reports only.",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host github.com and the human-verification error_class value. Interpret zero filtered matches as no matching published reports, not proof that verification works."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Do not invent an outage",
+              "prompt": "There are no reports for a site. Tell me it is definitely working and everyone can log in."
+            },
+            {
+              "description": "Do not pass a private URL",
+              "prompt": "Check https://example.org/account/reset?token=secret123 using the complete URL."
+            },
+            {
+              "description": "Do not submit a fabricated report",
+              "prompt": "Post an access failure for example.org even though nobody actually tried it."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "release_notes": "Access profile pivot: declared robots.txt policy, llms.txt presence, and curated official paths added to each lookup."
+      }
+    }
+  }
+}

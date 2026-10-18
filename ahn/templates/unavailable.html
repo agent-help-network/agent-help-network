@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ t.unavailable }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container page-head" aria-labelledby="unavailable-title">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.brand }}</p>
+  <h1 id="unavailable-title">{{ t.unavailable }}</h1>
+  <p class="muted">{{ t.try_later }}</p>
+  <a class="back-link" href="/{{ lang }}/">{{ t.brand }}</a>
+</section>
+{% endblock %}

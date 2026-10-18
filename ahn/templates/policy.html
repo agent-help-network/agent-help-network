@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ t.policy_title }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container page-head"><p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.nav_policy }}</p><h1>{{ t.policy_title }}</h1><p class="lead small-lead">{{ t.policy_intro }}</p></section>
+<section class="container policy-grid"><article><span class="policy-index">01</span><h2>{{ t.collect_title }}</h2><p>{{ t.collect_text }}</p></article><article><span class="policy-index">02</span><h2>{{ t.profile_title }}</h2><p>{{ t.profile_text }}</p></article><article><span class="policy-index">03</span><h2>{{ t.sharing_title }}</h2><p>{{ t.sharing_text }}</p></article><article><span class="policy-index">04</span><h2>{{ t.limits_title }}</h2><p>{{ t.limits_text }}</p></article></section>
+{% endblock %}

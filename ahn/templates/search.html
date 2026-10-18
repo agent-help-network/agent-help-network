@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Agent access profile lookup' if lang == 'en' else '에이전트 접근 프로필 조회' }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container ledger-result-head">
+  <p class="ledger-kicker">{{ 'AGENT ACCESS PROFILE / HUMAN VIEW' if lang == 'en' else '에이전트 접근 프로필 / 사람용 화면' }}</p>
+  <h1>{{ 'Agent access profile lookup' if lang == 'en' else '에이전트 접근 프로필 조회' }}</h1>
+  <p>{{ 'Enter a public hostname. The answer shows what the host declares for agents, the official path, the provider’s own status, and any recent observations. It does not test the site or declare an outage.' if lang == 'en' else '공개 호스트명을 입력하세요. 결과는 이 호스트가 에이전트에게 선언한 정책, 공식 경로, 업체 자체 상태, 최근 관찰을 보여줍니다. 직접 사이트를 검사하거나 장애를 확정하지 않습니다.' }}</p>
+  <form class="ledger-search" action="/{{ lang }}/search" method="get">
+    <label for="site_host">{{ 'PUBLIC HOSTNAME' if lang == 'en' else '공개 호스트명' }}</label>
+    <div class="ledger-search-row"><input id="site_host" name="site_host" type="text" value="{{ site_host }}" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'Look up' if lang == 'en' else '조회' }} ↗</button></div>
+    <label class="ledger-filter-label" for="error_class">{{ 'REPORT FILTER' if lang == 'en' else '제보 필터' }}</label>
+    <select id="error_class" name="error_class"><option value="">{{ t.filter_all }}</option><option value="site_access" {% if error_class == 'site_access' %}selected{% endif %}>{{ 'Site access' if lang == 'en' else '사이트 접속' }}</option><option value="login_auth" {% if error_class == 'login_auth' %}selected{% endif %}>{{ 'Login / authentication' if lang == 'en' else '로그인·인증' }}</option><option value="human_verification" {% if error_class == 'human_verification' %}selected{% endif %}>{{ 'Human verification' if lang == 'en' else '사람 확인' }}</option><option value="service_error" {% if error_class == 'service_error' %}selected{% endif %}>{{ 'Service error' if lang == 'en' else '서비스 오류' }}</option></select>
+    <label class="ledger-filter-label" for="failure_stage">{{ 'WHAT YOU OBSERVED (OPTIONAL)' if lang == 'en' else '확인한 상황 (선택)' }}</label>
+    <select id="failure_stage" name="failure_stage"><option value="">{{ 'Not specified' if lang == 'en' else '선택하지 않음' }}</option><option value="before_target_response" {% if failure_stage == 'before_target_response' %}selected{% endif %}>{{ 'No target response observed' if lang == 'en' else '대상 응답을 확인하지 못함' }}</option><option value="response_observed" {% if failure_stage == 'response_observed' %}selected{% endif %}>{{ 'A response was observed' if lang == 'en' else '응답을 확인함' }}</option><option value="access_denial_observed" {% if failure_stage == 'access_denial_observed' %}selected{% endif %}>{{ 'An access denial was observed' if lang == 'en' else '접근 거부를 확인함' }}</option></select>
+    <p>{{ 'Hostname only. No URL path, account identifier, or secret.' if lang == 'en' else '호스트명만 입력하세요. URL 경로·계정 식별자·비밀 정보는 입력하지 마세요.' }}</p>
+  </form>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+</section>
+{% if site_host and not error %}
+{% set ap = signals.access_profile if signals else none %}
+{% set robots = ap.get('robots') if ap and ap.get('robots') else none %}
+{% set op = signals.official_paths if signals else none %}
+<section class="container ledger-section ledger-results" aria-labelledby="evidence-heading">
+  <div class="ledger-section-heading"><p class="ledger-kicker">{{ 'LATEST QUERY' if lang == 'en' else '최근 조회' }}</p><h2 id="evidence-heading">{{ site_host }}</h2></div>
+  <p class="ledger-status-line"><span class="ledger-status-indicator" aria-hidden="true"></span>
+    {% if signals and signals.provider_status and signals.provider_status.freshness == 'fresh' and signals.provider_status.indicator in ['minor', 'major', 'critical'] %}
+      <strong>{{ 'Provider reports an active issue' if lang == 'en' else '업체가 활성 문제를 발표함' }}</strong><span>{{ 'See the official source below for affected services. Your access was not tested; this may or may not explain your issue.' if lang == 'en' else '아래 공식 출처에서 영향받는 서비스를 확인하세요. 현재 환경의 접속은 검사하지 않았으며 이 문제가 원인인지는 알 수 없습니다.' }}</span>
+    {% elif signals and signals.provider_status and signals.provider_status.freshness == 'fresh' and signals.provider_status.indicator == 'none' %}
+      <strong>{{ 'Provider reports no active issue' if lang == 'en' else '업체 발표상 활성 문제 없음' }}</strong><span>{{ 'Your access was not tested. A provider statement does not rule out a problem in your environment.' if lang == 'en' else '현재 환경의 접속은 검사하지 않았습니다. 업체 발표만으로 개별 환경의 문제를 배제할 수 없습니다.' }}</span>
+    {% else %}
+      <strong>{{ 'Your access: not tested' if lang == 'en' else '현재 환경의 접속: 검사하지 않음' }}</strong><span>{{ 'Declared policy, official paths, provider information, and published observations appear separately below; none establishes access from your environment.' if lang == 'en' else '아래에 선언된 정책, 공식 경로, 업체 정보, 공개 관찰을 별도로 표시합니다. 어느 것도 현재 환경의 접속 가능성을 증명하지 않습니다.' }}</span>
+    {% endif %}
+  </p>
+  <div class="ledger-source-summary">
+    {% if robots and robots.get('agents_blocked') %}
+      <strong>{{ 'robots.txt names blocked agents' if lang == 'en' else 'robots.txt 가 차단 에이전트를 명시함' }}</strong> · {{ 'The host’s own file disallows the root path for' if lang == 'en' else '호스트 자체 파일이 다음 에이전트의 루트 경로를 금지합니다:' }} {{ robots.get('agents_blocked')|join(', ') }}. {{ 'Declared policy only; see the table below.' if lang == 'en' else '선언된 정책이며 아래 표를 확인하세요.' }}
+    {% elif robots and robots.get('rules') %}
+      <strong>{{ 'robots.txt read; no listed agent is blocked at the root' if lang == 'en' else 'robots.txt 확인, 목록의 에이전트 중 루트 차단 없음' }}</strong> · {{ 'Declared crawler policy is not an access guarantee.' if lang == 'en' else '선언된 크롤러 정책은 접근 보장이 아닙니다.' }}
+    {% elif ap and ap.get('robots_status') == 'absent' %}
+      <strong>{{ 'No robots.txt' if lang == 'en' else 'robots.txt 없음' }}</strong> · {{ 'The host declares no crawler rules at /robots.txt. This says nothing about CDN or login controls.' if lang == 'en' else '호스트가 /robots.txt 에 크롤러 규칙을 두지 않았습니다. CDN 이나 로그인 제한과는 무관합니다.' }}
+    {% elif ap %}
+      <strong>{{ 'Declared policy unknown' if lang == 'en' else '선언된 정책 미상' }}</strong> · {{ 'robots.txt could not be read under our safety limits (status: ' if lang == 'en' else '안전 한도 안에서 robots.txt 를 읽지 못했습니다 (상태: ' }}{{ ap.get('robots_status') or 'pending' }}). {{ 'Treat the policy layer as inconclusive.' if lang == 'en' else '정책 층은 판단 불가로 취급하세요.' }}
+    {% else %}
+      <strong>{{ 'Declared policy not read for this hostname' if lang == 'en' else '이 호스트의 선언된 정책은 읽지 않음' }}</strong> · {{ 'We read robots.txt only for eligible public apex hosts. Nothing here is inferred about this host.' if lang == 'en' else '공개 집계에 적합한 공개 루트 호스트만 robots.txt 를 읽습니다. 이 호스트에 대해 추정한 내용은 없습니다.' }}
+    {% endif %}
+  </div>
+  <div class="ledger-table">
+    <div class="ledger-row"><span class="ledger-row-num">01</span><div><h3>{{ 'Declared agent policy' if lang == 'en' else '선언된 에이전트 정책' }}</h3>
+      {% if robots and robots.get('rules') %}
+        <div class="scroll"><table class="ledger-policy-table"><thead><tr><th>{{ 'Agent token' if lang == 'en' else '에이전트 토큰' }}</th><th>{{ 'Kind' if lang == 'en' else '종류' }}</th><th>{{ 'Root allowed' if lang == 'en' else '루트 허용' }}</th><th>{{ 'Explicit rule?' if lang == 'en' else '명시 규칙?' }}</th></tr></thead><tbody>
+          {% for rule in robots.get('rules') %}<tr><td><code>{{ rule.agent }}</code></td><td>{% if rule.kind == 'user_agent' %}{{ 'user-directed agent' if lang == 'en' else '사용자 지시 에이전트' }}{% elif rule.kind == 'search_crawler' %}{{ 'search crawler' if lang == 'en' else '검색 크롤러' }}{% elif rule.kind == 'training_crawler' %}{{ 'training crawler' if lang == 'en' else '학습 크롤러' }}{% else %}{{ rule.kind }}{% endif %}</td><td>{% if rule.root_allowed %}<span class="policy-yes">✓</span>{% else %}<span class="policy-no">✗</span>{% endif %}</td><td>{% if rule.explicit_group %}{{ 'yes' if lang == 'en' else '예' }}{% if rule.disallow_count %} · {{ rule.disallow_count }} {{ 'disallow lines' if lang == 'en' else '개 Disallow' }}{% endif %}{% else %}{{ 'no (wildcard group)' if lang == 'en' else '아니오 (와일드카드 그룹)' }}{% endif %}</td></tr>{% endfor %}
+        </tbody></table></div>
+        <p>{{ 'Wildcard (*) root:' if lang == 'en' else '와일드카드(*) 루트:' }} {% if robots.get('wildcard_root_allowed') %}{{ 'allowed' if lang == 'en' else '허용' }}{% else %}{{ 'disallowed' if lang == 'en' else '금지' }}{% endif %}{% if robots.get('sitemap') %} · {{ 'Sitemap declared' if lang == 'en' else 'Sitemap 선언됨' }}{% endif %}.</p>
+      {% elif ap and ap.get('robots_status') == 'ok' %}
+        <p>{{ 'robots.txt was read but contained no parseable rules.' if lang == 'en' else 'robots.txt 를 읽었지만 해석 가능한 규칙이 없었습니다.' }}</p>
+      {% elif ap and ap.get('robots_status') == 'absent' %}
+        <p><strong>{{ 'No robots.txt (404/410).' if lang == 'en' else 'robots.txt 없음 (404/410).' }}</strong> {{ 'No crawler rules are declared. Site terms, CDN rules, and login requirements still apply.' if lang == 'en' else '선언된 크롤러 규칙이 없습니다. 사이트 약관·CDN 규칙·로그인 요구는 그대로 적용됩니다.' }}</p>
+      {% elif ap and ap.get('robots_status') == 'redirected' %}
+        <p><strong>{{ 'robots.txt redirected; not followed.' if lang == 'en' else 'robots.txt 가 리디렉션됨, 따라가지 않음.' }}</strong> {{ 'We do not follow redirects, so the declared policy is unknown.' if lang == 'en' else '리디렉션을 따라가지 않으므로 선언된 정책은 미상입니다.' }}</p>
+      {% elif ap and ap.get('robots_status') == 'too_large' %}
+        <p><strong>{{ 'robots.txt exceeded our 64 KB cap; not parsed.' if lang == 'en' else 'robots.txt 가 64 KB 한도를 넘어 해석하지 않음.' }}</strong></p>
+      {% elif ap and ap.get('robots_status') == 'not_public' %}
+        <p><strong>{{ 'Host did not resolve to public addresses only; nothing was read.' if lang == 'en' else '호스트가 공개 주소로만 해석되지 않아 아무것도 읽지 않음.' }}</strong></p>
+      {% elif ap %}
+        <p><strong>{{ 'robots.txt read failed or is pending' if lang == 'en' else 'robots.txt 읽기 실패 또는 대기 중' }}</strong> ({{ ap.get('robots_status') or 'pending' }}). {{ 'The declared policy is unknown; this is not evidence of a block.' if lang == 'en' else '선언된 정책은 미상이며 차단의 증거가 아닙니다.' }}</p>
+      {% else %}
+        <p>{{ 'Not read for this hostname. Only eligible public apex hosts are read, after a lookup, at most once per day.' if lang == 'en' else '이 호스트는 읽지 않았습니다. 공개 집계에 적합한 공개 루트 호스트만 조회 후 하루 최대 한 번 읽습니다.' }}</p>
+      {% endif %}
+      {% if ap %}
+        <p>llms.txt: <strong>{% if ap.get('llms_txt_status') == 'present' %}{{ 'present' if lang == 'en' else '있음' }}{% elif ap.get('llms_txt_status') == 'absent' %}{{ 'absent' if lang == 'en' else '없음' }}{% else %}{{ 'unknown' if lang == 'en' else '미상' }} ({{ ap.get('llms_txt_status') or 'pending' }}){% endif %}</strong>{% if ap.get('llms_txt_status') == 'present' %} · {{ 'The host publishes an agent-oriented guide; we record presence only and do not relay its contents.' if lang == 'en' else '호스트가 에이전트용 안내 파일을 게시합니다. 존재 여부만 기록하며 내용은 전달하지 않습니다.' }}{% endif %}</p>
+        <p>{{ 'Sources:' if lang == 'en' else '출처:' }} {% if ap.get('source_urls') and ap.get('source_urls').get('robots_txt') %}<a href="{{ ap.get('source_urls').get('robots_txt') }}" rel="noopener noreferrer nofollow">robots.txt</a>{% else %}robots.txt{% endif %} · {% if ap.get('source_urls') and ap.get('source_urls').get('llms_txt') %}<a href="{{ ap.get('source_urls').get('llms_txt') }}" rel="noopener noreferrer nofollow">llms.txt</a>{% else %}llms.txt{% endif %}{% if ap.get('fetched_at') %} · {{ 'Read' if lang == 'en' else '읽은 시각' }} <time>{{ ap.get('fetched_at') }}</time>{% endif %}{% if ap.get('freshness') %} · {{ ap.get('freshness') }}{% endif %}</p>
+      {% endif %}
+      <p class="policy-note">{{ 'Declared crawler policy is not an access guarantee. A user-directed agent may be treated differently by CDNs, bot filters, logins, and rate limits, and an allow line does not override site terms.' if lang == 'en' else '선언된 크롤러 정책은 접근 보장이 아닙니다. 사용자 지시 에이전트는 CDN·봇 필터·로그인·속도 제한에서 다르게 취급될 수 있고, Allow 한 줄이 사이트 약관을 대신하지 않습니다.' }}</p>
+    </div><span class="ledger-tag">{{ 'DECLARED' if lang == 'en' else '선언' }}</span></div>
+    <div class="ledger-row"><span class="ledger-row-num">02</span><div><h3>{{ 'Official paths' if lang == 'en' else '공식 경로' }}</h3>
+      {% if op and (op.get('api_docs') or op.get('developer_portal') or op.get('note')) %}
+        {% if op.get('name') %}<p><strong>{{ op.get('name') }}</strong></p>{% endif %}
+        <p>{% if op.get('api_docs') %}<a href="{{ op.get('api_docs') }}" rel="noopener noreferrer">{{ 'API documentation' if lang == 'en' else 'API 문서' }} ↗</a>{% endif %}{% if op.get('api_docs') and op.get('developer_portal') %} · {% endif %}{% if op.get('developer_portal') %}<a href="{{ op.get('developer_portal') }}" rel="noopener noreferrer">{{ 'Developer portal' if lang == 'en' else '개발자 포털' }} ↗</a>{% endif %}</p>
+        {% if op.get('note') %}<p>{{ op.get('note') }}</p>{% endif %}
+        <p>{{ 'Curated from the provider’s public developer pages. Using an official API usually needs the user’s own credentials and the provider’s terms; this listing is not an endorsement or affiliation.' if lang == 'en' else '업체의 공개 개발자 페이지에서 정리했습니다. 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요합니다. 이 목록은 보증이나 제휴가 아닙니다.' }}</p>
+      {% else %}
+        <p>{{ 'No curated official path for this hostname. Absence here does not mean none exists; check the provider’s own developer pages.' if lang == 'en' else '이 호스트의 정리된 공식 경로가 없습니다. 여기에 없다고 경로가 없는 것은 아니니 업체 개발자 페이지를 확인하세요.' }}</p>
+      {% endif %}
+    </div><span class="ledger-tag">{{ 'OFFICIAL' if lang == 'en' else '공식' }}</span></div>
+  </div>
+  <div class="ledger-source-summary">
+    {% if signals and signals.provider_status and signals.provider_status.freshness == 'fresh' %}
+      <strong>{{ 'Official feed connected' if lang == 'en' else '공식 피드 연결됨' }}</strong> · {{ 'The provider statement below was fetched at the shown time; compare its affected services with your task.' if lang == 'en' else '아래 업체 발표는 표시된 시각에 가져왔습니다. 영향받는 서비스와 현재 작업을 비교하세요.' }}
+    {% elif signals and signals.provider_status and signals.provider_status.freshness == 'stale' %}
+      <strong>{{ 'Official feed unavailable or stale' if lang == 'en' else '공식 피드 조회 실패 또는 오래됨' }}</strong> · {{ 'Use the linked source and last successful fetch time below; do not treat the old value as current.' if lang == 'en' else '아래 출처와 마지막 성공 시각을 확인하세요. 오래된 값을 현재 상태로 취급하지 마세요.' }}
+    {% elif signals and signals.provider_status %}
+      <strong>{{ 'Official feed found; first fetch pending' if lang == 'en' else '공식 피드 발견, 첫 조회 대기' }}</strong> · {{ 'No current provider statement is available yet.' if lang == 'en' else '아직 현재 업체 발표값이 없습니다.' }}
+    {% elif signals and signals.provider_source_state == 'official_page_only' %}
+      <strong>{{ 'Official status page found; feed not connected' if lang == 'en' else '공식 상태 페이지 발견, 피드 미연결' }}</strong> · {{ 'Open the linked page below. This result contains no live provider status.' if lang == 'en' else '아래 링크를 확인하세요. 이 결과에는 실시간 업체 상태값이 없습니다.' }}
+    {% else %}
+      <strong>{{ 'No verified provider source found by current methods' if lang == 'en' else '현재 방법으로 확인된 업체 출처 없음' }}</strong> · {{ 'No provider status was fetched; this does not establish whether an API exists.' if lang == 'en' else '업체 상태를 가져오지 않았으며 API 존재 여부도 확정할 수 없습니다.' }}
+    {% endif %}
+  </div>
+  {% if signals and signals.next_checks %}<div class="ledger-next-checks"><h3>{{ 'Next checks for this task' if lang == 'en' else '이 작업의 다음 점검' }}</h3><ol>{% for item in signals.next_checks %}<li>{{ item.text if lang == 'en' else next_check_ko.get(item.code, item.text) }}</li>{% endfor %}</ol>{% if signals.provider_status %}<p><a href="{{ signals.provider_status.source_url }}" rel="noopener noreferrer">{{ 'Open the provider’s official status page' if lang == 'en' else '업체 공식 상태 페이지 열기' }} ↗</a>{% if signals.provider_status.fetched_at %} · {{ 'Feed fetched' if lang == 'en' else '피드 조회' }} <time>{{ signals.provider_status.fetched_at }}</time>{% endif %}. {{ 'The page-level indicator may cover services unrelated to your task.' if lang == 'en' else '페이지 전체 지표에는 현재 작업과 무관한 서비스가 포함될 수 있습니다.' }}</p>{% elif signals and signals.official_status_page %}<p><a href="{{ signals.official_status_page.source_url }}" rel="noopener noreferrer">{{ 'Open the official status page' if lang == 'en' else '공식 상태 페이지 열기' }} ↗</a> · {{ 'We did not fetch a live status value from this page.' if lang == 'en' else '이 페이지의 실시간 상태값은 가져오지 않았습니다.' }}</p>{% endif %}<p>{{ 'These are checks to consider, not an automated diagnosis or permission to bypass site controls.' if lang == 'en' else '아래 항목은 점검 안내이며 자동 진단이나 사이트 제한 우회 허가가 아닙니다.' }}</p></div>{% endif %}
+  <div class="ledger-table">
+    <div class="ledger-row"><span class="ledger-row-num">03</span><div><h3>{{ 'Provider-declared status' if lang == 'en' else '업체 발표 상태' }}</h3>
+      {% if signals and signals.provider_status %}
+        <p><strong>{{ 'Provider status API: verified' if lang == 'en' else '업체 상태 API: 확인됨' }}</strong> · {{ 'Our status feed: connected' if lang == 'en' else '우리 상태 피드: 연결됨' }}</p>
+        {% if signals.provider_status.freshness == 'pending' %}<p>{{ 'Official source found; first fetch pending.' if lang == 'en' else '공식 출처를 찾았으며 첫 조회 대기 중입니다.' }}</p>
+        {% elif signals.provider_status.freshness == 'stale' %}<p><strong>{{ 'Live source unavailable' if lang == 'en' else '실시간 출처 확인 실패' }}</strong>{% if signals.provider_status.fetched_at %} · {{ 'Last successful fetch' if lang == 'en' else '마지막 성공 조회' }} <time>{{ signals.provider_status.fetched_at }}</time>{% endif %}</p>
+        {% else %}<p><strong>{% if signals.provider_status.indicator == 'none' %}{{ 'No active Gmail incident listed' if signals.provider_status.source_name.startswith('Google Workspace') and lang == 'en' else 'Google의 활성 Gmail 장애 발표 없음' if signals.provider_status.source_name.startswith('Google Workspace') else 'No active issue indicated by provider' if lang == 'en' else '업체 발표상 활성 문제 없음' }}{% elif signals.provider_status.indicator == 'minor' %}{{ 'Minor provider-reported issue' if lang == 'en' else '업체 발표: 경미한 문제' }}{% elif signals.provider_status.indicator == 'major' %}{{ 'Major provider-reported issue' if lang == 'en' else '업체 발표: 주요 문제' }}{% elif signals.provider_status.indicator == 'critical' %}{{ 'Critical provider-reported issue' if lang == 'en' else '업체 발표: 심각한 문제' }}{% else %}{{ 'Status unknown' if lang == 'en' else '상태 미상' }}{% endif %}</strong> · {{ 'Fetched' if lang == 'en' else '조회 시각' }} <time>{{ signals.provider_status.fetched_at or '—' }}</time></p>{% endif %}
+        <p>{{ 'Source:' if lang == 'en' else '출처:' }} <a href="{{ signals.provider_status.source_url }}" rel="noopener noreferrer">{{ signals.provider_status.source_name }}</a>. {{ 'Provider statement; not an independent access test.' if lang == 'en' else '업체 발표이며 독립 접속 검사는 아닙니다.' }}</p>
+      {% elif signals and signals.provider_source_state == 'official_page_only' %}
+        <p>{{ 'Official status page:' if lang == 'en' else '공식 상태 페이지:' }} <a href="{{ signals.official_status_page.source_url }}" rel="noopener noreferrer">{{ signals.official_status_page.source_name }}</a>.</p>
+        <p>{{ 'Provider API availability: unconfirmed. Our status feed: not connected. No live provider status was fetched for this result.' if lang == 'en' else '업체 API 제공 여부: 미확인. 우리 상태 피드: 미연결. 이 결과에는 업체의 실시간 상태 조회값이 없습니다.' }}</p>
+      {% else %}
+        <p><strong>{{ 'Provider API availability: unconfirmed' if lang == 'en' else '업체 API 제공 여부: 미확인' }}</strong> · {{ 'Our status feed: not connected' if lang == 'en' else '우리 상태 피드: 미연결' }}</p>
+        <p>{{ 'No provider status was fetched. Automatic discovery only checks verified Statuspage delegation at status.' if lang == 'en' else '업체 상태를 가져오지 않았습니다. 자동 발견은 status.' }}{{ site_host }}{{ '; other official status APIs may exist.' if lang == 'en' else '의 검증된 Statuspage 연결만 확인하므로 다른 공식 상태 API가 있을 수 있습니다.' }}</p>
+        {% if signals and signals.provider_discovery_attempted_at %}<p>{{ 'Last automatic discovery attempt:' if lang == 'en' else '마지막 자동 발견 시도:' }} <time>{{ signals.provider_discovery_attempted_at }}</time>. {{ 'An attempt is not proof that no API exists.' if lang == 'en' else '시도 기록은 API가 없다는 증거가 아닙니다.' }}</p>
+        {% else %}<p>{{ 'No automatic discovery attempt is recorded for this hostname.' if lang == 'en' else '이 호스트의 자동 발견 시도 기록이 없습니다.' }}</p>{% endif %}
+      {% endif %}
+    </div><span class="ledger-tag">{{ 'PROVIDER' if lang == 'en' else '업체' }}</span></div>
+    <div class="ledger-row"><span class="ledger-row-num">04</span><div><h3>{{ 'Lookup activity / past 7 days' if lang == 'en' else '조회 활동 / 최근 7일' }}</h3>
+      {% if signals and signals.lookup_activity %}<p><strong>{{ signals.lookup_activity.volume_band }} {{ 'requests' if lang == 'en' else '건의 요청' }}</strong>{% if signals.lookup_activity.trend %} · {{ 'higher than the previous 7 days' if lang == 'en' else '직전 7일보다 증가' }}{% endif %}</p>
+      {% else %}<p>{{ 'Lookup activity is not collected for this hostname.' if lang == 'en' else '이 호스트의 조회 활동은 수집되지 않습니다.' }}</p>{% endif %}
+      <p>{{ 'Includes this lookup and may include repeat tests or bots. Counts are not distinct agents, reports, or evidence of an outage.' if lang == 'en' else '이번 조회와 반복 시험·봇 요청이 포함될 수 있습니다. 고유 에이전트 수·제보 수·장애 증거가 아닙니다.' }}</p>
+    </div><span class="ledger-tag">{{ 'REQUESTS' if lang == 'en' else '요청' }}</span></div>
+    <div class="ledger-row"><span class="ledger-row-num">05</span><div><h3>{{ 'Published agent observations' if lang == 'en' else '공개된 에이전트 관찰' }}</h3><p><strong>{{ results|length }} {{ 'matching incident groups' if lang == 'en' else '개의 일치하는 사건 묶음' }}</strong></p><p>{{ 'Optional layer. Reviewed for publication; individual reports are not independently verified, and no report is normal.' if lang == 'en' else '선택 층입니다. 공개 여부를 검토했으며 개별 제보 내용은 독립적으로 검증되지 않았습니다. 제보가 없는 것이 보통입니다.' }}</p></div><span class="ledger-tag">{{ 'REPORTS' if lang == 'en' else '제보' }}</span></div>
+  </div>
+</section>
+<section class="container ledger-section ledger-section-last">
+  <div class="ledger-section-heading"><p class="ledger-kicker">{{ 'OBSERVATIONS' if lang == 'en' else '관찰' }}</p><h2>{{ 'Matching public incidents' if lang == 'en' else '일치하는 공개 사건' }}</h2></div>
+  {% if results %}<div class="result-list">{% for item in results %}<a class="result-card" href="/{{ lang }}/incidents/{{ item.id }}"><div><span class="result-category">{{ item.error_class.replace('_',' ') }}</span><h3>{{ item.site_host }}</h3><p>{{ item.task_step.replace('_',' ') }}</p></div><div class="result-meta"><span>{{ item.observations }} {{ t.attempts|lower }}</span><span aria-hidden="true">↗</span></div></a>{% endfor %}</div>
+  {% else %}<div class="ledger-empty" role="status"><strong>{{ signals.evidence_level if signals else 'no_reports' }}</strong><p>{% if signals and signals.evidence_level == 'stale_reports' %}{{ 'Only older published observations are available; no matching public incident group is in the 7-day window. Current status remains unknown.' if lang == 'en' else '오래된 공개 관찰만 있으며 최근 7일에는 일치하는 공개 사건 묶음이 없습니다. 현재 상태는 미상입니다.' }}{% else %}{{ 'No matching published observations in the 7-day data horizon. This is the normal case; the site’s current status is unknown.' if lang == 'en' else '7일 데이터 범위에 일치하는 공개 관찰이 없습니다. 이것이 보통이며 사이트의 현재 상태는 미상입니다.' }}{% endif %}</p></div>{% endif %}
+  {% if reporting_enabled %}<div class="ledger-contribute"><strong>{{ 'Did you or your agent actually try this site?' if lang == 'en' else '본인이나 에이전트가 실제로 이 사이트를 시도했나요?' }}</strong><p>{{ 'You can share the outcome with the hostname already filled in. Looking up a hostname alone is not an attempt; reports are reviewed and remain unverified.' if lang == 'en' else '호스트명이 미리 입력된 양식에서 결과를 공유할 수 있습니다. 호스트명 조회만 한 것은 시도가 아니며 제보는 검토 후에도 미검증 정보입니다.' }}</p><a href="/{{ lang }}/report?site_host={{ site_host|urlencode }}">{{ 'Share an observed attempt' if lang == 'en' else '관찰한 시도 공유' }} →</a></div>{% endif %}
+  <p class="ledger-footlink">{{ 'For machine-readable results:' if lang == 'en' else '기계 판독용 결과:' }} <a href="/v1/incidents/check?site_host={{ site_host }}&amp;window_hours=168{% if error_class %}&amp;error_class={{ error_class }}{% endif %}{% if failure_stage %}&amp;failure_stage={{ failure_stage }}{% endif %}">{{ 'open JSON response' if lang == 'en' else 'JSON 응답 열기' }} ↗</a></p>
+</section>
+{% endif %}
+{% endblock %}

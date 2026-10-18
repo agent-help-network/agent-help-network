@@ -1,0 +1,36 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*key*.txt
+*secret*.txt
+*.pem
+*.p12
+
+# Runtime data and logs
+*.log
+*.jsonl
+*.sqlite*
+*.db
+data/
+logs/
+work/
+
+# Python and editor state
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.dump
+*.sql.gz
+local-data/

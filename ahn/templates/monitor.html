@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Agent Help Network · 운영 모니터</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, "Malgun Gothic", sans-serif; color: #122537; background: #f3f6f9; }
+    * { box-sizing: border-box; } body { margin: 0; } main { max-width: 1180px; margin: auto; padding: 28px 20px 64px; }
+    h1 { margin: 5px 0 8px; font-size: clamp(1.7rem, 3vw, 2.5rem); letter-spacing: -.04em; }
+    h2 { margin: 0 0 15px; font-size: 1.13rem; } p { line-height: 1.55; }
+    .eyebrow { text-transform: uppercase; font-size: .75rem; font-weight: 800; letter-spacing: .14em; color: #225d82; }
+    .intro { color: #506476; margin: 0 0 24px; } .notice { background: #fff4da; border: 1px solid #edcc7a; border-radius: 12px; padding: 12px 16px; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 23px 0; }
+    .card,.panel { background: white; border: 1px solid #dce5ec; border-radius: 15px; box-shadow: 0 5px 20px #2948600a; }
+    .card { padding: 18px; } .card span { display: block; color: #53697a; font-size: .88rem; } .card strong { display: block; margin: 8px 0 2px; font-size: 2rem; letter-spacing: -.04em; }
+    .card small { color: #627587; } .sections { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .panel { padding: 20px; min-width: 0; } .wide { grid-column: span 2; }
+    .bars { display: flex; align-items: end; gap: 10px; height: 170px; padding: 12px 0 0; border-bottom: 1px solid #cbd8e1; }
+    .bar-col { flex: 1; text-align: center; height: 100%; display: flex; flex-direction: column; justify-content: end; gap: 4px; min-width: 0; }
+    .bar { background: linear-gradient(#3ea7b6,#1c658e); border-radius: 6px 6px 0 0; min-height: 2px; } .bar-col small { font-size: .72rem; color: #63788b; white-space: nowrap; }
+    .bar-col b { font-size: .76rem; } .scroll { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+    th,td { padding: 10px 7px; border-bottom: 1px solid #e5ebef; text-align: left; } th { color: #5b6f80; font-weight: 650; }
+    td:last-child,th:last-child { text-align: right; } td { overflow-wrap: anywhere; } .muted { color: #697d8e; font-size: .83rem; }
+    .legend { margin-top: 22px; border-top: 1px solid #d5e0e7; padding-top: 15px; color: #53697a; font-size: .85rem; }
+    @media(max-width: 800px) { .grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .sections { grid-template-columns: 1fr; } .wide { grid-column: span 1; } }
+    @media(max-width: 480px) { main { padding: 20px 12px 40px; } .grid { gap: 8px; } .card { padding: 12px; } .card strong { font-size: 1.5rem; } .panel { padding: 14px; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Private operator view</div>
+  <h1>운영 모니터</h1>
+  <p class="intro">지난 7일 집계 · 개인별 추적과 실제 사이트 정상 여부 판정은 포함하지 않습니다.</p>
+  {% if test_mode %}<p class="notice"><strong>가상 시험 모드</strong> · 아래 수치는 로컬 시험 요청과 합성 제보를 포함합니다. 공개 서비스 통계가 아닙니다.</p>{% endif %}
+  {% if not lookup_enabled or not request_enabled %}<p class="notice">일부 집계 수집이 꺼져 있습니다. 0건을 실제 사용량 0으로 해석하지 마세요.</p>{% endif %}
+  <section class="grid" aria-label="핵심 지표">
+    <div class="card"><span>오늘 조회</span><strong>{{ demand.today }}</strong><small>호스트별 확인 요청</small></div>
+    <div class="card"><span>7일 조회</span><strong>{{ demand.checks }}</strong><small>사용자 수가 아닌 호출 수</small></div>
+    <div class="card"><span>7일 MCP 도구 성공</span><strong>{{ mcp_checks.successful }}</strong><small>check_incident 실제 실행 · 운영 시험 포함</small></div>
+    <div class="card"><span>7일 MCP 무제보 응답</span><strong>{{ mcp_checks.no_reports }}</strong><small>도구 성공 중 관찰 제보 없음</small></div>
+    <div class="card"><span>오늘 페이지 조회</span><strong>{{ pages.today }}</strong><small>고유 방문자 수가 아닌 화면 요청</small></div>
+    <div class="card"><span>7일 페이지 조회</span><strong>{{ pages.total }}</strong><small>2xx HTML 경로 요청</small></div>
+    <div class="card"><span>7일 전체 요청</span><strong>{{ traffic.total }}</strong><small>웹·API 요청 포함</small></div>
+    <div class="card"><span>4xx·5xx 비율</span><strong>{% if error_rate is not none %}{{ error_rate }}%{% else %}—{% endif %}</strong><small>거절된 입력·인증도 포함</small></div>
+    <div class="card"><span>7일 서버 오류</span><strong>{{ traffic.server_errors }}</strong><small>5xx만 분리 · 앱 집계</small></div>
+    <div class="card"><span>검토 대기</span><strong>{{ pending }}</strong><small>실제 비합성 관찰만</small></div>
+    <div class="card"><span>7일 공개 관찰</span><strong>{{ counts.published }}</strong><small>가상 기록 제외</small></div>
+    <div class="card"><span>7일 가상 관찰</span><strong>{{ counts.synthetic }}</strong><small>제품 효과의 증거 아님</small></div>
+    <div class="card"><span>응답 시간 p95 버킷</span><strong>{% if p95_bucket is not none %}≤{{ p95_bucket }}ms{% else %}—{% endif %}</strong><small>원시 값이 아닌 버킷 근사</small></div>
+    <div class="card"><span>이번 달 웹 전송량</span><strong>{% if bandwidth %}{{ '%.3f'|format(bandwidth.usage_gb) }} GB{% else %}—{% endif %}</strong><small>Render 측정치 · {{ (bandwidth and bandwidth.get('warning_gb')) or 10 }} GB 경고 / {{ (bandwidth and bandwidth.get('stop_gb')) or 20 }} GB 중단</small></div>
+    <div class="card"><span>7일 일별 클라이언트 키</span><strong>{{ client_days }}</strong><small>하루마다 바뀌는 IP 파생값 · 사람 수 아님</small></div>
+    <div class="card"><span>Render CPU 최근값</span><strong>{% if render_metrics.cpu %}{{ '%.2f'|format(render_metrics.cpu.value) }}{% else %}—{% endif %}</strong><small>{% if render_metrics.cpu %}{{ render_metrics.cpu.unit }} · {{ render_metrics.cpu.sample_at }}{% else %}최근 4시간 자료 없음{% endif %}</small></div>
+    <div class="card"><span>Render 메모리 최근값</span><strong>{% if render_metrics.memory %}{{ '%.2f'|format(render_metrics.memory.value) }}{% else %}—{% endif %}</strong><small>{% if render_metrics.memory %}{{ render_metrics.memory.unit }} · {{ render_metrics.memory.sample_at }}{% else %}최근 4시간 자료 없음{% endif %}</small></div>
+    <div class="card"><span>Render HTTP 최근 구간</span><strong>{% if render_metrics.http_requests %}{{ '%.0f'|format(render_metrics.http_requests.value) }}{% else %}—{% endif %}</strong><small>{% if render_metrics.http_requests %}{{ render_metrics.http_requests.unit }} · {{ render_metrics.http_requests.sample_at }}{% else %}최근 4시간 자료 없음{% endif %}</small></div>
+    <div class="card"><span>DB 저장량</span><strong>{{ '%.1f'|format(database_stats.bytes / 1048576) }} MB</strong><small>PostgreSQL 현재 DB 크기</small></div>
+    <div class="card"><span>DB 연결</span><strong>{{ database_stats.connections }}</strong><small>PostgreSQL 현재 연결 수</small></div>
+  </section>
+  {% if bandwidth %}<p class="notice">대역폭 상태: {{ bandwidth.state }} · 마지막 검사 {{ bandwidth.checked_at }} · 최근 측정 구간 {{ bandwidth.latest_sample_at }}. Render 지표는 약 60분 지연되며 청구액 상한이 아닙니다.</p>{% else %}<p class="notice">Render 대역폭 검사 결과가 아직 없습니다. 사용량 0으로 해석하지 마세요.</p>{% endif %}
+  <div class="sections">
+    <section class="panel wide" aria-label="일별 조회"><h2>일별 조회 수요</h2><div class="bars">
+      {% for row in chart %}<div class="bar-col"><b>{{ row.checks }}</b><div class="bar" style="height: {{ row.pct }}%"></div><small>{{ row.day[5:] }}</small></div>{% endfor %}
+    </div><p class="muted">조회는 정보 수요이며 사건이나 장애 건수가 아닙니다.</p></section>
+    <section class="panel wide"><h2>일별 핵심 활동</h2><div class="scroll"><table><thead><tr><th>UTC 날짜</th><th>홈 요청</th><th>검색 결과 요청</th><th>REST 조회</th><th>MCP 도구 실행</th><th>운영자 네트워크*</th></tr></thead><tbody>
+      {% for row in stage_chart %}<tr><td>{{ row.day }}</td><td>{{ row.home }}</td><td>{{ row.search }}</td><td>{{ row.rest_check }}</td><td>{{ row.mcp_check }}</td><td>{{ row.owner_network }}</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">각 열은 개별 요청의 일별 합계이며 동일 방문의 전환 단계가 아닙니다. 홈·검색·REST와 운영자 네트워크 분류는 유입 계측 배포 이후만 포함합니다. *허용된 집 공인 IP에서 발생한 요청으로, 테스트·실사용·공유 네트워크를 구분하지 않습니다. MCP 도구 실행에는 이미 알고 있는 운영 검수 호출도 포함됩니다.</p></section>
+    <section class="panel"><h2>상위 조회 호스트·유형</h2><div class="scroll"><table><thead><tr><th>호스트</th><th>유형</th><th>조회</th></tr></thead><tbody>
+      {% for row in top_hosts %}<tr><td>{{ row.site_host }}</td><td>{{ row.error_class }}</td><td>{{ row.checks }}</td></tr>{% else %}<tr><td colspan="3">기록된 조회가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div></section>
+    <section class="panel wide"><h2>전체 기간 조회 이력</h2><div class="scroll"><table><thead><tr><th>호스트</th><th>누적 조회</th><th>첫 조회일</th><th>마지막 조회일</th></tr></thead><tbody>
+      {% for row in lookup_history %}<tr><td>{{ row.site_host }}</td><td>{{ row.checks }}</td><td>{{ row.first_day }}</td><td>{{ row.last_day }}</td></tr>{% else %}<tr><td colspan="4">기록된 조회가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <div class="scroll"><table><thead><tr><th>UTC 날짜</th><th>조회</th><th>호스트 수</th></tr></thead><tbody>
+      {% for row in lookup_days %}<tr><td>{{ row.day }}</td><td>{{ row.checks }}</td><td>{{ row.hosts }}</td></tr>{% else %}<tr><td colspan="3">기록된 날이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="muted">공개 apex 호스트의 조회만 집계되며(운영자 시험 포함), 요청 수이지 사람·에이전트 수가 아닙니다. 접근 프로필 캐시 상태: {% for row in profile_rows %}{{ row.robots_status }} {{ row.hosts }}{% if not loop.last %} · {% endif %}{% else %}아직 읽은 호스트 없음{% endfor %}.</p></section>
+    <section class="panel"><h2>요청 경로와 응답</h2><div class="scroll"><table><thead><tr><th>정규화 경로</th><th>방법</th><th>상태</th><th>건수</th></tr></thead><tbody>
+      {% for row in routes %}<tr><td>{{ row.route_code }}</td><td>{{ row.method }}</td><td>{{ row.status_class }}</td><td>{{ row.requests }}</td></tr>{% else %}<tr><td colspan="4">요청 집계가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div></section>
+    <section class="panel"><h2>MCP 조회 결과</h2><div class="scroll"><table><thead><tr><th>관찰 수준</th><th>업체 신호</th><th>도구 실행</th></tr></thead><tbody>
+      {% for row in mcp_results %}<tr><td>{{ row.evidence_level }}</td><td>{{ row.provider_signal }}</td><td>{{ row.calls }}</td></tr>{% else %}<tr><td colspan="3">배포 이후 기록된 MCP 도구 실행이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">HTTP /mcp 요청과 구분한 성공한 도구 실행 집계입니다. 오류와 운영자 시험의 별도 구분은 없으며 이용자 신원·작업 결과는 알 수 없습니다. 수집 오류가 있으면 일부 실행이 누락될 수 있습니다.</p></section>
+    <section class="panel wide"><h2>페이지 유입 분류 · 최근 7일</h2><div class="scroll"><table><thead><tr><th>출처</th><th>매체</th><th>캠페인</th><th>Referrer 범주</th><th>요청</th></tr></thead><tbody>
+      {% for row in sources %}<tr><td>{{ row.source }}</td><td>{{ row.medium }}</td><td>{{ row.campaign }}</td><td>{{ row.referrer }}</td><td>{{ row.requests }}</td></tr>{% else %}<tr><td colspan="5">새 유입 집계가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">허용된 UTM 태그와 알려진 Referrer 도메인만 분류합니다. 태그는 요청자가 지정하며, Referrer가 없는 요청은 출처를 알 수 없습니다. 이 값은 방문자 수나 게시물의 인과 효과가 아닙니다.</p></section>
+    <section class="panel wide"><h2>API·MCP HTTP 요청 출처 · 최근 7일</h2><div class="scroll"><table><thead><tr><th>경로</th><th>출처</th><th>클라이언트 추정</th><th>요청</th></tr></thead><tbody>
+      {% for row in agent_sources %}<tr><td>{{ row.route_code }}</td><td>{{ row.source }}</td><td>{{ row.client_type }}</td><td>{{ row.requests }}</td></tr>{% else %}<tr><td colspan="4">새 요청 집계가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">HTTP 요청 수로 실제 MCP 도구 실행 수와 다릅니다. 연결한 앱·에이전트의 신원은 확인하지 못합니다.</p></section>
+    <section class="panel"><h2>클라이언트 프로그램 추정</h2><div class="scroll"><table><thead><tr><th>범주</th><th>요청</th></tr></thead><tbody>
+      {% for row in client_types %}<tr><td>{{ row.client_type }}</td><td>{{ row.requests }}</td></tr>{% else %}<tr><td colspan="2">새 집계가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">User-Agent 문자열의 대략적인 분류입니다. 에이전트·사람 여부를 검증하지 않습니다.</p></section>
+    <section class="panel"><h2>일별 클라이언트 키 상위 12개</h2><div class="scroll"><table><thead><tr><th>UTC 날짜</th><th>날짜별 키</th><th>요청</th></tr></thead><tbody>
+      {% for row in top_clients %}<tr><td>{{ row.day }}</td><td>{{ row.daily_key }}…</td><td>{{ row.requests }}</td></tr>{% else %}<tr><td colspan="3">호스팅 경계에서 클라이언트 주소가 전달된 집계가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div><p class="muted">IP 원문은 저장하지 않습니다. 같은 키는 해당 날짜의 같은 전달 주소를 뜻할 뿐, 같은 사람이나 독립 에이전트를 뜻하지 않습니다. 14일 뒤 삭제합니다.</p></section>
+    <section class="panel"><h2>관찰 검토 상태</h2><div class="scroll"><table><tbody>
+      <tr><th>비합성 검토 대기</th><td>{{ counts.pending }}</td></tr><tr><th>비합성 공개</th><td>{{ counts.published }}</td></tr><tr><th>비합성 숨김</th><td>{{ counts.hidden }}</td></tr><tr><th>합성 시험</th><td>{{ counts.synthetic }}</td></tr><tr><th>7일 철회</th><td>{{ withdrawals }}</td></tr>
+    </tbody></table></div></section>
+    <section class="panel"><h2>자동 검토 보류 사유</h2><div class="scroll"><table><thead><tr><th>사유</th><th>건수</th></tr></thead><tbody>
+      {% for row in held_reasons %}<tr><td>{{ row.review_reason }}</td><td>{{ row.reports }}</td></tr>{% else %}<tr><td colspan="2">보류 기록이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div></section>
+    <section class="panel wide"><h2>최근 보류 제보 20건</h2><div class="scroll"><table><thead><tr><th>ID</th><th>호스트</th><th>유형</th><th>사유</th><th>접수</th></tr></thead><tbody>
+      {% for row in held_reports %}<tr><td>{{ row.id }}</td><td>{{ row.site_host }}</td><td>{{ row.error_class }}</td><td>{{ row.review_reason }}</td><td>{{ row.received_at }}</td></tr>{% else %}<tr><td colspan="5">보류 제보가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div></section>
+    <section class="panel"><h2>7일 운영 이벤트</h2><div class="scroll"><table><thead><tr><th>이벤트</th><th>건수</th></tr></thead><tbody>
+      {% for row in events %}<tr><td>{{ row.event_type }}</td><td>{{ row.events }}</td></tr>{% else %}<tr><td colspan="2">이벤트가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div></section>
+  </div>
+  <p class="legend">합계는 정확한 사람 수나 독립적인 에이전트 수가 아닙니다. 새 유입 분류는 배포 이후 요청부터 쌓이며 과거 유입은 복구할 수 없습니다. Render API 값은 시간별 수집 후 표시되어 지연될 수 있고, 자체 요청 집계와 측정 범위가 다릅니다. 데이터 수집 장애가 있으면 일부 수치는 누락될 수 있습니다. 자동 공개도 제보 사실의 진위를 증명하지 않습니다. 운영자 수동 조치는 CLI에서 수행합니다.</p>
+</main>
+</body>
+</html>

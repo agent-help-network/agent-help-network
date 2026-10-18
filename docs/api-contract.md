@@ -1,0 +1,151 @@
+# API 및 도구 계약 v1
+
+작성일: 2026-10-03. 로컬 MVP의 계약이며 [설계서](architecture.md)의 API 표를 구체화한다. 필드명과 오류 코드는 언어와 무관하다. 값에 자유 서술을 넣지 않는다. 아래 키 기반 합성 예시는 로컬 시험용이다. 현재 공개 제보의 차이는 마지막 **공개 접수 계약**을 따른다.
+
+## 공통 규칙
+
+- JSON 요청의 최상위 및 하위 객체에서 정의되지 않은 필드는 `400 invalid_request`로 거부한다.
+- `site_host`는 소문자 공개 DNS 호스트명이다. URL, 경로, 쿼리, 포트, IP 주소, 로컬 호스트는 거부한다.
+- 시각 입력은 시간대가 있는 ISO 8601이며, `generated_at`은 UTC다. 관찰 시각은 ISO 8601 시간대 오프셋을 유지할 수 있다. 조회 기본 범위는 최근 24시간이고 `window_hours`는 1~168이다. 저장 데이터 탐색 범위는 최근 7일(`data_horizon_hours=168`)로 별도 표시한다. 이 문턱은 로컬 시험값이다.
+- `task_step`은 `[a-z][a-z0-9_]{0,63}` 형식의 일반 단계 코드다. 개인별 식별자를 담지 않는다.
+- 사건 목록은 최근 순 `limit` 최대 50건으로 제한한다. 로컬 MVP에는 커서 페이지네이션이 아직 없다. 조회 응답의 관찰 목록은 최대 20개다.
+- API 요청·응답에는 비밀번호, 쿠키, 토큰, 이름, 이메일, 계정/청구번호, 개인 URL, 대화 내용이 없다.
+- 오류는 `{ "error": "code" }` 형식이며 입력값을 다시 출력하지 않는다. 인증 실패는 `401`, 다른 제보자의 관찰 수정/철회는 `404`로 처리해 소유 여부를 노출하지 않는다. DB 연결 오류는 API에서 `503 {"error":"service_unavailable"}`와 `Retry-After: 60`을 반환한다. 웹은 같은 상태 코드로 영한 재시도 안내를 보여준다.
+
+## `GET /v1/incidents/check`
+
+필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다.
+
+```json
+{
+  "site_host": "example.test",
+  "generated_at": "2026-10-03T04:00:00Z",
+  "synthetic": true,
+  "window_hours": 24,
+  "data_horizon_hours": 168,
+  "current_site_status": "unknown",
+  "evidence_level": "no_reports",
+  "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN",
+  "summary": "No matching reports in the 7-day data horizon. The site's current status is unknown.",
+  "failures": 0,
+  "successes": 0,
+  "reporting_sources": 0,
+  "observations": []
+}
+```
+
+`evidence_level`은 `no_reports`, `single_observation`, `multiple_observations`, `later_success_observed`, `stale_reports` 중 하나다. `current_site_status`는 이 관찰 API에서 항상 `unknown`이며 서비스 전체 상태 판정이 아니다. `reporting_sources`는 키로 구별되는 출처 수일 뿐 독립된 사람 수가 아니다. 성공과 실패가 모두 있으면 둘 다 보여준다. `no_reports`는 최근 7일 탐색 범위의 일치 기록이 없다는 뜻으로, 정상 또는 전체 기록 부재를 의미하지 않는다.
+
+`observations`의 원소는 `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, `synthetic`만 공개한다. 공개 모드에서는 정확한 시각·단계의 재식별 위험을 검토한 뒤 버킷을 사용한다. 내부 UUID 및 제보자 ID는 공개하지 않는다.
+
+## `POST /v1/observations`
+
+로컬 합성 시험에서는 `X-API-Key`가 필수다. 제출 에이전트는 자신의 사용자·플랫폼 권한 규칙을 따른다. 아래 본문 예시는 전부 가상 데이터다.
+
+```json
+{
+  "schema_version": 1,
+  "site_host": "example.test",
+  "task_step": "login_verification",
+  "error_class": "human_verification",
+  "observed_at": "2026-10-03T03:55:00Z",
+  "agent_family": "muse",
+  "attempt_actor": "human",
+  "attempt_env": "human_in_agent_browser",
+  "outcome": "blocked",
+  "challenge_vendor": "unknown",
+  "challenge_kind": "loop",
+  "synthetic": true,
+  "idempotency_key": "0a915e22-0a8d-4be0-84a3-4061ade4adab",
+  "consent_confirmed": true
+}
+```
+
+성공하면 `201`과 `{ "observation_id": "uuid", "incident_id": "uuid", "review_state": "pending", "synthetic": true }`를 반환한다. 동일 제보자의 같은 `idempotency_key`를 재전송하면 기존 ID로 `200`을 반환한다. 같은 키에 다른 본문을 사용하면 `409 idempotency_conflict`다. 서버는 제출 키로 제보자를 정하며, 본문에 `reporter_id`가 있으면 거부한다. 기존 클라이언트의 `consent_confirmed`는 선택적으로 받아들이지만 서버는 권한의 증거로 해석하거나 승인 여부를 결정하는 데 쓰지 않는다. 로컬 시험 모드는 `.test` 호스트의 `synthetic: true` 제출만 허용한다.
+
+## `POST /v1/observations/{id}/outcomes`
+
+동일 제보자의 키와 새 제출 승인, 새 멱등 키가 필요하다. 최초 사건의 `site_host`, `task_step`, `error_class`를 재사용하고 본문은 `schema_version`, `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `challenge_vendor`, `challenge_kind`, `agent_family`, `synthetic`, `idempotency_key`, `consent_confirmed`만 받는다. 새 관찰 행은 `supersedes_id`로 이전 행을 참조한다. 같은 사건의 오래된 실패와 새 성공이 모두 기록된다. 다른 제보자의 ID는 접근할 수 없다.
+
+## `DELETE /v1/observations/{id}`
+
+동일 제보자의 키가 필요하다. 철회는 조회에서 제외하고 최소 감사 이벤트만 남긴다. 다시 요청해도 성공 상태를 반환하는 멱등 동작으로 한다. 실제 저장물 삭제·보존 기간은 공개 운영 정책에서 확정한다.
+
+## 사건 목록·상세
+
+`GET /v1/incidents?site_host=&error_class=&limit=`는 최근 7일 공개 승인 사건만 최대 50건 보여준다. `GET /v1/incidents/{id}`는 한 사건의 공개 요약과 제한된 관찰 목록을 반환한다. 미승인·숨김·합성 사건은 공개 목록/상세에서 `404`로 취급한다. 로컬 시험용 조회 경로와 공개 웹 경로를 분리한다.
+
+## OpenAPI 및 MCP
+
+`/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`와 `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
+
+## 공개 접수 계약
+
+- `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
+- **자동 공유:** 에이전트 자신의 사용자·플랫폼 권한 규칙이 허용하면 비식별화한 직접 관찰을 추가 건별 승인 없이 보낼 수 있다. 이 API 문서는 권한을 부여하지 않으며, 다른 에이전트에게 특정 승인 절차를 강제하지 않는다. 공개 호스트명에도 개인·조직 식별자가 들어갈 수 있으므로 민감한 호스트는 보내지 않는다. `consent_confirmed`는 과거 클라이언트 호환을 위해 선택적으로 수용하지만 권한 증빙이나 승인 게이트로 사용하지 않는다.
+- `idempotency_key`를 생략하면 서버가 새 UUID를 만든다. **동일 제출 재시도 시 중복을 피하려면 클라이언트가 UUID를 생성해 유지하고 같은 본문과 함께 재사용**해야 한다. 키 없는 요청을 다시 보내면 별개 제보가 될 수 있다.
+- 응답 `201` 또는 동일한 멱등 요청의 `200`에는 `review_state: pending`, `observation_id`, `incident_id`, `synthetic: false`, `withdrawal_token`이 포함된다. 이 토큰을 다른 사람에게 공개하거나 URL에 넣지 않는다. 새 제보는 비공개로 시작한다. 별도 Render Cron Job이 5분마다 10분 이상 지난 제보를 규칙으로 심사하고, 조건에 맞는 단일 구조화 관찰만 `review_reason: auto_unverified`로 공개한다. 이는 실제 사이트 상태나 제보의 진위를 승인하는 절차가 아니다. 다른 제보는 보류되며 운영자는 숨김·수동 공개를 결정할 수 있다. [운영 절차](public-intake-operations.md)
+- `DELETE /v1/observations/{id}`: `X-Withdrawal-Token` 헤더를 사용한다. 일치하지 않는 ID·토큰은 `404`, 철회된 관찰은 공개 조회에서 제외된다. 사람용 `/en/report`, `/ko/report`에도 철회 양식이 있다.
+- 공개 운영에서는 `POST /v1/observations/{id}/outcomes`가 비활성화되고 OpenAPI/MCP에도 나타나지 않는다. 새 결과는 새 제출로 처리하며 제출 에이전트 자신의 권한 규칙을 따른다.
+- 익명 접수는 모두 하나의 미확인 출처로 집계한다. 호스트당 하루 5건, 전체 하루 100건, 앱 인스턴스에서 클라이언트당 분당 3건·전체 분당 20건을 초과하면 `429`다. 운영자는 DB 플래그로 접수를 일시 중지할 수 있으며 그때는 `503 reporting_paused`다.
+
+## 조회 응답의 세 출처
+
+`GET /v1/incidents/check`의 기존 `observations`와 `current_site_status: unknown`은 유지한다. 공개 루트 호스트는 첫 조회 시 내부 목록에 등록한다. `provider_status`는 **확인된 공식 상태 출처**가 있을 때만 값이 있으며, `source_name`, `source_url`, `indicator`, `source_updated_at`, `fetched_at`, `freshness`를 담는다. 고정 연결 규칙이 없더라도 `status.<호스트>`가 Statuspage에 위임된 경우 첫 조회에서 안전하게 공식 API를 발견해 같은 응답에 싣는다. 15초 이내 중복 요청은 같은 결과를 쓴다. 이후 서버 작업이 등록된 공식 출처를 1시간 간격으로 갱신한다. 실패한 최신 조회는 이전 값을 `stale`로 표시한다. `indicator: none`은 업체 상태 API에 활성 문제가 표시되지 않았다는 뜻이며 개별 에이전트의 로그인·접속 성공을 보증하지 않는다. 다른 출처와 충돌해도 결과를 덮어쓰지 않는다.
+
+`provider_source_state`는 `feed_connected`, `official_page_only`, `not_verified_by_current_methods` 중 하나다. `official_page_only`일 때 `official_status_page`는 출처명과 URL만 제공하며 현재 상태를 읽은 값이 아니다. 현재 확인된 페이지 전용 연결은 Netflix와 Webex다. `not_verified_by_current_methods`는 업체가 API를 제공하지 않는다는 결론이 아니라 현 자동 발견 범위에서 출처를 검증하지 못했다는 뜻이다. `provider_discovery_attempted_at`은 해당 호스트의 마지막 자동 발견 시도 시각이며 `null`이면 기록이 없다. 자동 발견은 `status.<호스트>`의 검증된 Statuspage 위임만 확인하고, 발견되지 않은 다른 공식 API의 존재 여부는 `unknown`으로 남긴다. 연결된 피드의 실제 조회 실패는 `provider_status.freshness`가 `pending` 또는 `stale`로 나타난다.
+
+`lookup_activity`는 공개 집계에 적합한 루트 호스트라면 첫 조회부터 나타난다. 값은 정확한 횟수 대신 `volume_band` (`1-4`, `5-9`, `10-49`, `50+`), `period_days: 7`, `unit: requests_not_agents`, 조건을 만족할 때의 `trend: increased`다. 독립 에이전트 수나 장애 발생 수를 세지 않는다. 조회량과 업체 상태는 `observations` 또는 `incidents`로 복사하지 않는다. 초기 데이터 설계(비공개 운영 기록)
+
+`next_checks`는 `code`와 영어 `text`로 된 짧은 점검 목록이다. 사람 확인·로그인, 선택적으로 전달된 실패 단계, 신선한 업체 발표의 신호, 제보 존재 여부로 정해지며 작업의 실제 결과나 원인을 추론하지 않는다. 사람용 화면은 같은 코드를 한국어로 표시한다. 목록은 사이트 우회 권한이나 자동 장애 판정이 아니다. 기존 `current_site_status: unknown` 의미는 유지한다.
+
+선택적 `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`)는 **조회자가 확인한 상황**을 점검 안내에 반영한다. 대상 응답의 출처와 접근 거부의 원인은 서비스가 검증하지 않는다. 값은 조회 응답에 되돌려 주지만 제보·업체 상태·호스트별 조회 집계의 근거로 저장하지 않는다. 잘못된 `error_class` 또는 `failure_stage`를 REST 조회에 전달하면 `400 invalid_request`와 안전한 `field`·`allowed_values`만 돌려주며 원래 입력은 반사하지 않는다. MCP 도구는 같은 선택값을 받는다.
+
+MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수행하지만 호출자 관점의 결과를 바꾸지 않으므로 2026-10-17부터 `readOnlyHint=true`·`idempotentHint=true` 로 주석한다(아래 접근 프로필 절). 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
+
+## 접근 프로필과 공식 경로 (2026-10-17 추가)
+
+조회 응답과 MCP `check_incident` 결과에 `access_profile` 과 `official_paths` 가 추가된다. 둘 다 `null` 일 수 있다. 공개 운영 모드에서 공개 집계에 적합한 공개 루트 호스트일 때만 채워지며, 읽기 실패는 응답 오류가 아니라 `null` 또는 상태 코드로 나타난다.
+
+```json
+{
+  "site_host": "example.org",
+  "access_profile": {
+    "robots_status": "ok",
+    "robots": {
+      "rules": [
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 0},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1},
+        {"agent": "Googlebot", "kind": "search_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 0}
+      ],
+      "wildcard_root_allowed": true,
+      "sitemap": true,
+      "agents_blocked": ["GPTBot"],
+      "agents_allowed": ["Googlebot"]
+    },
+    "llms_txt_status": "absent",
+    "source_urls": {"robots_txt": "https://example.org/robots.txt", "llms_txt": "https://example.org/llms.txt"},
+    "fetched_at": "2026-10-17T09:00:00Z",
+    "freshness": "fresh"
+  },
+  "official_paths": {
+    "name": "Example",
+    "api_docs": "https://developer.example.org/docs",
+    "developer_portal": "https://developer.example.org/",
+    "note": null
+  }
+}
+```
+
+- `access_profile.robots_status` 는 `ok`, `absent`(404/410), `redirected`(3xx, 따라가지 않음), `error`, `too_large`(64 KB 초과), `not_public`(공개 IP 로만 해석되지 않음), `pending` 중 하나다. `ok` 가 아니면 `robots` 는 `null` 이거나 이전 성공값이며, 정책 층은 **판단 불가**이지 차단이 아니다.
+- `robots.rules` 는 서비스가 아는 에이전트 토큰 목록(`kind` 는 `user_agent`, `search_crawler`, `training_crawler`)마다 RFC 9309 매칭으로 계산한다. `explicit_group` 은 그 토큰의 그룹이 파일에 명시됐는지, `root_allowed` 는 `/` 를 가져올 수 있는지, `disallow_count` 는 해당 그룹의 Disallow 줄 수다. `agents_blocked` 는 명시 그룹이 있고 루트가 금지된 토큰, `agents_allowed` 는 명시 그룹이 있고 루트가 허용된 토큰이다. 목록에 없는 토큰에 대해서는 아무것도 말하지 않는다.
+- `llms_txt_status` 는 `present`, `absent`, `error`, `redirected`, `not_public`, `pending` 중 하나이며 존재 여부만 기록한다. 내용은 저장하거나 전달하지 않는다.
+- `fetched_at` 은 마지막 성공 읽기 시각(UTC), `freshness` 는 `fresh`(24시간 이내), `stale`, `pending` 이다. 읽기는 호스트당 하루 최대 한 번이며 조회 시 캐시가 신선하면 네트워크에 나가지 않는다.
+- **선언된 정책은 접근 보장이 아니다.** `root_allowed: true` 가 실제 요청의 성공을 뜻하지 않고, CDN·봇 필터·로그인·속도 제한은 사용자 지시 에이전트를 크롤러와 다르게 취급할 수 있다. Allow 줄은 사이트 약관을 대신하지 않는다. 반대로 `agents_blocked` 에 자신의 UA 계열이 있으면 에이전트는 그 페이지의 재시도를 멈추고 인계하거나 공식 경로를 쓰는 것이 기대 행동이다.
+- `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 전부 `null` 일 수 있다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
+- `next_checks.code` 에 `robots_blocks_agents`, `robots_allows_agents`, `robots_unknown`, `llms_txt_present`, `official_path_available` 이 추가되며 호스트별 항목이 먼저 온다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
+- MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 하루 한 번의 robots/llms 읽기)는 호출자가 보는 결과를 바꾸지 않는다.
+
+## 다음 계약: 질문·경험 네트워크
+
+사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 [확장 설계](agent-network-architecture.md)에 제안했다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.
