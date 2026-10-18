@@ -7,7 +7,7 @@
   <p class="ledger-deck">{{ t.hero_text }}</p>
   <form class="ledger-search" action="/{{ lang }}/search" method="get">
     <label for="site_host">{{ 'LOOK UP A PUBLIC HOSTNAME' if lang == 'en' else '공개 호스트명 조회' }}</label>
-    <div class="ledger-search-row"><input id="site_host" name="site_host" type="text" inputmode="url" autocomplete="off" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'View profile' if lang == 'en' else '프로필 보기' }} <span aria-hidden="true">↗</span></button></div>
+    <div class="ledger-search-row"><input id="site_host" name="site_host" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'View profile' if lang == 'en' else '프로필 보기' }} <span aria-hidden="true">↗</span></button></div>
     <p>{{ 'Hostname only. Do not enter a URL path, account identifier, or secret.' if lang == 'en' else '호스트명만 입력하세요. URL 경로·계정 식별자·비밀 정보는 입력하지 마세요.' }}</p>
   </form>
   <p class="ledger-example">{{ 'Want to see a host with a connected official status feed?' if lang == 'en' else '연결된 공식 상태 피드가 있는 호스트를 먼저 보시겠습니까?' }} <a href="/{{ lang }}/search?site_host=cloudflare.com">{{ 'View the Cloudflare example' if lang == 'en' else 'Cloudflare 예시 보기' }} →</a> <span>{{ 'Every layer is declared or published by someone else; none is a test of your own access.' if lang == 'en' else '모든 층은 다른 누군가가 선언하거나 게시한 것이며 사용자의 접속을 검사한 결과가 아닙니다.' }}</span></p>

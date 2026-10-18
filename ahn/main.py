@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
 from .db import connect
-from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, valid_host
+from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, valid_owner_authorization, valid_owner_ip
 from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
@@ -320,6 +320,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     def check_incident(site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
                        window_hours: int = Query(24, ge=1, le=168), failure_stage: FailureStage | None = None,
                        mcp_call: str | None = Header(default=None, alias="X-AHN-MCP-Call", include_in_schema=False)):
+        site_host = normalize_host_input(site_host)
         try:
             valid_host(site_host)
         except ValueError:
@@ -346,6 +347,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     @app.get("/v1/incidents")
     def list_incidents(site_host: str | None = None, error_class: ErrorClass | None = None, limit: int = Query(20, ge=1, le=50)):
         if site_host is not None:
+            site_host = normalize_host_input(site_host)
             try:
                 valid_host(site_host)
             except ValueError:
@@ -406,6 +408,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
         try:
+            site_host = normalize_host_input(site_host)
             report_host = valid_host(site_host) if site_host else ""
         except ValueError:
             report_host = ""
@@ -430,6 +433,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 selected_stage = FailureStage(failure_stage)
             except ValueError:
                 error = lang_text[lang]["invalid_filter"]
+        site_host = normalize_host_input(site_host)
         if site_host:
             try:
                 valid_host(site_host)

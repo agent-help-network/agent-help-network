@@ -170,6 +170,32 @@ def test_fetch_tries_the_next_address_only_when_a_connection_cannot_be_made(monk
     assert calls == ["93.184.216.34"]
 
 
+@pytest.mark.parametrize("typed,canonical", [
+    ("Amazon.com", "amazon.com"), ("  GitHub.COM ", "github.com"), ("example.org.", "example.org"),
+    ("https://Example.org/", "example.org"), ("http://example.org", "example.org"),
+])
+def test_typed_hosts_are_normalised_before_validation(typed, canonical):
+    from ahn.models import normalize_host_input
+    assert normalize_host_input(typed) == canonical
+    assert valid_host(normalize_host_input(typed)) == canonical
+
+
+@pytest.mark.parametrize("typed", ["https://example.org/path", "user@example.org", "example.org/a", "Exa mple.org", ""])
+def test_normalisation_never_turns_a_url_or_account_into_a_host(typed):
+    from ahn.models import normalize_host_input
+    with pytest.raises(ValueError):
+        valid_host(normalize_host_input(typed))
+
+
+def test_hostname_inputs_turn_off_phone_autocapitalisation():
+    from pathlib import Path
+    templates = Path(__file__).resolve().parents[1] / "ahn" / "templates"
+    for name in ("home.html", "human.html", "report.html", "search.html"):
+        text = (templates / name).read_text(encoding="utf-8")
+        tag = text[text.index('name="site_host"') - 60:text.index('name="site_host"') + 260]
+        assert 'autocapitalize="none"' in tag and 'autocorrect="off"' in tag, name
+
+
 def _request(headers: dict, client=("10.0.0.9", 1234)) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     return Request({"type": "http", "method": "GET", "path": "/", "headers": raw, "client": client, "query_string": b""})
