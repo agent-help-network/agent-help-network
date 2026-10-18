@@ -120,8 +120,11 @@ def main() -> None:
     print(f"auto_review published={result['published']} held={result['held']}")
     from .settings import Settings
     from .status_refresh import refresh_batch
-    source_result = refresh_batch(Settings(database_url, "unused-by-status-refresh"))
-    print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} failed={source_result['failed']}")
+    try:
+        source_result = refresh_batch(Settings(database_url, "unused-by-status-refresh"))
+        print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} failed={source_result['failed']}")
+    except Exception as exc:  # one step's failure (e.g. a migration the web service has not applied yet) must not skip the rest
+        print(f"status_refresh failed={type(exc).__name__}")
     from .profile_warm import warm_profiles
     try:
         warm_batch = max(0, min(50, int(os.environ.get("AHN_WARM_BATCH", "10"))))

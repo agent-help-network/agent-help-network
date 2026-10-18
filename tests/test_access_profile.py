@@ -171,10 +171,12 @@ def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
     profile = build_profile("example.com", reader=reader)
     assert profile["robots_status"] == "ok" and profile["robots"]["agents_blocked"] == ["ChatGPT-User"]
     assert profile["robots_detail"] == "http_200" and profile["source_urls"]["robots_txt"] == "https://www.example.com/robots.txt"
+    assert profile["read_host"] == "www.example.com" and profile["source_urls"]["llms_txt"] == "https://www.example.com/llms.txt"
     assert calls == [("example.com", "/robots.txt"), ("www.example.com", "/robots.txt"), ("www.example.com", "/llms.txt")]
     # When www refuses as well, the apex refusal stands and carries its detail.
     refused_everywhere = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("refused", None, "http_403"))
     assert refused_everywhere["robots_status"] == "refused" and refused_everywhere["robots_detail"] == "http_403"
+    assert refused_everywhere["read_host"] == "example.com" and refused_everywhere["source_urls"]["robots_txt"] == "https://example.com/robots.txt"
     # A www host is never prefixed twice.
     only_once = []
     build_profile("www.example.com", reader=lambda h, p, *, cap_bytes, **_: (only_once.append(h), ("error", None, "connect_error"))[1])

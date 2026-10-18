@@ -46,7 +46,10 @@ def failure_label(exc: BaseException) -> str:
         return exc.label
     if isinstance(exc, httpx.HTTPStatusError):
         return f"http_{exc.response.status_code}"
-    message = str(exc).lower()
+    try:
+        message = str(exc).lower()
+    except Exception:  # a pathological __str__ must not turn a failed read into an unrecorded one
+        message = ""
     if isinstance(exc, (urllib3.exceptions.NameResolutionError, socket.gaierror)):
         return "dns_failed"
     if isinstance(exc, (urllib3.exceptions.SSLError, ssl.SSLError)):
@@ -60,9 +63,9 @@ def failure_label(exc: BaseException) -> str:
         return "connect_error"
     if isinstance(exc, (httpx.TimeoutException, urllib3.exceptions.TimeoutError, TimeoutError)):
         return "timeout"
-    if isinstance(exc, (httpx.HTTPError, urllib3.exceptions.ProtocolError)):
+    if isinstance(exc, (httpx.HTTPError, urllib3.exceptions.ProtocolError, urllib3.exceptions.DecodeError)):
         return "read_error"
-    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError, KeyError)):
+    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError, KeyError, RecursionError)):
         return "invalid_body"
     if isinstance(exc, OSError):
         return "connect_error"
@@ -157,8 +160,11 @@ def _statuspage_target(site_host: str) -> tuple[str, str] | None:
     resolver.lifetime = 1.5
     try:
         answers = resolver.resolve(status_host, "CNAME")
-    except (dns.exception.DNSException, OSError):
-        return None
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+        return None  # the name does not exist or carries no CNAME: not delegated
+    except (dns.exception.DNSException, OSError) as exc:
+        # SERVFAIL, timeout, no reachable nameserver: the resolver failed, which says nothing about delegation.
+        raise FeedFailure("dns_failed") from exc
     targets = {str(answer.target).lower() for answer in answers}
     if len(targets) != 1:
         return None
@@ -212,7 +218,7 @@ def discover_source(site_host: str) -> tuple[Source, str, datetime | None] | Non
     """Bounded best-effort discovery; unknown hosts remain unknown."""
     try:
         return _read_discovered_statuspage(site_host)
-    except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError):
+    except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError, RecursionError):
         return None
 
 
@@ -383,7 +389,7 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
                     (site_host, indicator, updated_at),
                 )
             return True
-        except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError) as exc:
             # Keep why the read failed: a bare "stale" would show a 403 from the feed and a timeout as the same word.
             with connect(settings) as conn:
                 conn.execute(

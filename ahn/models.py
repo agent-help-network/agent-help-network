@@ -218,6 +218,7 @@ class AccessProfile(StrictModel):
     robots_detail: str | None = None
     llms_txt_status: Literal["present", "absent", "redirected", "refused", "error", "not_public", "pending"]
     llms_detail: str | None = None
+    read_host: str | None = None
     source_urls: dict[str, str]
     fetched_at: datetime | None = None
     freshness: Literal["fresh", "stale", "pending"]
@@ -238,7 +239,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_unknown", "robots_fetch_refused", "profile_not_read", "llms_txt_present", "official_path_available"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_unknown", "robots_fetch_refused", "profile_not_read", "llms_txt_present", "official_path_available"]
     text: str
 
 

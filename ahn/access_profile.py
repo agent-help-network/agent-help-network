@@ -270,7 +270,7 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {
         "robots_status": robots_status, "robots": robots, "robots_detail": robots_detail,
-        "llms_txt_status": llms_txt_status, "llms_detail": llms_detail,
+        "llms_txt_status": llms_txt_status, "llms_detail": llms_detail, "read_host": read_host,
         "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
     }
 
@@ -283,14 +283,17 @@ def _freshness(fetched_at, error_at, now: datetime, max_age: timedelta) -> str:
     return "stale"
 
 
-_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail"
+_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host"
 
 
 def _as_profile(site_host: str, row, now: datetime, max_age: timedelta) -> dict:
+    # The host that supplied the files: the apex, or its www alias after the fallback. Rows written
+    # before the column existed, and rows that never got an answer, name the looked-up host.
+    read_host = row["read_host"] or site_host
     return {
         "robots_status": row["robots_status"], "robots": row["robots"], "robots_detail": row["robots_detail"],
-        "llms_txt_status": row["llms_txt_status"], "llms_detail": row["llms_detail"],
-        "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
+        "llms_txt_status": row["llms_txt_status"], "llms_detail": row["llms_detail"], "read_host": read_host,
+        "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
         "fetched_at": row["fetched_at"], "freshness": _freshness(row["fetched_at"], row["last_error_at"], now, max_age),
     }
 
@@ -329,13 +332,13 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
             else:
                 # ok/absent/redirected/too_large/not_public/refused are answers in their own right.
                 row = conn.execute(
-                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
-                        robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail
+                        robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
-                     profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"]),
+                     profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"]),
                 ).fetchone()
         return _as_profile(site_host, row, now, max_age)

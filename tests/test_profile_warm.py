@@ -151,6 +151,26 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
     assert third == {"candidates": 0, "read": 3, "ok": 3, "errors": 0}
 
 
+def test_warm_profiles_retries_a_transport_failure_that_followed_an_earlier_answer(warm_settings):
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    healthy = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now)
+    assert stored_hosts(settings) == set(SEEDS)
+    # A request-path read later hit a transport failure: the answer stays, only the failure timestamp moves.
+    with connect(settings) as conn:
+        conn.execute("UPDATE host_access_profile SET last_error_at=%s, robots_detail='dns_timeout' WHERE site_host=%s",
+                     (now + timedelta(minutes=30), SEEDS[2]))
+    healthy.calls.clear()
+    too_soon = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(hours=1))
+    assert healthy.calls == [] and too_soon == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
+    due = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(hours=1, minutes=31))
+    assert healthy.hosts == [SEEDS[2]] and due == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
+    with connect(settings) as conn:
+        row = conn.execute("SELECT robots_status,last_error_at,read_host FROM host_access_profile WHERE site_host=%s", (SEEDS[2],)).fetchone()
+    assert row["robots_status"] == "ok" and row["last_error_at"] is None and row["read_host"] == SEEDS[2]
+
+
 def test_warm_profiles_treats_a_refusal_as_an_answer_not_a_retry(warm_settings):
     settings, _ = warm_settings
     now = datetime.now(timezone.utc)
@@ -221,6 +241,22 @@ def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypat
     monkeypatch.setenv("AHN_WARM_BATCH", "not-a-number")
     auto_review.main()
     assert seen == [10, 4, 10]
+
+
+def test_cron_main_survives_a_failing_status_step(monkeypatch, capsys):
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
+    monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
+    monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
+
+    def broken(received_settings):
+        raise RuntimeError("column last_error_detail does not exist")
+
+    monkeypatch.setattr(status_refresh, "refresh_batch", broken)
+    monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch: {"candidates": 1, "read": 1, "ok": 1, "errors": 0})
+    auto_review.main()
+    out = capsys.readouterr().out
+    assert "status_refresh failed=RuntimeError" in out and "does not exist" not in out
+    assert "profile_warm read=1 ok=1 errors=0 remaining=1" in out  # the later step still ran
 
 
 def test_cron_main_survives_a_failing_warm_step(monkeypatch, capsys):

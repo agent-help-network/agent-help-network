@@ -19,6 +19,7 @@ CHECKS = {
     "robots_blocks_agents": "This host's robots.txt explicitly disallows one or more agent user agents at the site root (see access_profile.robots.agents_blocked). Treat it as the host's declared policy: stop automated retries against pages, prefer an official path, and hand the step to the user where their participation is needed.",
     "robots_allows_agents": "This host's robots.txt does not disallow the listed agent user agents at the site root. Declared crawler policy is not an access guarantee; CDN challenges and rate limits can still apply, so keep requests modest and honor any Crawl-delay.",
     "robots_unknown": "No robots.txt policy could be read for this host (absent, redirected, or unreachable within limits). Treat the host's agent policy as unknown rather than permissive.",
+    "robots_wildcard_disallow": "This host's robots.txt disallows the site root for every crawler it does not name (User-agent: *) and names no agent user agent. Whether a user-directed fetcher falls under that wildcard is your operator's policy; treat the host as not inviting automation, prefer an official path if one exists, and do not read this as permission.",
     "robots_fetch_refused": "This host's edge refused even a plain robots.txt read from a data-center address with an honest bot user agent (see access_profile.robots_detail). Expect page automation from a similar environment to be refused too: prefer the official path, and hand the step to the user if it needs them.",
     "profile_not_read": "Declared policy is read only for public apex hosts, and this hostname is a subdomain or tenant host, so no robots.txt was read for it. Look up the apex host for the site-wide declaration; the subdomain may still have its own rules.",
     "llms_txt_present": "This host publishes llms.txt. Read it first: it is the host's own guidance to language-model agents and may point to preferred machine-readable resources.",
@@ -41,6 +42,7 @@ CHECKS_KO = {
     "robots_blocks_agents": "이 호스트의 robots.txt가 하나 이상의 에이전트 UA에 대해 사이트 루트 접근을 명시적으로 금지합니다(access_profile.robots.agents_blocked). 호스트가 선언한 정책으로 보고, 페이지 자동 재시도를 멈추고 공식 경로를 우선하며 사용자 참여가 필요한 단계는 사용자에게 넘기세요.",
     "robots_allows_agents": "이 호스트의 robots.txt는 나열된 에이전트 UA의 루트 접근을 금지하지 않습니다. 선언된 크롤러 정책은 접근 보장이 아니며 CDN 챌린지와 속도 제한은 여전히 적용될 수 있으니 요청을 절제하고 Crawl-delay를 지키세요.",
     "robots_unknown": "이 호스트의 robots.txt 정책을 읽지 못했습니다(없음, 리다이렉트, 또는 제한 내 미도달). 에이전트 정책을 허용이 아니라 미상으로 두세요.",
+    "robots_wildcard_disallow": "이 호스트의 robots.txt는 이름을 지정하지 않은 모든 크롤러(User-agent: *)의 사이트 루트 접근을 금지하며 에이전트 UA는 따로 지정하지 않았습니다. 사용자 지시 페처가 이 와일드카드에 해당하는지는 운영사 정책이지만, 호스트가 자동화를 환영하지 않는다고 보고 공식 경로가 있으면 그쪽을 쓰며 허용으로 읽지 마세요.",
     "robots_fetch_refused": "이 호스트의 경계가 데이터센터 주소·정직한 봇 UA의 단순 robots.txt 읽기조차 거절했습니다(access_profile.robots_detail 참조). 비슷한 환경의 페이지 자동화도 거절될 것으로 보고, 공식 경로를 우선하고 사용자 참여가 필요한 단계는 사용자에게 넘기세요.",
     "profile_not_read": "선언 정책은 공개 apex 호스트에 대해서만 읽으며, 이 호스트명은 서브도메인·테넌트 호스트라 robots.txt를 읽지 않았습니다. 사이트 전체 선언은 apex 호스트로 조회하세요. 서브도메인에 별도 규칙이 있을 수 있습니다.",
     "llms_txt_present": "이 호스트는 llms.txt를 게시합니다. 먼저 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내이며 선호하는 기계 판독 자원을 가리킬 수 있습니다.",
@@ -56,6 +58,14 @@ def declared_block(access_profile: dict | None) -> list[str]:
         return []
     return [rule["agent"] for rule in access_profile["robots"].get("rules", [])
             if rule.get("explicit_group") and not rule.get("root_allowed") and rule.get("kind") in AGENT_KINDS_FOR_BLOCK]
+
+
+def wildcard_block(access_profile: dict | None) -> list[str]:
+    """Agent tokens that no group names and that the wildcard group disallows at the root: not a declared agent block, not permission either."""
+    if not access_profile or access_profile.get("robots_status") != "ok" or not access_profile.get("robots"):
+        return []
+    return [rule["agent"] for rule in access_profile["robots"].get("rules", [])
+            if not rule.get("explicit_group") and not rule.get("root_allowed") and rule.get("kind") in AGENT_KINDS_FOR_BLOCK]
 
 
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
@@ -79,6 +89,11 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
         if official and (official.get("api_docs") or official.get("developer_portal")):
             return {"action": "use_official_path", "confidence": "medium", "reasons": ["robots_fetch_refused", "official_path_available"]}
         return {"action": "unknown", "confidence": "medium", "reasons": ["robots_fetch_refused"]}
+    if wildcard_block(access_profile):
+        # "Disallow: /" for everyone it does not name: the host did not invite automation, but it named no agent either.
+        if official and (official.get("api_docs") or official.get("developer_portal")):
+            return {"action": "use_official_path", "confidence": "medium", "reasons": ["robots_wildcard_disallow", "official_path_available"]}
+        return {"action": "unknown", "confidence": "low", "reasons": ["robots_wildcard_disallow"]}
     if official and (official.get("api_docs") or official.get("developer_portal")) and error_class in (None, "site_access", "service_error"):
         return {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]}
     if access_profile and access_profile.get("robots_status") == "ok":
@@ -109,6 +124,8 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
             codes.append("robots_unknown")
         elif declared_block(access_profile):
             codes.append("robots_blocks_agents")
+        elif wildcard_block(access_profile):
+            codes.append("robots_wildcard_disallow")
         else:
             codes.append("robots_allows_agents")
         if access_profile.get("llms_txt_status") == "present":

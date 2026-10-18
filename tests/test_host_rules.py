@@ -119,3 +119,36 @@ def test_next_checks_lists_declared_policy_before_provider_and_reports():
     crawler_only["robots"]["agents_blocked"] = ["GPTBot"]
     assert recommendation("site_access", None, crawler_only, None)["action"] == "proceed"
     assert "robots_allows_agents" in [c["code"] for c in next_checks("site_access", None, "no_reports", None, crawler_only, None)]
+
+
+def test_wildcard_only_root_block_is_neither_a_declared_block_nor_permission():
+    from ahn.access_profile import parse_robots
+
+    official = {"name": "Example", "api_docs": "https://developer.example.com/", "developer_portal": None, "note": None}
+    wildcard = _profile([], [])
+    wildcard["robots"]["wildcard_root_allowed"] = False
+    wildcard["robots"]["rules"] = [
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": False, "root_allowed": False, "disallow_count": 1},
+        {"agent": "Googlebot", "kind": "search_crawler", "explicit_group": False, "root_allowed": False, "disallow_count": 1},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": False, "root_allowed": False, "disallow_count": 1},
+    ]
+    assert recommendation("site_access", None, wildcard, None) == {"action": "unknown", "confidence": "low", "reasons": ["robots_wildcard_disallow"]}
+    assert recommendation("site_access", None, wildcard, official) == {"action": "use_official_path", "confidence": "medium",
+                                                                        "reasons": ["robots_wildcard_disallow", "official_path_available"]}
+    codes = [c["code"] for c in next_checks("site_access", None, "no_reports", None, wildcard, None)]
+    assert codes == ["locate_failure_stage", "robots_wildcard_disallow", "provider_unknown", "reports_unknown"]
+    # Human-verification and sign-in steps still hand off first.
+    assert recommendation("human_verification", None, wildcard, official)["action"] == "hand_off_to_human"
+    # Once every agent token is named and allowed at the root, the wildcard no longer covers any of them.
+    for rule in wildcard["robots"]["rules"][:2]:
+        rule.update(explicit_group=True, root_allowed=True)
+    assert recommendation("site_access", None, wildcard, None) == {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents"]}
+    # The same from a real file, end to end through the parser.
+    parsed = parse_robots("User-agent: *\nDisallow: /\n")
+    real = {"robots_status": "ok", "robots": parsed, "llms_txt_status": "absent", "freshness": "fresh"}
+    assert parsed["agents_blocked"] == [] and recommendation("site_access", None, real, None)["action"] == "unknown"
+    assert [c["code"] for c in next_checks("site_access", None, "no_reports", None, real, None)][1] == "robots_wildcard_disallow"
+    # An explicit per-agent block still wins over the wildcard reason.
+    parsed_explicit = parse_robots("User-agent: *\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n")
+    explicit = {"robots_status": "ok", "robots": parsed_explicit, "llms_txt_status": "absent", "freshness": "fresh"}
+    assert recommendation("site_access", None, explicit, None)["reasons"] == ["robots_blocks_agents"]

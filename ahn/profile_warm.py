@@ -66,7 +66,10 @@ def warm_profiles(
         row["site_host"]: max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
         for row in rows
     }
-    failed = {row["site_host"] for row in rows if row["robots_status"] == "error"}
+    # A transport failure after an earlier answer leaves robots_status alone and only moves last_error_at,
+    # so "failed last" is judged by the timestamps, the same way get_profile's cache window does.
+    failed = {row["site_host"] for row in rows
+              if row["last_error_at"] is not None and (row["fetched_at"] is None or row["last_error_at"] > row["fetched_at"])}
     cutoff = now - timedelta(hours=max_age_hours)
     # A transport failure is due again after ERROR_RETRY (same rule get_profile applies);
     # a definitive answer, including a refusal, waits for the full window.

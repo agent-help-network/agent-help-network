@@ -261,6 +261,28 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     assert sensitive["access_profile"] is None and len(reads) == 2
 
 
+def test_api_names_the_host_that_answered_after_the_www_fallback(public_client, monkeypatch):
+    from ahn.access_profile import get_profile
+
+    settings, client = public_client
+    def reader(site_host, path, *, cap_bytes, **_kw):
+        if site_host == "fallback.org":
+            return ("refused", None, "http_503")
+        return ("ok", b"User-agent: *\nDisallow:\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+    monkeypatch.setattr("ahn.service.get_profile", lambda s, host, **kw: get_profile(s, host, reader=reader))
+    first = client.get("/v1/incidents/check", params={"site_host": "fallback.org"}).json()
+    profile = first["access_profile"]
+    assert profile["robots_status"] == "ok" and profile["read_host"] == "www.fallback.org"
+    assert profile["source_urls"] == {"robots_txt": "https://www.fallback.org/robots.txt", "llms_txt": "https://www.fallback.org/llms.txt"}
+    assert CheckResponse(**first).access_profile.read_host == "www.fallback.org"
+    # The cached row answers the same way, and the page links to the file that was actually read.
+    again = client.get("/v1/incidents/check", params={"site_host": "fallback.org"}).json()["access_profile"]
+    assert again["read_host"] == "www.fallback.org" and again["freshness"] == "fresh"
+    assert "https://www.fallback.org/robots.txt" in client.get("/en/search", params={"site_host": "fallback.org"}).text
+    with connect(settings) as conn:
+        assert conn.execute("SELECT read_host FROM host_access_profile WHERE site_host='fallback.org'").fetchone()["read_host"] == "www.fallback.org"
+
+
 def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the_day(public_client):
     from ahn.access_profile import get_profile
 

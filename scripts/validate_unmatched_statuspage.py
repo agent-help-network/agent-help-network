@@ -17,7 +17,7 @@ import urllib3
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from ahn.status_refresh import _read_discovered_statuspage
+from ahn.status_refresh import _read_discovered_statuspage, failure_label
 
 WORK = ROOT / "work" / "status-discovery"
 
@@ -31,8 +31,8 @@ def validate(row: dict[str, str]) -> dict[str, str]:
                       page_url=source.page_url, indicator_at_check=indicator,
                       note="publisher product scope not yet reviewed")
     except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError) as exc:
-        # Research output only records the exception type, never response bodies.
-        result.update(result="validation_failed", note=type(exc).__name__)
+        # Research output only records the failure label, never response bodies.
+        result.update(result="validation_failed", note=failure_label(exc))
     return result
 
 

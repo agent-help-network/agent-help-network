@@ -75,6 +75,8 @@ def test_a_good_feed_still_parses_after_the_status_check_moved():
     (urllib3.exceptions.ProtocolError("connection broken"), "read_error"),
     (urllib3.exceptions.SSLError("bad handshake"), "tls_error"),
     (urllib3.exceptions.HTTPError("other"), "error"),
+    (urllib3.exceptions.DecodeError("bad gzip"), "read_error"),
+    (RecursionError("maximum recursion depth exceeded"), "invalid_body"),
     (httpx.DecodingError("bad gzip"), "read_error"),
     (json.JSONDecodeError("x", "doc", 0), "invalid_body"),
     (ValueError("invalid provider status response"), "invalid_body"),
@@ -87,6 +89,74 @@ def test_failure_label_covers_every_caught_exception_family(exc, label):
     assert failure_label(exc) == label
     assert label.startswith("http_") or label in FAILURE_LABELS
     assert len(label) <= 32  # status_cache.last_error_detail is varchar(32)
+
+
+def test_failure_label_survives_an_exception_whose_str_raises():
+    class Loud(ValueError):
+        def __str__(self):
+            raise RuntimeError("no message for you")
+    assert failure_label(Loud()) == "invalid_body"
+
+
+def test_resolver_failures_are_dns_failed_not_no_cname(monkeypatch):
+    import dns.exception
+    import dns.resolver
+
+    class TimingOut:
+        def __init__(self):
+            self.timeout = self.lifetime = None
+
+        def resolve(self, host, kind):
+            raise dns.exception.Timeout()
+
+    class NoServers(TimingOut):
+        def resolve(self, host, kind):
+            raise dns.resolver.NoNameservers()
+
+    class Missing(TimingOut):
+        def resolve(self, host, kind):
+            raise dns.resolver.NXDOMAIN()
+
+    for resolver in (TimingOut, NoServers):
+        monkeypatch.setattr(status_refresh.dns.resolver, "Resolver", resolver)
+        with pytest.raises(FeedFailure) as caught:
+            status_refresh._read_discovered_statuspage("example.org")
+        assert caught.value.label == "dns_failed"
+        assert status_refresh.discover_source("example.org") is None  # discovery still swallows it
+    monkeypatch.setattr(status_refresh.dns.resolver, "Resolver", Missing)
+    assert status_refresh._statuspage_target("example.org") is None
+    with pytest.raises(FeedFailure) as caught:
+        status_refresh._read_discovered_statuspage("example.org")
+    assert caught.value.label == "no_cname"
+
+
+def test_deeply_nested_feed_body_is_invalid_body_everywhere(monkeypatch):
+    nested = b"[" * 20_000
+    assert _label_from_read(lambda _r: httpx.Response(200, content=nested)) == "invalid_body"
+    monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
+    monkeypatch.setattr(status_refresh.socket, "getaddrinfo", lambda *_a, **_k: [(None, None, None, None, ("93.184.216.34", 443))])
+
+    class Response:
+        status = 200
+
+        def read(self, _limit):
+            return nested
+
+        def release_conn(self):
+            pass
+
+    class Pool:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def request(self, *_a, **_k):
+            return Response()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(status_refresh.urllib3, "HTTPSConnectionPool", Pool)
+    assert status_refresh.discover_source("example.org") is None
 
 
 def test_discovered_statuspage_failures_get_a_label(monkeypatch):
