@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-help-network": {
+      "type": "http",
+      "url": "https://agenthelpnetwork.com/mcp"
+    }
+  }
+}

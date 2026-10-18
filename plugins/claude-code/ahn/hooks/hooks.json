@@ -1,0 +1,30 @@
+{
+  "description": "Agent Help Network: after a failed web fetch or browser step, look up the target hostname (hostname only, read-only) and add a short answer to Claude's context.",
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "^WebFetch$|^mcp__((?!__).)*([Bb]rowser|[Cc]hrome|[Pp]laywright|[Pp]uppeteer|[Ff]etch)((?!__).)*__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"",
+            "timeout": 10,
+            "statusMessage": "Agent Help Network: checking the failed host"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

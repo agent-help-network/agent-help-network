@@ -1,0 +1,2 @@
+# sh rejects CRLF line endings; keep the hook launcher LF on Windows checkouts.
+*.sh text eol=lf

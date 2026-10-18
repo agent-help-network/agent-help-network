@@ -1,0 +1,14 @@
+{
+  "name": "ahn",
+  "displayName": "Agent Help Network",
+  "version": "0.1.0",
+  "description": "When a web fetch or browser step fails, look up the hostname on Agent Help Network: the host's declared agent policy (robots.txt, llms.txt), the official developer path, provider status, and published observations, with one recommended action. Read-only; sends the hostname only.",
+  "author": {
+    "name": "Agent Help Network",
+    "url": "https://agenthelpnetwork.com"
+  },
+  "homepage": "https://agenthelpnetwork.com/en/agents",
+  "repository": "https://github.com/agent-help-network/agent-help-network",
+  "license": "Apache-2.0",
+  "keywords": ["agent access", "robots.txt", "llms.txt", "official api", "web fetch", "blocked"]
+}

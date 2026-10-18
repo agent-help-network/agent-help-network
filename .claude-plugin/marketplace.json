@@ -1,0 +1,16 @@
+{
+  "name": "agent-help-network",
+  "description": "Agent Help Network plugins for Claude Code. Agent Help Network is an independent project.",
+  "owner": {
+    "name": "Agent Help Network",
+    "url": "https://agenthelpnetwork.com"
+  },
+  "plugins": [
+    {
+      "name": "ahn",
+      "source": "./plugins/claude-code/ahn",
+      "description": "Look up a failed web step's hostname on Agent Help Network: declared agent policy, official developer path, provider status, and one recommended action. Read-only; hostname only.",
+      "category": "productivity"
+    }
+  ]
+}
