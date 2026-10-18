@@ -283,6 +283,60 @@ def test_api_names_the_host_that_answered_after_the_www_fallback(public_client, 
         assert conn.execute("SELECT read_host FROM host_access_profile WHERE site_host='fallback.org'").fetchone()["read_host"] == "www.fallback.org"
 
 
+def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(public_client, monkeypatch):
+    from ahn.access_profile import get_profile
+
+    settings, client = public_client
+    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
+    official = {"name": "Alias Example", "api_docs": "https://developer.aliasexample.org/", "developer_portal": None, "note": None}
+    # Exact-key stand-in for the curated table, so the lookup has to ask with the apex itself.
+    monkeypatch.setattr("ahn.service.official_paths", lambda host: dict(official) if host == "aliasexample.org" else None)
+    reads = []
+    def reader(host, path, *, cap_bytes, **_kw):
+        reads.append((host, path))
+        return ("ok", b"User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+    monkeypatch.setattr("ahn.service.get_profile", lambda s, host, **kw: get_profile(s, host, reader=reader))
+    params = {"error_class": "site_access"}
+    www = client.get("/v1/incidents/check", params={"site_host": "www.aliasexample.org", **params}).json()
+    apex = client.get("/v1/incidents/check", params={"site_host": "aliasexample.org", **params}).json()
+    # The answer still names the host that was asked about.
+    assert www["site_host"] == "www.aliasexample.org" and apex["site_host"] == "aliasexample.org"
+    assert www["access_profile"] is not None and www["access_profile"] == apex["access_profile"]
+    assert www["access_profile"]["read_host"] == "aliasexample.org" and www["access_profile"]["robots"]["agents_blocked"] == ["ChatGPT-User"]
+    assert www["recommendation"] == apex["recommendation"] == {"action": "use_official_path", "confidence": "high",
+                                                                "reasons": ["robots_blocks_agents", "official_path_available"]}
+    for key in ("official_paths", "next_checks", "lookup_activity", "provider_source_state", "official_status_page"):
+        assert www[key] == apex[key], key
+    assert "profile_not_read" not in [item["code"] for item in www["next_checks"]]
+    assert CheckResponse(**www).access_profile.read_host == "aliasexample.org"
+    # One read of the apex serves both names; nothing is read, registered or counted under www.
+    assert reads == [("aliasexample.org", "/robots.txt"), ("aliasexample.org", "/llms.txt")]
+    with connect(settings) as conn:
+        assert [r["site_host"] for r in conn.execute("SELECT site_host FROM host_access_profile").fetchall()] == ["aliasexample.org"]
+        assert [r["site_host"] for r in conn.execute("SELECT site_host FROM queried_hosts").fetchall()] == ["aliasexample.org"]
+        metrics = conn.execute("SELECT site_host, sum(checks) AS n FROM lookup_metrics GROUP BY site_host").fetchall()
+    assert metrics == [{"site_host": "aliasexample.org", "n": 2}]
+    # Any other subdomain, and www. in front of one, still reads nothing and says so.
+    for host in ("user123.aliasexample.org", "www.user123.aliasexample.org"):
+        other = client.get("/v1/incidents/check", params={"site_host": host}).json()
+        assert other["access_profile"] is None and other["recommendation"]["reasons"][-1:] == ["profile_not_read"]
+    assert len(reads) == 2
+    # Reports stay under the exact host they were made for: a published www report is not the apex's report,
+    # and its incident page keeps its own host while showing the site's declared policy.
+    receipt = post_public(client, sample(site_host="www.aliasexample.org")).json()
+    with connect(settings) as conn:  # the operator's manual publish (ahn.cli publish-observation)
+        conn.execute("UPDATE observations SET review_state='published' WHERE id=%s", (receipt["observation_id"],))
+        conn.execute("UPDATE incidents SET visibility='published' WHERE id=%s", (receipt["incident_id"],))
+        assert conn.execute("SELECT site_host FROM incidents WHERE id=%s", (receipt["incident_id"],)).fetchone()["site_host"] == "www.aliasexample.org"
+    assert client.get("/v1/incidents/check", params={"site_host": "www.aliasexample.org"}).json()["evidence_level"] == "single_observation"
+    assert client.get("/v1/incidents/check", params={"site_host": "aliasexample.org"}).json()["evidence_level"] == "no_reports"
+    detail = client.get(f"/v1/incidents/{receipt['incident_id']}").json()
+    assert detail["site_host"] == "www.aliasexample.org" and detail["evidence_level"] == "single_observation"
+    assert detail["access_profile"]["read_host"] == "aliasexample.org"
+    assert [item["site_host"] for item in client.get("/v1/incidents", params={"site_host": "www.aliasexample.org"}).json()["incidents"]] == ["www.aliasexample.org"]
+    assert client.get("/v1/incidents", params={"site_host": "aliasexample.org"}).json()["incidents"] == []
+
+
 def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the_day(public_client):
     from ahn.access_profile import get_profile
 
