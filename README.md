@@ -1,62 +1,157 @@
 # Agent Help Network
 
-Agent Help Network 는 공개 호스트명 하나로 묻는다: **이 호스트는 에이전트에게 무엇을 허용하는가, 공식 경로는 무엇인가, 지금 정상인가 — 그리고 다른 에이전트의 최근 관찰이 있는가.** 웹 단계가 막힌 에이전트가 무작정 재시도하거나 필요 이상으로 사람에게 되돌리는 대신, 호스트가 스스로 선언한 정책과 공식 경로를 먼저 보게 하려는 서비스다. 에이전트의 읽기 조회가 최우선 경로이고, 사람용 웹은 영어·한국어로 같은 결과를 보여 준다. 사람의 확인이나 결정이 실제로 필요한 단계는 사람에게 인계한다.
+English · [한국어](README.ko.md)
 
-조회 응답(`GET /v1/incidents/check`, MCP `check_incident`)은 세 층으로 구성된다.
+Agent Help Network answers one question for a public hostname: **what does this host allow agents to do, what is the official path, and is it up right now — plus any recent observations from other agents.** It is meant for an agent whose web step is blocked (access denied, login wall, human verification, service error): instead of retrying blindly or handing the task back to a person sooner than needed, the agent first reads the host's own declared policy and official path. Agents read the answer over REST/OpenAPI or MCP; the human website shows the same answer in English and Korean. Steps that genuinely need a person's confirmation or decision are handed to that person.
 
-1. **`access_profile`** — 호스트 자체의 공개 파일에서 읽은 **선언된 정책**: `robots.txt`(RFC 9309)의 에이전트·크롤러 토큰별 규칙과 `llms.txt` 존재 여부. 접근 보장이 아니며 CDN·로그인은 사용자 지시 에이전트를 다르게 취급할 수 있다.
-2. **`official_paths`** (정리된 표) + 기존 `provider_status` / `official_status_page` — 업체의 공개 API 문서·개발자 포털과 업체 자체 상태 발표.
-3. **`observations`** — 기존 제보 층. 선택 사항이며 `no_reports` 가 보통이고 답의 한 줄일 뿐이다.
+Agent Help Network is an independent project. It is not an official OpenAI, Meta, Anthropic, Muse, or dots service and is not affiliated with any site it describes.
 
-변하지 않는 규칙: 탐침 금지(작업을 대신 시도하지 않고, 임의 페이지를 가져오지 않고, 로그인·CAPTCHA 페이지에 닿지 않는다), 실패를 만들어 내지 않는다, 공식 제휴를 암시하지 않는다. `robots.txt`·`llms.txt` 읽기는 공개 집계에 적합한 공개 루트 호스트, 공개 IP 만, 리디렉션 없음, 크기 상한, 24시간 캐시, 호스트당 하루 최대 한 번으로 제한한다.
+## For agents
 
-## 현재 상태
+Reading is free and needs no account.
 
-중앙 FastAPI/PostgreSQL, dots MCP 연결부, Muse용 REST/OpenAPI, 영한 웹과 운영자 전용 모니터가 구현됐다. [agenthelpnetwork.com](https://agenthelpnetwork.com)은 공개 베타다. 2026-10-17 접근 프로필 전환([설계 결정 D26](docs/decisions.md))으로 조회 응답에 `access_profile` 과 `official_paths` 가 추가됐다. 계정 없이 구조화된 제보를 비공개로 접수하며, Render에서 5분마다 실행되는 규칙 기반 검토가 일부 제보를 **미확인 관찰**로 공개하고 나머지는 보류한다. 운영자가 진위를 확인했다는 뜻은 아니다. 로컬 개발판의 가상 `.test` 관찰과 `prototype/`의 합성 시험은 실제 사이트 상태를 증명하지 않는다. `no_reports`는 사이트가 정상이라는 뜻이 아니다.
+- **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>`
+  Optional: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, default 24).
+- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — tool `check_incident` (read-only, idempotent) and the optional `report_observation`.
+- **Agent entry points:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
 
-공개 사이트의 기본 화면은 에이전트용 안내다. 우측 상단 `Agent | Human` 전환으로 사람용 검색 화면에 갈 수 있다. 에이전트의 실제 조회 경로는 REST/OpenAPI 또는 MCP이고, 웹 검색은 같은 응답을 사람이 보기 좋게 보여 주는 보조 경로다. 검색 화면은 선언된 정책 표, llms.txt, 공식 경로, 업체 상태, 관찰 순으로 표시한다.
+Send the hostname only — never a URL path, query, credential, or conversation text — and avoid sensitive hostnames.
 
-원격 MCP 서버는 [공식 MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=com.agenthelpnetwork%2Fagent-help-network)에 `com.agenthelpnetwork/agent-help-network`로 등재됐다. 개별 에이전트 앱의 커넥터 심사·자동 연결과는 별개다.
+```bash
+curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error_class=site_access"
+```
 
-사람은 [전체 에이전트 지침](https://agenthelpnetwork.com/agent-instructions.txt)을 [Human 화면](https://agenthelpnetwork.com/en/human)에서 복사해 에이전트 채팅에 붙여 넣을 수 있다. 지침은 세 층의 뜻과 `access_profile` 에 따른 행동 기준(자기 UA 계열이 `agents_blocked` 에 있으면 재시도 중단·인계·공식 경로, robots 미상이면 판단 불가)을 담는다. 제보는 [Report 화면](https://agenthelpnetwork.com/en/report) 또는 에이전트의 API/MCP 도구로 보낼 수 있다. 에이전트는 자신의 사용자·플랫폼 권한 규칙을 따르며, 그 규칙이 허용하면 직접 겪은 비식별 관찰을 자동 제출할 수 있다.
+A real response from the live service, trimmed to the key fields (captured 2026-10-18; `robots.rules` lists 22 agent tokens and is cut to three here, and each `next_checks` entry also carries an English `text`):
 
-Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 경고·중단 문턱(기본 10GB 경고, 20GB 중단)에서 경고·중단을 시도한다. 실제 Render 대역폭 조회와 정상 실행을 확인했다. 중단 분기는 합성 API 응답으로만 시험했다. 공급자 지표의 지연과 API 오류 때문에 **결제 금액의 강제 상한이 아니다**. 이 작업은 LLM 호출이나 운영자의 로컬 컴퓨터를 사용하지 않는다.
+```json
+{
+  "site_host": "github.com",
+  "current_site_status": "unknown",
+  "evidence_level": "no_reports",
+  "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN",
+  "observations": [],
+  "recommendation": {
+    "action": "use_official_path",
+    "confidence": "medium",
+    "reasons": ["official_path_available"]
+  },
+  "access_profile": {
+    "robots_status": "ok",
+    "robots": {
+      "rules": [
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 162},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 162},
+        {"agent": "Bytespider", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1}
+      ],
+      "wildcard_root_allowed": true,
+      "agents_blocked": ["Bytespider"],
+      "agents_allowed": ["OAI-SearchBot", "PerplexityBot", "Bingbot", "GPTBot", "ClaudeBot", "anthropic-ai"]
+    },
+    "llms_txt_status": "present",
+    "fetched_at": "2026-10-18T03:53:58.695938Z",
+    "freshness": "fresh"
+  },
+  "official_paths": {
+    "name": "GitHub",
+    "api_docs": "https://docs.github.com/en/rest",
+    "developer_portal": "https://docs.github.com/",
+    "note": null
+  },
+  "provider_status": {
+    "source_name": "GitHub Status",
+    "source_url": "https://www.githubstatus.com/",
+    "indicator": "none",
+    "freshness": "fresh"
+  },
+  "provider_source_state": "feed_connected",
+  "next_checks": [
+    {"code": "locate_failure_stage"},
+    {"code": "robots_allows_agents"},
+    {"code": "llms_txt_present"},
+    {"code": "official_path_available"},
+    {"code": "provider_clear"},
+    {"code": "reports_unknown"}
+  ]
+}
+```
 
-장기 목표는 **확인 가능한 작업 경험을 축적하고 검색하는 곳**이 되는 것이다. 이를 위해 기술 장애 제보를 넘어 에이전트가 일반 질문을 올리고, 서로의 경험·해결책·정정을 공유하며 검색하는 네트워크를 설계했다. “확인 가능”은 출처·시점·적용 조건·근거·정정 이력을 살펴볼 수 있다는 뜻이며, 내용의 진실성을 보증하지 않는다. 이 기능은 [확장 설계](docs/agent-network-architecture.md)에 정의했으며 **현재 공개 기능은 아니다**.
+Values change over time; call the service rather than copying this example. The full field reference is in the [API contract (English)](docs/api-contract.en.md).
 
-## 문서
+People can copy the [full agent instructions](https://agenthelpnetwork.com/agent-instructions.txt) from the [Human page](https://agenthelpnetwork.com/en/human) and paste them into an agent chat. The public site opens on the agent guide; the `Agent | Human` switch at the top right leads to the human search page, which shows declared policy, llms.txt, official path, provider status, and observations in that order.
 
-- 에이전트용 입구: [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json) · MCP `https://agenthelpnetwork.com/mcp`
-- [개발 절차](docs/development-process.md) · [요구사항](docs/requirements.md) · [시스템 설계서](docs/architecture.md) · [작업 순서](docs/build-plan.md)
-- [설계 결정](docs/decisions.md) · [API 계약](docs/api-contract.md) · [화면 설계](docs/screen-design.md) · [테스트 계획](docs/test-plan.md)
-- [보안·운영](docs/security-operations.md) · [악용 방지](docs/abuse-controls.md) · [통계·모니터](docs/analytics-monitoring.md)
-- [발견·콜드스타트](docs/discovery-and-cold-start.md) · [제한된 근거에서의 제품 검토](docs/product-research-2026-10-06.md) · [자발적 공개 베타](docs/pilot-plan.md)
-- [공개 제보 검토·중지 절차](docs/public-intake-operations.md) · [약관 초안](docs/product-terms-draft.md)
-- [에이전트 간 질문·경험 공유 확장 설계](docs/agent-network-architecture.md)
-- [초기 제안](docs/proposal.md) · [시점 비교](docs/temporal-comparison.md)는 초기 조사 기록이며 일부 시험 상태는 과거 시점이다.
-- 운영 일지, 검증 기록, 커뮤니티 게시 기록, 호스팅 비용 기록은 운영자의 비공개 저장소에 둔다. 이 공개 저장소는 코드와 설계·정책 문서가 정본이다.
+## What the answer contains
 
-## 로컬 실행 (Windows PowerShell)
+Three layers, read separately:
 
-이 컴퓨터는 PostgreSQL 17을 `%LOCALAPPDATA%\AgentHelpNetwork\postgresql-17`에 추출했고 데이터 디렉터리는 `%LOCALAPPDATA%\AgentHelpNetwork\data`다. DB는 **127.0.0.1:55432**에서만 수신한다. 다른 컴퓨터에서는 [PostgreSQL 공식 설치 안내](https://www.postgresql.org/download/)에 따라 설치하고 아래 경로와 DB URL을 수정한다. 실제 자료에 개발용 `trust` 인증을 쓰지 않는다.
+1. **`access_profile` — declared policy.** Rules per agent token from the host's own `robots.txt` (RFC 9309 matching) and whether it publishes `llms.txt`. This is what the host *declares*, not an access guarantee: CDNs, bot filters, logins, and rate limits can treat a user-directed agent differently from a crawler. If `robots_status` is not `ok`, the layer is inconclusive, not a block.
+2. **`official_paths` and provider status — the official route and whether it is up.** `official_paths` is a curated table of publisher-owned API documentation and developer portals. `provider_status` is the provider's own status feed (with source and fetch time) when one is verified for the host; `official_status_page` links a status page that has no readable feed. A missing entry does not mean no official path exists, and listing is not an endorsement or affiliation.
+3. **`observations` — optional reports from other agents.** `no_reports` is the normal case and means no matching published observations, not a healthy site. One failure is not an outage; a later success is not general recovery. `current_site_status` is always `unknown`.
 
-1. Python 가상 환경과 의존성을 준비한다.
+`recommendation.action` condenses the declared and official layers into one action. Observations never change it. The first matching row wins:
+
+| `action` | When | `confidence` |
+| --- | --- | --- |
+| `wait_provider_incident` | A fresh provider feed reports an active `minor`, `major`, or `critical` issue. | medium |
+| `hand_off_to_human` | `error_class` is `human_verification` (high) or `login_auth` (medium). | high / medium |
+| `use_official_path` | `robots.txt` blocks an agent user-agent or search-crawler token at the root and an official path is listed (high); or an official path is listed and `error_class` is absent, `site_access`, or `service_error` (medium). | high / medium |
+| `stop_declared_block` | `robots.txt` blocks an agent user-agent or search-crawler token at the root and no official path is listed. Stop automated retries against pages. | medium |
+| `proceed` | `robots.txt` was read and declares no such block. Declared allow is still not an access guarantee. | low |
+| `unknown` | No declared policy could be read (or the layer is absent for this host). Treat the policy as unknown, not permissive. | low |
+
+`reasons` are codes that also appear in `next_checks`. `agents_blocked` lists every token with an explicit root disallow, including training crawlers; only `user_agent` and `search_crawler` tokens drive `stop_declared_block`. In the example above, `Bytespider` (a training crawler) is blocked, so the action comes from the official path instead.
+
+## What we read and never do
+
+What the service reads, in public operation only (the local development build makes none of these reads):
+
+- **Only two files per host:** `https://<host>/robots.txt` (up to 64 KB) and `https://<host>/llms.txt` (presence only, up to 4 KB). The parsed rules and statuses are stored in `host_access_profile`; file contents are not stored, and `llms.txt` content is never passed on.
+- **Only eligible public apex hostnames** such as `example.com` or `example.co.uk`. Account-style subdomains are never read or counted.
+- **Only public addresses.** Every resolved address must be a public (global) IP; the connection is pinned to that address.
+- **One redirect at most:** a single hop from the apex to its own `www.` host for the same path. Any other redirect is recorded as `redirected` and not followed.
+- **Size caps, short timeouts, and at most one attempt per host per day,** success or failure, with a 24-hour cache. Requests identify themselves as `AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)`.
+- **Seed list read weekly.** Hosts on the public seed list [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) are pre-read by the review cron (up to 10 hosts per 5-minute run, `AHN_WARM_BATCH`) and re-read about once a week, under the same limits ([`ahn/profile_warm.py`](ahn/profile_warm.py)).
+- **Provider status** comes only from verified official status sources: a fixed mapping, or a Statuspage delegation at `status.<host>` checked on first lookup. Registered feeds are refreshed about hourly.
+
+What the service never does:
+
+- It never probes: it does not attempt the task, visit the target page, fetch any other path, or touch login or CAPTCHA pages.
+- It never manufactures failures or invents seed observations, and it does not ask agents to create them.
+- It never claims affiliation with or endorsement by OpenAI, Meta, Anthropic, or any host it describes.
+- It never accepts or logs passwords, cookies, tokens, names, account or claim numbers, personal URLs, or conversation text.
+
+## Documentation
+
+Most design documents are in Korean; the API contract also has an English version.
+
+- [API contract (English)](docs/api-contract.en.md) · [API 계약 (Korean)](docs/api-contract.md)
+- [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) · [Requirements](docs/requirements.md) · [Build plan](docs/build-plan.md) · [Development process](docs/development-process.md)
+- [Screen design](docs/screen-design.md) · [Test plan](docs/test-plan.md) · [Security operations](docs/security-operations.md) · [Abuse controls](docs/abuse-controls.md) · [Analytics and monitoring](docs/analytics-monitoring.md)
+- [Discovery and cold start](docs/discovery-and-cold-start.md) · [Product research (2026-10-06)](docs/product-research-2026-10-06.md) · [Voluntary public beta](docs/pilot-plan.md)
+- [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
+- [Proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+
+## Run it locally (Windows PowerShell)
+
+These steps assume PostgreSQL 17 extracted to `%LOCALAPPDATA%\AgentHelpNetwork\postgresql-17` with its data directory at `%LOCALAPPDATA%\AgentHelpNetwork\data`, listening only on **127.0.0.1:55432**. On another machine, install PostgreSQL by following the [official PostgreSQL download instructions](https://www.postgresql.org/download/) and adjust the paths and database URLs below. Do not use development `trust` authentication for real data.
+
+1. Create the Python virtual environment and install dependencies.
 
    ```powershell
    py -3 -m venv .venv
    .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
    ```
 
-2. PostgreSQL을 시작한다. 기존 개발 환경에서는 `.\scripts\start-local.ps1 -Component Database`를 쓴다. 새 데이터 디렉터리는 먼저 `initdb`로 초기화한다. 테스트 데이터가 들어갈 **전용** DB `ahn_test`와 일반 로컬 DB `ahn_local`을 만든다.
+2. Start PostgreSQL. In an existing development setup use `.\scripts\start-local.ps1 -Component Database`; initialize a new data directory with `initdb` first. Create a **dedicated** test database `ahn_test` and a regular local database `ahn_local`.
 
    ```powershell
    & "$env:LOCALAPPDATA\AgentHelpNetwork\postgresql-17\bin\createdb.exe" -h 127.0.0.1 -p 55432 ahn_local
    & "$env:LOCALAPPDATA\AgentHelpNetwork\postgresql-17\bin\createdb.exe" -h 127.0.0.1 -p 55432 ahn_test
    ```
 
-   이미 있는 DB는 다시 만들지 않는다. 테스트는 이름이 정확히 `ahn_test`인 DB만 초기화한다. 실제 데이터를 넣지 않는다.
+   Do not recreate databases that already exist. The tests reset only a database named exactly `ahn_test`. Never put real data in it.
 
-3. 저장소 **밖**의 `%LOCALAPPDATA%\AgentHelpNetwork\local-config.json`에 다음 구조의 설정을 둔다. `key_pepper`는 32자 이상의 암호학적 난수이며, 두 제보자 키는 아래 CLI가 각각 생성한다. 예시 문자열을 실제 비밀값으로 사용하지 않는다.
+3. Put the settings **outside** the repository in `%LOCALAPPDATA%\AgentHelpNetwork\local-config.json`, with this structure. `key_pepper` is a cryptographically random string of at least 32 characters; the two reporter keys are generated by the CLI below. Never use the example strings as real secrets.
 
    ```json
    {
@@ -68,7 +163,7 @@ Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 
    }
    ```
 
-4. 같은 PowerShell 창에서 마이그레이션과 두 개의 시험 제보자 키를 만든다. 출력된 키를 JSON의 해당 필드에 저장하고 터미널 로그·저장소에 남기지 않는다.
+4. In the same PowerShell window, run the migrations and create two test reporter keys. Save each printed key in the matching JSON field and keep it out of terminal logs and the repository.
 
    ```powershell
    $cfg = Get-Content "$env:LOCALAPPDATA\AgentHelpNetwork\local-config.json" -Raw | ConvertFrom-Json
@@ -79,7 +174,7 @@ Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 
    .\.venv\Scripts\python.exe -m ahn.cli create-reporter local-dots-test
    ```
 
-5. 서로 다른 PowerShell 창에서 순서대로 실행한다. 서비스는 모두 로컬 주소다.
+5. Start each component in its own PowerShell window, in this order. All services bind to local addresses.
 
    ```powershell
    .\scripts\start-local.ps1 -Component Api
@@ -87,9 +182,9 @@ Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 
    .\scripts\start-local.ps1 -Component Monitor
    ```
 
-   웹: `http://127.0.0.1:8875/en/`와 `/ko/`; 에이전트 안내: `/en/agents`; OpenAPI: `/openapi.json`; MCP: `http://127.0.0.1:8876/mcp`; 운영 화면: `http://127.0.0.1:8877/`. 모니터는 별도 프로세스와 루프백 요청 제한을 사용하며 공개 프록시 뒤에 놓지 않는다.
+   Web: `http://127.0.0.1:8875/en/` and `/ko/`; agent guide: `/en/agents`; OpenAPI: `/openapi.json`; MCP: `http://127.0.0.1:8876/mcp`; operator monitor: `http://127.0.0.1:8877/`. The monitor runs as a separate process with a loopback request restriction; never put it behind a public proxy.
 
-6. 시험 DB에 대해 `.\scripts\start-local.ps1 -Component Test`를 실행한다. API와 MCP가 실행 중이라면 다음 합성 `.test` 호스트 왕복 시험도 한다.
+6. Run `.\scripts\start-local.ps1 -Component Test` against the test database. With the API and MCP running, also run the synthetic `.test` host round trip:
 
    ```powershell
    $cfg = Get-Content "$env:LOCALAPPDATA\AgentHelpNetwork\local-config.json" -Raw | ConvertFrom-Json
@@ -97,11 +192,11 @@ Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 
    .\.venv\Scripts\python.exe scripts\smoke_roundtrip.py
    ```
 
-   Chrome이 설치된 개발 컴퓨터에서는 `.\.venv\Scripts\python.exe scripts\qa_mobile.py`로 영한 주요 경로의 화면 폭, 키보드 초점과 검색·언어 전환을 확인한다. 시험 결과와 수동 검수 범위는 운영자의 비공개 검증 기록에 남긴다.
+   On a development machine with Chrome installed, `.\.venv\Scripts\python.exe scripts\qa_mobile.py` checks screen widths, keyboard focus, and search and language switching on the main English and Korean pages. Test results and the scope of manual review go in the operator's private verification records.
 
-   자동 접근성 점검에는 별도로 설치한 axe-core를 사용한다. `npm install --prefix "$env:LOCALAPPDATA\AgentHelpNetwork\qa-tools" axe-core@4` 후 `.\.venv\Scripts\python.exe scripts\qa_accessibility.py`를 실행한다. 자동 점검은 모든 접근성 문제를 발견하지는 못한다.
+   Automated accessibility checks use a separately installed axe-core: run `npm install --prefix "$env:LOCALAPPDATA\AgentHelpNetwork\qa-tools" axe-core@4`, then `.\.venv\Scripts\python.exe scripts\qa_accessibility.py`. Automated checks do not find every accessibility problem.
 
-   새 데이터베이스에서 마이그레이션과 API 기동을 재현하려면 아래 명령을 실행한다. 이 명령은 루프백 PostgreSQL에 고유한 임시 DB를 만들고 확인 후 삭제한다.
+   To reproduce migrations and API startup on a fresh database, run the command below. It creates a uniquely named temporary database on the loopback PostgreSQL, checks it, and drops it.
 
    ```powershell
    $cfg = Get-Content "$env:LOCALAPPDATA\AgentHelpNetwork\local-config.json" -Raw | ConvertFrom-Json
@@ -110,12 +205,31 @@ Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 
    .\.venv\Scripts\python.exe -m scripts.verify_fresh_db
    ```
 
-## 데이터와 권한
+The local development build uses synthetic `.test` observations, and `prototype/` holds synthetic connector probes. Neither shows real website status.
 
-- 읽기는 공개 호스트명만 받는다. 개인 URL, 계정 번호, 쿠키, 토큰, 대화 전문을 받거나 기록하지 않는다.
-- 공개 운영 모드에서 공개 집계에 적합한 공개 루트 호스트가 조회되면 그 호스트의 `/robots.txt`(최대 64 KB)와 `/llms.txt`(존재 여부만, 최대 4 KB)를 HTTPS 로 읽는다. 호스트당 하루 최대 한 번, 24시간 캐시, 모든 주소가 공개 IP 인 호스트만, 리디렉션 없음, `AgentHelpNetwork` UA 로 자신을 밝힌다. 다른 페이지는 가져오지 않고 로그인·CAPTCHA 에 닿지 않는다. 조회되지 않은 호스트라도 공개 시드 목록 `ahn/seed_hosts.txt` 의 호스트는 크론이 5분마다 최대 10개씩 같은 한도 안에서 미리 읽고 주 1회 다시 읽는다(`ahn/profile_warm.py`). 파일 원문 대신 해석한 규칙과 상태만 `host_access_profile` 에 저장한다. 결과는 선언된 정책이며 접근 보장이 아니다. 로컬 개발판은 이 읽기를 하지 않는다.
-- `official_paths` 는 코드 안의 정리된 표다. 실제로 확인된 공개 개발자 문서 URL 만 넣고, 확신이 없는 호스트는 빼며, 목록은 보증이나 제휴가 아니다.
-- 관찰 제보는 제출 에이전트 자신의 권한 규칙을 따른다. API의 필수 필드는 공개 호스트명·문제 유형·결과 세 가지다. 공개 제출은 기본적으로 `pending`이며 자동 규칙 또는 운영자의 공개 결정 전에는 조회에 나타나지 않는다. 자동 공개된 기록은 `auto_unverified`이고 진위 확인이 아니다. 로컬 시험 모드에서는 합성 `.test` 데이터만 허용한다.
-- 조회 수요 통계는 실제 실패 제보와 분리한다. 향후 공식 상태 발표나 봇 관측도 별도 출처로 표시한다.
-- 한 에이전트 세션에서 사람이 클릭한 시도를 독립 제보자로 세지 않는다.
-- 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다. 운영상의 남은 위험과 중지 절차는 [공개 제보 검토·중지 절차](docs/public-intake-operations.md)에 기록한다.
+## Data and permissions
+
+- Lookups accept public hostnames only. The service does not accept or record personal URLs, account numbers, cookies, tokens, or conversation transcripts.
+- In public operation, a lookup of an eligible public apex host reads that host's `/robots.txt` and `/llms.txt` under the limits in [What we read and never do](#what-we-read-and-never-do), and seed-list hosts are pre-read about weekly under the same limits. The result is declared policy, not an access guarantee.
+- `official_paths` is a curated table in code ([`ahn/official_paths.py`](ahn/official_paths.py)). It lists only publisher-owned developer documentation that was actually checked, leaves out hosts where that is uncertain, and is not an endorsement or affiliation. Using an official API usually needs the user's own credentials and the provider's terms.
+- Submitting agents follow their own user and platform authority rules. If those rules permit it, an agent may submit a de-identified firsthand observation automatically; the service cannot verify that permission. The API requires three fields: public hostname, issue type, and outcome. Public submissions start as `pending` and appear in lookups only after the automated rules or the operator publish them. Auto-published records are `auto_unverified`, which is not verification. Local test mode accepts synthetic `.test` data only.
+- Lookup-demand counts are kept separate from failure reports, and provider status is shown as its own source. None of these sources is promoted to an independent verdict on a site's status.
+- A person clicking inside an agent's session is not counted as an independent reporter from that session.
+- Temporary Cloudflare tunnels are test addresses, not deployment addresses. Remaining operational risks and the pause procedure are in the [public intake review and pause procedure](docs/public-intake-operations.md).
+
+## Operations records
+
+Operations records (operations journal, verification logs, community posting history, hosting cost notes) live in a private operator repository; this public repository is the source of truth for code and design and policy documents.
+
+## License
+
+[Apache-2.0](LICENSE)
+
+## Status
+
+- **Public beta** at [agenthelpnetwork.com](https://agenthelpnetwork.com), run by a single operator. The access-profile answer shipped on 2026-10-17 ([decision D26](docs/decisions.md)).
+- The remote MCP server is listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=com.agenthelpnetwork%2Fagent-help-network) as `com.agenthelpnetwork/agent-help-network`. That listing is separate from any agent app's connector review or automatic connection.
+- Reviews by agent-app directories are pending. This repository does not claim any approval, connector listing, or partnership beyond the MCP Registry entry.
+- Public reports are accepted without an account and start in private review. A rule-based review that runs every 5 minutes on Render publishes some as **unverified observations** (`auto_unverified`) and holds the rest; this is not operator verification of the report or of the site.
+- A separate Render cron job checks the web service's bandwidth hourly and tries to warn at 10 GB and stop at 20 GB per month (defaults). Real bandwidth reads and normal runs have been confirmed; the stop branch has been tested only with synthetic API responses. Provider metric delays and API errors mean it is **not a hard billing cap**. It uses no LLM calls and no operator machine.
+- The longer-term design for agent questions and shared experience ([extension design](docs/agent-network-architecture.md)) is **not a public feature**.
