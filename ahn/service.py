@@ -48,6 +48,22 @@ def aggregate_eligible_host(site_host: str) -> bool:
     return len(labels) == 3 and ".".join(labels[1:]) in PUBLIC_SUFFIXES_2
 
 
+def policy_host(site_host: str) -> str:
+    """The host whose declared policy, provider status, official paths and lookup counts answer for site_host.
+
+    A single leading "www." label in front of an eligible apex names the same site as that apex, so
+    www.nytimes.com is answered from nytimes.com. Every other host, including other subdomains and
+    "www." in front of a non-eligible name, is returned unchanged. A "www" that is itself the
+    registrable label (www.co.uk) is an eligible apex already and is never cut down to a public
+    suffix. Reports stay keyed by site_host.
+    """
+    if site_host.startswith("www.") and not aggregate_eligible_host(site_host):
+        apex = site_host[4:]
+        if aggregate_eligible_host(apex):
+            return apex
+    return site_host
+
+
 class ServiceError(Exception):
     def __init__(self, code: str, status: int):
         self.code = code
@@ -211,53 +227,57 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     sql = f"SELECT o.observed_at,o.attempt_actor,o.attempt_env,o.outcome,o.reporter_id,i.error_class,i.task_step FROM observations o JOIN incidents i ON i.id=o.incident_id WHERE {' AND '.join(where)} ORDER BY o.observed_at DESC LIMIT 500"
     with connect(settings) as conn:
         rows = conn.execute(sql, params).fetchall()
+    # Reports above are keyed by the exact host; every host-level layer below
+    # (registry, provider status, lookup counts, declared policy, official paths)
+    # answers for the site, so www.<apex> reads and counts as <apex>.
+    host = policy_host(site_host)
     # Record demand only for public apex hosts. A bounded registry prevents
     # arbitrary tenant names in hostnames from becoming permanent public data.
     mapped_source = False
     registered_host = False
     discover_now = False
-    if settings.public_mode and not test_query and (aggregate_eligible_host(site_host) or site_host in SOURCES):
+    if settings.public_mode and not test_query and (aggregate_eligible_host(host) or host in SOURCES):
         with connect(settings) as conn:
             existing = conn.execute(
                 "UPDATE queried_hosts SET last_seen_at=now() WHERE site_host=%s RETURNING site_host",
-                (site_host,),
+                (host,),
             ).fetchone()
-            if existing or site_host in SOURCES or conn.execute("SELECT count(*) AS n FROM queried_hosts").fetchone()["n"] < QUERIED_HOST_CAP:
+            if existing or host in SOURCES or conn.execute("SELECT count(*) AS n FROM queried_hosts").fetchone()["n"] < QUERIED_HOST_CAP:
                 if not existing:
                     conn.execute(
                         "INSERT INTO queried_hosts (site_host) VALUES (%s) ON CONFLICT (site_host) DO UPDATE SET last_seen_at=now()",
-                        (site_host,),
+                        (host,),
                     )
                 registered_host = True
-                mapped_source = register_source(conn, site_host)
-                if not mapped_source and site_host not in SOURCES:
+                mapped_source = register_source(conn, host)
+                if not mapped_source and host not in SOURCES:
                     discover_now = bool(conn.execute(
                         """UPDATE queried_hosts SET last_discovery_at=now()
                            WHERE site_host=%s AND (last_discovery_at IS NULL OR last_discovery_at < now() - interval '1 day')
                            AND NOT EXISTS (SELECT 1 FROM status_sources WHERE site_host=%s AND enabled=true)
                            RETURNING site_host""",
-                        (site_host, site_host),
+                        (host, host),
                     ).fetchone())
     if discover_now:
-        discovered = discover_source(site_host)
+        discovered = discover_source(host)
         if discovered:
             source, indicator, updated_at = discovered
             with connect(settings) as conn:
-                mapped_source = register_source(conn, site_host, source)
+                mapped_source = register_source(conn, host, source)
                 if mapped_source:
                     conn.execute(
                         """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail)
                            VALUES (%s,%s,%s,now(),NULL,NULL) ON CONFLICT (site_host) DO UPDATE SET
                            indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
                            fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL""",
-                        (site_host, indicator, updated_at),
+                        (host, indicator, updated_at),
                     )
-    if settings.collect_lookup_metrics and aggregate_eligible_host(site_host) and (not settings.public_mode or registered_host):
+    if settings.collect_lookup_metrics and aggregate_eligible_host(host) and (not settings.public_mode or registered_host):
         try:
             with connect(settings) as conn:
                 conn.execute(
                     "INSERT INTO lookup_metrics (day,site_host,error_class,checks) VALUES (CURRENT_DATE,%s,%s,1) ON CONFLICT (day,site_host,error_class) DO UPDATE SET checks=lookup_metrics.checks+1",
-                    (site_host, error_class or "unspecified"),
+                    (host, error_class or "unspecified"),
                 )
         except Exception:
             # A metrics outage must not turn a successful incident lookup into a failure.
@@ -265,7 +285,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     if mapped_source and not discover_now:
         # On the first lookup, fetch the publisher directly before returning.
         # Later lookups refresh too; the background job keeps the list warm.
-        refresh_one(settings, site_host)
+        refresh_one(settings, host)
     now = datetime.now(timezone.utc)
     provider_status = None
     provider_discovery_attempted_at = None
@@ -274,7 +294,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         with connect(settings) as conn:
             discovery = conn.execute(
                 "SELECT last_discovery_at FROM queried_hosts WHERE site_host=%s",
-                (site_host,),
+                (host,),
             ).fetchone()
             if discovery:
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
@@ -283,7 +303,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                           c.fetched_at,c.last_error_at,c.last_error_detail
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
                    WHERE s.site_host=%s AND s.enabled=true""",
-                (site_host,),
+                (host,),
             ).fetchone()
             if source:
                 fetched_at = source["fetched_at"]
@@ -295,12 +315,12 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     "fetched_at": fetched_at, "freshness": freshness,
                     "error_detail": source["last_error_detail"] if failed_later else None,
                 }
-            if aggregate_eligible_host(site_host):
+            if aggregate_eligible_host(host):
                 volume = conn.execute(
                     """SELECT COALESCE(sum(checks) FILTER (WHERE day >= CURRENT_DATE - 6),0) AS recent,
                               COALESCE(sum(checks) FILTER (WHERE day BETWEEN CURRENT_DATE - 13 AND CURRENT_DATE - 7),0) AS previous
                        FROM lookup_metrics WHERE site_host=%s AND day >= CURRENT_DATE - 13""",
-                    (site_host,),
+                    (host,),
                 ).fetchone()
                 recent, previous = volume["recent"], volume["previous"]
                 if recent >= 1:
@@ -314,11 +334,11 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     # Both are independent of reports, so a lookup answers before any observation exists.
     access_profile = None
     profile_not_read = False
-    official = official_paths(site_host) if settings.public_mode and not test_query else None
+    official = official_paths(host) if settings.public_mode and not test_query else None
     if settings.public_mode and not test_query:
-        if aggregate_eligible_host(site_host):
+        if aggregate_eligible_host(host):
             try:
-                access_profile = get_profile(settings, site_host)
+                access_profile = get_profile(settings, host)
             except Exception:
                 # The declared-policy layer must never turn a lookup into an error.
                 access_profile = None
@@ -354,7 +374,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "outcome": row["outcome"], "error_class": row["error_class"],
             "task_step": row["task_step"], "synthetic": test_query,
         })
-    official_page = OFFICIAL_STATUS_PAGES.get(site_host) if settings.public_mode and not test_query and provider_status is None else None
+    official_page = OFFICIAL_STATUS_PAGES.get(host) if settings.public_mode and not test_query and provider_status is None else None
     return {
         "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
         "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,

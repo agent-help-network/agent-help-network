@@ -31,6 +31,28 @@ def test_aggregate_eligibility_is_apex_only(host, eligible):
     assert aggregate_eligible_host(host) is eligible
 
 
+@pytest.mark.parametrize("host,expected", [
+    # A single leading www. in front of an eligible apex is that apex.
+    ("www.nytimes.com", "nytimes.com"), ("www.bbc.co.uk", "bbc.co.uk"), ("www.naver.co.kr", "naver.co.kr"),
+    # Apex and every other host stay as given.
+    ("nytimes.com", "nytimes.com"), ("bbc.co.uk", "bbc.co.uk"), ("news.ycombinator.com", "news.ycombinator.com"),
+    ("www2.example.com", "www2.example.com"), ("wwwexample.com", "wwwexample.com"), ("www.com", "www.com"),
+    # Only one label is removed, and only when what remains is eligible: no tenant name becomes a key.
+    ("www.www.example.com", "www.www.example.com"), ("www.user123.example.org", "www.user123.example.org"),
+    ("www.account.bbc.co.uk", "www.account.bbc.co.uk"), ("www.xn--p1ai.com", "www.xn--p1ai.com"),
+    ("www.example.test", "www.example.test"), ("api.www.example.com", "api.www.example.com"),
+    # "www" as the registrable label under a two-label suffix is already an apex, never a public suffix.
+    ("www.co.uk", "www.co.uk"), ("www.com.au", "www.com.au"),
+])
+def test_policy_host_maps_only_a_leading_www_label_to_its_eligible_apex(host, expected):
+    from ahn.service import aggregate_eligible_host, policy_host
+    assert valid_host(host) == host  # valid_host itself is unchanged: www. names stay valid lookups
+    assert policy_host(host) == expected
+    # Never widens what is read or counted: a changed host is always an eligible apex.
+    if expected != host:
+        assert aggregate_eligible_host(expected) and not aggregate_eligible_host(host)
+
+
 def test_only_same_host_www_redirect_is_followed(monkeypatch):
     from ahn import access_profile
 
