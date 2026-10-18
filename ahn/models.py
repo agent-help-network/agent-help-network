@@ -176,6 +176,7 @@ class ProviderStatus(StrictModel):
     fetched_at: datetime | None
     source_updated_at: datetime | None
     freshness: Literal["pending", "fresh", "stale"]
+    error_detail: str | None = None
 
 
 class OfficialStatusPage(StrictModel):

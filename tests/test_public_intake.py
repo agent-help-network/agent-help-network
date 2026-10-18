@@ -369,6 +369,20 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
         assert status["indicator"] == "none"
         assert status["freshness"] == "stale"
         assert status["fetched_at"] is not None
+        assert status["error_detail"] == "http_502"
+        page = client.get("/en/search", params={"site_host": "github.com"}).text
+        assert "Feed read failed:" in page and "http_502" in page
+    with connect(settings) as conn:
+        assert conn.execute("SELECT last_error_detail FROM status_cache WHERE site_host='github.com'").fetchone()["last_error_detail"] == "http_502"
+    # A later successful read clears the reason again.
+    with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={
+        "page": {"updated_at": "2026-10-03T18:00:00Z"}, "status": {"indicator": "none"},
+    }))) as remote:
+        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote, min_interval=0))
+        status = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
+        assert status["freshness"] == "fresh" and status["error_detail"] is None
+    with connect(settings) as conn:
+        assert conn.execute("SELECT last_error_detail FROM status_cache WHERE site_host='github.com'").fetchone()["last_error_detail"] is None
 
 
 def test_gmail_official_feed_is_product_specific(public_client, monkeypatch):

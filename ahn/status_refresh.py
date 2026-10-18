@@ -11,6 +11,7 @@ import ipaddress
 import json
 import re
 import socket
+import ssl
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,49 @@ import urllib3
 
 from .db import connect
 from .settings import Settings
+
+
+class FeedFailure(ValueError):
+    """A feed read that ended for a known reason; the label is stored as status_cache.last_error_detail."""
+
+    def __init__(self, label: str):
+        super().__init__(label)
+        self.label = label
+
+
+FAILURE_LABELS = frozenset({"too_large", "invalid_body", "dns_failed", "connect_error", "tls_error", "timeout",
+                            "read_error", "no_cname", "id_mismatch", "not_public", "error"})
+_DNS_HINTS = ("getaddrinfo", "name or service", "nodename nor servname", "name resolution", "no address associated")
+_TLS_HINTS = ("ssl", "certificate", "tls")
+
+
+def failure_label(exc: BaseException) -> str:
+    """Short lowercase reason for a failed feed read: ``http_NNN`` or one of FAILURE_LABELS. Never raises."""
+    if isinstance(exc, FeedFailure):
+        return exc.label
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"http_{exc.response.status_code}"
+    message = str(exc).lower()
+    if isinstance(exc, (urllib3.exceptions.NameResolutionError, socket.gaierror)):
+        return "dns_failed"
+    if isinstance(exc, (urllib3.exceptions.SSLError, ssl.SSLError)):
+        return "tls_error"
+    # urllib3's NewConnectionError inherits from its ConnectTimeoutError, so connection failures go before timeouts.
+    if isinstance(exc, (httpx.ConnectError, urllib3.exceptions.NewConnectionError, ConnectionError)):
+        if any(hint in message for hint in _DNS_HINTS):
+            return "dns_failed"
+        if any(hint in message for hint in _TLS_HINTS):
+            return "tls_error"
+        return "connect_error"
+    if isinstance(exc, (httpx.TimeoutException, urllib3.exceptions.TimeoutError, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, (httpx.HTTPError, urllib3.exceptions.ProtocolError)):
+        return "read_error"
+    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError, KeyError)):
+        return "invalid_body"
+    if isinstance(exc, OSError):
+        return "connect_error"
+    return "error"
 
 
 @dataclass(frozen=True)
@@ -127,12 +171,12 @@ def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime |
     """Fetch a publisher-owned Statuspage endpoint using a pinned public IP."""
     target = _statuspage_target(site_host)
     if target is None:
-        raise ValueError("no verified Statuspage CNAME")
+        raise FeedFailure("no_cname")
     cname, page_id = target
     status_host = f"status.{site_host}"
     addresses = {item[4][0] for item in socket.getaddrinfo(cname, 443, type=socket.SOCK_STREAM)}
     if not addresses or len(addresses) > 16 or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
-        raise ValueError("Statuspage DNS did not resolve only to public addresses")
+        raise FeedFailure("not_public")
     pool = urllib3.HTTPSConnectionPool(
         sorted(addresses)[0], port=443, server_hostname=status_host,
         assert_hostname=status_host, timeout=urllib3.Timeout(connect=2.0, read=3.0), retries=False,
@@ -144,10 +188,10 @@ def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime |
         )
         try:
             if response.status != 200:
-                raise ValueError("unexpected Statuspage response")
+                raise FeedFailure(f"http_{response.status}")
             body = response.read(32_769)
             if len(body) > 32_768:
-                raise ValueError("Statuspage response too large")
+                raise FeedFailure("too_large")
         finally:
             response.release_conn()
     finally:
@@ -155,10 +199,10 @@ def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime |
     payload = json.loads(body)
     page = payload.get("page") if isinstance(payload, dict) else None
     if not isinstance(page, dict) or page.get("id") != page_id:
-        raise ValueError("Statuspage ID does not match first-party DNS")
+        raise FeedFailure("id_mismatch")
     name = page.get("name")
     if not isinstance(name, str) or not 1 <= len(name) <= 72:
-        raise ValueError("invalid Statuspage name")
+        raise FeedFailure("invalid_body")
     indicator, updated_at = parse_status(payload)
     source = Source(f"{name} Status", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage")
     return source, indicator, updated_at
@@ -262,20 +306,19 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
-            raise ValueError("invalid discovered source URL")
+            raise FeedFailure("error")
         _, indicator, updated_at = _read_discovered_statuspage(host[7:])
         return indicator, updated_at
     # Follow no redirects, stream with a hard byte cap, and never send credentials.
     cap = 1_048_576 if source.kind == "google_gmail" else 32_768
     with client.stream("GET", source.api_url, headers={"Accept": "application/json"}) as response:
-        response.raise_for_status()
         if response.status_code != 200:
-            raise ValueError("unexpected provider response")
+            raise FeedFailure(f"http_{response.status_code}")
         data = bytearray()
         for chunk in response.iter_bytes():
             data.extend(chunk)
             if len(data) > cap:
-                raise ValueError("provider response too large")
+                raise FeedFailure("too_large")
     body = httpx.Response(200, content=bytes(data)).json()
     return parse_google_gmail(body) if source.kind == "google_gmail" else parse_status(body)
 
@@ -333,20 +376,21 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
             indicator, updated_at = _read_source(source, client)
             with connect(settings) as conn:
                 conn.execute(
-                    """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at)
-                       VALUES (%s,%s,%s,now(),NULL) ON CONFLICT (site_host) DO UPDATE SET
+                    """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail)
+                       VALUES (%s,%s,%s,now(),NULL,NULL) ON CONFLICT (site_host) DO UPDATE SET
                        indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
-                       fetched_at=EXCLUDED.fetched_at,last_error_at=NULL""",
+                       fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL""",
                     (site_host, indicator, updated_at),
                 )
             return True
-        except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            # Keep why the read failed: a bare "stale" would show a 403 from the feed and a timeout as the same word.
             with connect(settings) as conn:
                 conn.execute(
-                    """INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at)
-                       VALUES (%s,'unknown',NULL,now()) ON CONFLICT (site_host) DO UPDATE SET
-                       last_error_at=now()""",
-                    (site_host,),
+                    """INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail)
+                       VALUES (%s,'unknown',NULL,now(),%s) ON CONFLICT (site_host) DO UPDATE SET
+                       last_error_at=now(),last_error_detail=EXCLUDED.last_error_detail""",
+                    (site_host, failure_label(exc)),
                 )
             return False
         finally:

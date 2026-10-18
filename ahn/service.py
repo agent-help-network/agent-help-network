@@ -246,10 +246,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 mapped_source = register_source(conn, site_host, source)
                 if mapped_source:
                     conn.execute(
-                        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at)
-                           VALUES (%s,%s,%s,now(),NULL) ON CONFLICT (site_host) DO UPDATE SET
+                        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail)
+                           VALUES (%s,%s,%s,now(),NULL,NULL) ON CONFLICT (site_host) DO UPDATE SET
                            indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
-                           fetched_at=EXCLUDED.fetched_at,last_error_at=NULL""",
+                           fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL""",
                         (site_host, indicator, updated_at),
                     )
     if settings.collect_lookup_metrics and aggregate_eligible_host(site_host) and (not settings.public_mode or registered_host):
@@ -280,7 +280,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
             source = conn.execute(
                 """SELECT s.source_name,s.status_page_url,c.indicator,c.source_updated_at,
-                          c.fetched_at,c.last_error_at
+                          c.fetched_at,c.last_error_at,c.last_error_detail
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
                    WHERE s.site_host=%s AND s.enabled=true""",
                 (site_host,),
@@ -293,6 +293,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     "source_name": source["source_name"], "source_url": source["status_page_url"],
                     "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],
                     "fetched_at": fetched_at, "freshness": freshness,
+                    "error_detail": source["last_error_detail"] if failed_later else None,
                 }
             if aggregate_eligible_host(site_host):
                 volume = conn.execute(
