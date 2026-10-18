@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 from psycopg.rows import dict_row
 
-from .service import aggregate_eligible_host
+from .service import aggregate_eligible_host, policy_host
 
 
 MIN_REVIEW_AGE = timedelta(minutes=10)
@@ -22,12 +22,24 @@ BURST_WINDOW = timedelta(minutes=15)
 PUBLIC_STEPS = {"site_open", "login", "human_verification", "service_use", "other"}
 
 
+def _review_hosts(site_host: str) -> list[str]:
+    """The stored hosts whose reports share site_host's burst and publication windows.
+
+    www.<eligible apex> reviews as its apex, and the two names count together so a pair of
+    reports split across them cannot double the publication rate for one site. This only
+    groups the abuse counts; reports and incidents stay keyed by their exact site_host.
+    """
+    apex = policy_host(site_host)
+    return [apex, f"www.{apex}"]
+
+
 def _decision(conn, row: dict, now: datetime) -> str:
     """Return 'publish' or a short reason for private operator review."""
     if row["outcome"] not in {"blocked", "error", "passed"}:
         return "uncertain_outcome"
-    if not aggregate_eligible_host(row["site_host"]):
+    if not aggregate_eligible_host(policy_host(row["site_host"])):
         return "unreviewed_subdomain"
+    hosts = _review_hosts(row["site_host"])
     if row["task_step"] not in PUBLIC_STEPS:
         return "unexpected_step"
     if row["observed_at"] < row["received_at"] - MAX_OBSERVATION_AGE:
@@ -36,17 +48,17 @@ def _decision(conn, row: dict, now: datetime) -> str:
         return "future_observation"
     burst = conn.execute(
         """SELECT count(*) AS n FROM observations o JOIN incidents i ON i.id=o.incident_id
-        WHERE i.site_host=%s AND o.synthetic=false AND o.withdrawn_at IS NULL
+        WHERE i.site_host = ANY(%s) AND o.synthetic=false AND o.withdrawn_at IS NULL
           AND o.received_at >= %s AND o.received_at <= %s""",
-        (row["site_host"], row["received_at"] - BURST_WINDOW, row["received_at"] + BURST_WINDOW),
+        (hosts, row["received_at"] - BURST_WINDOW, row["received_at"] + BURST_WINDOW),
     ).fetchone()["n"]
     if burst > 2:
         return "host_burst"
     published = conn.execute(
         """SELECT count(*) AS n FROM observations o JOIN incidents i ON i.id=o.incident_id
-        WHERE i.site_host=%s AND o.outcome=%s AND o.review_state='published' AND o.synthetic=false
+        WHERE i.site_host = ANY(%s) AND o.outcome=%s AND o.review_state='published' AND o.synthetic=false
           AND o.withdrawn_at IS NULL AND o.received_at >= %s""",
-        (row["site_host"], row["outcome"], now - HOST_WINDOW),
+        (hosts, row["outcome"], now - HOST_WINDOW),
     ).fetchone()["n"]
     if published:
         return "recent_host_publication"

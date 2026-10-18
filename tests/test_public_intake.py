@@ -589,6 +589,55 @@ def test_auto_review_holds_host_burst(public_client):
     assert reasons == [{"review_reason": "host_burst"}]
 
 
+def test_auto_review_publishes_www_apex_under_its_exact_host(public_client):
+    settings, client = public_client
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+    www = post_public(client, sample(site_host="www.wwwexample.org", observed_at=old_time.isoformat())).json()
+    tenant = post_public(client, sample(site_host="shop.wwwexample.org", observed_at=old_time.isoformat())).json()
+    double = post_public(client, sample(site_host="www.www.wwwexample.org", observed_at=old_time.isoformat())).json()
+    with connect(settings) as conn:
+        conn.execute("UPDATE observations SET received_at=now()-interval '15 minutes'")
+    assert review_batch(TEST_URL) == {"published": 1, "held": 2}
+    with connect(settings) as conn:
+        rows = {
+            str(r.pop("id")): r
+            for r in conn.execute(
+                "SELECT o.id,o.review_state,o.review_reason,i.site_host FROM observations o JOIN incidents i ON i.id=o.incident_id"
+            ).fetchall()
+        }
+    assert rows[www["observation_id"]] == {"review_state": "published", "review_reason": "auto_unverified", "site_host": "www.wwwexample.org"}
+    assert rows[tenant["observation_id"]]["review_reason"] == "unreviewed_subdomain"
+    assert rows[double["observation_id"]]["review_reason"] == "unreviewed_subdomain"
+    assert client.get("/v1/incidents/check", params={"site_host": "www.wwwexample.org"}).json()["evidence_level"] == "single_observation"
+    assert client.get("/v1/incidents/check", params={"site_host": "wwwexample.org"}).json()["evidence_level"] == "no_reports"
+
+
+def test_auto_review_counts_www_and_apex_together(public_client):
+    settings, client = public_client
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
+    apex = post_public(client, sample(site_host="pairexample.org", observed_at=old_time.isoformat())).json()
+    with connect(settings) as conn:
+        conn.execute("UPDATE observations SET received_at=now()-interval '15 minutes' WHERE id=%s", (apex["observation_id"],))
+    assert review_batch(TEST_URL) == {"published": 1, "held": 0}
+    www = post_public(client, sample(site_host="www.pairexample.org", observed_at=old_time.isoformat())).json()
+    with connect(settings) as conn:
+        conn.execute("UPDATE observations SET received_at=now()-interval '15 minutes' WHERE id=%s", (www["observation_id"],))
+    assert review_batch(TEST_URL) == {"published": 0, "held": 1}
+    with connect(settings) as conn:
+        row = conn.execute("SELECT review_state,review_reason FROM observations WHERE id=%s", (www["observation_id"],)).fetchone()
+    assert row == {"review_state": "pending", "review_reason": "recent_host_publication"}
+
+    receipts = [post_public(client, sample(site_host=host, observed_at=old_time.isoformat(), outcome="blocked")).json() for host in ("burstpair.org", "burstpair.org", "www.burstpair.org")]
+    with connect(settings) as conn:
+        conn.execute("UPDATE observations SET received_at=now()-interval '15 minutes' WHERE id = ANY(%s)", ([r["observation_id"] for r in receipts],))
+    assert review_batch(TEST_URL) == {"published": 0, "held": 3}
+    with connect(settings) as conn:
+        reasons = conn.execute("SELECT DISTINCT o.review_reason FROM observations o JOIN incidents i ON i.id=o.incident_id WHERE i.site_host LIKE %s", ("%burstpair.org",)).fetchall()
+        hosts = conn.execute("SELECT DISTINCT site_host FROM incidents WHERE site_host LIKE %s ORDER BY site_host", ("%burstpair.org",)).fetchall()
+    assert reasons == [{"review_reason": "host_burst"}]
+    assert hosts == [{"site_host": "burstpair.org"}, {"site_host": "www.burstpair.org"}]
+
+
 def test_auto_review_can_publish_pass_and_pause_publication(public_client):
     settings, client = public_client
     old_time = datetime.now(timezone.utc) - timedelta(minutes=20)
