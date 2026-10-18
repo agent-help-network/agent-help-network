@@ -91,7 +91,7 @@
 - 응답 `201` 또는 동일한 멱등 요청의 `200`에는 `review_state: pending`, `observation_id`, `incident_id`, `synthetic: false`, `withdrawal_token`이 포함된다. 이 토큰을 다른 사람에게 공개하거나 URL에 넣지 않는다. 새 제보는 비공개로 시작한다. 별도 Render Cron Job이 5분마다 10분 이상 지난 제보를 규칙으로 심사하고, 조건에 맞는 단일 구조화 관찰만 `review_reason: auto_unverified`로 공개한다. 이는 실제 사이트 상태나 제보의 진위를 승인하는 절차가 아니다. 다른 제보는 보류되며 운영자는 숨김·수동 공개를 결정할 수 있다. [운영 절차](public-intake-operations.md)
 - `DELETE /v1/observations/{id}`: `X-Withdrawal-Token` 헤더를 사용한다. 일치하지 않는 ID·토큰은 `404`, 철회된 관찰은 공개 조회에서 제외된다. 사람용 `/en/report`, `/ko/report`에도 철회 양식이 있다.
 - 공개 운영에서는 `POST /v1/observations/{id}/outcomes`가 비활성화되고 OpenAPI/MCP에도 나타나지 않는다. 새 결과는 새 제출로 처리하며 제출 에이전트 자신의 권한 규칙을 따른다.
-- 익명 접수는 모두 하나의 미확인 출처로 집계한다. 호스트당 하루 5건, 전체 하루 100건, 앱 인스턴스에서 클라이언트당 분당 3건·전체 분당 20건을 초과하면 `429`다. 운영자는 DB 플래그로 접수를 일시 중지할 수 있으며 그때는 `503 reporting_paused`다.
+- 익명 접수는 모두 하나의 미확인 출처로 집계한다. 호스트당 하루 5건(`www.<루트>`는 루트 호스트와 합쳐 센다), 전체 하루 100건, 앱 인스턴스에서 클라이언트당 분당 3건·전체 분당 20건을 초과하면 `429`다. 운영자는 DB 플래그로 접수를 일시 중지할 수 있으며 그때는 `503 reporting_paused`다.
 
 ## 조회 응답의 세 출처
 

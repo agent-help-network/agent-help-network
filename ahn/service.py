@@ -116,9 +116,11 @@ def submit(settings: Settings, key: str, data: ObservationIn | OutcomeIn, parent
                 "INSERT INTO public_intake_daily (day,reports) VALUES (CURRENT_DATE,1) ON CONFLICT (day) DO UPDATE SET reports=public_intake_daily.reports+1 WHERE public_intake_daily.reports < %s RETURNING reports",
                 (PUBLIC_DAILY_CAP,),
             ).fetchone()
+            # www.<apex> shares its apex's daily slots, so splitting reports across the two
+            # names cannot double the cap; the observation itself keeps its exact site_host.
             host_count = conn.execute(
                 "INSERT INTO public_intake_host_daily (day,site_host,reports) VALUES (CURRENT_DATE,%s,1) ON CONFLICT (day,site_host) DO UPDATE SET reports=public_intake_host_daily.reports+1 WHERE public_intake_host_daily.reports < %s RETURNING reports",
-                (data.site_host, PUBLIC_HOST_DAILY_CAP),
+                (policy_host(data.site_host), PUBLIC_HOST_DAILY_CAP),
             ).fetchone() if global_count else None
             if not global_count or not host_count:
                 raise ServiceError("report_rate_limited", 429)
