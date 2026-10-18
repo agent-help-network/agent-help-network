@@ -196,20 +196,27 @@ class AgentRule(StrictModel):
     explicit_group: bool
     root_allowed: bool
     disallow_count: int = Field(ge=0)
+    crawl_delay: float | None = None
+    disallow_paths: list[str] = Field(default_factory=list)
 
 
 class RobotsSummary(StrictModel):
     rules: list[AgentRule]
     wildcard_root_allowed: bool
     sitemap: bool = False
+    sitemaps: list[str] = Field(default_factory=list)
+    wildcard_crawl_delay: float | None = None
+    wildcard_disallow_paths: list[str] = Field(default_factory=list)
     agents_blocked: list[str] = Field(default_factory=list)
     agents_allowed: list[str] = Field(default_factory=list)
 
 
 class AccessProfile(StrictModel):
-    robots_status: Literal["ok", "absent", "redirected", "error", "too_large", "not_public", "pending"]
+    robots_status: Literal["ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public", "pending"]
     robots: RobotsSummary | None = None
-    llms_txt_status: Literal["present", "absent", "redirected", "error", "not_public", "pending"]
+    robots_detail: str | None = None
+    llms_txt_status: Literal["present", "absent", "redirected", "refused", "error", "not_public", "pending"]
+    llms_detail: str | None = None
     source_urls: dict[str, str]
     fetched_at: datetime | None = None
     freshness: Literal["fresh", "stale", "pending"]
@@ -230,7 +237,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_unknown", "llms_txt_present", "official_path_available"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_unknown", "robots_fetch_refused", "profile_not_read", "llms_txt_present", "official_path_available"]
     text: str
 
 

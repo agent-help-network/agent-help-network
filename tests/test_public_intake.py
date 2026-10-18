@@ -261,6 +261,40 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     assert sensitive["access_profile"] is None and len(reads) == 2
 
 
+def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the_day(public_client):
+    from ahn.access_profile import get_profile
+
+    settings, _ = public_client
+    t0 = datetime(2026, 10, 18, 1, 0, tzinfo=timezone.utc)
+    mode = {"fail": True}
+    calls = []
+    def reader(host, path, *, cap_bytes, **_kw):
+        calls.append((host, path))
+        if mode["fail"]:
+            return ("error", None, "dns_timeout")
+        return ("ok", b"User-agent: *\nAllow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+    first = get_profile(settings, "retry.org", now=t0, reader=reader)
+    assert first["robots_status"] == "error" and first["robots_detail"] == "dns_timeout" and first["freshness"] == "pending"
+    assert calls == [("retry.org", "/robots.txt"), ("www.retry.org", "/robots.txt"), ("retry.org", "/llms.txt")]
+    # Within the hour the failed attempt is cached; after an hour it is retried and succeeds.
+    calls.clear()
+    assert get_profile(settings, "retry.org", now=t0 + timedelta(minutes=30), reader=reader)["robots_status"] == "error"
+    assert calls == []
+    mode["fail"] = False
+    recovered = get_profile(settings, "retry.org", now=t0 + timedelta(hours=1, minutes=1), reader=reader)
+    assert recovered["robots_status"] == "ok" and recovered["freshness"] == "fresh" and recovered["robots_detail"] == "http_200"
+    # A refusal is a definitive answer: cached for the full window, not retried hourly.
+    calls = []
+    refusing = lambda host, path, *, cap_bytes, **_kw: (calls.append(path), ("refused", None, "http_403"))[1]
+    refused = get_profile(settings, "edge.org", now=t0, reader=refusing)
+    assert refused["robots_status"] == "refused" and refused["robots_detail"] == "http_403" and refused["freshness"] == "fresh"
+    get_profile(settings, "edge.org", now=t0 + timedelta(hours=5), reader=refusing)
+    assert calls == ["/robots.txt", "/robots.txt", "/llms.txt"]  # apex robots, www fallback robots, llms — read once only
+    with connect(settings) as conn:
+        row = conn.execute("SELECT robots_status,robots_detail,llms_detail FROM host_access_profile WHERE site_host='edge.org'").fetchone()
+    assert row == {"robots_status": "refused", "robots_detail": "http_403", "llms_detail": "http_403"}
+
+
 def test_mcp_tool_execution_is_counted_separately_from_http_requests(public_client, monkeypatch):
     from ahn.tool_metrics import mcp_metric_token
 

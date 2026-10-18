@@ -139,9 +139,11 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
 }
 ```
 
-- `access_profile.robots_status` 는 `ok`, `absent`(404/410), `redirected`(루트 호스트에서 자기 `www.` 호스트로 가는 한 단계 외의 3xx, 따라가지 않음), `error`, `too_large`(64 KB 초과), `not_public`(공개 IP 로만 해석되지 않음), `pending` 중 하나다. `ok` 가 아니면 `robots` 는 `null` 이거나 이전 성공값이며, 정책 층은 **판단 불가**이지 차단이 아니다.
+- `access_profile.robots_status` 는 `ok`, `absent`(404/410), `redirected`(루트 호스트에서 자기 `www.` 호스트로 가는 한 단계 외의 3xx, 따라가지 않음), `refused`(공개 데이터센터 주소의 단순 robots.txt 읽기에 호스트 경계가 401/403/429/503 으로 답함 — 선언이 아니라 강한 신호), `invalid`(정책 파일 대신 웹 페이지가 옴, 소프트 404), `error`(DNS·TLS·연결 등 전송 실패, 1시간 뒤 재시도), `too_large`(256 KB 초과), `not_public`(공개 IP 로만 해석되지 않음), `pending` 중 하나다. `ok` 가 아니면 `robots` 는 `null` 이거나 이전 성공값이며 정책 층은 **판단 불가**이지 차단이 아니다. 단 `refused` 는 판정에서 공식 경로 우선의 근거로 쓴다.
+- `robots_detail` / `llms_detail` 은 읽기가 그렇게 끝난 이유를 짧은 기계 라벨로 적는다 — `http_200`, `http_403`, `http_503`, `redirect:<host>`, `dns_timeout`, `dns_failed`, `connect_error`, `html_body`, `too_large`, `not_public`. 루트 호스트가 실패·거절하면 `www.` 별칭을 한 번 더 읽고, 그때는 `source_urls` 가 그 호스트를 가리킨다.
+- `robots.rules[].crawl_delay`(초, 적용 그룹 기준)와 `robots.rules[].disallow_paths`(금지 경로 접두 표본 최대 6개)는 `root_allowed: true` 의 뜻을 좁힌다 — 루트는 열어 두고 검색·장바구니·계정 경로를 막는 호스트가 많다. `robots.sitemaps` 는 선언된 Sitemap URL 최대 5개, `robots.wildcard_crawl_delay`·`robots.wildcard_disallow_paths` 는 `*` 그룹의 값이다.
 - `robots.rules` 는 서비스가 아는 에이전트 토큰 목록(`kind` 는 `user_agent`, `search_crawler`, `training_crawler`)마다 RFC 9309 매칭으로 계산한다. `explicit_group` 은 그 토큰의 그룹이 파일에 명시됐는지, `root_allowed` 는 `/` 를 가져올 수 있는지, `disallow_count` 는 해당 그룹의 Disallow 줄 수다. `agents_blocked` 는 명시 그룹이 있고 루트가 금지된 토큰, `agents_allowed` 는 명시 그룹이 있고 루트가 허용된 토큰이다. 목록에 없는 토큰에 대해서는 아무것도 말하지 않는다.
-- `llms_txt_status` 는 `present`, `absent`, `error`, `redirected`, `not_public`, `pending` 중 하나이며 존재 여부만 기록한다. 내용은 저장하거나 전달하지 않는다.
+- `llms_txt_status` 는 `present`, `absent`(소프트 404 페이지 포함, `llms_detail: html_body`), `refused`, `error`, `redirected`, `not_public`, `pending` 중 하나이며 존재 여부만 기록한다. 내용은 저장하거나 전달하지 않는다. 서브도메인·테넌트 호스트를 조회하면 프로필을 읽지 않고 `next_checks` 에 `profile_not_read` 를 넣어 apex 호스트 조회를 안내한다.
 - `fetched_at` 은 마지막 성공 읽기 시각(UTC), `freshness` 는 `fresh`(24시간 이내), `stale`, `pending` 이다. 읽기는 호스트당 하루 최대 한 번이며 조회 시 캐시가 신선하면 네트워크에 나가지 않는다.
 - **선언된 정책은 접근 보장이 아니다.** `root_allowed: true` 가 실제 요청의 성공을 뜻하지 않고, CDN·봇 필터·로그인·속도 제한은 사용자 지시 에이전트를 크롤러와 다르게 취급할 수 있다. Allow 줄은 사이트 약관을 대신하지 않는다. 반대로 `agents_blocked` 에 자신의 UA 계열이 있으면 에이전트는 그 페이지의 재시도를 멈추고 인계하거나 공식 경로를 쓰는 것이 기대 행동이다.
 - `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 전부 `null` 일 수 있다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.

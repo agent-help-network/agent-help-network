@@ -19,6 +19,8 @@ CHECKS = {
     "robots_blocks_agents": "This host's robots.txt explicitly disallows one or more agent user agents at the site root (see access_profile.robots.agents_blocked). Treat it as the host's declared policy: stop automated retries against pages, prefer an official path, and hand the step to the user where their participation is needed.",
     "robots_allows_agents": "This host's robots.txt does not disallow the listed agent user agents at the site root. Declared crawler policy is not an access guarantee; CDN challenges and rate limits can still apply, so keep requests modest and honor any Crawl-delay.",
     "robots_unknown": "No robots.txt policy could be read for this host (absent, redirected, or unreachable within limits). Treat the host's agent policy as unknown rather than permissive.",
+    "robots_fetch_refused": "This host's edge refused even a plain robots.txt read from a data-center address with an honest bot user agent (see access_profile.robots_detail). Expect page automation from a similar environment to be refused too: prefer the official path, and hand the step to the user if it needs them.",
+    "profile_not_read": "Declared policy is read only for public apex hosts, and this hostname is a subdomain or tenant host, so no robots.txt was read for it. Look up the apex host for the site-wide declaration; the subdomain may still have its own rules.",
     "llms_txt_present": "This host publishes llms.txt. Read it first: it is the host's own guidance to language-model agents and may point to preferred machine-readable resources.",
     "official_path_available": "An official developer path is listed for this host (official_paths). Prefer the documented API or developer portal over page automation; it is the sanctioned route and usually the more reliable one.",
 }
@@ -39,6 +41,8 @@ CHECKS_KO = {
     "robots_blocks_agents": "이 호스트의 robots.txt가 하나 이상의 에이전트 UA에 대해 사이트 루트 접근을 명시적으로 금지합니다(access_profile.robots.agents_blocked). 호스트가 선언한 정책으로 보고, 페이지 자동 재시도를 멈추고 공식 경로를 우선하며 사용자 참여가 필요한 단계는 사용자에게 넘기세요.",
     "robots_allows_agents": "이 호스트의 robots.txt는 나열된 에이전트 UA의 루트 접근을 금지하지 않습니다. 선언된 크롤러 정책은 접근 보장이 아니며 CDN 챌린지와 속도 제한은 여전히 적용될 수 있으니 요청을 절제하고 Crawl-delay를 지키세요.",
     "robots_unknown": "이 호스트의 robots.txt 정책을 읽지 못했습니다(없음, 리다이렉트, 또는 제한 내 미도달). 에이전트 정책을 허용이 아니라 미상으로 두세요.",
+    "robots_fetch_refused": "이 호스트의 경계가 데이터센터 주소·정직한 봇 UA의 단순 robots.txt 읽기조차 거절했습니다(access_profile.robots_detail 참조). 비슷한 환경의 페이지 자동화도 거절될 것으로 보고, 공식 경로를 우선하고 사용자 참여가 필요한 단계는 사용자에게 넘기세요.",
+    "profile_not_read": "선언 정책은 공개 apex 호스트에 대해서만 읽으며, 이 호스트명은 서브도메인·테넌트 호스트라 robots.txt를 읽지 않았습니다. 사이트 전체 선언은 apex 호스트로 조회하세요. 서브도메인에 별도 규칙이 있을 수 있습니다.",
     "llms_txt_present": "이 호스트는 llms.txt를 게시합니다. 먼저 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내이며 선호하는 기계 판독 자원을 가리킬 수 있습니다.",
     "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 페이지 자동화보다 문서화된 API나 개발자 포털을 우선하세요. 허용된 경로이며 대개 더 안정적입니다.",
 }
@@ -55,7 +59,7 @@ def declared_block(access_profile: dict | None) -> list[str]:
 
 
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
-                   official: dict | None) -> dict:
+                   official: dict | None, *, profile_not_read: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources."""
     reasons: list[str] = []
     if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in {"minor", "major", "critical"}:
@@ -70,16 +74,23 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
         if official and (official.get("api_docs") or official.get("developer_portal")):
             return {"action": "use_official_path", "confidence": "high", "reasons": reasons + ["official_path_available"]}
         return {"action": "stop_declared_block", "confidence": "medium", "reasons": reasons}
+    if access_profile and access_profile.get("robots_status") == "refused":
+        # The edge would not even serve robots.txt to an automated reader: a strong hint, not a declaration.
+        if official and (official.get("api_docs") or official.get("developer_portal")):
+            return {"action": "use_official_path", "confidence": "medium", "reasons": ["robots_fetch_refused", "official_path_available"]}
+        return {"action": "unknown", "confidence": "medium", "reasons": ["robots_fetch_refused"]}
     if official and (official.get("api_docs") or official.get("developer_portal")) and error_class in (None, "site_access", "service_error"):
         return {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]}
     if access_profile and access_profile.get("robots_status") == "ok":
         return {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents"]}
-    return {"action": "unknown", "confidence": "low", "reasons": ["robots_unknown"] if access_profile else []}
+    if access_profile:
+        return {"action": "unknown", "confidence": "low", "reasons": ["robots_unknown"]}
+    return {"action": "unknown", "confidence": "low", "reasons": ["profile_not_read"] if profile_not_read else []}
 
 
 def next_checks(error_class: str | None, provider_status: dict | None, evidence_level: str,
                 failure_stage: str | None = None, access_profile: dict | None = None,
-                official: dict | None = None) -> list[dict[str, str]]:
+                official: dict | None = None, *, profile_not_read: bool = False) -> list[dict[str, str]]:
     codes: list[str] = []
     if failure_stage and failure_stage != "unknown":
         codes.append(failure_stage)
@@ -89,8 +100,12 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
         codes.append("human_handoff")
     elif error_class == "login_auth":
         codes.append("account_handoff")
+    if access_profile is None and profile_not_read:
+        codes.append("profile_not_read")
     if access_profile:
-        if access_profile.get("robots_status") != "ok":
+        if access_profile.get("robots_status") == "refused":
+            codes.append("robots_fetch_refused")
+        elif access_profile.get("robots_status") != "ok":
             codes.append("robots_unknown")
         elif declared_block(access_profile):
             codes.append("robots_blocks_agents")

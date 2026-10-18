@@ -16,6 +16,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 import urllib3
+from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 
 from .db import connect
@@ -30,20 +31,23 @@ AGENT_USER_AGENTS: tuple[tuple[str, str], ...] = (
     ("CCBot", "training_crawler"), ("Bytespider", "training_crawler"), ("cohere-ai", "training_crawler"), ("Diffbot", "training_crawler"),
 )
 USER_AGENT = "AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)"
-ROBOTS_CAP = 65_536
+ROBOTS_CAP = 262_144
 LLMS_CAP = 4_096
-MAX_LINES = 2_000
+MAX_LINES = 5_000
+MAX_SITEMAPS = 5
+MAX_PATH_SAMPLES = 6
+_HTML_MARKERS = (b"<!doctype", b"<html", b"<head", b"<body", b"<?xml")
 _HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$")
 _HOST_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def _groups(text: str) -> tuple[list[dict], bool]:
+def _groups(text: str) -> tuple[list[dict], list[str]]:
     """Tolerant RFC 9309 group split: user-agent lines open a group, rule lines close its agent list."""
     groups: list[dict] = []
     current: dict | None = None
     expecting_agents = False
-    sitemap = False
+    sitemaps: list[str] = []
     for line in text.splitlines()[:MAX_LINES]:
         line = line.split("#", 1)[0].strip()
         if not line or ":" not in line:
@@ -53,19 +57,40 @@ def _groups(text: str) -> tuple[list[dict], bool]:
         if key in ("user-agent", "useragent"):
             agent = value.split("/", 1)[0].split()[0].lower() if value.split() else ""
             if current is None or not expecting_agents:
-                current = {"agents": [], "rules": []}
+                current = {"agents": [], "rules": [], "crawl_delay": None}
                 groups.append(current)
             if agent:
                 current["agents"].append(agent)
             expecting_agents = True
             continue
         if key == "sitemap":
-            sitemap = True
+            if value.startswith(("https://", "http://")) and len(value) <= 300 and len(sitemaps) < MAX_SITEMAPS and value not in sitemaps:
+                sitemaps.append(value)
             continue
         expecting_agents = False
-        if key in ("allow", "disallow") and current is not None:
+        if current is None:
+            continue
+        if key in ("allow", "disallow"):
             current["rules"].append((key, value))
-    return groups, sitemap
+        elif key == "crawl-delay":
+            try:
+                delay = float(value)
+                if 0 <= delay <= 3600:
+                    current["crawl_delay"] = delay
+            except ValueError:
+                pass
+    return groups, sitemaps
+
+
+def _disallow_samples(rules: list[tuple[str, str]]) -> list[str]:
+    """A few disallowed path prefixes, so 'root allowed' is not read as 'everything allowed'."""
+    seen: list[str] = []
+    for kind, pattern in rules:
+        if kind == "disallow" and pattern and pattern not in seen:
+            seen.append(pattern[:80])
+            if len(seen) >= MAX_PATH_SAMPLES:
+                break
+    return seen
 
 
 def _path_matches(pattern: str, path: str) -> bool:
@@ -98,10 +123,11 @@ def parse_robots(text: str | bytes) -> dict:
     if isinstance(text, bytes):
         text = text[:ROBOTS_CAP].decode("utf-8", errors="replace")
     text = text[:ROBOTS_CAP].lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    groups, sitemap = _groups(text)
+    groups, sitemaps = _groups(text)
     wildcard = [group for group in groups if "*" in group["agents"]]
     wildcard_rules = [rule for group in wildcard for rule in group["rules"]]
     wildcard_root_allowed = _root_allowed(wildcard_rules)
+    wildcard_delay = next((g["crawl_delay"] for g in wildcard if g["crawl_delay"] is not None), None)
     rules, blocked, allowed = [], [], []
     for token, kind in AGENT_USER_AGENTS:
         lowered = token.lower()
@@ -109,14 +135,17 @@ def parse_robots(text: str | bytes) -> dict:
         explicit = bool(matched)
         effective = [rule for group in (matched if explicit else wildcard) for rule in group["rules"]]
         root_allowed = _root_allowed(effective) if explicit else wildcard_root_allowed
+        delay = next((g["crawl_delay"] for g in matched if g["crawl_delay"] is not None), None) if explicit else wildcard_delay
         rules.append({
             "agent": token, "kind": kind, "explicit_group": explicit, "root_allowed": root_allowed,
             "disallow_count": sum(1 for rule_kind, pattern in effective if rule_kind == "disallow" and pattern),
+            "crawl_delay": delay, "disallow_paths": _disallow_samples(effective),
         })
         if explicit:
             (allowed if root_allowed else blocked).append(token)
     return {
-        "rules": rules, "wildcard_root_allowed": wildcard_root_allowed, "sitemap": sitemap,
+        "rules": rules, "wildcard_root_allowed": wildcard_root_allowed, "sitemap": bool(sitemaps),
+        "sitemaps": sitemaps, "wildcard_crawl_delay": wildcard_delay, "wildcard_disallow_paths": _disallow_samples(wildcard_rules),
         "agents_blocked": blocked, "agents_allowed": allowed,
     }
 
@@ -140,20 +169,36 @@ def _www_redirect_target(response, site_host: str, path: str) -> str | None:
     return None
 
 
-def read_public_file(
+# An edge that answers robots.txt itself with one of these is refusing automated
+# reads, which is a signal in its own right and distinct from a transport failure.
+REFUSAL_STATUSES = frozenset({401, 403, 429, 503})
+# Transport failures are retried after this long; definitive answers keep max_age.
+ERROR_RETRY = timedelta(hours=1)
+
+
+def fetch_public_file(
     site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0, timeout_read: float = 3.0,
     _hop: int = 0,
-) -> tuple[str, bytes | None]:
-    """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures."""
+) -> tuple[str, bytes | None, str | None]:
+    """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures.
+
+    Returns (status, body, detail). detail is a short machine label such as
+    'http_503', 'dns_timeout' or 'connect_error' so the answer can say why.
+    """
     site_host = site_host.strip().rstrip(".").lower()
     if not _HOST_RE.match(site_host) or not path.startswith("/") or "//" in path or cap_bytes < 1:
-        return ("error", None)
+        return ("error", None, "invalid_input")
     try:
-        addresses = _resolve(site_host, 2.0)
+        try:
+            addresses = _resolve(site_host, 2.0)
+        except concurrent.futures.TimeoutError:
+            return ("error", None, "dns_timeout")
+        except (OSError, socket.gaierror):
+            return ("error", None, "dns_failed")
         if not addresses or len(addresses) > 16:
-            return ("error", None)
+            return ("error", None, "dns_failed")
         if any(not ipaddress.ip_address(ip).is_global for ip in addresses):
-            return ("not_public", None)
+            return ("not_public", None, "not_public")
         pool = urllib3.HTTPSConnectionPool(
             sorted(addresses)[0], port=443, server_hostname=site_host, assert_hostname=site_host,
             timeout=urllib3.Timeout(connect=timeout_connect, read=timeout_read), retries=False,
@@ -164,37 +209,69 @@ def read_public_file(
                 redirect=False, preload_content=False,
             )
             try:
-                if response.status in (404, 410):
-                    return ("absent", None)
-                if 300 <= response.status < 400:
+                status = response.status
+                if status in (404, 410):
+                    return ("absent", None, f"http_{status}")
+                if 300 <= status < 400:
                     # Many apex hosts answer only on www; that is still the host's own file.
                     www = _www_redirect_target(response, site_host, path) if _hop == 0 else None
                     if www:
                         response.release_conn()
                         pool.close()
-                        return read_public_file(www, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
-                                                timeout_read=timeout_read, _hop=1)
-                    return ("redirected", None)
-                if response.status != 200:
-                    return ("error", None)
+                        return fetch_public_file(www, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
+                                                 timeout_read=timeout_read, _hop=1)
+                    target = urlparse((response.headers.get("Location") or "").strip()).hostname or ""
+                    return ("redirected", None, (f"redirect:{target}" if target else f"http_{status}")[:32])
+                if status in REFUSAL_STATUSES:
+                    return ("refused", None, f"http_{status}")
+                if status != 200:
+                    return ("error", None, f"http_{status}")
                 body = response.read(cap_bytes + 1)
-                return ("too_large", None) if len(body) > cap_bytes else ("ok", body)
+                if len(body) > cap_bytes:
+                    return ("too_large", None, "too_large")
+                if body.lstrip()[:12].lower().startswith(_HTML_MARKERS):
+                    # A web page served for an unknown path (soft 404) is not a policy file.
+                    return ("invalid", None, "html_body")
+                return ("ok", body, "http_200")
             finally:
                 response.release_conn()
         finally:
             pool.close()
     except Exception:  # a lookup must never fail or hang because a third-party host misbehaves
-        return ("error", None)
+        return ("error", None, "connect_error")
 
 
-def build_profile(site_host: str, *, reader=read_public_file) -> dict:
-    robots_status, robots_body = reader(site_host, "/robots.txt", cap_bytes=ROBOTS_CAP)
+def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0,
+                     timeout_read: float = 3.0, _hop: int = 0) -> tuple[str, bytes | None]:
+    status, body, _detail = fetch_public_file(site_host, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
+                                              timeout_read=timeout_read, _hop=_hop)
+    return (status, body)
+
+
+def _read(reader, site_host: str, path: str, cap_bytes: int) -> tuple[str, bytes | None, str | None]:
+    """Accept both the 2-tuple reader contract (tests, callers) and the detailed 3-tuple."""
+    result = reader(site_host, path, cap_bytes=cap_bytes)
+    if len(result) == 2:
+        return (result[0], result[1], None)
+    return (result[0], result[1], result[2])
+
+
+def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
+    robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP)
+    read_host = site_host
+    if robots_status in ("error", "refused", "redirected", "invalid") and not site_host.startswith("www."):
+        # Apex failed or refused: the www alias is still the host's own file and often the one that answers.
+        alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP)
+        if alt_status in ("ok", "absent", "too_large"):
+            robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
     robots = parse_robots(robots_body) if robots_status == "ok" and robots_body is not None else None
-    llms_status, _ = reader(site_host, "/llms.txt", cap_bytes=LLMS_CAP)
-    llms_txt_status = "present" if llms_status in ("ok", "too_large") else llms_status
+    llms_status, _, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP)
+    # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.
+    llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {
-        "robots_status": robots_status, "robots": robots, "llms_txt_status": llms_txt_status,
-        "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
+        "robots_status": robots_status, "robots": robots, "robots_detail": robots_detail,
+        "llms_txt_status": llms_txt_status, "llms_detail": llms_detail,
+        "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
     }
 
 
@@ -206,19 +283,29 @@ def _freshness(fetched_at, error_at, now: datetime, max_age: timedelta) -> str:
     return "stale"
 
 
+_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail"
+
+
 def _as_profile(site_host: str, row, now: datetime, max_age: timedelta) -> dict:
     return {
-        "robots_status": row["robots_status"], "robots": row["robots"], "llms_txt_status": row["llms_txt_status"],
+        "robots_status": row["robots_status"], "robots": row["robots"], "robots_detail": row["robots_detail"],
+        "llms_txt_status": row["llms_txt_status"], "llms_detail": row["llms_detail"],
         "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
         "fetched_at": row["fetched_at"], "freshness": _freshness(row["fetched_at"], row["last_error_at"], now, max_age),
     }
 
 
-def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=read_public_file) -> dict | None:
-    """Cached declared policy; at most one read attempt per host per max_age window, success or not."""
+def _cache_window(row, max_age: timedelta) -> timedelta:
+    """A transport failure is retried after ERROR_RETRY; every definitive answer keeps the caller's max_age."""
+    failed_last = row["last_error_at"] is not None and (row["fetched_at"] is None or row["last_error_at"] > row["fetched_at"])
+    return min(max_age, ERROR_RETRY) if failed_last else max_age
+
+
+def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file) -> dict | None:
+    """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure)."""
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(hours=max_age_hours)
-    query = "SELECT fetched_at,robots_status,robots,llms_txt_status,last_error_at FROM host_access_profile WHERE site_host=%s"
+    query = f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s"
     with _LOCKS_GUARD:
         lock = _HOST_LOCKS.setdefault(site_host, threading.Lock())
     with lock:
@@ -226,27 +313,29 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
             row = conn.execute(query, (site_host,)).fetchone()
         if row:
             latest = max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
-            if latest is not None and latest >= now - max_age:
+            if latest is not None and latest >= now - _cache_window(row, max_age):
                 return _as_profile(site_host, row, now, max_age)
         profile = build_profile(site_host, reader=reader)
         with connect(settings) as conn:
             if profile["robots_status"] == "error":
-                # Network failure: keep the previous declared policy, only record the failed attempt.
+                # Transport failure: keep the previous declared policy, record the attempt and why it failed.
                 row = conn.execute(
-                    """INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at)
-                       VALUES (%s,NULL,'error',NULL,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
-                       last_error_at=EXCLUDED.last_error_at
-                       RETURNING fetched_at,robots_status,robots,llms_txt_status,last_error_at""",
-                    (site_host, profile["llms_txt_status"], now),
+                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail)
+                        VALUES (%s,NULL,'error',NULL,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                        last_error_at=EXCLUDED.last_error_at,robots_detail=EXCLUDED.robots_detail
+                        RETURNING {_ROW_COLUMNS}""",
+                    (site_host, profile["llms_txt_status"], now, profile["robots_detail"], profile["llms_detail"]),
                 ).fetchone()
             else:
+                # ok/absent/redirected/too_large/not_public/refused are answers in their own right.
                 row = conn.execute(
-                    """INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at)
-                       VALUES (%s,%s,%s,%s,%s,NULL) ON CONFLICT (site_host) DO UPDATE SET
-                       fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
-                       llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL
-                       RETURNING fetched_at,robots_status,robots,llms_txt_status,last_error_at""",
+                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                        fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
+                        llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
+                        robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail
+                        RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
-                     profile["llms_txt_status"]),
+                     profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"]),
                 ).fetchone()
         return _as_profile(site_host, row, now, max_age)

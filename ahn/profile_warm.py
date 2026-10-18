@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .access_profile import get_profile
+from .access_profile import ERROR_RETRY, get_profile
 from .db import connect
 from .models import valid_host
 from .service import aggregate_eligible_host
@@ -59,15 +59,21 @@ def warm_profiles(
     result = {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
     with connect(settings) as conn:
         rows = conn.execute(
-            "SELECT site_host,fetched_at,last_error_at FROM host_access_profile WHERE site_host=ANY(%s)",
+            "SELECT site_host,fetched_at,last_error_at,robots_status FROM host_access_profile WHERE site_host=ANY(%s)",
             (seeds,),
         ).fetchall()
     latest_attempt = {
         row["site_host"]: max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
         for row in rows
     }
+    failed = {row["site_host"] for row in rows if row["robots_status"] == "error"}
     cutoff = now - timedelta(hours=max_age_hours)
-    due = [host for host in seeds if latest_attempt.get(host) is None or latest_attempt[host] < cutoff]
+    # A transport failure is due again after ERROR_RETRY (same rule get_profile applies);
+    # a definitive answer, including a refusal, waits for the full window.
+    retry_cutoff = now - ERROR_RETRY
+    due = [host for host in seeds
+           if latest_attempt.get(host) is None or latest_attempt[host] < cutoff
+           or (host in failed and latest_attempt[host] < retry_cutoff)]
     chosen = due[:max(batch, 0)]
     options = {} if reader is None else {"reader": reader}
     started = _clock()

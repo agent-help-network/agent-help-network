@@ -144,6 +144,27 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
         row = conn.execute("SELECT fetched_at,last_error_at,robots_status FROM host_access_profile WHERE site_host=%s", (SEEDS[0],)).fetchone()
     assert row["fetched_at"] is None and row["last_error_at"] is not None and row["robots_status"] == "error"
 
+    # Transport failures are due again after ERROR_RETRY, ahead of the weekly refresh of healthy hosts.
+    healthy.calls.clear()
+    third = profile_warm.warm_profiles(settings, batch=3, reader=healthy, now=now + timedelta(hours=1, minutes=1))
+    assert healthy.hosts == SEEDS[:3]
+    assert third == {"candidates": 0, "read": 3, "ok": 3, "errors": 0}
+
+
+def test_warm_profiles_treats_a_refusal_as_an_answer_not_a_retry(warm_settings):
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    refusing = Reader(robots=("refused", None, "http_503"), llms=("refused", None, "http_503"))
+    first = profile_warm.warm_profiles(settings, batch=2, reader=refusing, now=now)
+    assert first == {"candidates": 3, "read": 2, "ok": 0, "errors": 0}
+    refusing.calls.clear()
+    again = profile_warm.warm_profiles(settings, batch=5, reader=refusing, now=now + timedelta(hours=2))
+    assert refusing.hosts and SEEDS[0] not in refusing.hosts and SEEDS[1] not in refusing.hosts
+    assert again["read"] == 3
+    with connect(settings) as conn:
+        row = conn.execute("SELECT robots_status,robots_detail,fetched_at FROM host_access_profile WHERE site_host=%s", (SEEDS[0],)).fetchone()
+    assert row["robots_status"] == "refused" and row["robots_detail"] == "http_503" and row["fetched_at"] is not None
+
 
 def test_warm_profiles_swallows_an_exception_for_one_host_and_continues(warm_settings):
     settings, _ = warm_settings

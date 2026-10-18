@@ -30,7 +30,9 @@ def test_explicit_training_crawler_groups_with_search_crawler_allowed():
     assert parsed["sitemap"] is True
     assert parsed["wildcard_root_allowed"] is True
     gpt = _rule(parsed, "GPTBot")
-    assert gpt == {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": True, "root_allowed": False, "disallow_count": 1}
+    assert gpt == {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": True, "root_allowed": False, "disallow_count": 1,
+                   "crawl_delay": None, "disallow_paths": ["/"]}
+    assert parsed["sitemaps"] == ["https://example.com/sitemap.xml"] and parsed["wildcard_disallow_paths"] == ["/private/"]
     chat = _rule(parsed, "ChatGPT-User")
     assert chat["explicit_group"] is False and chat["root_allowed"] is True and chat["disallow_count"] == 1
 
@@ -43,7 +45,8 @@ def test_allow_disallow_precedence_is_longest_match_then_allow():
     specific_block = parse_robots("User-agent: GPTBot\nAllow: /\nDisallow: /*\n")
     assert _rule(specific_block, "GPTBot")["root_allowed"] is False
     empty_disallow = parse_robots("User-agent: GPTBot\nDisallow:\n")
-    assert _rule(empty_disallow, "GPTBot") == {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": True, "root_allowed": True, "disallow_count": 0}
+    assert _rule(empty_disallow, "GPTBot") == {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": True, "root_allowed": True, "disallow_count": 0,
+                                               "crawl_delay": None, "disallow_paths": []}
     deep_only = parse_robots("User-agent: GPTBot\nDisallow: /admin\nDisallow: /tmp/\n")
     assert _rule(deep_only, "GPTBot")["root_allowed"] is True and _rule(deep_only, "GPTBot")["disallow_count"] == 2
 
@@ -73,6 +76,49 @@ def test_token_matching_is_case_insensitive_and_prefix_aware():
     assert _rule(parsed, "anthropic-ai")["explicit_group"] is False
     longer = parse_robots("User-agent: Googlebot-News\nDisallow: /\n")
     assert _rule(longer, "Googlebot")["explicit_group"] is False
+
+
+def test_crawl_delay_sitemaps_and_path_samples_survive_the_summary():
+    text = (
+        "User-agent: *\nCrawl-delay: 10\nDisallow: /search\nDisallow: /cart\nDisallow: /account\nDisallow: /a\nDisallow: /b\nDisallow: /c\nDisallow: /d\n"
+        "Sitemap: https://shop.example/sitemap.xml\nSitemap: https://shop.example/sitemap-products.xml\nSitemap: not-a-url\n\n"
+        "User-agent: ChatGPT-User\nCrawl-delay: 2.5\nDisallow: /checkout\n\nUser-agent: GPTBot\nCrawl-delay: nonsense\nDisallow: /\n"
+    )
+    parsed = parse_robots(text)
+    assert parsed["sitemaps"] == ["https://shop.example/sitemap.xml", "https://shop.example/sitemap-products.xml"] and parsed["sitemap"] is True
+    assert parsed["wildcard_crawl_delay"] == 10 and parsed["wildcard_root_allowed"] is True
+    assert parsed["wildcard_disallow_paths"] == ["/search", "/cart", "/account", "/a", "/b", "/c"]  # capped sample, file order
+    chat = _rule(parsed, "ChatGPT-User")
+    assert chat["crawl_delay"] == 2.5 and chat["disallow_paths"] == ["/checkout"] and chat["root_allowed"] is True
+    gpt = _rule(parsed, "GPTBot")
+    assert gpt["crawl_delay"] is None and gpt["disallow_paths"] == ["/"] and gpt["root_allowed"] is False
+    claude = _rule(parsed, "Claude-User")  # falls back to the wildcard group, including its delay and samples
+    assert claude["crawl_delay"] == 10 and claude["disallow_paths"][:2] == ["/search", "/cart"]
+
+
+def test_html_body_is_invalid_not_a_permissive_policy(monkeypatch):
+    from ahn import access_profile
+
+    class Response:
+        status = 200
+        headers = {}
+        def read(self, _limit):
+            return b"\n<!DOCTYPE html><html><body>Not found</body></html>"
+        def release_conn(self):
+            pass
+    class Pool:
+        def __init__(self, *_a, **_kw):
+            pass
+        def request(self, *_a, **_kw):
+            return Response()
+        def close(self):
+            pass
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", Pool)
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("invalid", None, "html_body")
+    profile = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("invalid", None, "html_body"))
+    assert profile["robots_status"] == "invalid" and profile["robots"] is None and profile["llms_txt_status"] == "absent"
+    assert profile["llms_detail"] == "html_body"
 
 
 def test_rules_before_any_group_and_oversized_input_are_capped_not_fatal():
@@ -106,10 +152,62 @@ def test_build_profile_ok_parses_robots_and_reports_llms_presence():
 
 
 def test_build_profile_non_ok_statuses_pass_through_with_no_robots_summary():
-    for status in ("absent", "redirected", "too_large", "error", "not_public"):
+    for status in ("absent", "redirected", "too_large", "error", "not_public", "refused"):
         profile = build_profile("example.com", reader=_stub(robots=(status, None), llms=(status, None)))
         assert profile["robots_status"] == status and profile["robots"] is None
         assert profile["llms_txt_status"] == ("present" if status == "too_large" else status)
+        assert profile["robots_detail"] is None and profile["llms_detail"] is None
+
+
+def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
+    calls = []
+
+    def reader(site_host, path, *, cap_bytes, **_):
+        calls.append((site_host, path))
+        if site_host == "example.com":
+            return ("refused", None, "http_503")
+        return ("ok", b"User-agent: ChatGPT-User\nDisallow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+
+    profile = build_profile("example.com", reader=reader)
+    assert profile["robots_status"] == "ok" and profile["robots"]["agents_blocked"] == ["ChatGPT-User"]
+    assert profile["robots_detail"] == "http_200" and profile["source_urls"]["robots_txt"] == "https://www.example.com/robots.txt"
+    assert calls == [("example.com", "/robots.txt"), ("www.example.com", "/robots.txt"), ("www.example.com", "/llms.txt")]
+    # When www refuses as well, the apex refusal stands and carries its detail.
+    refused_everywhere = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("refused", None, "http_403"))
+    assert refused_everywhere["robots_status"] == "refused" and refused_everywhere["robots_detail"] == "http_403"
+    # A www host is never prefixed twice.
+    only_once = []
+    build_profile("www.example.com", reader=lambda h, p, *, cap_bytes, **_: (only_once.append(h), ("error", None, "connect_error"))[1])
+    assert only_once == ["www.example.com", "www.example.com"]
+
+
+def test_fetch_public_file_maps_http_statuses(monkeypatch):
+    from ahn import access_profile
+
+    class Response:
+        def __init__(self, status, headers=None, body=b""):
+            self.status, self.headers, self._body = status, headers or {}, body
+        def read(self, _limit):
+            return self._body
+        def release_conn(self):
+            pass
+
+    def pool_for(status, body=b""):
+        class Pool:
+            def __init__(self, *_a, **_kw):
+                pass
+            def request(self, *_a, **_kw):
+                return Response(status, body=body)
+            def close(self):
+                pass
+        return Pool
+
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+    for status, expected in ((503, ("refused", None, "http_503")), (403, ("refused", None, "http_403")), (429, ("refused", None, "http_429")),
+                             (404, ("absent", None, "http_404")), (500, ("error", None, "http_500")), (200, ("ok", b"x", "http_200"))):
+        monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", pool_for(status, b"x"))
+        assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=10) == expected
+    assert access_profile.read_public_file("example.com", "/robots.txt", cap_bytes=10) == ("ok", b"x")
 
 
 def test_official_paths_hit_subdomain_and_miss():

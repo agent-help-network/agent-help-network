@@ -94,6 +94,21 @@ def test_recommendation_prefers_declared_policy_and_official_paths():
     assert recommendation("site_access", incident, _profile(["ChatGPT-User"], []), official)["action"] == "wait_provider_incident"
 
 
+def test_refused_robots_read_is_a_hint_not_a_declaration():
+    official = {"name": "Example", "api_docs": "https://developer.example.com/", "developer_portal": None, "note": None}
+    refused = {"robots_status": "refused", "robots": None, "robots_detail": "http_503", "llms_txt_status": "refused", "freshness": "fresh"}
+    assert recommendation("site_access", None, refused, official) == {"action": "use_official_path", "confidence": "medium", "reasons": ["robots_fetch_refused", "official_path_available"]}
+    assert recommendation("site_access", None, refused, None) == {"action": "unknown", "confidence": "medium", "reasons": ["robots_fetch_refused"]}
+    codes = [c["code"] for c in next_checks("site_access", None, "no_reports", None, refused, None)]
+    assert codes == ["locate_failure_stage", "robots_fetch_refused", "provider_unknown", "reports_unknown"]
+    # A human-verification step still hands off first.
+    assert recommendation("human_verification", None, refused, official)["action"] == "hand_off_to_human"
+    # A subdomain lookup says why the layer is empty instead of staying silent.
+    assert recommendation("site_access", None, None, None, profile_not_read=True) == {"action": "unknown", "confidence": "low", "reasons": ["profile_not_read"]}
+    assert [c["code"] for c in next_checks("site_access", None, "no_reports", None, None, None, profile_not_read=True)] == ["locate_failure_stage", "profile_not_read", "provider_unknown", "reports_unknown"]
+    assert "profile_not_read" not in [c["code"] for c in next_checks("site_access", None, "no_reports", None, None, None)]
+
+
 def test_next_checks_lists_declared_policy_before_provider_and_reports():
     codes = [c["code"] for c in next_checks("site_access", None, "no_reports", None, _profile([], ["GPTBot"], llms="present"),
                                             {"name": "E", "api_docs": "https://d.example/", "developer_portal": None, "note": None})]

@@ -312,13 +312,18 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     # Layer 1: the host's own declared policy; layer 2: curated official paths.
     # Both are independent of reports, so a lookup answers before any observation exists.
     access_profile = None
+    profile_not_read = False
     official = official_paths(site_host) if settings.public_mode and not test_query else None
-    if settings.public_mode and not test_query and aggregate_eligible_host(site_host):
-        try:
-            access_profile = get_profile(settings, site_host)
-        except Exception:
-            # The declared-policy layer must never turn a lookup into an error.
-            access_profile = None
+    if settings.public_mode and not test_query:
+        if aggregate_eligible_host(site_host):
+            try:
+                access_profile = get_profile(settings, site_host)
+            except Exception:
+                # The declared-policy layer must never turn a lookup into an error.
+                access_profile = None
+        else:
+            # Subdomain or tenant host: say so instead of leaving the layer silently empty.
+            profile_not_read = True
     if access_profile is not None:
         access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
     recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
@@ -362,9 +367,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         "lookup_activity": lookup_activity,
         "access_profile": access_profile,
         "official_paths": official,
-        "recommendation": recommendation(error_class, provider_status, access_profile, official),
+        "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read),
         "failure_stage": failure_stage,
-        "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official),
+        "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
+                                   profile_not_read=profile_not_read),
     }
 
 
