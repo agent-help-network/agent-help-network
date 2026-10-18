@@ -4,10 +4,16 @@ Thanks for helping. Agent Help Network is a small public beta run by a single op
 
 ## Run the tests
 
-The full suite needs PostgreSQL 17 and a **dedicated** database named exactly `ahn_test`. The suite refuses to reset any database with another name. Never point tests or scripts at a production database URL, and never put real data in `ahn_test`.
+The full suite needs Python 3.12 (the version CI uses) and PostgreSQL 17 with a **dedicated** database named exactly `ahn_test`. The suite refuses to reset any database with another name. Never point tests or scripts at a production database URL, and never put real data in `ahn_test`.
 
 - **Windows, local setup from the README:** follow [Run it locally](README.md#run-it-locally-windows-powershell), then run `.\scripts\start-local.ps1 -Component Test`. It reads `test_database_url` from your local config outside the repository.
-- **Any platform, the same way CI does it** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+- **Any platform, the same way CI does it** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Start a throwaway PostgreSQL 17 for the tests, for example with Docker, or use a local PostgreSQL 17 server and create `ahn_test` there with `createdb`:
+
+  ```bash
+  docker run -d --name ahn-test-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ahn_test -p 127.0.0.1:5432:5432 postgres:17
+  ```
+
+  Then run the suite:
 
   ```bash
   python -m pip install -r requirements-dev.txt
@@ -17,13 +23,16 @@ The full suite needs PostgreSQL 17 and a **dedicated** database named exactly `a
   python -m pytest -q
   ```
 
+- Without `AHN_TEST_DATABASE_URL`, the database-backed tests are skipped rather than failed, so a passing run without it has not exercised them. Check the skipped count in the summary.
+- [`tests/test_status_upgrade.py`](tests/test_status_upgrade.py) needs a database role with `CREATEDB`: it creates and drops temporary `ahn_upgrade_*` databases, and runs only against a loopback server. The `postgres` superuser in the Docker example has that right.
+
 Tests must not reach real hosts. [`tests/conftest.py`](tests/conftest.py) disables live `robots.txt`/`llms.txt` reads by default; tests that need the access-profile layer pass a stub reader.
 
 ## Pull requests
 
 - Open a pull request against `main`. The `pytest` check must pass before merge; `main` is protected by a ruleset that requires it. Merging to `main` deploys to production.
 - Keep one topic per pull request. Say what changed, why, and how you tested it.
-- Repository content is in English. Korean files stay Korean; when you change [README.md](README.md) or [docs/api-contract.en.md](docs/api-contract.en.md), update [README.ko.md](README.ko.md) or [docs/api-contract.md](docs/api-contract.md) so they say the same thing. Website text must exist in both English and Korean.
+- New content is in English; existing Korean documents stay Korean. When you change [README.md](README.md) or [docs/api-contract.en.md](docs/api-contract.en.md), update [README.ko.md](README.ko.md) or [docs/api-contract.md](docs/api-contract.md) so they say the same thing. Website text must exist in both English and Korean.
 - Record product decisions in [docs/decisions.md](docs/decisions.md).
 - New `official_paths` entries must be publisher-owned developer documentation you actually checked. Leave a host out when unsure.
 - Contributions are licensed under [Apache-2.0](LICENSE), the project license.

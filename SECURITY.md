@@ -12,8 +12,10 @@ A single operator runs this public beta, so responses are best effort. Only the 
 - The code in this repository, for example:
   - exposure of unpublished, hidden, or withdrawn observations, reporter identifiers, withdrawal tokens, or secrets;
   - bypassing withdrawal-token checks, idempotency, rate limits, or the intake pause;
-  - making the `robots.txt`/`llms.txt` reader or the provider-status reader request non-public addresses, follow redirects beyond the single apex → `www.` hop, fetch other paths, or exceed its size caps;
-  - injection, cross-site scripting, or access to the operator monitor from outside loopback.
+  - making the `robots.txt`/`llms.txt` reader request non-public addresses, read from a host other than the looked-up apex and its own `www.` alias, follow redirects beyond the single hop to that alias, fetch other paths, or exceed its size caps;
+  - making the provider-status reader request non-public addresses, follow redirects, or exceed its size caps;
+  - authentication bypass of the operator page `/owner` (an IP allow list, or Basic auth when no allow list is configured);
+  - injection, cross-site scripting, or access to the loopback operator monitor from outside loopback.
 
 ## Out of scope
 

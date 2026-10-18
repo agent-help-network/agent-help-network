@@ -18,14 +18,14 @@ This is the English version of the [Korean API contract](api-contract.md); both 
 
 Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`.
 
-Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs and returns the same structure.
+Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs except `window_hours` (it always uses the default 24 hours) and returns the same structure.
 
-A live public response for `github.com` (`error_class=site_access`, captured 2026-10-18), trimmed: `robots.rules` has one entry per known agent token (22 tokens) and is cut to three here, and `next_checks[].text` is shortened.
+A public response for `github.com` (`error_class=site_access`), captured from the live service on 2026-10-18 and trimmed: `robots.rules` has one entry per known agent token (22 tokens) and is cut to three here, path-sample lists are cut to at most three entries, and `next_checks[].text` is shortened. `robots_detail`, `llms_detail`, the path samples, `read_host`, and `provider_status.error_detail` are shown as a fresh read under this contract returns them (the profile cached at capture time predated them). `llms_detail: too_large` with `llms_txt_status: present` means the host's `llms.txt` exists but is larger than the 4 KB cap.
 
 ```json
 {
   "site_host": "github.com",
-  "generated_at": "2026-10-18T04:41:37.175110Z",
+  "generated_at": "2026-10-18T05:26:34.687021Z",
   "synthetic": false,
   "window_hours": 24,
   "data_horizon_hours": 168,
@@ -41,9 +41,10 @@ A live public response for `github.com` (`error_class=site_access`, captured 202
     "source_name": "GitHub Status",
     "source_url": "https://www.githubstatus.com/",
     "indicator": "none",
-    "fetched_at": "2026-10-18T04:41:37.171405Z",
-    "source_updated_at": "2026-10-18T02:29:25.654000Z",
-    "freshness": "fresh"
+    "fetched_at": "2026-10-18T05:26:34.684158Z",
+    "source_updated_at": "2026-10-18T04:44:16.876000Z",
+    "freshness": "fresh",
+    "error_detail": null
   },
   "provider_source_state": "feed_connected",
   "provider_discovery_attempted_at": null,
@@ -53,16 +54,25 @@ A live public response for `github.com` (`error_class=site_access`, captured 202
     "robots_status": "ok",
     "robots": {
       "rules": [
-        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 162},
-        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 162},
-        {"agent": "Bytespider", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1}
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 162,
+         "crawl_delay": null, "disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"]},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 162,
+         "crawl_delay": 1.0, "disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"]},
+        {"agent": "Bytespider", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1,
+         "crawl_delay": null, "disallow_paths": ["/"]}
       ],
       "wildcard_root_allowed": true,
       "sitemap": false,
+      "sitemaps": [],
+      "wildcard_crawl_delay": null,
+      "wildcard_disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"],
       "agents_blocked": ["Bytespider"],
       "agents_allowed": ["OAI-SearchBot", "PerplexityBot", "Bingbot", "GPTBot", "ClaudeBot", "anthropic-ai"]
     },
+    "robots_detail": "http_200",
     "llms_txt_status": "present",
+    "llms_detail": "too_large",
+    "read_host": "github.com",
     "source_urls": {"robots_txt": "https://github.com/robots.txt", "llms_txt": "https://github.com/llms.txt"},
     "fetched_at": "2026-10-18T03:53:58.695938Z",
     "freshness": "fresh",
@@ -104,7 +114,7 @@ In local test mode a `.test` lookup returns the same top-level fields with `synt
 - `provider_status` is present only when a **verified official status source** exists for the host. It carries `source_name`, `source_url`, `indicator` (`none`, `minor`, `major`, `critical`, `unknown`, or `null`), `source_updated_at`, `fetched_at`, `freshness` (`fresh`, `pending`, `stale`; older than 2 hours or failed since the last success is `stale`), and `error_detail`: `null` unless the latest feed read failed, then a short label for why — `http_NNN` (the feed's HTTP status; redirects are not followed, so they appear as `http_301` and the like), `timeout`, `dns_failed`, `connect_error`, `tls_error`, `read_error`, `too_large`, `invalid_body`, or for discovered Statuspage sources `no_cname`, `id_mismatch`, `not_public`; `error` is the fallback. It describes the read of the status feed, not the user's target site.
 - Without a fixed mapping, the first lookup checks whether `status.<host>` is delegated to Statuspage and, if verified, reads the official API in the same response. Requests within 15 seconds share one result. A server job then refreshes registered sources about hourly. A failed refresh marks the previous value `stale`, records why in `error_detail`, and is retried on the next run.
 - `indicator: none` means the provider's status API shows no active issue. It does not guarantee that a given agent's sign-in or access will succeed. Provider status never overwrites another source's data.
-- `provider_source_state` is `feed_connected`, `official_page_only`, or `not_verified_by_current_methods`. With `official_page_only`, `official_status_page` gives only a source name and URL, not a current reading (the page-only mappings confirmed so far are Netflix and Webex). `not_verified_by_current_methods` means the current discovery methods could not verify a source, not that the provider has no status API.
+- `provider_source_state` is `feed_connected`, `official_page_only`, or `not_verified_by_current_methods`. With `official_page_only`, `official_status_page` gives only a source name and URL, not a current reading. The page-only mapping (`OFFICIAL_STATUS_PAGES` in `ahn/status_refresh.py`) currently covers 23 hosts, for example Netflix, Webex, Adobe, and Microsoft 365, and is used only when no feed is connected for the host. `not_verified_by_current_methods` means the current discovery methods could not verify a source, not that the provider has no status API.
 - `provider_discovery_attempted_at` is the time of the host's last automatic discovery attempt, or `null` if none is recorded.
 
 ### Lookup activity
@@ -115,19 +125,21 @@ In local test mode a `.test` lookup returns the same top-level fields with `synt
 
 `access_profile` is the host's **declared** agent policy, read from its own `robots.txt` and `llms.txt`. It is `null` outside public mode, for hosts that are not eligible public apex hosts, and if the layer fails; a read failure never turns a lookup into an error.
 
-- `robots_status`: `ok`, `absent` (404/410), `redirected` (a 3xx other than the single apex → `www.` hop, not followed), `refused` (the host's edge answered 401/403/429/503 to a plain robots.txt read from a public data-center address — a strong hint, not a declaration), `invalid` (a web page came back instead of a policy file: soft 404), `error` (transport failure: DNS, TLS, connect; retried after one hour), `too_large` (over 256 KB), `not_public` (the host does not resolve only to public IPs), or `pending`. When it is not `ok`, `robots` is `null` or the last successful value, and the policy layer is **inconclusive**, not a block — except `refused`, which the recommendation treats as a hint to prefer the official path.
-- `robots_detail` / `llms_detail`: a short machine label saying why a read ended as it did — `http_200`, `http_403`, `http_503`, `redirect:<host>`, `dns_timeout`, `dns_failed`, `connect_error`, `html_body`, `too_large`, `not_public`. When the apex host fails or refuses, the `www.` alias is read as a fallback and `source_urls` then point at it.
-- `robots.rules[].crawl_delay` (seconds, from the applicable group) and `robots.rules[].disallow_paths` (up to 6 sample disallowed path prefixes) qualify a `root_allowed: true`: a host may allow `/` while disallowing search, cart, or account paths. `robots.sitemaps` lists up to 5 declared sitemap URLs; `robots.wildcard_crawl_delay` and `robots.wildcard_disallow_paths` describe the `*` group.
-- `robots.rules`: one entry per agent token the service knows, computed with RFC 9309 matching. `kind` is `user_agent`, `search_crawler`, or `training_crawler`. `explicit_group` says whether the file names a group for that token; `root_allowed` says whether `/` may be fetched; `disallow_count` is the number of non-empty Disallow lines that apply. Tokens without their own group inherit the `*` group.
-- `robots.agents_blocked`: tokens with an explicit group that disallows the root. `robots.agents_allowed`: tokens with an explicit group that allows it. Nothing is said about tokens that are not listed. `wildcard_root_allowed` is the `*` group's root decision, and `sitemap` says whether the file declares a sitemap.
-- `llms_txt_status`: `present`, `absent` (including a soft-404 page, see `llms_detail: html_body`), `refused`, `error`, `redirected`, `not_public`, or `pending`. Only presence is recorded; the content is neither stored nor passed on.
-- `source_urls`: the two file URLs on the looked-up host. `fetched_at`: last successful read (UTC). `freshness`: `fresh` (within 24 hours), `stale`, or `pending`. `note`: a fixed English caveat.
-- Reads happen at most once per host per day, success or failure. A lookup with a fresh cache makes no network request. Hosts on the public seed list `ahn/seed_hosts.txt` are pre-read by the review cron (`python -m ahn.auto_review`: up to 10 per 5-minute run, `AHN_WARM_BATCH`, `0` disables) and re-read about weekly, under the same limits (`ahn/profile_warm.py`).
+- **What is read.** Only `/robots.txt` (cap 256 KB) and `/llms.txt` (cap 4 KB, presence only), on the eligible apex host or its own `www.` alias. A 3xx is followed only when it points to the same path on the host's own `www.` alias (one hop); any other redirect is recorded as `redirected` and not followed. If the apex `robots.txt` read ends as `error`, `refused`, `redirected`, or `invalid`, `https://www.<host>/robots.txt` is read once as a fallback and replaces the apex result when it ends as `ok`, `absent`, or `too_large`. `llms.txt` is read from the host that supplied `robots.txt`. One attempt makes at most five HTTPS requests: the apex `robots.txt`, one hop to the `www.` alias, the `www.` fallback, `llms.txt`, and its hop.
+- `robots_status`: `ok`, `absent` (404/410), `redirected` (a 3xx other than the single hop to the host's own `www.` alias, not followed), `refused` (the host's edge answered 401/403/429/503 to a plain robots.txt read from a public data-center address — a strong hint, not a declaration), `invalid` (a web page came back instead of a policy file: soft 404), `error` (transport failure: DNS, TLS, connect, timeout, or any HTTP status other than 200, 3xx, 401, 403, 404, 410, 429, and 503), `too_large` (over 256 KB), `not_public` (the host does not resolve only to public IPs), or `pending`. A transport failure never overwrites an earlier answer: `robots_status`, `robots`, `llms_txt_status`, `llms_detail`, and `fetched_at` keep the last definitive read, `freshness` becomes `stale`, and `robots_detail` carries the failure label. `error` therefore appears only before any definitive read, with `freshness: pending`. `robots` is non-null only when `robots_status` is `ok`. When the status is not `ok`, the policy layer is **inconclusive**, not a block — except `refused`, which the recommendation treats as a hint to prefer the official path.
+- `robots_detail` / `llms_detail`: a short machine label saying why a read ended as it did — `http_<status>` for any HTTP answer (`http_200`, `http_401`, `http_403`, `http_404`, `http_410`, `http_429`, `http_500`, `http_503`, ...), `redirect:<host>` (the whole label cut to 32 characters; `http_3xx` when the redirect names no host), `dns_timeout`, `dns_failed`, `connect_error` (also covers TLS errors and timeouts), `html_body`, `too_large`, `not_public`, or `invalid_input`. After a transport failure, `robots_detail` describes that failure while the rest of the profile shows the last definitive read. Both can be `null` for a profile cached before these labels existed.
+- `read_host`: the host that actually supplied the files — the looked-up apex host, or its `www.` alias after the fallback.
+- `robots.rules[].crawl_delay` (seconds, from the applicable group) and `robots.rules[].disallow_paths` (up to 6 sample disallowed path prefixes, 80 characters each) qualify a `root_allowed: true`: a host may allow `/` while disallowing search, cart, or account paths. `robots.sitemaps` lists up to 5 declared sitemap URLs; `robots.wildcard_crawl_delay` and `robots.wildcard_disallow_paths` describe the `*` group. Only these parsed values and the read status are stored; the rest of the file is not.
+- `robots.rules`: one entry per agent token the service knows, computed with RFC 9309 precedence (longest matching rule wins, Allow wins a tie) and lenient prefix matching of user-agent names: a group whose user-agent name has 3 or more characters also applies to every known token that starts with that name (case-insensitive). `kind` is `user_agent`, `search_crawler`, or `training_crawler`. `explicit_group` says whether the file names a group for that token; `root_allowed` says whether `/` may be fetched; `disallow_count` is the number of non-empty Disallow lines that apply. Tokens without their own group inherit the `*` group.
+- `robots.agents_blocked`: tokens with an explicit group that disallows the root. `robots.agents_allowed`: tokens with an explicit group that allows it. Nothing is said about tokens that are not listed. `wildcard_root_allowed` is the `*` group's root decision, and `sitemap` says whether the file declares a sitemap. A file whose only root block is the `*` group and that has no group naming an agent token is reported through the recommendation and `next_checks` as `robots_wildcard_disallow`, never as "allows agents".
+- `llms_txt_status`: `present` (including a file over the 4 KB cap, `llms_detail: too_large`), `absent` (including a soft-404 page, see `llms_detail: html_body`), `refused`, `error`, `redirected`, `not_public`, or `pending`. Only presence is recorded; the content is neither stored nor passed on.
+- `source_urls`: the two file URLs on `read_host`, the host that actually supplied the file (the apex or its `www.` alias), so they always point at the file that was read. `fetched_at`: the last definitive read (UTC). `freshness`: `fresh` (a definitive read within 24 hours and no transport failure since), `stale` (older, or a transport failure since), or `pending` (no definitive read yet). `note`: a fixed English caveat.
+- **Cache and retry.** A definitive answer (`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`) is cached for 24 hours. A transport failure (DNS, TLS, connect, timeout, unexpected HTTP status) is retried after one hour. A lookup inside the cache window makes no network request, and concurrent lookups of one host in one app instance wait for a single read. Hosts on the public seed list `ahn/seed_hosts.txt` are pre-read by the review cron (`python -m ahn.auto_review`: 10 per 5-minute run by default, `AHN_WARM_BATCH`, `0` disables) and re-read about weekly, under the same limits (`ahn/profile_warm.py`); a transport failure is retried after an hour, including for a host that already had an answer.
 - **Declared policy is not an access guarantee.** `root_allowed: true` does not mean a request will succeed; CDNs, bot filters, logins, and rate limits can treat a user-directed agent differently from a crawler. An Allow line does not replace the site's terms. Conversely, if the agent's own user-agent family is in `agents_blocked`, the expected behavior is to stop retrying that page and hand off to the user or use the official path.
 
 ### Official paths layer
 
-`official_paths` comes from a curated table in code (`ahn/official_paths.py`) and has only `name`, `api_docs`, `developer_portal`, and `note`; any of the last three can be `null`, and the whole object is `null` for hosts not in the table. Only hosts whose public developer documentation was actually checked are listed. `null` does not mean no official path exists. Listing is not an endorsement or affiliation, and using an official API usually requires the user's own credentials and the provider's terms.
+`official_paths` comes from a curated table in code (`ahn/official_paths.py`) and has only `name`, `api_docs`, `developer_portal`, and `note`; any of the last three can be `null`, and the whole object is `null` for hosts not in the table. A subdomain matches its apex entry (`api.github.com` gets the `github.com` entry). An entry with only a `note` (for example, "No public API") is shown but does not count as an available official path for the recommendation or `official_path_available`; that needs `api_docs` or `developer_portal`. Only hosts whose public developer documentation was actually checked are listed. `null` does not mean no official path exists. Listing is not an endorsement or affiliation, and using an official API usually requires the user's own credentials and the provider's terms.
 
 How the table is curated and verified (2026-10-18):
 
@@ -149,13 +161,17 @@ How the table is curated and verified (2026-10-18):
 | `wait_provider_incident` | `provider_status.freshness` is `fresh` and `indicator` is `minor`, `major`, or `critical`. | medium | `provider_scope` |
 | `hand_off_to_human` | `error_class=human_verification` | high | `human_handoff` |
 | `hand_off_to_human` | `error_class=login_auth` | medium | `account_handoff` |
-| `use_official_path` | Declared block (below) and an official path with `api_docs` or `developer_portal`. | high | `robots_blocks_agents`, `official_path_available` |
+| `use_official_path` | Declared block (below) and an official path is listed. | high | `robots_blocks_agents`, `official_path_available` |
 | `stop_declared_block` | Declared block and no official path. | medium | `robots_blocks_agents` |
+| `use_official_path` | `robots_status` is `refused` and an official path is listed. | medium | `robots_fetch_refused`, `official_path_available` |
+| `unknown` | `robots_status` is `refused` and no official path. | medium | `robots_fetch_refused` |
+| `use_official_path` | Wildcard-only disallow (below) and an official path is listed. | medium | `robots_wildcard_disallow`, `official_path_available` |
+| `unknown` | Wildcard-only disallow and no official path. | low | `robots_wildcard_disallow` |
 | `use_official_path` | Official path listed and `error_class` absent, `site_access`, or `service_error`. | medium | `official_path_available` |
-| `proceed` | `robots_status` is `ok` with no declared block. | low | `robots_allows_agents` |
-| `unknown` | Anything else, such as unreadable `robots.txt` or no access profile. | low | `robots_unknown` when an access profile exists, otherwise empty |
+| `proceed` | `robots_status` is `ok` with neither a declared block nor a wildcard-only disallow. | low | `robots_allows_agents` |
+| `unknown` | Anything else. | low | `robots_unknown` when an access profile exists (for example, unreadable `robots.txt`); `profile_not_read` when the hostname is a subdomain or tenant host in public mode; otherwise empty |
 
-A **declared block** means `robots_status` is `ok` and at least one `user_agent` or `search_crawler` token has an explicit group that disallows the root. Training-crawler blocks appear in `agents_blocked` but do not trigger it.
+"An official path is listed" means `official_paths` has `api_docs` or `developer_portal`; a `note`-only entry does not count. A **declared block** means `robots_status` is `ok` and at least one `user_agent` or `search_crawler` token has an explicit group (a group that names it) that disallows the root. Training-crawler blocks appear in `agents_blocked` but do not trigger it. A **wildcard-only disallow** means `robots_status` is `ok`, the file's only root block is the `*` group (`User-agent: *` with `Disallow: /`), and no group names an agent token. It is not a declared block and is never reported as "allows agents": treat it as not inviting automation, prefer an official path, and do not read it as permission.
 
 ### `next_checks`
 
@@ -163,7 +179,7 @@ A **declared block** means `robots_status` is `ok` and at least one `user_agent`
 
 1. `failure_stage` value if given and not `unknown` (`before_target_response`, `response_observed`, `access_denial_observed`); otherwise `locate_failure_stage`, unless `error_class` is `human_verification` or `login_auth`.
 2. `human_handoff` (`error_class=human_verification`) or `account_handoff` (`error_class=login_auth`).
-3. When an access profile exists: `robots_fetch_refused` (`robots_status` is `refused`), `robots_unknown` (any other non-`ok` status), `robots_blocks_agents` (declared block), or `robots_allows_agents`; then `llms_txt_present` when `llms_txt_status` is `present`. When no profile was read because the hostname is a subdomain or tenant host, `profile_not_read` says so and points at the apex host.
+3. Declared profile. When no profile was read because the hostname is a subdomain or tenant host, `profile_not_read` says so and points at the apex host. When an access profile exists: `robots_fetch_refused` (`robots_status` is `refused`), `robots_unknown` (any other non-`ok` status), `robots_blocks_agents` (declared block), `robots_wildcard_disallow` (wildcard-only disallow), or `robots_allows_agents`; then `llms_txt_present` when `llms_txt_status` is `present`.
 4. `official_path_available` when an official path with `api_docs` or `developer_portal` is listed.
 5. `provider_scope` (fresh active issue), `provider_clear` (fresh `indicator: none`), or `provider_unknown` (no fresh feed, or another indicator).
 6. `reports_unknown` (`no_reports`), `reports_stale` (`stale_reports`), or `reports_unverified` (any other evidence level).
@@ -176,9 +192,12 @@ A **declared block** means `robots_status` is `ok` and at least one `user_agent`
 | `access_denial_observed` | An access denial was observed; follow the site's stated policy and do not bypass its controls. |
 | `human_handoff` | Human verification needs the user's participation through the normal handoff; do not bypass it. |
 | `account_handoff` | The step may need the user's sign-in or account permission; never request or share credentials through this service. |
-| `robots_blocks_agents` | `robots.txt` explicitly disallows an agent user agent at the root; stop automated retries, prefer the official path, hand off where needed. |
-| `robots_allows_agents` | `robots.txt` does not disallow the listed agent user agents at the root; not an access guarantee, keep requests modest. |
-| `robots_unknown` | No `robots.txt` policy could be read; treat the policy as unknown, not permissive. |
+| `profile_not_read` | Declared policy is read only for public apex hosts, and this hostname is a subdomain or tenant host, so no `robots.txt` was read for it; look up the apex host for the site-wide declaration (the subdomain may still have its own rules). |
+| `robots_fetch_refused` | The host's edge refused even a plain `robots.txt` read from a data-center address with an honest bot user agent (see `robots_detail`); expect page automation from a similar environment to be refused too, prefer the official path, and hand off if the step needs the user. |
+| `robots_unknown` | No `robots.txt` policy could be read (absent, redirected, or unreachable within limits); treat the policy as unknown, not permissive. |
+| `robots_blocks_agents` | A `robots.txt` group naming an agent user agent disallows the site root (see `robots.agents_blocked`); stop automated retries, prefer the official path, hand off where needed. |
+| `robots_wildcard_disallow` | This host's `robots.txt` disallows the site root for every crawler it does not name and names no agent user agent; treat it as not inviting automation, prefer an official path, and do not read it as permission. |
+| `robots_allows_agents` | `robots.txt` does not disallow the listed agent user agents at the root; not an access guarantee, keep requests modest and honor any Crawl-delay. |
 | `llms_txt_present` | The host publishes `llms.txt`; read it first. |
 | `official_path_available` | An official developer path is listed; prefer it over page automation. |
 | `provider_scope` | The provider reports an active issue; compare affected services and update time with the blocked step. |
@@ -235,7 +254,7 @@ In local test mode, requires the same reporter's key (public mode uses a withdra
 
 `/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident` and `report_observation`.
 
-`check_incident` creates no report but has server-side effects: host registration, a daily per-host lookup count, and at most one `robots.txt`/`llms.txt` read per host per day. Because these never change what the caller sees, it is annotated `readOnlyHint=true` and `idempotentHint=true` from 2026-10-17. MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
+`check_incident` creates no report but has server-side effects: host registration, a daily per-host lookup count, and a cached `robots.txt`/`llms.txt` read (a definitive answer is reused for 24 hours; a transport failure is retried after one hour). Because these never change what the caller sees, it is annotated `readOnlyHint=true` and `idempotentHint=true` from 2026-10-17. MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
 
 ## Public intake contract
 

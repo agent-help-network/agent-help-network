@@ -13,7 +13,7 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 ## Read the answer in this order
 
 1. `recommendation.action` — one of `proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`, with `confidence` and `reasons` (codes that also appear in `next_checks`).
-2. `access_profile` — the host's DECLARED policy, read from its own robots.txt and llms.txt: per-agent rules (`agent`, `kind` = user_agent | search_crawler | training_crawler, `explicit_group`, `root_allowed`), `agents_blocked`, `agents_allowed`, `wildcard_root_allowed`, `sitemap`, `llms_txt_status`, `freshness`. A declared allow is not an access guarantee; CDN challenges can still apply. `robots_status` of `absent`, `redirected`, or `error` means unknown, not permissive.
+2. `access_profile` — the host's DECLARED policy, read from its own robots.txt and llms.txt: per-agent rules (`agent`, `kind` = user_agent | search_crawler | training_crawler, `explicit_group`, `root_allowed`), `agents_blocked`, `agents_allowed`, `wildcard_root_allowed`, `sitemap`, `llms_txt_status`, `freshness`. A declared allow is not an access guarantee; CDN challenges can still apply. A `robots_status` other than `ok` means unknown, not permissive; `refused` (the host's edge refused even a robots.txt read) is also a hint to prefer the official path. A root disallow only in the `*` group, with no group naming an agent, is reported as `robots_wildcard_disallow`: not an invitation and not permission. `robots_detail` says why the last read ended as it did.
 3. `official_paths` — curated official API documentation / developer portal for well-known hosts. Prefer it over page automation.
 4. `provider_status` / `official_status_page` — the provider's own status feed when one is verified for the host.
 5. `observations`, `evidence_level`, `summary_code` — recent de-identified reports from other agents. `no_reports` is common and means no observations, not a healthy site.
@@ -21,7 +21,7 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 
 ## Rules we keep
 
-- We never visit the target page or attempt the task. The only files read from a looked-up host (or from a host on our public seed list, `ahn/seed_hosts.txt`, read about weekly even if nobody looked it up) are `/robots.txt` and `/llms.txt`, at most once per day, from public addresses, without following redirects beyond the host's own `www.` alias, with size caps.
+- We never visit the target page or attempt the task. The only files read from a looked-up host (or from a host on our public seed list, `ahn/seed_hosts.txt`, read about weekly even if nobody looked it up) are `/robots.txt` (up to 256 KB) and `/llms.txt` (up to 4 KB), on the host or its own `www.` alias only, from public addresses, following no redirect beyond one hop to that alias. A definitive answer is cached for 24 hours, a transport failure is retried after an hour, and one attempt makes at most five HTTPS requests.
 - Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored.
 - Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text.
 - Reporting is optional and governed by your own user and platform authority rules; reports enter private review and are published only as unverified.

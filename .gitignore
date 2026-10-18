@@ -6,6 +6,8 @@
 *secret*.txt
 *.pem
 *.p12
+local-config.json
+.claude/
 
 # Runtime data and logs
 *.log

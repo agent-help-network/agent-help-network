@@ -34,6 +34,8 @@
   <div class="ledger-source-summary">
     {% if robots and robots.get('agents_blocked') %}
       <strong>{{ 'robots.txt names blocked agents' if lang == 'en' else 'robots.txt 가 차단 에이전트를 명시함' }}</strong> · {{ 'The host’s own file disallows the root path for' if lang == 'en' else '호스트 자체 파일이 다음 에이전트의 루트 경로를 금지합니다:' }} {{ robots.get('agents_blocked')|join(', ') }}. {{ 'Declared policy only; see the table below.' if lang == 'en' else '선언된 정책이며 아래 표를 확인하세요.' }}
+    {% elif robots and 'robots_wildcard_disallow' in (signals.next_checks or [])|map(attribute='code')|list %}
+      <strong>{{ 'robots.txt disallows the root for every crawler it does not name' if lang == 'en' else 'robots.txt 가 이름을 지목하지 않은 모든 크롤러의 루트를 금지함' }}</strong> · {{ 'The wildcard (*) group disallows / and no group names an agent. Not a declared block of agents, but not an invitation to automate either; prefer an official path and do not read it as permission.' if lang == 'en' else '와일드카드(*) 그룹이 / 를 금지하고 에이전트를 지목한 그룹은 없습니다. 에이전트 차단 선언은 아니지만 자동화를 청한 것도 아니니 공식 경로를 우선하고 허락으로 읽지 마세요.' }}
     {% elif robots and robots.get('rules') %}
       <strong>{{ 'robots.txt read; no listed agent is blocked at the root' if lang == 'en' else 'robots.txt 확인, 목록의 에이전트 중 루트 차단 없음' }}</strong> · {{ 'Declared crawler policy is not an access guarantee.' if lang == 'en' else '선언된 크롤러 정책은 접근 보장이 아닙니다.' }}
     {% elif ap and ap.get('robots_status') == 'refused' %}
@@ -65,13 +67,13 @@
       {% elif ap and ap.get('robots_status') == 'redirected' %}
         <p><strong>{{ 'robots.txt redirected away; not followed' if lang == 'en' else 'robots.txt 가 다른 곳으로 리디렉션됨, 따라가지 않음' }}</strong>{% if ap.get('robots_detail') %} ({{ ap.get('robots_detail') }}){% endif %}. {{ 'Only a redirect to the host’s own www alias is followed, so the declared policy is unknown.' if lang == 'en' else '호스트 자신의 www 별칭으로 가는 리디렉션만 따라가므로 선언된 정책은 미상입니다.' }}</p>
       {% elif ap and ap.get('robots_status') == 'too_large' %}
-        <p><strong>{{ 'robots.txt exceeded our 64 KB cap; not parsed.' if lang == 'en' else 'robots.txt 가 64 KB 한도를 넘어 해석하지 않음.' }}</strong></p>
+        <p><strong>{{ 'robots.txt exceeded our 256 KB cap; not parsed.' if lang == 'en' else 'robots.txt 가 256 KB 한도를 넘어 해석하지 않음.' }}</strong></p>
       {% elif ap and ap.get('robots_status') == 'not_public' %}
         <p><strong>{{ 'Host did not resolve to public addresses only; nothing was read.' if lang == 'en' else '호스트가 공개 주소로만 해석되지 않아 아무것도 읽지 않음.' }}</strong></p>
       {% elif ap %}
-        <p><strong>{{ 'robots.txt read failed or is pending' if lang == 'en' else 'robots.txt 읽기 실패 또는 대기 중' }}</strong> ({{ ap.get('robots_status') or 'pending' }}{% if ap.get('robots_detail') %} · {{ ap.get('robots_detail') }}{% endif %}). {{ 'The declared policy is unknown; this is not evidence of a block. Transport failures are retried within an hour.' if lang == 'en' else '선언된 정책은 미상이며 차단의 증거가 아닙니다. 전송 실패는 1시간 안에 다시 시도합니다.' }}</p>
+        <p><strong>{{ 'robots.txt read failed or is pending' if lang == 'en' else 'robots.txt 읽기 실패 또는 대기 중' }}</strong> ({{ ap.get('robots_status') or 'pending' }}{% if ap.get('robots_detail') %} · {{ ap.get('robots_detail') }}{% endif %}). {{ 'The declared policy is unknown; this is not evidence of a block. Transport failures are retried after an hour.' if lang == 'en' else '선언된 정책은 미상이며 차단의 증거가 아닙니다. 전송 실패는 1시간 뒤 다시 시도합니다.' }}</p>
       {% else %}
-        <p>{{ 'Not read for this hostname. Only eligible public apex hosts are read, after a lookup, at most once per day.' if lang == 'en' else '이 호스트는 읽지 않았습니다. 공개 집계에 적합한 공개 루트 호스트만 조회 후 하루 최대 한 번 읽습니다.' }}</p>
+        <p>{{ 'Not read for this hostname. Only eligible public apex hosts are read after a lookup (cached for 24 hours); look up the apex host for the site-wide declaration.' if lang == 'en' else '이 호스트는 읽지 않았습니다. 공개 집계에 적합한 공개 루트 호스트만 조회 후 읽습니다(24시간 캐시). 사이트 전체 선언은 루트 호스트로 조회하세요.' }}</p>
       {% endif %}
       {% if ap %}
         <p>llms.txt: <strong>{% if ap.get('llms_txt_status') == 'present' %}{{ 'present' if lang == 'en' else '있음' }}{% elif ap.get('llms_txt_status') == 'absent' %}{{ 'absent' if lang == 'en' else '없음' }}{% else %}{{ 'unknown' if lang == 'en' else '미상' }} ({{ ap.get('llms_txt_status') or 'pending' }}){% endif %}</strong>{% if ap.get('llms_txt_status') == 'present' %} · {{ 'The host publishes an agent-oriented guide; we record presence only and do not relay its contents.' if lang == 'en' else '호스트가 에이전트용 안내 파일을 게시합니다. 존재 여부만 기록하며 내용은 전달하지 않습니다.' }}{% endif %}</p>

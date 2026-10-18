@@ -16,7 +16,7 @@
 
 ## `GET /v1/incidents/check`
 
-필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다.
+필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`, `failure_stage`. MCP `check_incident` 는 `window_hours` 를 받지 않고(항상 기본 24시간) 나머지 입력과 응답 구조는 같다. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다.
 
 ```json
 {
@@ -38,7 +38,7 @@
 
 `evidence_level`은 `no_reports`, `single_observation`, `multiple_observations`, `later_success_observed`, `stale_reports` 중 하나다. `current_site_status`는 이 관찰 API에서 항상 `unknown`이며 서비스 전체 상태 판정이 아니다. `reporting_sources`는 키로 구별되는 출처 수일 뿐 독립된 사람 수가 아니다. 성공과 실패가 모두 있으면 둘 다 보여준다. `no_reports`는 최근 7일 탐색 범위의 일치 기록이 없다는 뜻으로, 정상 또는 전체 기록 부재를 의미하지 않는다.
 
-`observations`의 원소는 `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, `synthetic`만 공개한다. 공개 모드에서는 정확한 시각·단계의 재식별 위험을 검토한 뒤 버킷을 사용한다. 내부 UUID 및 제보자 ID는 공개하지 않는다.
+`observations`의 원소는 `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, `synthetic`만 공개한다. 공개 모드에서는 재식별 위험을 줄이기 위해 `observed_at` 을 정시 단위로 내려서(분·초 절사) 공개한다. 내부 UUID 및 제보자 ID는 공개하지 않는다.
 
 ## `POST /v1/observations`
 
@@ -95,11 +95,11 @@
 
 `GET /v1/incidents/check`의 기존 `observations`와 `current_site_status: unknown`은 유지한다. 공개 루트 호스트는 첫 조회 시 내부 목록에 등록한다. `provider_status`는 **확인된 공식 상태 출처**가 있을 때만 값이 있으며, `source_name`, `source_url`, `indicator`, `source_updated_at`, `fetched_at`, `freshness`, `error_detail`을 담는다. 고정 연결 규칙이 없더라도 `status.<호스트>`가 Statuspage에 위임된 경우 첫 조회에서 안전하게 공식 API를 발견해 같은 응답에 싣는다. 15초 이내 중복 요청은 같은 결과를 쓴다. 이후 서버 작업이 등록된 공식 출처를 1시간 간격으로 갱신한다. 실패한 최신 조회는 이전 값을 `stale`로 표시하고 실패 사유를 `error_detail`에 짧은 라벨로 남긴다(`http_NNN`은 피드의 HTTP 상태이며 리디렉션은 따라가지 않으므로 `http_301` 같은 값으로 나타난다. 그 밖에 `timeout`, `dns_failed`, `connect_error`, `tls_error`, `read_error`, `too_large`, `invalid_body`, 발견된 Statuspage 출처의 `no_cname`·`id_mismatch`·`not_public`, 예비값 `error`). 이 라벨은 상태 피드 읽기에 대한 것이지 사용자의 대상 사이트에 대한 것이 아니며, 마지막 읽기가 성공이면 `null`이다. 다음 주기 작업에서 다시 시도한다. `indicator: none`은 업체 상태 API에 활성 문제가 표시되지 않았다는 뜻이며 개별 에이전트의 로그인·접속 성공을 보증하지 않는다. 다른 출처와 충돌해도 결과를 덮어쓰지 않는다.
 
-`provider_source_state`는 `feed_connected`, `official_page_only`, `not_verified_by_current_methods` 중 하나다. `official_page_only`일 때 `official_status_page`는 출처명과 URL만 제공하며 현재 상태를 읽은 값이 아니다. 현재 확인된 페이지 전용 연결은 Netflix와 Webex다. `not_verified_by_current_methods`는 업체가 API를 제공하지 않는다는 결론이 아니라 현 자동 발견 범위에서 출처를 검증하지 못했다는 뜻이다. `provider_discovery_attempted_at`은 해당 호스트의 마지막 자동 발견 시도 시각이며 `null`이면 기록이 없다. 자동 발견은 `status.<호스트>`의 검증된 Statuspage 위임만 확인하고, 발견되지 않은 다른 공식 API의 존재 여부는 `unknown`으로 남긴다. 연결된 피드의 실제 조회 실패는 `provider_status.freshness`가 `pending` 또는 `stale`로 나타난다.
+`provider_source_state`는 `feed_connected`, `official_page_only`, `not_verified_by_current_methods` 중 하나다. `official_page_only`일 때 `official_status_page`는 출처명과 URL만 제공하며 현재 상태를 읽은 값이 아니다. 페이지 전용 연결(`ahn/status_refresh.py` 의 `OFFICIAL_STATUS_PAGES`)은 현재 23개 호스트(예: Netflix, Webex, Adobe, Microsoft 365)이며, 그 호스트에 연결된 피드가 없을 때만 쓴다. `not_verified_by_current_methods`는 업체가 API를 제공하지 않는다는 결론이 아니라 현 자동 발견 범위에서 출처를 검증하지 못했다는 뜻이다. `provider_discovery_attempted_at`은 해당 호스트의 마지막 자동 발견 시도 시각이며 `null`이면 기록이 없다. 자동 발견은 `status.<호스트>`의 검증된 Statuspage 위임만 확인하고, 발견되지 않은 다른 공식 API의 존재 여부는 `unknown`으로 남긴다. 연결된 피드의 실제 조회 실패는 `provider_status.freshness`가 `pending` 또는 `stale`로 나타난다.
 
 `lookup_activity`는 공개 집계에 적합한 루트 호스트라면 첫 조회부터 나타난다. 값은 정확한 횟수 대신 `volume_band` (`1-4`, `5-9`, `10-49`, `50+`), `period_days: 7`, `unit: requests_not_agents`, 조건을 만족할 때의 `trend: increased`다. 독립 에이전트 수나 장애 발생 수를 세지 않는다. 조회량과 업체 상태는 `observations` 또는 `incidents`로 복사하지 않는다. 초기 데이터 설계(비공개 운영 기록)
 
-`next_checks`는 `code`와 영어 `text`로 된 짧은 점검 목록이다. 사람 확인·로그인, 선택적으로 전달된 실패 단계, 신선한 업체 발표의 신호, 제보 존재 여부로 정해지며 작업의 실제 결과나 원인을 추론하지 않는다. 사람용 화면은 같은 코드를 한국어로 표시한다. 목록은 사이트 우회 권한이나 자동 장애 판정이 아니다. 기존 `current_site_status: unknown` 의미는 유지한다.
+`next_checks`는 `code`와 영어 `text`로 된 짧은 점검 목록이다. 사람 확인·로그인, 선택적으로 전달된 실패 단계, 선언 정책 층(`access_profile`)과 공식 경로 층(`official_paths`), 신선한 업체 발표의 신호, 제보 존재 여부로 정해지며 작업의 실제 결과나 원인을 추론하지 않는다. 사람용 화면은 같은 코드를 한국어로 표시한다. 목록은 사이트 우회 권한이나 자동 장애 판정이 아니다. 기존 `current_site_status: unknown` 의미는 유지한다.
 
 선택적 `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`)는 **조회자가 확인한 상황**을 점검 안내에 반영한다. 대상 응답의 출처와 접근 거부의 원인은 서비스가 검증하지 않는다. 값은 조회 응답에 되돌려 주지만 제보·업체 상태·호스트별 조회 집계의 근거로 저장하지 않는다. 잘못된 `error_class` 또는 `failure_stage`를 REST 조회에 전달하면 `400 invalid_request`와 안전한 `field`·`allowed_values`만 돌려주며 원래 입력은 반사하지 않는다. MCP 도구는 같은 선택값을 받는다.
 
@@ -107,7 +107,7 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
 
 ## 접근 프로필과 공식 경로 (2026-10-17 추가)
 
-조회 응답과 MCP `check_incident` 결과에 `access_profile` 과 `official_paths` 가 추가된다. 둘 다 `null` 일 수 있다. 공개 운영 모드에서 공개 집계에 적합한 공개 루트 호스트일 때만 채워지며, 읽기 실패는 응답 오류가 아니라 `null` 또는 상태 코드로 나타난다.
+조회 응답과 MCP `check_incident` 결과에 `access_profile` 과 `official_paths` 가 추가된다. 둘 다 `null` 일 수 있다. 공개 운영 모드에서만 채워지며, `access_profile` 은 공개 집계에 적합한 공개 루트 호스트일 때, `official_paths` 는 표에 있는 호스트(서브도메인은 루트 호스트 항목)일 때 값이 있다. 읽기 실패는 응답 오류가 아니라 `null` 또는 상태 코드로 나타난다.
 
 ```json
 {
@@ -116,16 +116,25 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
     "robots_status": "ok",
     "robots": {
       "rules": [
-        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 0},
-        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1},
-        {"agent": "Googlebot", "kind": "search_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 0}
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 1,
+         "crawl_delay": null, "disallow_paths": ["/search"]},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1,
+         "crawl_delay": null, "disallow_paths": ["/"]},
+        {"agent": "Googlebot", "kind": "search_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 0,
+         "crawl_delay": null, "disallow_paths": []}
       ],
       "wildcard_root_allowed": true,
       "sitemap": true,
+      "sitemaps": ["https://example.org/sitemap.xml"],
+      "wildcard_crawl_delay": null,
+      "wildcard_disallow_paths": ["/search"],
       "agents_blocked": ["GPTBot"],
       "agents_allowed": ["Googlebot"]
     },
+    "robots_detail": "http_200",
     "llms_txt_status": "absent",
+    "llms_detail": "http_404",
+    "read_host": "example.org",
     "source_urls": {"robots_txt": "https://example.org/robots.txt", "llms_txt": "https://example.org/llms.txt"},
     "fetched_at": "2026-10-17T09:00:00Z",
     "freshness": "fresh"
@@ -139,17 +148,40 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
 }
 ```
 
-- `access_profile.robots_status` 는 `ok`, `absent`(404/410), `redirected`(루트 호스트에서 자기 `www.` 호스트로 가는 한 단계 외의 3xx, 따라가지 않음), `refused`(공개 데이터센터 주소의 단순 robots.txt 읽기에 호스트 경계가 401/403/429/503 으로 답함 — 선언이 아니라 강한 신호), `invalid`(정책 파일 대신 웹 페이지가 옴, 소프트 404), `error`(DNS·TLS·연결 등 전송 실패, 1시간 뒤 재시도), `too_large`(256 KB 초과), `not_public`(공개 IP 로만 해석되지 않음), `pending` 중 하나다. `ok` 가 아니면 `robots` 는 `null` 이거나 이전 성공값이며 정책 층은 **판단 불가**이지 차단이 아니다. 단 `refused` 는 판정에서 공식 경로 우선의 근거로 쓴다.
-- `robots_detail` / `llms_detail` 은 읽기가 그렇게 끝난 이유를 짧은 기계 라벨로 적는다 — `http_200`, `http_403`, `http_503`, `redirect:<host>`, `dns_timeout`, `dns_failed`, `connect_error`, `html_body`, `too_large`, `not_public`. 루트 호스트가 실패·거절하면 `www.` 별칭을 한 번 더 읽고, 그때는 `source_urls` 가 그 호스트를 가리킨다.
-- `robots.rules[].crawl_delay`(초, 적용 그룹 기준)와 `robots.rules[].disallow_paths`(금지 경로 접두 표본 최대 6개)는 `root_allowed: true` 의 뜻을 좁힌다 — 루트는 열어 두고 검색·장바구니·계정 경로를 막는 호스트가 많다. `robots.sitemaps` 는 선언된 Sitemap URL 최대 5개, `robots.wildcard_crawl_delay`·`robots.wildcard_disallow_paths` 는 `*` 그룹의 값이다.
-- `robots.rules` 는 서비스가 아는 에이전트 토큰 목록(`kind` 는 `user_agent`, `search_crawler`, `training_crawler`)마다 RFC 9309 매칭으로 계산한다. `explicit_group` 은 그 토큰의 그룹이 파일에 명시됐는지, `root_allowed` 는 `/` 를 가져올 수 있는지, `disallow_count` 는 해당 그룹의 Disallow 줄 수다. `agents_blocked` 는 명시 그룹이 있고 루트가 금지된 토큰, `agents_allowed` 는 명시 그룹이 있고 루트가 허용된 토큰이다. 목록에 없는 토큰에 대해서는 아무것도 말하지 않는다.
-- `llms_txt_status` 는 `present`, `absent`(소프트 404 페이지 포함, `llms_detail: html_body`), `refused`, `error`, `redirected`, `not_public`, `pending` 중 하나이며 존재 여부만 기록한다. 내용은 저장하거나 전달하지 않는다. 서브도메인·테넌트 호스트를 조회하면 프로필을 읽지 않고 `next_checks` 에 `profile_not_read` 를 넣어 apex 호스트 조회를 안내한다.
-- `fetched_at` 은 마지막 성공 읽기 시각(UTC), `freshness` 는 `fresh`(24시간 이내), `stale`, `pending` 이다. 읽기는 호스트당 하루 최대 한 번이며 조회 시 캐시가 신선하면 네트워크에 나가지 않는다.
+- 읽는 범위: 공개 루트 호스트 또는 그 호스트 자신의 `www.` 별칭의 `/robots.txt`(상한 256 KB)와 `/llms.txt`(상한 4 KB, 존재 여부만)뿐이다. 3xx 는 같은 경로의 자기 `www.` 별칭을 가리킬 때만 한 단계 따라가고, 다른 리디렉션은 `redirected` 로 기록하고 따라가지 않는다. 루트 호스트의 `robots.txt` 결과가 `error`·`refused`·`redirected`·`invalid` 면 `https://www.<호스트>/robots.txt` 를 예비로 한 번 읽고, 그 결과가 `ok`·`absent`·`too_large` 면 루트 결과를 대신한다. `llms.txt` 는 `robots.txt` 를 내준 호스트에서 읽는다. 한 번의 시도는 HTTPS 요청을 최대 다섯 번 한다(루트 `robots.txt`, `www.` 별칭으로 가는 한 단계, `www.` 예비 읽기, `llms.txt`, 그 한 단계).
+- `access_profile.robots_status` 는 `ok`, `absent`(404/410), `redirected`(자기 `www.` 별칭으로 가는 한 단계 외의 3xx, 따라가지 않음), `refused`(공개 데이터센터 주소의 단순 robots.txt 읽기에 호스트 경계가 401/403/429/503 으로 답함 — 선언이 아니라 강한 신호), `invalid`(정책 파일 대신 웹 페이지가 옴, 소프트 404), `error`(DNS·TLS·연결·시간 초과, 또는 200·3xx·401·403·404·410·429·503 이외의 HTTP 상태 같은 전송 실패), `too_large`(256 KB 초과), `not_public`(공개 IP 로만 해석되지 않음), `pending` 중 하나다. 전송 실패는 이전 답을 덮어쓰지 않는다. `robots_status`·`robots`·`llms_txt_status`·`llms_detail`·`fetched_at` 은 마지막 확정 읽기를 유지하고, `freshness` 는 `stale` 이 되며, `robots_detail` 에 실패 라벨이 남는다. 따라서 `error` 는 확정 읽기가 한 번도 없을 때만(`freshness: pending`) 나타난다. `robots` 는 `robots_status` 가 `ok` 일 때만 값이 있다. `ok` 가 아니면 정책 층은 **판단 불가**이지 차단이 아니다. 단 `refused` 는 판정에서 공식 경로 우선의 근거로 쓴다.
+- `robots_detail` / `llms_detail` 은 읽기가 그렇게 끝난 이유를 짧은 기계 라벨로 적는다 — 모든 HTTP 응답의 `http_<상태>`(`http_200`, `http_401`, `http_403`, `http_404`, `http_410`, `http_429`, `http_500`, `http_503` 등), `redirect:<host>`(라벨 전체를 32자로 자름, 리디렉션에 호스트가 없으면 `http_3xx`), `dns_timeout`, `dns_failed`, `connect_error`(TLS 오류·시간 초과 포함), `html_body`, `too_large`, `not_public`, `invalid_input`. 전송 실패 뒤에는 `robots_detail` 이 그 실패를 말하고 나머지 필드는 마지막 확정 읽기를 보여 준다. 이 라벨이 생기기 전에 캐시된 프로필에서는 둘 다 `null` 일 수 있다.
+- `read_host` 는 파일을 실제로 내준 호스트(조회한 루트 호스트, 또는 예비 읽기 뒤의 `www.` 별칭)다. `source_urls` 는 `read_host` 기준의 두 파일 URL 이므로 항상 실제로 읽은 파일을 가리킨다.
+- `robots.rules[].crawl_delay`(초, 적용 그룹 기준)와 `robots.rules[].disallow_paths`(금지 경로 접두 표본 최대 6개, 각 80자)는 `root_allowed: true` 의 뜻을 좁힌다 — 루트는 열어 두고 검색·장바구니·계정 경로를 막는 호스트가 많다. `robots.sitemaps` 는 선언된 Sitemap URL 최대 5개, `robots.wildcard_crawl_delay`·`robots.wildcard_disallow_paths` 는 `*` 그룹의 값이다. 저장하는 것은 이 해석값과 읽기 상태뿐이며 파일의 나머지는 저장하지 않는다.
+- `robots.rules` 는 서비스가 아는 에이전트 토큰 목록(`kind` 는 `user_agent`, `search_crawler`, `training_crawler`)마다 RFC 9309 우선순위(가장 긴 일치 규칙 우선, 같은 길이면 Allow 우선)로 계산하며, user-agent 이름은 너그럽게 앞부분 일치로 맞춘다(user-agent 이름이 3자 이상인 그룹은 그 이름으로 시작하는 모든 알려진 토큰에 적용, 대소문자 무시). `explicit_group` 은 그 토큰의 그룹이 파일에 명시됐는지, `root_allowed` 는 `/` 를 가져올 수 있는지, `disallow_count` 는 적용되는 비어 있지 않은 Disallow 줄 수다. `agents_blocked` 는 명시 그룹이 있고 루트가 금지된 토큰, `agents_allowed` 는 명시 그룹이 있고 루트가 허용된 토큰이다. 목록에 없는 토큰에 대해서는 아무것도 말하지 않는다. 루트 금지가 `*` 그룹뿐이고 에이전트 토큰을 지목한 그룹이 없는 파일은 판정과 `next_checks` 에서 `robots_wildcard_disallow` 로 보고하며 "에이전트를 허용함"으로 보고하지 않는다.
+- `llms_txt_status` 는 `present`(4 KB 상한을 넘는 파일 포함, `llms_detail: too_large`), `absent`(소프트 404 페이지 포함, `llms_detail: html_body`), `refused`, `error`, `redirected`, `not_public`, `pending` 중 하나이며 존재 여부만 기록한다. 내용은 저장하거나 전달하지 않는다. 서브도메인·테넌트 호스트를 조회하면 프로필을 읽지 않고 `next_checks` 에 `profile_not_read` 를 넣어 apex 호스트 조회를 안내한다.
+- `fetched_at` 은 마지막 확정 읽기 시각(UTC), `freshness` 는 `fresh`(24시간 이내의 확정 읽기이고 그 뒤 전송 실패 없음), `stale`(오래됐거나 그 뒤 전송 실패), `pending`(확정 읽기 없음)이다. 확정된 답(`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`)은 24시간 캐시하고, 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도한다. 캐시 기간 안의 조회는 네트워크에 나가지 않는다.
 - **선언된 정책은 접근 보장이 아니다.** `root_allowed: true` 가 실제 요청의 성공을 뜻하지 않고, CDN·봇 필터·로그인·속도 제한은 사용자 지시 에이전트를 크롤러와 다르게 취급할 수 있다. Allow 줄은 사이트 약관을 대신하지 않는다. 반대로 `agents_blocked` 에 자신의 UA 계열이 있으면 에이전트는 그 페이지의 재시도를 멈추고 인계하거나 공식 경로를 쓰는 것이 기대 행동이다.
-- `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 전부 `null` 일 수 있다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
-- `next_checks.code` 에 `robots_blocks_agents`, `robots_allows_agents`, `robots_unknown`, `llms_txt_present`, `official_path_available` 이 추가되며 호스트별 항목이 먼저 온다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
-- 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 최대 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
-- MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 하루 한 번의 robots/llms 읽기)는 호출자가 보는 결과를 바꾸지 않는다.
+- `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 전부 `null` 일 수 있다. 서브도메인은 루트 호스트의 항목과 맞춘다(`api.github.com` 은 `github.com` 항목). `note` 만 있는 항목(예: 공개 API 없음)은 표시하지만 판정과 `official_path_available` 에서는 사용 가능한 공식 경로로 세지 않으며, 그러려면 `api_docs` 나 `developer_portal` 이 있어야 한다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
+- `next_checks.code` 는 다음 순서로 나온다: ① 실패 단계(`failure_stage` 값이 있고 `unknown` 이 아니면 `before_target_response`·`response_observed`·`access_denial_observed`, 아니면 `error_class` 가 `human_verification`·`login_auth` 가 아닐 때 `locate_failure_stage`) → ② 인계(`human_handoff`, `account_handoff`) → ③ 선언 프로필(프로필을 읽지 않은 서브도메인·테넌트 호스트는 `profile_not_read`; 프로필이 있으면 `robots_fetch_refused`, `robots_unknown`, `robots_blocks_agents`, `robots_wildcard_disallow`, `robots_allows_agents` 중 하나, 이어서 `llms_txt_present`) → ④ 공식 경로(`official_path_available`) → ⑤ 업체(`provider_scope`, `provider_clear`, `provider_unknown`) → ⑥ 제보(`reports_unknown`, `reports_stale`, `reports_unverified`). 모두 20개 코드이며 영어 계약의 표에 뜻이 있다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
+- 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 기본 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 전송 실패는 이미 답이 있던 호스트라도 1시간 뒤 다시 시도한다. 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
+- MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 캐시되는 robots/llms 읽기 — 확정 답은 24시간 재사용, 전송 실패는 1시간 뒤 재시도)는 호출자가 보는 결과를 바꾸지 않는다.
+
+## 판정 (`recommendation`)
+
+`recommendation` 은 선언 정책 층과 공식 경로 층에서만 정하는 행동 하나다(관찰은 바꾸지 않는다). 위에서부터 처음 맞는 행이 적용된다.
+
+| `action` | 조건 | `confidence` | `reasons` |
+| --- | --- | --- | --- |
+| `wait_provider_incident` | `provider_status.freshness` 가 `fresh` 이고 `indicator` 가 `minor`, `major`, `critical` | medium | `provider_scope` |
+| `hand_off_to_human` | `error_class=human_verification` | high | `human_handoff` |
+| `hand_off_to_human` | `error_class=login_auth` | medium | `account_handoff` |
+| `use_official_path` | 차단 선언(아래)이 있고 공식 경로가 있다 | high | `robots_blocks_agents`, `official_path_available` |
+| `stop_declared_block` | 차단 선언이 있고 공식 경로가 없다 | medium | `robots_blocks_agents` |
+| `use_official_path` | `robots_status` 가 `refused` 이고 공식 경로가 있다 | medium | `robots_fetch_refused`, `official_path_available` |
+| `unknown` | `robots_status` 가 `refused` 이고 공식 경로가 없다 | medium | `robots_fetch_refused` |
+| `use_official_path` | 와일드카드 단독 금지(아래)이고 공식 경로가 있다 | medium | `robots_wildcard_disallow`, `official_path_available` |
+| `unknown` | 와일드카드 단독 금지이고 공식 경로가 없다 | low | `robots_wildcard_disallow` |
+| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` | medium | `official_path_available` |
+| `proceed` | `robots_status` 가 `ok` 이고 차단 선언도 와일드카드 단독 금지도 없다 | low | `robots_allows_agents` |
+| `unknown` | 그 밖의 모든 경우 | low | 접근 프로필이 있으면 `robots_unknown`(예: `robots.txt` 를 읽지 못함), 공개 모드에서 서브도메인·테넌트 호스트면 `profile_not_read`, 그 밖에는 빈 목록 |
+
+"공식 경로가 있다"는 `official_paths` 에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다. **차단 선언**은 `robots_status` 가 `ok` 이고 `user_agent` 또는 `search_crawler` 토큰 하나 이상을 이름으로 지목한 그룹이 루트를 금지하는 경우다. 학습 크롤러의 금지는 `agents_blocked` 에 나오지만 차단 선언으로 세지 않는다. **와일드카드 단독 금지**는 `robots_status` 가 `ok` 이고 루트 금지가 `*` 그룹(`User-agent: *` 와 `Disallow: /`)뿐이며 에이전트 토큰을 지목한 그룹이 없는 경우다. 차단 선언은 아니지만 "에이전트를 허용함"으로도 보고하지 않는다. 자동화를 청하지 않은 것으로 보고 공식 경로를 우선하며 허락으로 읽지 않는다.
 
 ### 공식 경로 표의 정리와 검증 (2026-10-18)
 
