@@ -12,6 +12,7 @@ import concurrent.futures
 import ipaddress
 import re
 import socket
+import ssl
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -160,6 +161,31 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
         executor.shutdown(wait=False)
 
 
+MAX_ADDRESSES_TRIED = 3
+
+
+def _transport_label(exc: BaseException) -> str:
+    """Why a pinned-IP HTTPS read failed, as a short label; a timeout is not a refusal and TLS is not DNS."""
+    if isinstance(exc, urllib3.exceptions.NameResolutionError):
+        return "dns_failed"
+    if isinstance(exc, (urllib3.exceptions.SSLError, ssl.SSLError)):
+        return "tls_error"
+    if isinstance(exc, urllib3.exceptions.NewConnectionError):  # subclass of ConnectTimeoutError: check first
+        return "connect_error"
+    if isinstance(exc, urllib3.exceptions.ConnectTimeoutError):
+        return "connect_timeout"
+    if isinstance(exc, (urllib3.exceptions.ReadTimeoutError, TimeoutError)):
+        return "read_timeout"
+    if isinstance(exc, (urllib3.exceptions.ProtocolError, urllib3.exceptions.DecodeError)):
+        return "read_error"
+    return "connect_error"
+
+
+def _address_order(addresses: set[str]) -> list[str]:
+    """IPv4 before IPv6 (the deployment has no IPv6 egress), then a stable order; at most MAX_ADDRESSES_TRIED."""
+    return sorted(addresses, key=lambda ip: (ipaddress.ip_address(ip).version != 4, ip))[:MAX_ADDRESSES_TRIED]
+
+
 def _www_redirect_target(response, site_host: str, path: str) -> str | None:
     """The only redirect we follow: apex → its own www host, same scheme and path (one hop)."""
     location = (response.headers.get("Location") or "").strip()
@@ -199,15 +225,27 @@ def fetch_public_file(
             return ("error", None, "dns_failed")
         if any(not ipaddress.ip_address(ip).is_global for ip in addresses):
             return ("not_public", None, "not_public")
-        pool = urllib3.HTTPSConnectionPool(
-            sorted(addresses)[0], port=443, server_hostname=site_host, assert_hostname=site_host,
-            timeout=urllib3.Timeout(connect=timeout_connect, read=timeout_read), retries=False,
-        )
-        try:
-            response = pool.request(
-                "GET", path, headers={"Host": site_host, "User-Agent": USER_AGENT, "Accept": "text/plain,*/*;q=0.5"},
-                redirect=False, preload_content=False,
+        last_label = "connect_error"
+        for address in _address_order(addresses):
+            pool = urllib3.HTTPSConnectionPool(
+                address, port=443, server_hostname=site_host, assert_hostname=site_host,
+                timeout=urllib3.Timeout(connect=timeout_connect, read=timeout_read), retries=False,
             )
+            try:
+                try:
+                    response = pool.request(
+                        "GET", path, headers={"Host": site_host, "User-Agent": USER_AGENT, "Accept": "text/plain,*/*;q=0.5"},
+                        redirect=False, preload_content=False,
+                    )
+                except urllib3.exceptions.ConnectTimeoutError as exc:
+                    # Could not even connect to this address (refused, unreachable, SYN timeout): one of the host's
+                    # other addresses may answer. Anything after a connection is established is not retried.
+                    last_label = _transport_label(exc)
+                    pool.close()
+                    continue
+            except Exception:
+                pool.close()
+                raise
             try:
                 status = response.status
                 if status in (404, 410):
@@ -235,10 +273,10 @@ def fetch_public_file(
                 return ("ok", body, "http_200")
             finally:
                 response.release_conn()
-        finally:
-            pool.close()
-    except Exception:  # a lookup must never fail or hang because a third-party host misbehaves
-        return ("error", None, "connect_error")
+                pool.close()
+        return ("error", None, last_label)
+    except Exception as exc:  # a lookup must never fail or hang because a third-party host misbehaves
+        return ("error", None, _transport_label(exc))
 
 
 def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0,

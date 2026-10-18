@@ -96,6 +96,70 @@ def test_www_fallback_read_never_spends_a_second_redirect_hop(monkeypatch):
     assert calls == ["example.com", "www.example.com", "example.com"]
 
 
+def _pool_class(behaviour: dict, calls: list):
+    """HTTPSConnectionPool stand-in: behaviour maps an address to a status, a body, or an exception to raise."""
+    import urllib3
+
+    class Response:
+        def __init__(self, status, body=b""):
+            self.status, self.headers, self._body = status, {}, body
+        def read(self, _limit):
+            return self._body
+        def release_conn(self):
+            pass
+
+    class Pool:
+        def __init__(self, ip, port, server_hostname, **_kw):
+            calls.append(ip)
+            self.ip = ip
+        def request(self, _method, path, **_kw):
+            outcome = behaviour[self.ip]
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return Response(200, outcome)
+        def close(self):
+            pass
+    return Pool
+
+
+def test_fetch_tries_the_next_address_only_when_a_connection_cannot_be_made(monkeypatch):
+    import urllib3
+    from ahn import access_profile
+
+    body = b"User-agent: *\nDisallow:\n"
+    addresses = {"93.184.216.36", "93.184.216.34", "93.184.216.35", "93.184.216.37"}
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: set(addresses))
+    # First address refuses, second times out on connect, third answers.
+    calls = []
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({
+        "93.184.216.34": urllib3.exceptions.NewConnectionError(None, "connection refused"),
+        "93.184.216.35": urllib3.exceptions.ConnectTimeoutError("connect timed out"),
+        "93.184.216.36": body, "93.184.216.37": body,
+    }, calls))
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("ok", body, "http_200")
+    assert calls == ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
+    # All connects fail: at most three addresses are tried and the last connect failure is the label.
+    calls.clear()
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({
+        ip: urllib3.exceptions.ConnectTimeoutError("connect timed out") for ip in addresses}, calls))
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("error", None, "connect_timeout")
+    assert calls == ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
+    # Once connected, a slow or broken answer is not retried on another address, and it is labelled for what it was.
+    for exc, label in ((urllib3.exceptions.ReadTimeoutError(None, "/robots.txt", "read timed out"), "read_timeout"),
+                       (urllib3.exceptions.SSLError("handshake failure"), "tls_error"),
+                       (urllib3.exceptions.ProtocolError("connection broken"), "read_error")):
+        calls.clear()
+        monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({ip: exc for ip in addresses}, calls))
+        assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("error", None, label)
+        assert calls == ["93.184.216.34"]
+    # IPv4 is tried before IPv6.
+    calls.clear()
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"})
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({"93.184.216.34": body}, calls))
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000)[0] == "ok"
+    assert calls == ["93.184.216.34"]
+
+
 def _request(headers: dict, client=("10.0.0.9", 1234)) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     return Request({"type": "http", "method": "GET", "path": "/", "headers": raw, "client": client, "query_string": b""})
