@@ -248,9 +248,9 @@ def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_conne
     return (status, body)
 
 
-def _read(reader, site_host: str, path: str, cap_bytes: int) -> tuple[str, bytes | None, str | None]:
-    """Accept both the 2-tuple reader contract (tests, callers) and the detailed 3-tuple."""
-    result = reader(site_host, path, cap_bytes=cap_bytes)
+def _read(reader, site_host: str, path: str, cap_bytes: int, **options) -> tuple[str, bytes | None, str | None]:
+    """Accept both the 2-tuple reader contract (tests, callers) and the detailed 3-tuple; options reach the reader."""
+    result = reader(site_host, path, cap_bytes=cap_bytes, **options)
     if len(result) == 2:
         return (result[0], result[1], None)
     return (result[0], result[1], result[2])
@@ -261,11 +261,12 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     read_host = site_host
     if robots_status in ("error", "refused", "redirected", "invalid") and not site_host.startswith("www."):
         # Apex failed or refused: the www alias is still the host's own file and often the one that answers.
-        alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP)
+        # The apex->www step is the one redirect hop a read may spend: the www host has to answer itself.
+        alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP, _hop=1)
         if alt_status in ("ok", "absent", "too_large"):
             robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
     robots = parse_robots(robots_body) if robots_status == "ok" and robots_body is not None else None
-    llms_status, _, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP)
+    llms_status, _, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
     # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.
     llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {

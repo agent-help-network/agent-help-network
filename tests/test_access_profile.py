@@ -162,8 +162,8 @@ def test_build_profile_non_ok_statuses_pass_through_with_no_robots_summary():
 def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
     calls = []
 
-    def reader(site_host, path, *, cap_bytes, **_):
-        calls.append((site_host, path))
+    def reader(site_host, path, *, cap_bytes, **options):
+        calls.append((site_host, path, options.get("_hop", 0)))
         if site_host == "example.com":
             return ("refused", None, "http_503")
         return ("ok", b"User-agent: ChatGPT-User\nDisallow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
@@ -172,7 +172,8 @@ def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
     assert profile["robots_status"] == "ok" and profile["robots"]["agents_blocked"] == ["ChatGPT-User"]
     assert profile["robots_detail"] == "http_200" and profile["source_urls"]["robots_txt"] == "https://www.example.com/robots.txt"
     assert profile["read_host"] == "www.example.com" and profile["source_urls"]["llms_txt"] == "https://www.example.com/llms.txt"
-    assert calls == [("example.com", "/robots.txt"), ("www.example.com", "/robots.txt"), ("www.example.com", "/llms.txt")]
+    # Reads on the www alias carry _hop=1: the apex->www step already spent the single redirect hop.
+    assert calls == [("example.com", "/robots.txt", 0), ("www.example.com", "/robots.txt", 1), ("www.example.com", "/llms.txt", 1)]
     # When www refuses as well, the apex refusal stands and carries its detail.
     refused_everywhere = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("refused", None, "http_403"))
     assert refused_everywhere["robots_status"] == "refused" and refused_everywhere["robots_detail"] == "http_403"

@@ -62,6 +62,40 @@ def test_only_same_host_www_redirect_is_followed(monkeypatch):
     assert calls == ["other.org"]
 
 
+def test_www_fallback_read_never_spends_a_second_redirect_hop(monkeypatch):
+    from ahn import access_profile
+
+    calls = []
+    class Response:
+        def __init__(self, status, headers=None, body=b""):
+            self.status, self.headers, self._body = status, headers or {}, body
+        def read(self, _limit):
+            return self._body
+        def release_conn(self):
+            pass
+    class Pool:
+        def __init__(self, ip, port, server_hostname, **_kw):
+            calls.append(server_hostname)
+        def request(self, _method, path, **_kw):
+            if calls[-1] == "example.com":
+                return Response(503)
+            if calls[-1] == "www.example.com":
+                return Response(301, {"Location": "https://www.www.example.com" + path})
+            pytest.fail("a second redirect hop was followed")
+        def close(self):
+            pass
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", Pool)
+    # With the hop already spent, a www host that redirects again is reported, not followed.
+    assert access_profile.fetch_public_file("www.example.com", "/robots.txt", cap_bytes=1000, _hop=1) == ("redirected", None, "redirect:www.www.example.com")
+    assert calls == ["www.example.com"]
+    calls.clear()
+    # End to end: apex refuses, www redirects onward, so the apex refusal stands and only three connections are made.
+    profile = access_profile.build_profile("example.com")
+    assert profile["robots_status"] == "refused" and profile["robots_detail"] == "http_503" and profile["read_host"] == "example.com"
+    assert calls == ["example.com", "www.example.com", "example.com"]
+
+
 def _request(headers: dict, client=("10.0.0.9", 1234)) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     return Request({"type": "http", "method": "GET", "path": "/", "headers": raw, "client": client, "query_string": b""})
