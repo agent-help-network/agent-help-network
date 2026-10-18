@@ -151,6 +151,17 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
 - 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 최대 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
 - MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 하루 한 번의 robots/llms 읽기)는 호출자가 보는 결과를 바꾸지 않는다.
 
+### 공식 경로 표의 정리와 검증 (2026-10-18)
+
+- **표에 없음은 "정리되지 않음"이지 "API 없음"이 아니다.** `official_paths: null` 은 이 서비스가 그 호스트를 아직 정리하지 않았다는 뜻일 뿐이며, 에이전트는 업체 사이트에서 공식 경로를 직접 찾을 수 있다.
+- 키는 `valid_host` 를 통과하는 소문자 등록 가능 루트 호스트다. 하위 도메인은 가장 가까운 루트 키로 해석한다(`api.github.com` → `github.com`). `gov.uk`, `go.kr` 같은 공용 접미사는 키로 쓰지 않는다. 그 아래의 서로 다른 기관이 한 항목을 물려받기 때문이다. 별칭은 `x.com`/`twitter.com` 처럼 실제로 따로 운영되는 호스트일 때만 둔다.
+- URL 은 발행자(업체·기관)가 직접 운영하는 개발자 문서, API 레퍼런스, 개발자 포털만 넣는다. 제3자 미러, 블로그 글, 마케팅 페이지는 넣지 않는다. 키와 다른 도메인에 있는 공식 문서(`learn.microsoft.com`, `developers.google.com`, 업체의 GitHub 조직 등)는 `scripts/verify_official_paths.py` 의 `PUBLISHER_DOMAINS` 에 하나씩 선언하고, 순수 테스트 `tests/test_official_paths.py` 가 선언되지 않은 도메인을 거부한다.
+- 공개 API 가 없는 호스트는 사실이고 쓸모 있을 때만 `note` 로 남긴다(예: 공개 API 종료 사실과 공식 상태 페이지). URL 은 추측하지 않는다.
+- 검증: `scripts/verify_official_paths.py` 가 표의 모든 고유 URL(`note` 안의 URL 포함)에 HTTPS GET 을 한 번씩 보낸다. 제한 시간 10초, 전체 초당 최대 1요청, User-Agent `AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)`, 전송 오류·429·5xx 에만 재시도 1회다. 리디렉션은 검증용으로만 따라가며 최종 상태 200, `https`, 발행자 소유 최종 호스트, 로그인·봇 확인 페이지 아님, "not found" 제목 아님을 모두 만족해야 통과한다. `blocked:*` 는 발행자가 자동 확인을 거절했다는 뜻이지 페이지가 사라졌다는 증거가 아니다. 문서 URL 외에는 아무것도 가져오지 않는다(robots.txt·로그인 페이지·크롤링 없음).
+- 이 스크립트는 외부 사이트 상태에 CI 가 묶이지 않도록 CI 에서 실행하지 않는다. 표를 바꿀 때 사람이 직접 실행하고 결과를 확인한다. 2026-10-18 전체 검증 결과는 이 절 끝에 적는다.
+- `ahn/seed_hosts.txt` 는 공개 집계에 적합한 표의 키를 표 순서대로 맨 앞에 둔다(`tests/test_profile_warm.py`).
+- 2026-10-18 전체 검증: 표 546개 호스트(URL 이 있는 540개), 고유 URL 722개 중 707개 통과, 13개 `blocked:*`, 2개 실패. 통과하지 못한 URL 은 모두 기존 항목이며 페이지가 사라졌다는 근거가 없어 유지했다. 봇 확인·403: `binance.com`(api_docs), `coupang.com`, `ebay.com`, `nih.gov`(api_docs), `pexels.com`, `salesforce.com`, `stackexchange.com`·`stackoverflow.com`(stackapps.com), `stlouisfed.org`(포털), `unsplash.com`. 연결 끊김: `tumblr.com`(같은 User-Agent 의 curl 은 200). 새로 넣은 항목은 모두 200 으로 확인했다.
+
 ## 다음 계약: 질문·경험 네트워크
 
 사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 [확장 설계](agent-network-architecture.md)에 제안했다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.
