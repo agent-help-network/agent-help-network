@@ -122,6 +122,17 @@ def main() -> None:
     from .status_refresh import refresh_batch
     source_result = refresh_batch(Settings(database_url, "unused-by-status-refresh"))
     print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} failed={source_result['failed']}")
+    from .profile_warm import warm_profiles
+    try:
+        warm_batch = max(0, min(50, int(os.environ.get("AHN_WARM_BATCH", "10"))))
+    except ValueError:
+        warm_batch = 10
+    if warm_batch:
+        try:
+            warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch)
+            print(f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}")
+        except Exception as exc:  # the seed pre-read is best effort and must not fail the review cron
+            print(f"profile_warm failed={type(exc).__name__}")
 
 
 if __name__ == "__main__":

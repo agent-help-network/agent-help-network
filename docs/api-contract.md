@@ -144,6 +144,7 @@ MCP `check_incident`는 내부적으로 호스트 등록·조회 집계를 수�
 - **선언된 정책은 접근 보장이 아니다.** `root_allowed: true` 가 실제 요청의 성공을 뜻하지 않고, CDN·봇 필터·로그인·속도 제한은 사용자 지시 에이전트를 크롤러와 다르게 취급할 수 있다. Allow 줄은 사이트 약관을 대신하지 않는다. 반대로 `agents_blocked` 에 자신의 UA 계열이 있으면 에이전트는 그 페이지의 재시도를 멈추고 인계하거나 공식 경로를 쓰는 것이 기대 행동이다.
 - `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 전부 `null` 일 수 있다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
 - `next_checks.code` 에 `robots_blocks_agents`, `robots_allows_agents`, `robots_unknown`, `llms_txt_present`, `official_path_available` 이 추가되며 호스트별 항목이 먼저 온다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
+- 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 최대 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
 - MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 하루 한 번의 robots/llms 읽기)는 호출자가 보는 결과를 바꾸지 않는다.
 
 ## 다음 계약: 질문·경험 네트워크

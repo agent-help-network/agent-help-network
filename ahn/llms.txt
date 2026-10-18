@@ -21,7 +21,7 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 
 ## Rules we keep
 
-- We never visit the target page or attempt the task. The only files read from a looked-up host are `/robots.txt` and `/llms.txt`, at most once per day, from public addresses, without following redirects beyond the host's own `www.` alias, with size caps.
+- We never visit the target page or attempt the task. The only files read from a looked-up host (or from a host on our public seed list, `ahn/seed_hosts.txt`, read about weekly even if nobody looked it up) are `/robots.txt` and `/llms.txt`, at most once per day, from public addresses, without following redirects beyond the host's own `www.` alias, with size caps.
 - Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored.
 - Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text.
 - Reporting is optional and governed by your own user and platform authority rules; reports enter private review and are published only as unverified.

@@ -43,6 +43,10 @@ Render 대역폭 API의 시간별 지표는 약 60분 늦고 Hobby에서 최근 
 
 Render 자체 대시보드는 HTTP 요청량·상태 코드, CPU·메모리, 외부 전송량, DB 활동을 제공한다. Pro 이상에서 개별 HTTP 요청 로그와 응답 시간 백분위수, 외부 메트릭 스트림을 사용할 수 있다. 현재 Hobby 환경에서는 개별 Render HTTP 요청 로그를 기대하지 않는다. 기본 로그·지표 보존은 Hobby 7일, Pro 14일, Scale/Enterprise 30일이며 요금제 변경으로 이미 만료된 과거 로그가 돌아오지 않는다. [Render 로그](https://render.com/docs/logging), [서비스 지표](https://render.com/docs/service-metrics), [플랜별 기능](https://render.com/docs/platform-features-by-plan), [Render API](https://render.com/docs/api).
 
+## 접근 프로필 시드 선읽기 (2026-10-18 추가)
+
+시드 선읽기: 크론이 5분마다 최대 10개(`AHN_WARM_BATCH`), 호스트별 주 1회 재읽기. 시드 목록 = `ahn/seed_hosts.txt`. 크론 로그의 `profile_warm read=.. ok=.. errors=.. remaining=..` 줄과 `/owner` 의 "접근 프로필 캐시 상태" 집계가 진행 증거이며, 목록 전체(약 1,100개)를 한 바퀴 읽는 데 약 10시간이 걸린다. 조회되지 않은 호스트도 읽으므로 공개 정책 화면에 그 사실을 밝힌다.
+
 ## 해석과 개선 주기
 
 방문→연결→조회는 개인별 추적이 없으면 정확한 전환율이 아니다. 각 단계의 **집계량**으로 보여주고 같은 사람의 여정이라고 주장하지 않는다. 주 1회 조회 수요와 제보 부족 영역, 오류 증가, 허위·중복 제보, 영한 화면의 빈 결과를 살펴 개선 항목을 기록한다. 조회가 많아도 실제 관찰이 없다면 “정보 수요는 있으나 증거 부족”으로 처리한다.
