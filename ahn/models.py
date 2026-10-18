@@ -19,6 +19,20 @@ RESERVED_TLDS = frozenset({"local", "localhost", "internal", "invalid", "example
                            "corp", "home", "intranet", "private", "localdomain", "alt"})
 
 
+def normalize_host_input(value: str | None) -> str:
+    """What people and agents type, made canonical: surrounding spaces, a pasted https:// scheme or
+    one trailing slash, a trailing dot and letter case (phones capitalise the first letter).
+    Anything else that is not a hostname is left for valid_host to reject."""
+    value = (value or "").strip()
+    for scheme in ("https://", "http://"):
+        if value.lower().startswith(scheme):
+            value = value[len(scheme):]
+            break
+    if value.endswith("/") and "/" not in value[:-1]:
+        value = value[:-1]
+    return value.rstrip(".").lower()
+
+
 def valid_host(value: str) -> str:
     if not isinstance(value, str) or len(value) > 253 or value != value.lower():
         raise ValueError("invalid public hostname")

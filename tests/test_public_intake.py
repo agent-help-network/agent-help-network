@@ -112,6 +112,17 @@ def test_lookup_links_to_a_host_prefilled_report_without_submitting(public_clien
     assert '/ko/report?site_host=example.org' in korean.text
 
 
+def test_a_capitalised_or_pasted_hostname_is_looked_up_as_the_host(public_client):
+    _, client = public_client
+    # iPhone keyboards capitalise the first letter; people paste https:// and a trailing slash.
+    for typed in ("Example.org", " EXAMPLE.ORG ", "https://example.org/"):
+        api = client.get("/v1/incidents/check", params={"site_host": typed})
+        assert api.status_code == 200 and api.json()["site_host"] == "example.org", typed
+        page = client.get("/ko/search", params={"site_host": typed})
+        assert page.status_code == 200 and '/ko/report?site_host=example.org' in page.text, typed
+    assert client.get("/v1/incidents/check", params={"site_host": "https://example.org/path"}).status_code == 400
+
+
 def test_minimal_report_retry_with_stable_key_is_idempotent(public_client):
     _, client = public_client
     report = {"site_host": "example.org", "error_class": "site_access", "outcome": "blocked", "idempotency_key": str(uuid4())}
