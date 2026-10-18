@@ -13,6 +13,7 @@ import ipaddress
 import re
 import socket
 import ssl
+import time
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -162,6 +163,8 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
 
 
 MAX_ADDRESSES_TRIED = 3
+CONNECT_BUDGET_FACTOR = 2  # all connection attempts of one read share timeout_connect * this
+_clock = time.monotonic  # patched in tests
 
 
 def _transport_label(exc: BaseException) -> str:
@@ -226,10 +229,17 @@ def fetch_public_file(
         if any(not ipaddress.ip_address(ip).is_global for ip in addresses):
             return ("not_public", None, "not_public")
         last_label = "connect_error"
+        # One address of a host can be dead from this network while another answers (seen with amazon.com),
+        # so a failure to connect moves on to the next address. All attempts share one connection-time
+        # budget, so a host that drops every packet costs at most CONNECT_BUDGET_FACTOR connect timeouts.
+        connect_budget = timeout_connect * CONNECT_BUDGET_FACTOR
         for address in _address_order(addresses):
+            if connect_budget <= 0:
+                break
+            started = _clock()
             pool = urllib3.HTTPSConnectionPool(
                 address, port=443, server_hostname=site_host, assert_hostname=site_host,
-                timeout=urllib3.Timeout(connect=timeout_connect, read=timeout_read), retries=False,
+                timeout=urllib3.Timeout(connect=min(timeout_connect, connect_budget), read=timeout_read), retries=False,
             )
             try:
                 try:
@@ -238,10 +248,11 @@ def fetch_public_file(
                         redirect=False, preload_content=False,
                     )
                 except urllib3.exceptions.ConnectTimeoutError as exc:
-                    # Could not even connect to this address (refused, unreachable, SYN timeout): one of the host's
-                    # other addresses may answer. Anything after a connection is established is not retried.
+                    # Refused, unreachable or a SYN timeout: nothing was established, try the next address.
+                    # Anything after a connection is established is reported as is and never retried.
                     last_label = _transport_label(exc)
                     pool.close()
+                    connect_budget -= _clock() - started
                     continue
             except Exception:
                 pool.close()

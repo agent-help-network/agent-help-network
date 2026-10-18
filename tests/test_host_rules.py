@@ -129,7 +129,7 @@ def test_fetch_tries_the_next_address_only_when_a_connection_cannot_be_made(monk
     body = b"User-agent: *\nDisallow:\n"
     addresses = {"93.184.216.36", "93.184.216.34", "93.184.216.35", "93.184.216.37"}
     monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: set(addresses))
-    # First address refuses, second times out on connect, third answers.
+    # First address refuses, second times out on connect, third answers (fast clock: budget not consumed).
     calls = []
     monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({
         "93.184.216.34": urllib3.exceptions.NewConnectionError(None, "connection refused"),
@@ -138,12 +138,22 @@ def test_fetch_tries_the_next_address_only_when_a_connection_cannot_be_made(monk
     }, calls))
     assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("ok", body, "http_200")
     assert calls == ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
-    # All connects fail: at most three addresses are tried and the last connect failure is the label.
+    # Every address refuses at once: at most three are tried and the last connect failure is the label.
     calls.clear()
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({
+        ip: urllib3.exceptions.NewConnectionError(None, "connection refused") for ip in addresses}, calls))
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("error", None, "connect_error")
+    assert calls == ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
+    # A host that drops every packet: each attempt burns the 2 s connect timeout, and the attempts share a
+    # budget of twice that, so the third address is never tried.
+    calls.clear()
+    ticks = iter([0.0, 2.0, 2.0, 4.0, 4.0, 6.0])
+    monkeypatch.setattr(access_profile, "_clock", lambda: next(ticks))
     monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _pool_class({
         ip: urllib3.exceptions.ConnectTimeoutError("connect timed out") for ip in addresses}, calls))
     assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000) == ("error", None, "connect_timeout")
-    assert calls == ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
+    assert calls == ["93.184.216.34", "93.184.216.35"]
+    monkeypatch.setattr(access_profile, "_clock", __import__("time").monotonic)  # the fake clock is exhausted
     # Once connected, a slow or broken answer is not retried on another address, and it is labelled for what it was.
     for exc, label in ((urllib3.exceptions.ReadTimeoutError(None, "/robots.txt", "read timed out"), "read_timeout"),
                        (urllib3.exceptions.SSLError("handshake failure"), "tls_error"),
