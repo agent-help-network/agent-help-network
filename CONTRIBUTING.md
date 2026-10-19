@@ -52,6 +52,7 @@ If it fails, change the policy first, then the mapping in the test, which record
 - the OpenAI plugin manifest [`plugins/agent-help-network/plugin.json`](plugins/agent-help-network/plugin.json): descriptions, capabilities and review test cases, with a version bump;
 - the MCP registry entry [`server.json`](server.json), if the server's description, tools or version change;
 - [README.md](README.md) and [README.ko.md](README.ko.md), if they describe the data or the tools.
+- the other surfaces ticked in the [pull request template](.github/pull_request_template.md), such as the API contract and `ahn/llms.txt`.
 
 ## Do not submit
 
