@@ -140,3 +140,6 @@ html{font-family:system-ui,"Noto Sans KR",Segoe UI,Arial,sans-serif}
 .policy-no{color:#a72525;font-weight:800}
 .policy-note{font-size:12px;color:var(--muted)}
 .ledger-row a{color:var(--blue);font-weight:700}
+.install-button{display:inline-block;background:var(--blue);color:#fff!important;border-radius:4px;padding:10px 18px;font-weight:750;text-decoration:none}
+.install-button:hover{background:var(--blue-dark)}
+#install .info-card .ledger-code{margin-top:10px}

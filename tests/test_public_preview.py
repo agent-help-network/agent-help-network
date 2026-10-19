@@ -115,3 +115,50 @@ def test_query_validation_explains_allowed_values_without_reflecting_input():
         assert invalid_stage.status_code == 400
         assert invalid_stage.json()["field"] == "failure_stage"
         assert "private_secret_value" not in invalid_stage.text
+
+
+def test_connect_page_install_section_in_both_languages():
+    import base64
+    import html
+    import json
+    import re
+
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        pages = {lang: client.get(f"/{lang}/connect") for lang in ("en", "ko")}
+        for lang, page in pages.items():
+            assert page.status_code == 200
+            text = page.text
+            assert 'id="install"' in text
+            assert "claude plugin marketplace add agent-help-network/agent-help-network" in text
+            assert "claude plugin install ahn@agent-help-network" in text
+            assert "HostedMCPTool" in text and '"allowed_tools": ["check_incident"]' in text
+            assert '"mcpServers"' in text and "https://agenthelpnetwork.com/mcp" in text
+            for doc in ("https://code.claude.com/docs/en/plugin-marketplaces",
+                        "https://cursor.com/docs/context/mcp/install-links",
+                        "https://openai.github.io/openai-agents-python/mcp/"):
+                assert doc in text
+            link = re.search(r'href="(cursor://anysphere\.cursor-deeplink/mcp/install\?[^"]+)"', text)
+            assert link, lang
+            query = html.unescape(link.group(1)).split("?", 1)[1]
+            params = dict(part.split("=", 1) for part in query.split("&"))
+            assert params["name"] == "agent-help-network"
+            assert json.loads(base64.b64decode(params["config"])) == {"url": "https://agenthelpnetwork.com/mcp"}
+        assert "Install" in pages["en"].text and "Add to Cursor" in pages["en"].text
+        assert "설치" in pages["ko"].text and "Cursor 에 추가" in pages["ko"].text
+        assert "Four ways" not in pages["ko"].text
+        # The install text never presents these as official integrations of any vendor.
+        assert "none is an official integration" in pages["en"].text.lower()
+        assert "공식 통합이 아니" in pages["ko"].text
+
+
+def test_registry_manifest_matches_the_published_schema_limits():
+    import json
+
+    manifest = json.loads((Path(__file__).resolve().parents[1] / "server.json").read_text(encoding="utf-8"))
+    assert manifest["$schema"] == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+    assert 1 <= len(manifest["description"]) <= 100  # schema maxLength for the official registry
+    assert manifest["version"] == "0.1.1"
+    assert manifest["repository"]["source"] == "github"
+    assert manifest["repository"]["url"] == "https://github.com/agent-help-network/agent-help-network"
+    assert manifest["remotes"] == [{"type": "streamable-http", "url": "https://agenthelpnetwork.com/mcp"}]
