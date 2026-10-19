@@ -772,6 +772,113 @@ def test_descriptions_say_only_the_hook_is_read_only():
         assert "Read-only; sends the hostname only" not in flat and "Read-only; hostname only" not in flat
 
 
+# --- review round 2: confirmed findings of the adversarial review ----------------------------------
+
+def test_blocked_agents_deduplicates_in_linear_time_and_is_capped():
+    # 42,076 distinct 3-letter tokens took ~11 s with the list-membership check (past the hook timeout).
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    flood = [a + b + c for a in letters for b in letters for c in letters]
+    start = time.monotonic()
+    tokens, training = hook.blocked_agents({"agents_blocked": flood * 2, "rules": []})
+    assert time.monotonic() - start < 1.0
+    assert len(tokens) == hook.MAX_AGENT_TOKENS == 64 and training == 0
+    assert tokens[:3] == ["aaa", "aab", "aac"]
+    assert hook.blocked_agents({"agents_blocked": ["GPTBot", "GPTBot", "x", 5, "Claude-User"], "rules": []}) == (
+        ["GPTBot", "Claude-User"], 0)
+
+
+def test_deeply_nested_cache_does_not_stop_a_lookup(tmp_path):
+    path = Path(hook.cache_path())
+    path.parent.mkdir(parents=True)
+    path.write_text("[" * 100_000, encoding="utf-8")
+    assert hook.recently_seen("example.com") is False
+    assert hook.recently_seen("example.com") is True
+    assert json.loads(path.read_text(encoding="utf-8")).keys() == {"example.com"}
+
+
+def test_huge_cache_timestamps_are_dropped_not_fatal(tmp_path):
+    path = Path(hook.cache_path())
+    path.parent.mkdir(parents=True)
+    path.write_text('{"other.com": ' + "9" * 400 + ', "neg.com": -' + "9" * 400 + ', "example.com": ' + "9" * 400 + "}",
+                    encoding="utf-8")
+    assert hook.recently_seen("example.com") is False
+    assert json.loads(path.read_text(encoding="utf-8")).keys() == {"example.com"}
+
+
+@pytest.mark.parametrize("fields,error,host,error_class,stage", [
+    # The site's own name never picks the class (cloudflare / login / signin / challenge in the hostname).
+    ({"url": "https://developers.cloudflare.com/workers/"}, "Claude Code is unable to fetch from developers.cloudflare.com",
+     "developers.cloudflare.com", "site_access", "before_target_response"),
+    ({"url": "https://login.microsoftonline.com/"}, "Claude Code is unable to fetch from login.microsoftonline.com",
+     "login.microsoftonline.com", "site_access", "before_target_response"),
+    ({"url": "https://signin.aws.amazon.com/"}, "Claude Code is unable to fetch from signin.aws.amazon.com",
+     "signin.aws.amazon.com", "site_access", "before_target_response"),
+    ({"url": "https://www.cloudflare.com/"}, "page.goto: net::ERR_TIMED_OUT at https://www.cloudflare.com/",
+     "www.cloudflare.com", "service_error", "before_target_response"),
+    ({"url": "https://developers.cloudflare.com/"}, "Error: getaddrinfo ENOTFOUND developers.cloudflare.com",
+     "developers.cloudflare.com", "site_access", "before_target_response"),
+    # Words that are not the site's name still classify.
+    ({"url": "https://login.example.com/"}, "Redirected to the sign-in page of login.example.com",
+     "login.example.com", "login_auth", None),
+])
+def test_site_name_does_not_choose_the_error_class(fields, error, host, error_class, stage):
+    found = hook.failure(json.loads(payload(tool="mcp__playwright__browser_navigate", fields=fields, error=error)))
+    assert found == (host, error_class, stage)
+    webfetch = hook.failure(json.loads(payload(url=fields["url"], error=error)))
+    assert webfetch == (host, error_class, stage)
+
+
+def test_site_name_removal_is_linear_on_long_tokens():
+    start = time.monotonic()
+    assert hook.classify("x" * 200_000 + " ab." * 50_000, "example.com") == ("site_access", None)
+    assert time.monotonic() - start < 2.0
+
+
+@pytest.mark.parametrize("text,error_class", [
+    ("Error 521: Web server is down. Cloudflare Ray ID: abc", "service_error"),
+    ("502 Bad Gateway - cloudflare", "service_error"),
+    ("Error 522 Connection timed out cloudflare", "service_error"),
+    ("Error 1020 Access denied (Cloudflare)", "site_access"),
+    ("Checking your browser before accessing the site", "human_verification"),
+    ("Just a moment... Enable JavaScript and cookies to continue", "human_verification"),
+])
+def test_cloudflare_branding_alone_is_not_a_challenge(text, error_class):
+    assert hook.classify(text)[0] == error_class
+
+
+@pytest.mark.parametrize("text,error_class,stage", [
+    ("page.goto: net::ERR_NAME_NOT_RESOLVED at https://shop.example.org/", "site_access", "before_target_response"),
+    ("net::ERR_CONNECTION_REFUSED at https://shop.example.org/", "site_access", "before_target_response"),
+    ("net::ERR_CONNECTION_TIMED_OUT at https://shop.example.org/", "service_error", "before_target_response"),
+    ("net::ERR_INTERNET_DISCONNECTED", "site_access", "before_target_response"),
+    ("net::ERR_ADDRESS_UNREACHABLE", "site_access", "before_target_response"),
+    ("Unable to verify if domain example.com is safe to fetch. This may be due to network restrictions.",
+     "site_access", "before_target_response"),
+    ("Access to example.com is blocked by the network egress proxy.", "site_access", "before_target_response"),
+    # A browser error that is not "nothing received" keeps no stage.
+    ("net::ERR_CONNECTION_RESET", "service_error", None),
+])
+def test_chrome_network_errors_are_before_the_target_response(text, error_class, stage):
+    assert hook.classify(text) == (error_class, stage)
+
+
+@pytest.mark.parametrize("text", [
+    "Failed to fetch https://example.com, status 403",
+    "Failed to fetch https://example.com; 403",
+    "Failed to fetch https://example.com. Retry later",
+    "Failed to fetch https://example.com: 403",
+])
+def test_trailing_punctuation_after_a_bare_url_is_not_part_of_the_host(text):
+    assert hook.host_from_text(text) == "example.com"
+
+
+@pytest.mark.parametrize("value", ["https://faß.de/", "https://FASS.de".replace("FASS", "faς"), "https://a‍b.example/"])
+def test_idna_deviation_characters_are_not_looked_up_as_another_domain(value):
+    # IDNA2003 (Python's codec) folds ß to "ss"; browsers keep the IDNA2008 name, a different registration.
+    assert hook.normalize_host(value) is None
+    assert hook.normalize_host("https://bücher.example/") == "xn--bcher-kva.example"
+
+
 # --- launcher ----------------------------------------------------------------------------------
 
 @pytest.mark.skipif(sys.platform == "win32" or shutil.which("sh") is None, reason="needs a POSIX sh")
@@ -817,4 +924,5 @@ def test_launcher_picks_python_37_or_prints_nothing(tmp_path, os_name, versions,
     if expected is None:
         assert done.stdout == b""
     else:
-        assert done.stdout.decode() == f"{expected} {PLUGIN / 'hooks' / 'ahn_lookup.py'}"
+        # Both the version probe and the exec skip site and user settings (-I -S): see run-hook.sh.
+        assert done.stdout.decode() == f"{expected} -I -S {PLUGIN / 'hooks' / 'ahn_lookup.py'}"

@@ -66,12 +66,21 @@ SCHEMELESS = re.compile(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:[/?#].*)?", re.DOTALL
 # Fields of an MCP tool's input that name the page it acted on. WebFetch has only "url".
 URL_FIELDS = ("url", "uri", "href", "link", "page_url", "pageUrl", "target_url", "targetUrl")
 CLASSES = (
-    ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge|cloudflare", re.I)),
+    # Not the bare brand name: "cloudflare" also appears in Cloudflare 5xx pages and block pages (error 1020).
+    ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge"
+                                      r"|checking your browser|just a moment", re.I)),
     ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b401\b|\bauthenticat(?:e|ion)\b", re.I)),
-    ("service_error", re.compile(r"\b5\d\d\b|time ?out|timed ?out|unavailable|reset|bad gateway", re.I)),
+    ("service_error", re.compile(r"\b5\d\d\b|time ?out|timed[ _]?out|unavailable|reset|bad gateway", re.I)),
 )
-BEFORE_RESPONSE = re.compile(r"connection refused|could not resolve|timed ?out|ENOTFOUND|ECONNREFUSED|getaddrinfo"
-                             r"|is unable to fetch from", re.I)
+# Nothing was received from the site: Node errno names, Chrome "net::ERR_*" codes (browser MCP tools), and
+# Claude Code's pre-request WebFetch refusals.
+BEFORE_RESPONSE = re.compile(r"connection[ _]refused|could not resolve|timed[ _]?out|ENOTFOUND|ECONNREFUSED|getaddrinfo"
+                             r"|is unable to fetch from|unable to verify if domain|is blocked by the network"
+                             r"|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_ADDRESS_UNREACHABLE", re.I)
+HOST_LIKE = re.compile(r"[A-Za-z0-9.-]+")
+# Characters IDNA2003 (Python's "idna" codec) maps to a different domain than IDNA2008 (browsers) uses.
+IDNA_DEVIATIONS = frozenset("ßς‌‍")
+MAX_AGENT_TOKENS = 64
 
 # Closed enums of the response contract (docs/api-contract.en.md; ahn/models.py is the machine form).
 # A value outside them is dropped, never shown.
@@ -114,6 +123,8 @@ def hostname(value: str | None) -> str | None:
         return None
     host = host.rstrip(".").lower()
     if not host.isascii():
+        if IDNA_DEVIATIONS.intersection(host):
+            return None
         try:
             host = host.encode("idna").decode("ascii")
         except UnicodeError:
@@ -188,7 +199,7 @@ def skip_host(host: str, extra: str = "") -> bool:
 def host_from_text(text: str, refusal: bool = True) -> str | None:
     """The hostname of the first http(s) URL in an error text, else (when refusal) the host in Claude Code's refusal."""
     for match in URL_IN_TEXT.finditer(text):
-        host = hostname(match.group(0))
+        host = hostname(match.group(0).rstrip(".,;:!?"))
         if host:
             return host
     if refusal:
@@ -198,13 +209,23 @@ def host_from_text(text: str, refusal: bool = True) -> str | None:
     return None
 
 
-def without_urls(text: str) -> str:
-    """Replace each URL by its hostname so paths and queries never shape the classification."""
-    return URL_IN_TEXT.sub(lambda match: normalize_host(match.group(0)) or "", text)
+def without_urls(text: str, host: str | None = None) -> str:
+    """Blank each URL and every token naming host or one of its subdomains, so neither a path, a query nor the
+    site's own name (developers.cloudflare.com, login.example.com) shapes the classification."""
+    text = URL_IN_TEXT.sub(" ", text)
+    if not host:
+        return text
+    host = host.lower()
+
+    def blank(match) -> str:
+        token = match.group(0).lower().rstrip(".")
+        return " " if token == host or token.endswith("." + host) else match.group(0)
+
+    return HOST_LIKE.sub(blank, text)
 
 
-def classify(text: str) -> tuple[str, str | None]:
-    text = without_urls(text or "")
+def classify(text: str, host: str | None = None) -> tuple[str, str | None]:
+    text = without_urls(text or "", host)
     error_class = next((name for name, pattern in CLASSES if pattern.search(text)), "site_access")
     stage = "before_target_response" if BEFORE_RESPONSE.search(text) else None
     return error_class, stage
@@ -240,7 +261,7 @@ def failure(payload: dict) -> tuple[str, str, str | None] | None:
         host = next((name for name in candidates if name), None) or host_from_text(text, refusal=not mcp)
         if not host:
             return None
-        error_class, stage = classify(text)
+        error_class, stage = classify(text, host)
         return host, error_class, stage
     if event == "PostToolUse":
         status = http_status(payload.get("tool_response"))
@@ -289,11 +310,12 @@ def recently_seen(host: str, now: float | None = None, env=None) -> bool:
         entries = json.loads(text) if len(text) <= CACHE_MAX_BYTES else {}
         if not isinstance(entries, dict):
             entries = {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         entries = {}
+    # The magnitude bound keeps now - stamp from overflowing on a hand-written huge integer.
     entries = {key: stamp for key, stamp in entries.items()
                if isinstance(key, str) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
-               and 0 <= now - stamp < CACHE_TTL_SECONDS}
+               and -1e12 < stamp < 1e12 and 0 <= now - stamp < CACHE_TTL_SECONDS}
     if host in entries:
         return True
     entries[host] = now
@@ -404,9 +426,12 @@ def blocked_agents(robots: dict) -> tuple[list[str], int]:
     kinds = {rule.get("agent"): _enum(rule.get("kind"), AGENT_KINDS, None)
              for rule in rules if isinstance(rule, dict) and isinstance(rule.get("agent"), str)}
     listed = robots.get("agents_blocked") if isinstance(robots.get("agents_blocked"), list) else []
-    tokens = []
+    tokens, seen = [], set()
     for item in listed:
-        if isinstance(item, str) and AGENT_TOKEN.fullmatch(item) and item not in tokens:
+        if len(tokens) >= MAX_AGENT_TOKENS:
+            break
+        if isinstance(item, str) and item not in seen and AGENT_TOKEN.fullmatch(item):
+            seen.add(item)
             tokens.append(item)
     declared = [token for token in tokens if kinds.get(token) != "training_crawler"]
     return declared, len(tokens) - len(declared)

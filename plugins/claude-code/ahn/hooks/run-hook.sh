@@ -11,10 +11,12 @@ check='import sys; sys.exit(0 if sys.version_info >= (3, 7) else 1)'
 
 # Exec the interpreter given as arguments if it exists and is Python 3.7+.
 # The check reads /dev/null, so the hook payload on stdin stays for the hook.
+# Both starts are isolated (-I) and skip site (-S): the hook is stdlib-only, and loading
+# site-packages .pth files costs seconds per run on some machines.
 try_python() {
   command -v "$1" >/dev/null 2>&1 || return 1
-  "$@" -c "$check" </dev/null >/dev/null 2>&1 || return 1
-  exec "$@" "$script"
+  "$@" -I -S -c "$check" </dev/null >/dev/null 2>&1 || return 1
+  exec "$@" -I -S "$script"
 }
 
 if [ "${OS:-}" = "Windows_NT" ]; then
