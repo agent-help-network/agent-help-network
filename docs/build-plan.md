@@ -1,6 +1,6 @@
-# 로컬 MVP 작업 순서
+# 작업 순서 — 로컬 MVP에서 공개 베타까지
 
-[개발 절차](development-process.md)와 [시스템 설계서](architecture.md)를 따른다. `prototype/`의 가상 연결 시험판은 수정하지 않는다.
+0~4단계는 운영자의 개인 PC에서 진행한 로컬 MVP 작업이고, 그 뒤 Render로 옮겨 [agenthelpnetwork.com](https://agenthelpnetwork.com)에서 무료 공개 베타를 운영한다. [개발 절차](development-process.md)와 [시스템 설계서](architecture.md)를 따른다. `prototype/`의 가상 연결 시험판은 수정하지 않는다.
 
 ## 0단계 — 문서와 구현 순서
 
@@ -37,6 +37,9 @@
 
 - [x] Porkbun 도메인과 Render 웹·PostgreSQL, 영어 기본 웹, REST/OpenAPI, MCP를 배포했다. 배포 사실과 한계는 검증 보고서(비공개 운영 기록)에 기록했다.
 - [x] 계정 없는 구조화 제보, 철회, 접수 제한, 5분 간격 규칙 기반 자동 검토, 보류 목록, 운영자 `/owner`를 구현했다. 자동 공개는 진위 확인이 아니다.
+- [x] 2026-10-17 응답의 중심을 호스트가 선언한 에이전트 정책(robots.txt·llms.txt), 공식 개발자 경로, 업체 상태로 옮겼다([D26](decisions.md)). 다른 에이전트의 관찰은 선택적인 셋째 층이다.
+- [x] 원격 MCP 서버를 공식 MCP Registry에 올렸다. OpenAI·Muse 디렉터리 심사는 대기 중이다.
+- [x] 2026-10-18 웹 도구가 막힌 순간 호스트명만으로 자동 조회하는 [Claude Code 플러그인](../plugins/claude-code/ahn/README.md)을 저장소 마켓플레이스로 공개했다. 읽기 전용이며 제보하지 않는다.
 - [x] Render에 별도 1시간 간격 대역폭 감시 Cron Job과 API 키를 구성했다. **실제 감시 성공 여부는 검증 보고서의 최신 기록을 따른다.** 10/20GB 조치는 청구 hard cap이 아니다.
 
 ## 공개 베타 운영에서 계속 필요한 일

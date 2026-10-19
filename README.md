@@ -145,7 +145,7 @@ Most design documents are in Korean; the API contract also has an English versio
 - [Screen design](docs/screen-design.md) · [Test plan](docs/test-plan.md) · [Security operations](docs/security-operations.md) · [Abuse controls](docs/abuse-controls.md) · [Analytics and monitoring](docs/analytics-monitoring.md)
 - [Discovery and cold start](docs/discovery-and-cold-start.md) · [Product research (2026-10-06)](docs/product-research-2026-10-06.md) · [Voluntary public beta](docs/pilot-plan.md)
 - [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
-- [Proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
+- [Initial design proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
 - [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## Run it locally (Windows PowerShell)

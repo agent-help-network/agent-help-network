@@ -1,6 +1,6 @@
 # 로컬 MVP 요구사항
 
-작성일: 2026-10-03. 제안서의 방향을 개발·시험 가능한 요구사항으로 좁혔다.
+작성일: 2026-10-03. [초기 설계 제안](proposal.md)의 방향을 개발·시험 가능한 요구사항으로 좁혔다. 이 문서는 로컬 MVP 단계의 기록이다. 그 결과물은 이후 Render로 옮겨 [agenthelpnetwork.com](https://agenthelpnetwork.com)에서 무료 공개 베타로 운영하고 있으며, 지금의 응답 구조와 범위는 [README](../README.ko.md), [API 계약](api-contract.md), [결정 기록](decisions.md)을 따른다.
 
 | ID | 요구사항 | 검증 기준 |
 | --- | --- | --- |

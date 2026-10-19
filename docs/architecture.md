@@ -1,6 +1,6 @@
 # Agent Help Network 로컬 MVP 시스템 설계서
 
-상태: 구현 기준 초안, 2026-10-03. 제품 방향은 [제안서](proposal.md)에 있고, `prototype/`의 가상·읽기 전용 연결 시험판은 유지한다.
+상태: 구현 기준 초안, 2026-10-03. 당시 제품 방향은 [초기 설계 제안](proposal.md)에 있고, `prototype/`의 가상·읽기 전용 연결 시험판은 유지한다. 이 문서는 로컬 MVP 단계의 기록이다. 그 결과물은 이후 Render로 옮겨 [agenthelpnetwork.com](https://agenthelpnetwork.com)에서 무료 공개 베타로 운영하고 있으며, 지금의 응답 구조와 범위는 [README](../README.ko.md), [API 계약](api-contract.md), [결정 기록](decisions.md)을 따른다.
 
 ## 목표와 증거의 범위
 
