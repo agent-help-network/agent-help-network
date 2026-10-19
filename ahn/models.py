@@ -186,7 +186,7 @@ class CheckObservation(StrictModel):
 class ProviderStatus(StrictModel):
     source_name: str
     source_url: str
-    indicator: Literal["none", "minor", "major", "critical", "unknown"] | None
+    indicator: Literal["none", "minor", "major", "critical", "maintenance", "unknown"] | None
     fetched_at: datetime | None
     source_updated_at: datetime | None
     freshness: Literal["pending", "fresh", "stale"]

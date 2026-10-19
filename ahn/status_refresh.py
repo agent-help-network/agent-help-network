@@ -74,6 +74,16 @@ def failure_label(exc: BaseException) -> str:
 
 @dataclass(frozen=True)
 class Source:
+    """A verified publisher status feed.
+
+    kind picks the parser and the read cap (see FEED_KINDS):
+      statuspage    Atlassian Statuspage format, api_url = page_url + "api/v2/status.json" (incident.io pages answer it too)
+      instatus      api_url = page_url + "summary.json"
+      betterstack   api_url = page_url + "index.json"
+      google_gmail  Google Workspace Status Dashboard incident history, filtered to Gmail
+      discovered_statuspage  built at request time from a verified status.<host> CNAME; never listed in SOURCES
+    """
+
     name: str
     page_url: str
     api_url: str
@@ -534,6 +544,27 @@ SOURCES: dict[str, Source] = {
     "whoop.com": Source("WHOOP Status", "https://status.whoop.com/", "https://status.whoop.com/api/v2/status.json"),
     "workspaceone.com": Source("Omnissa Workspace ONE Status", "https://status.workspaceone.com/", "https://status.workspaceone.com/api/v2/status.json"),
     "yoast.com": Source("Yoast Status", "https://status.yoast.com/", "https://status.yoast.com/api/v2/status.json"),
+    # Moved from OFFICIAL_STATUS_PAGES after each feed answered and parsed on one read (2026-10-19), with the pages already curated there.
+    # brave.com: status.brave.com answers 301 to status.brave.app, the page that serves the feed (redirects are not followed).
+    "duffel.com": Source("Duffel Status", "https://www.duffelstatus.com/", "https://www.duffelstatus.com/api/v2/status.json"),
+    "ghost.org": Source("Ghost Status", "https://ghoststatus.org/", "https://ghoststatus.org/api/v2/status.json"),
+    "easypost.com": Source("EasyPost Status", "https://www.easypoststatus.com/", "https://www.easypoststatus.com/api/v2/status.json"),
+    "rubygems.org": Source("RubyGems Status", "https://status.rubygems.org/", "https://status.rubygems.org/api/v2/status.json"),
+    "sinch.com": Source("Sinch Status", "https://status.sinch.com/", "https://status.sinch.com/api/v2/status.json"),
+    "bsky.app": Source("Bluesky Status", "https://status.bsky.app/", "https://status.bsky.app/summary.json", "instatus"),
+    "exa.ai": Source("Exa Status", "https://status.exa.ai/", "https://status.exa.ai/summary.json", "instatus"),
+    "fastmail.com": Source("Fastmail Status", "https://fastmailstatus.com/", "https://fastmailstatus.com/summary.json", "instatus"),
+    "joinmastodon.org": Source("Mastodon Status", "https://status.joinmastodon.org/", "https://status.joinmastodon.org/summary.json", "instatus"),
+    "kagi.com": Source("Kagi Status", "https://status.kagi.com/", "https://status.kagi.com/summary.json", "instatus"),
+    "mastodon.social": Source("Mastodon Status", "https://status.joinmastodon.org/", "https://status.joinmastodon.org/summary.json", "instatus"),
+    "mollie.com": Source("Mollie Status", "https://status.mollie.com/", "https://status.mollie.com/summary.json", "instatus"),
+    "tiingo.com": Source("Tiingo Status", "https://status.tiingo.com/", "https://status.tiingo.com/summary.json", "instatus"),
+    "todoist.com": Source("Todoist API Status", "https://status.todoist.net/", "https://status.todoist.net/summary.json", "instatus"),
+    "brave.com": Source("Brave Status", "https://status.brave.app/", "https://status.brave.app/index.json", "betterstack"),
+    "firecrawl.dev": Source("Firecrawl Status", "https://status.firecrawl.dev/", "https://status.firecrawl.dev/index.json", "betterstack"),
+    "huggingface.co": Source("Hugging Face Status", "https://status.huggingface.co/", "https://status.huggingface.co/index.json", "betterstack"),
+    "openalex.org": Source("OpenAlex Status", "https://status.openalex.org/", "https://status.openalex.org/index.json", "betterstack"),
+    "together.ai": Source("Together AI Status", "https://status.together.ai/", "https://status.together.ai/index.json", "betterstack"),
 }
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
@@ -541,7 +572,6 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "netflix.com": ("Netflix Service Status", "https://help.netflix.com/en/is-netflix-down"),
     "webex.com": ("Webex Global Service Status", "https://status.webex.com/"),
     "adobe.com": ("Adobe Status", "https://status.adobe.com/"),
-    "brave.com": ("Brave Status", "https://status.brave.com/"),
     "cdn77.org": ("CDN77 Status", "https://client.cdn77.com/support/status"),
     "fastly.net": ("Fastly Status", "https://www.fastlystatus.com/"),
     "jetbrains.com": ("JetBrains Services Status", "https://status.jetbrains.com/"),
@@ -574,7 +604,6 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "azure.com": ("Azure Status (Azure services)", "https://azure.status.microsoft/en-us/status"),
     "bitwarden.com": ("Bitwarden Status", "https://status.bitwarden.com/"),
     "braintreepayments.com": ("Braintree Status", "https://www.paypal-status.com/product/production"),
-    "bsky.app": ("Bluesky Status", "https://status.bsky.app/"),
     "civitai.com": ("Civitai Status", "https://status.civitai.com/status/public"),
     "codeberg.org": ("Codeberg Status", "https://status.codeberg.org/status/codeberg"),
     "coingecko.com": ("CoinGecko API Status", "https://status.coingecko.com/"),
@@ -584,40 +613,28 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "deepl.com": ("DeepL Status", "https://status.deepl.com/"),
     "deepseek.com": ("DeepSeek Status", "https://status.deepseek.com/"),
     "docusign.com": ("DocuSign Status", "https://health.docusign.com/status"),
-    "duffel.com": ("Duffel Status", "https://www.duffelstatus.com/"),
-    "easypost.com": ("EasyPost Status", "https://www.easypoststatus.com/"),
     "eventbrite.com": ("Eventbrite Status", "https://www.eventbritestatus.com/"),
-    "exa.ai": ("Exa Status", "https://status.exa.ai/"),
     "facebook.com": ("Meta Status (business products and platform)", "https://metastatus.com/"),
-    "fastmail.com": ("Fastmail Status", "https://fastmailstatus.com/"),
-    "firecrawl.dev": ("Firecrawl Status", "https://status.firecrawl.dev/"),
     "fitbit.com": ("Fitbit Status", "https://status.healthapp.google.com/"),
     "freshworks.com": ("Freshworks Status", "https://status.freshworks.com/"),
     "garmin.com": ("Garmin Connect Status", "https://connect.garmin.com/status/"),
-    "ghost.org": ("Ghost Status", "https://ghoststatus.org/"),
     "gitlab.com": ("GitLab Status", "https://status.gitlab.com/"),
     "gumroad.com": ("Gumroad Status", "https://status.gumroad.com/"),
     "here.com": ("HERE Status", "https://status.here.com/status"),
     "heroku.com": ("Heroku Status", "https://status.heroku.com/"),
     "hetzner.com": ("Hetzner Status", "https://status.hetzner.com/"),
-    "huggingface.co": ("Hugging Face Status", "https://status.huggingface.co/"),
     "ibm.com": ("IBM Cloud Status (IBM Cloud services only)", "https://cloud.ibm.com/status"),
     "icloud.com": ("Apple System Status (Apple services)", "https://www.apple.com/support/systemstatus/"),
     "instagram.com": ("Meta Status (business products and platform)", "https://metastatus.com/"),
     "intuit.com": ("Intuit Status", "https://status.intuit.com/"),
-    "joinmastodon.org": ("Mastodon Status", "https://status.joinmastodon.org/"),
     "jsdelivr.com": ("jsDelivr Status", "https://status.jsdelivr.com/"),
-    "kagi.com": ("Kagi Status", "https://status.kagi.com/"),
     "lemonsqueezy.com": ("Lemon Squeezy Status", "https://status.lemonsqueezy.com/"),
     "letsencrypt.org": ("Let's Encrypt Status", "https://letsencrypt.status.io/"),
     "mailchimp.com": ("Mailchimp Status", "https://status.mailchimp.com/"),
-    "mastodon.social": ("Mastodon Status", "https://status.joinmastodon.org/"),
     "microsoftonline.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
-    "mollie.com": ("Mollie Status", "https://status.mollie.com/"),
     "neon.tech": ("Neon Status", "https://neonstatus.com/"),
     "nuget.org": ("NuGet Status", "https://status.nuget.org/"),
     "okx.com": ("OKX Status", "https://www.okx.com/en-us/status"),
-    "openalex.org": ("OpenAlex Status", "https://status.openalex.org/"),
     "openrouter.ai": ("OpenRouter Status", "https://status.openrouter.ai/"),
     "outlook.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
     "packagist.org": ("Packagist Status", "https://status.packagist.org/"),
@@ -634,14 +651,10 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "redis.io": ("Redis Cloud Status", "https://status.redis.io/"),
     "ringcentral.com": ("RingCentral Status", "https://status.ringcentral.com/"),
     "riotgames.com": ("Riot Games Service Status", "https://status.riotgames.com/"),
-    "rubygems.org": ("RubyGems Status", "https://status.rubygems.org/"),
     "sharepoint.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
-    "sinch.com": ("Sinch Status", "https://status.sinch.com/"),
     "slack.com": ("Slack Status", "https://slack-status.com/"),
     "splunk.com": ("Splunk Cloud Status", "https://www.splunk.com/en_us/products/system-status.html"),
     "themoviedb.org": ("TMDB Status", "https://status.themoviedb.org/"),
-    "tiingo.com": ("Tiingo Status", "https://status.tiingo.com/"),
-    "together.ai": ("Together AI Status", "https://status.together.ai/"),
     "tomtom.com": ("TomTom Status", "https://status.tomtom.com/csm"),
     "unity.com": ("Unity Services Status", "https://status.unity.com/"),
     "upstage.ai": ("Upstage Status", "https://status.upstage.ai/"),
@@ -654,7 +667,6 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "replicate.com": ("Cloudflare Status (Replicate's own status address redirects here)", "https://www.cloudflarestatus.com/services"),
     "soundcloud.com": ("SoundCloud Status", "https://help.soundcloud.com/hc/en-us/articles/4413524848667-SoundCloud-Status"),
     "tencentcloud.com": ("Tencent Cloud API Status", "https://status.tencentcloud.com/"),
-    "todoist.com": ("Todoist API Status", "https://status.todoist.net/"),
     "twelvedata.com": ("Twelve Data Status", "https://twelvedata.isitup.cloud/"),
     "twitter.com": ("X Developer Platform Status", "https://developer.x.com/status"),
     "writer.com": ("Writer Status", "https://status.writer.com/"),
@@ -903,7 +915,7 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "zoho.in": ("Zoho Status (India)", "https://in.zohostatus.com/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
-INDICATORS = frozenset({"none", "minor", "major", "critical", "unknown"})
+INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 _SOURCE_LOCKS = {host: threading.Lock() for host in SOURCES}
 _STATUSPAGE_CNAME = re.compile(r"^([a-z0-9]{8,32})\.stspg-customer\.com\.$")
 
@@ -1000,6 +1012,63 @@ def parse_status(body: dict) -> tuple[str, datetime | None]:
     return indicator, updated_at
 
 
+def _aware_time(raw, what: str) -> datetime:
+    if not isinstance(raw, str):
+        raise ValueError(f"invalid {what}")
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{what} has no timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+# Instatus public data, https://instatus.com/help/api/public-data : <page>/summary.json carries page.status,
+# one of UP, HASISSUES, UNDERMAINTENANCE, plus the active incidents and maintenances.
+INSTATUS_STATES = {"UP": "none", "HASISSUES": "minor", "UNDERMAINTENANCE": "maintenance"}
+
+
+def parse_instatus(body: dict) -> tuple[str, datetime | None]:
+    """Parse an Instatus summary.json; any page.status outside INSTATUS_STATES is rejected, never guessed."""
+    page = body.get("page") if isinstance(body, dict) else None
+    if not isinstance(page, dict) or not isinstance(page.get("status"), str):
+        raise ValueError("invalid provider status response")
+    state = page["status"]
+    if state not in INSTATUS_STATES:
+        raise ValueError("unknown provider status")
+    updated_at = None
+    if state != "UP":
+        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt).
+        times = []
+        for key in ("activeIncidents", "activeMaintenances"):
+            items = body.get(key)
+            if items is None:
+                continue
+            if not isinstance(items, list):
+                raise ValueError("invalid provider status response")
+            times += [_aware_time(item["updatedAt"], "provider update time")
+                      for item in items if isinstance(item, dict) and item.get("updatedAt") is not None]
+        updated_at = max(times) if times else None
+    return INSTATUS_STATES[state], updated_at
+
+
+# Better Stack Uptime status page API,
+# https://betterstack.com/docs/uptime/status-pages/subscribing-to-status-updates/subscribing-to-api/ :
+# <page>/index.json carries data.attributes.aggregate_state, one of operational, degraded, downtime, maintenance.
+BETTERSTACK_STATES = {"operational": "none", "degraded": "minor", "downtime": "major", "maintenance": "maintenance"}
+
+
+def parse_betterstack(body: dict) -> tuple[str, datetime | None]:
+    """Parse a Better Stack index.json; any aggregate_state outside BETTERSTACK_STATES is rejected, never guessed."""
+    data = body.get("data") if isinstance(body, dict) else None
+    attributes = data.get("attributes") if isinstance(data, dict) else None
+    if not isinstance(attributes, dict) or not isinstance(attributes.get("aggregate_state"), str):
+        raise ValueError("invalid provider status response")
+    state = attributes["aggregate_state"]
+    if state not in BETTERSTACK_STATES:
+        raise ValueError("unknown provider status")
+    raw_time = attributes.get("updated_at")
+    return BETTERSTACK_STATES[state], None if raw_time is None else _aware_time(raw_time, "provider update time")
+
+
 def parse_google_gmail(body: list) -> tuple[str, datetime | None]:
     """Interpret only active Gmail incidents in Google's official history feed."""
     if not isinstance(body, list):
@@ -1044,6 +1113,20 @@ def parse_google_gmail(body: list) -> tuple[str, datetime | None]:
     return indicator, max(updated_times) if updated_times else None
 
 
+# Per Source.kind: the hard read cap in bytes and the parser. Statuspage and Instatus answers are small (about 0.1 to
+# 1 KB measured; an Instatus summary lists only the active incidents), so they keep the 32 KiB cap. A Better Stack index.json
+# also embeds every resource with a daily status_history, so it grows with the page; measured 2026-10-19 on the
+# five mapped pages: 26,805 (openalex.org), 23,309 (firecrawl.dev), 80,091 (huggingface.co), 207,867 (together.ai)
+# and 266,919 (brave.com) bytes. 524,288 leaves about twice the largest as headroom; a larger page still fails
+# closed as too_large.
+FEED_KINDS = {
+    "statuspage": (32_768, parse_status),
+    "instatus": (32_768, parse_instatus),
+    "betterstack": (524_288, parse_betterstack),
+    "google_gmail": (1_048_576, parse_google_gmail),
+}
+
+
 def register_source(conn, site_host: str, source: Source | None = None) -> bool:
     """Persist a verified mapping only when a user looks up its host."""
     source = source or SOURCES.get(site_host)
@@ -1071,8 +1154,10 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
             raise FeedFailure("error")
         _, indicator, updated_at = _read_discovered_statuspage(host[7:])
         return indicator, updated_at
+    if source.kind not in FEED_KINDS:
+        raise FeedFailure("error")
+    cap, parse = FEED_KINDS[source.kind]
     # Follow no redirects, stream with a hard byte cap, and never send credentials.
-    cap = 1_048_576 if source.kind == "google_gmail" else 32_768
     with client.stream("GET", source.api_url, headers={"Accept": "application/json"}) as response:
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
@@ -1082,7 +1167,7 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
             if len(data) > cap:
                 raise FeedFailure("too_large")
     body = httpx.Response(200, content=bytes(data)).json()
-    return parse_google_gmail(body) if source.kind == "google_gmail" else parse_status(body)
+    return parse(body)
 
 
 def _cached_ok(settings: Settings, site_host: str) -> bool | None:

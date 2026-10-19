@@ -22,7 +22,7 @@ from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .traffic import client_type, daily_client_digest, request_source
-from .triage import CHECKS_KO
+from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
 
@@ -464,7 +464,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,
-                      next_check_ko=CHECKS_KO, error=error)
+                      next_check_ko={**CHECKS_KO, "provider_maintenance": MAINTENANCE_CHECK_KO}, error=error)
 
     @app.get("/{lang}/incidents/{incident_id}", include_in_schema=False)
     def detail_page(request: Request, lang: str, incident_id: UUID):

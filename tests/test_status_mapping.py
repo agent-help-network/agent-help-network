@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from ahn.models import valid_host
 from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host
-from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+from ahn.status_refresh import FEED_KINDS, OFFICIAL_STATUS_PAGES, SOURCES
 
 HOST = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
 _ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,13 @@ _spec.loader.exec_module(_verify)
 SHARED_HOSTING_SUFFIXES = _verify.PRIVATE_SUFFIXES
 # Platforms whose own status page answers for every customer site under their suffix (a deliberate, older mapping).
 PLATFORM_KEYS = frozenset({"github.io", "netlify.app", "vercel.app"})
+# Where each feed kind's machine-readable answer lives relative to the status page.
+API_PATH_BY_KIND = {
+    "statuspage": "api/v2/status.json",  # Atlassian Statuspage and the compatible incident.io endpoint
+    "instatus": "summary.json",
+    "betterstack": "index.json",
+    "google_gmail": "incidents.json",  # https://www.google.com/appsstatus/dashboard/incidents.json
+}
 
 
 def test_keys_are_plain_lowercase_apex_style_hosts():
@@ -47,8 +54,9 @@ def test_feed_sources_point_at_the_page_status_json():
         assert page.scheme == api.scheme == "https", host
         assert page.hostname == api.hostname and not page.query and not page.fragment, host
         assert source.page_url.endswith("/"), host
-        if source.kind == "statuspage":
-            assert source.api_url == source.page_url + "api/v2/status.json", host
+        assert source.kind in API_PATH_BY_KIND, host  # a new kind needs its own rule here and a parser in FEED_KINDS
+        assert source.kind in FEED_KINDS, host
+        assert source.api_url == source.page_url + API_PATH_BY_KIND[source.kind], host
 
 
 def test_official_page_links_are_https_and_named():
@@ -65,3 +73,22 @@ def test_no_mapping_points_at_a_placeholder_or_an_aggregator():
         parts = urlsplit(url)
         assert not parts.path.rstrip("/").endswith("/inactive"), url  # Statuspage's answer for a subdomain nobody runs
         assert not any((parts.hostname or "").endswith(domain) for domain in ("statusgator.com", "downdetector.com", "fruits.co")), url
+
+
+# Hosts whose status page was read once on 2026-10-19 and moved from a link to a feed.
+INSTATUS_HOSTS = {"bsky.app", "exa.ai", "fastmail.com", "joinmastodon.org", "kagi.com", "mastodon.social", "mollie.com",
+                  "tiingo.com", "todoist.com"}
+BETTERSTACK_HOSTS = {"brave.com", "firecrawl.dev", "huggingface.co", "openalex.org", "together.ai"}
+STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com"}
+
+
+def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
+    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS
+    for host in STATUSPAGE_COMPATIBLE_HOSTS:
+        assert SOURCES[host].kind == "statuspage", host
+    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS) & set(OFFICIAL_STATUS_PAGES)
+
+
+def test_datadog_stays_a_link_because_its_feed_covers_one_region_only():
+    assert "datadoghq.com" in OFFICIAL_STATUS_PAGES and "datadoghq.com" not in SOURCES

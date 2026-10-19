@@ -57,7 +57,7 @@ Declared policy is what the host says, read from its own files. It does not prov
 
 ### `provider_status`
 
-The provider's own status feed, with `source_name`, `indicator` (`none`, `minor`, `major`, `critical`, `unknown`), `fetched_at`, `freshness` (`fresh`, `stale`, `pending`) and `error_detail` (`null` unless the last feed read failed; then a short label such as `http_503` or `timeout`, describing the feed read, not the target site). `null` means no feed is connected; `official_status_page` may still link a human-readable status page. A provider incident may or may not explain the failure; "no active issue" does not prove access from this environment.
+The provider's own status feed, with `source_name`, `indicator` (`none`, `minor`, `major`, `critical`, `maintenance`, `unknown`), `fetched_at`, `freshness` (`fresh`, `stale`, `pending`) and `error_detail` (`null` unless the last feed read failed; then a short label such as `http_503` or `timeout`, describing the feed read, not the target site). `null` means no feed is connected; `official_status_page` may still link a human-readable status page. A provider incident may or may not explain the failure; "no active issue" does not prove access from this environment.
 
 ### `observations` and `evidence_level`
 

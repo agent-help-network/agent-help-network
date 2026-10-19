@@ -49,6 +49,11 @@ CHECKS_KO = {
     "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 페이지 자동화보다 문서화된 API나 개발자 포털을 우선하세요. 허용된 경로이며 대개 더 안정적입니다.",
 }
 
+# Same code (provider_scope), different text: the provider announced scheduled work, which is not an incident to diagnose.
+MAINTENANCE_CHECK = "The provider has announced scheduled maintenance. Compare its window and affected services with your blocked step; wait for the maintenance to end instead of retrying in a loop."
+MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하고, 반복 재시도하지 말고 점검이 끝날 때까지 기다리세요."
+ACTIVE_INDICATORS = {"minor", "major", "critical", "maintenance"}
+
 AGENT_KINDS_FOR_BLOCK = {"user_agent", "search_crawler"}
 
 
@@ -72,7 +77,7 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
                    official: dict | None, *, profile_not_read: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources."""
     reasons: list[str] = []
-    if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in {"minor", "major", "critical"}:
+    if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in ACTIVE_INDICATORS:
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
     if error_class == "human_verification":
         return {"action": "hand_off_to_human", "confidence": "high", "reasons": ["human_handoff"]}
@@ -134,7 +139,7 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
         codes.append("official_path_available")
     if provider_status and provider_status.get("freshness") == "fresh":
         indicator = provider_status.get("indicator")
-        if indicator in {"minor", "major", "critical"}:
+        if indicator in ACTIVE_INDICATORS:
             codes.append("provider_scope")
         elif indicator == "none":
             codes.append("provider_clear")
@@ -143,4 +148,5 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     else:
         codes.append("provider_unknown")
     codes.append("reports_stale" if evidence_level == "stale_reports" else "reports_unknown" if evidence_level == "no_reports" else "reports_unverified")
-    return [{"code": code, "text": CHECKS[code]} for code in codes]
+    maintenance = bool(provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "maintenance")
+    return [{"code": code, "text": MAINTENANCE_CHECK if maintenance and code == "provider_scope" else CHECKS[code]} for code in codes]
