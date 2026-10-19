@@ -776,7 +776,6 @@ OFFICIAL_PATHS: dict[str, dict] = {
     "vk.ru": _entry("VK for Developers", "https://dev.vk.com/en/api/overview", None),
     "ok.ru": _entry("OK API", "https://apiok.ru/en/dev/", "https://apiok.ru/en/"),
     "yandexcloud.net": _entry("Yandex Cloud API", "https://yandex.cloud/en/docs/api-design-guide/", "https://yandex.cloud/en/docs/"),
-    "avito.ru": _entry("Avito API", "https://developers.avito.ru/", None),
     "2gis.com": _entry("2GIS API", None, "https://docs.2gis.com/"),
     "sberbank.ru": _entry("SberDevices / Sber for Developers", None, "https://developers.sber.ru/"),
     "bitrix24.ru": _entry("Bitrix24 REST API", "https://apidocs.bitrix24.com/", None),
