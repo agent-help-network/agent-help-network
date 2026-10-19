@@ -21,7 +21,11 @@ SHARED_HOSTING_SUFFIXES = _verify.PRIVATE_SUFFIXES
 PLATFORM_KEYS = frozenset({"github.io", "netlify.app", "vercel.app"})
 # Older keys whose top-level domain is not in PUBLIC_AGGREGATE_TLDS, so the service does not answer for them today.
 # Either the TLD joins that list or these keys go; until then they are named here so no new key can slip in the same way.
-NOT_YET_ELIGIBLE = frozenset({"alpaca.markets", "mastodon.social", "notion.so"})
+NOT_YET_ELIGIBLE = frozenset({
+    "alpaca.markets",  # awaiting the TLD list update (separate runtime PR)
+    "mastodon.social",  # awaiting the TLD list update (separate runtime PR)
+    "notion.so",  # awaiting the TLD list update (separate runtime PR)
+})
 
 
 def test_keys_are_plain_lowercase_apex_style_hosts():
