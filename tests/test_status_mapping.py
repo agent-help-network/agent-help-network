@@ -19,13 +19,6 @@ _spec.loader.exec_module(_verify)
 SHARED_HOSTING_SUFFIXES = _verify.PRIVATE_SUFFIXES
 # Platforms whose own status page answers for every customer site under their suffix (a deliberate, older mapping).
 PLATFORM_KEYS = frozenset({"github.io", "netlify.app", "vercel.app"})
-# Older keys whose top-level domain is not in PUBLIC_AGGREGATE_TLDS, so the service does not answer for them today.
-# Either the TLD joins that list or these keys go; until then they are named here so no new key can slip in the same way.
-NOT_YET_ELIGIBLE = frozenset({
-    "alpaca.markets",  # awaiting the TLD list update (separate runtime PR)
-    "mastodon.social",  # awaiting the TLD list update (separate runtime PR)
-    "notion.so",  # awaiting the TLD list update (separate runtime PR)
-})
 
 
 def test_keys_are_plain_lowercase_apex_style_hosts():
@@ -40,7 +33,7 @@ def test_every_key_is_an_eligible_public_host():
         assert valid_host(host), host
         assert host not in PUBLIC_SUFFIXES_2, host  # a public suffix such as co.uk is nobody's host
         assert host not in SHARED_HOSTING_SUFFIXES or host in PLATFORM_KEYS, host  # a shared-hosting suffix is many owners' host
-        assert aggregate_eligible_host(host) or host in NOT_YET_ELIGIBLE, host
+        assert aggregate_eligible_host(host), host
 
 
 def test_a_host_has_a_feed_or_a_link_never_both():

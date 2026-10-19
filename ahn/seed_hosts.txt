@@ -31,6 +31,7 @@ discord.com
 telegram.org
 whatsapp.com
 zoom.us
+notion.so
 notion.com
 atlassian.com
 atlassian.net
@@ -175,6 +176,7 @@ legislation.gov.uk
 data.police.uk
 metoffice.gov.uk
 canada.ca
+who.int
 worldbank.org
 abs.gov.au
 e-stat.go.jp
@@ -507,6 +509,7 @@ yandex.ru
 anthropic.com
 claude.ai
 claude.com
+deepmind.google
 llama.com
 meta.ai
 ai21.com
@@ -649,7 +652,6 @@ un.org
 f5.com
 ya.ru
 vkontakte.ru
-notion.so
 usa.gov
 irs.gov
 ssa.gov
@@ -708,7 +710,6 @@ docs.python.org
 readthedocs.io
 mdn.io
 developer.mozilla.org
-deepmind.google
 gemini.google.com
 t-mobile.com
 comcast.com
@@ -870,7 +871,6 @@ capcutapi.com
 playstation.net
 roku.com
 imcmdb.net
-who.int
 adnxs.com
 name-services.com
 pubmatic.com
