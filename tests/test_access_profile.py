@@ -1,5 +1,6 @@
-from ahn.access_profile import AGENT_USER_AGENTS, LLMS_CAP, ROBOTS_CAP, build_profile, parse_robots
+from ahn.access_profile import AGENT_SOURCES, AGENT_USER_AGENTS, LLMS_CAP, ROBOTS_CAP, UNCONFIRMED_AGENT_TOKENS, build_profile, parse_robots
 from ahn.official_paths import OFFICIAL_PATHS, official_paths
+from ahn.triage import AGENT_KINDS_FOR_BLOCK, declared_block, recommendation
 
 
 def _rule(parsed: dict, agent: str) -> dict:
@@ -49,6 +50,61 @@ def test_allow_disallow_precedence_is_longest_match_then_allow():
                                                "crawl_delay": None, "disallow_paths": []}
     deep_only = parse_robots("User-agent: GPTBot\nDisallow: /admin\nDisallow: /tmp/\n")
     assert _rule(deep_only, "GPTBot")["root_allowed"] is True and _rule(deep_only, "GPTBot")["disallow_count"] == 2
+
+
+# The 22 tokens the table held before it was checked against vendor documentation, with the kind each had then.
+PREVIOUS_KINDS = {
+    "ChatGPT-User": "user_agent", "Claude-User": "user_agent", "Perplexity-User": "user_agent", "Meta-ExternalFetcher": "user_agent",
+    "MistralAI-User": "user_agent", "OAI-SearchBot": "search_crawler", "Claude-SearchBot": "search_crawler", "PerplexityBot": "search_crawler",
+    "Googlebot": "search_crawler", "Bingbot": "search_crawler", "DuckAssistBot": "search_crawler", "Amazonbot": "search_crawler",
+    "GPTBot": "training_crawler", "ClaudeBot": "training_crawler", "anthropic-ai": "training_crawler", "Google-Extended": "training_crawler",
+    "Applebot-Extended": "training_crawler", "Meta-ExternalAgent": "training_crawler", "CCBot": "training_crawler",
+    "Bytespider": "training_crawler", "cohere-ai": "training_crawler", "Diffbot": "training_crawler",
+}
+# Added from vendor documentation; each is named by its own robots.txt group in the test below.
+ADDED_KINDS = {
+    "Google-Agent": "user_agent", "Google-GeminiNotebook": "user_agent", "Amzn-User": "user_agent", "Diffbot-User": "user_agent",
+    "DuckDuckBot": "search_crawler", "Amzn-SearchBot": "search_crawler", "Meta-WebIndexer": "search_crawler",
+    "MistralAI-Index": "search_crawler", "Applebot": "search_crawler", "MistralAI-Training": "training_crawler",
+}
+# The only kind changes among the previous tokens (vendor documentation says so); everything else keeps its kind.
+RECLASSIFIED = {"Diffbot": "search_crawler", "DuckAssistBot": "user_agent"}
+
+
+def test_token_table_is_unique_sourced_and_only_the_documented_kinds_moved():
+    tokens = [token for token, _ in AGENT_USER_AGENTS]
+    assert len({token.lower() for token in tokens}) == len(tokens)
+    assert {kind for _, kind in AGENT_USER_AGENTS} == {"user_agent", "search_crawler", "training_crawler"}
+    assert dict(AGENT_USER_AGENTS) == {**PREVIOUS_KINDS, **RECLASSIFIED, **ADDED_KINDS}
+    assert set(AGENT_SOURCES) | UNCONFIRMED_AGENT_TOKENS == set(tokens) and not set(AGENT_SOURCES) & UNCONFIRMED_AGENT_TOKENS
+    assert all(url.startswith("https://") for url in AGENT_SOURCES.values())
+
+
+def test_every_added_or_reclassified_token_is_named_by_its_own_group():
+    for token, kind in {**ADDED_KINDS, **RECLASSIFIED}.items():
+        parsed = parse_robots(f"User-agent: {token}\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+        assert _rule(parsed, token)["kind"] == kind and _rule(parsed, token)["explicit_group"] is True
+        assert token in parsed["agents_blocked"]
+        profile = {"robots_status": "ok", "robots": parsed}
+        blocks = kind in AGENT_KINDS_FOR_BLOCK
+        assert (token in declared_block(profile)) == blocks
+        assert (recommendation("site_access", None, profile, None)["action"] == "stop_declared_block") == blocks
+
+
+def test_training_only_blocks_stay_non_blocking_including_the_new_training_token():
+    names = ("GPTBot", "ClaudeBot", "Google-Extended", "Applebot-Extended", "Meta-ExternalAgent", "MistralAI-Training", "CCBot", "Bytespider")
+    parsed = parse_robots("".join(f"User-agent: {name}\nDisallow: /\n\n" for name in names) + "User-agent: *\nAllow: /\n")
+    assert parsed["agents_blocked"] == [token for token, _ in AGENT_USER_AGENTS if token in names]
+    profile = {"robots_status": "ok", "robots": parsed}
+    assert declared_block(profile) == []
+    assert recommendation("site_access", None, profile, None)["action"] == "proceed"
+
+
+def test_new_spellings_do_not_cross_match_sibling_tokens():
+    parsed = parse_robots("User-agent: MistralAI-Training\nDisallow: /\n\nUser-agent: Amzn-SearchBot\nDisallow: /\n\nUser-agent: Google-GeminiNotebook\nDisallow: /\n")
+    assert parsed["agents_blocked"] == ["Google-GeminiNotebook", "Amzn-SearchBot", "MistralAI-Training"]
+    assert all(not _rule(parsed, token)["explicit_group"] for token in ("MistralAI-User", "Amzn-User", "Google-Agent", "Googlebot"))
+    assert parse_robots("User-agent: Applebot-Extended\nDisallow: /\n")["agents_blocked"] == ["Applebot-Extended"]
 
 
 def test_bom_crlf_comments_and_junk_are_tolerated():

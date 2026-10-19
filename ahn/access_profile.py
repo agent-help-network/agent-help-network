@@ -25,15 +25,46 @@ from psycopg.types.json import Jsonb
 
 from .db import connect
 
+# Only user_agent and search_crawler tokens can make a declared block (triage.AGENT_KINDS_FOR_BLOCK); a training_crawler
+# token is reported but never blocks. Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
 AGENT_USER_AGENTS: tuple[tuple[str, str], ...] = (
     ("ChatGPT-User", "user_agent"), ("Claude-User", "user_agent"), ("Perplexity-User", "user_agent"),
-    ("Meta-ExternalFetcher", "user_agent"), ("MistralAI-User", "user_agent"), ("OAI-SearchBot", "search_crawler"),
+    ("Meta-ExternalFetcher", "user_agent"), ("MistralAI-User", "user_agent"), ("Google-Agent", "user_agent"),
+    ("Google-GeminiNotebook", "user_agent"), ("Amzn-User", "user_agent"), ("Diffbot-User", "user_agent"),
+    ("DuckAssistBot", "user_agent"), ("OAI-SearchBot", "search_crawler"),
     ("Claude-SearchBot", "search_crawler"), ("PerplexityBot", "search_crawler"), ("Googlebot", "search_crawler"),
-    ("Bingbot", "search_crawler"), ("DuckAssistBot", "search_crawler"), ("Amazonbot", "search_crawler"),
+    ("Bingbot", "search_crawler"), ("DuckDuckBot", "search_crawler"), ("Amazonbot", "search_crawler"),
+    ("Amzn-SearchBot", "search_crawler"), ("Meta-WebIndexer", "search_crawler"), ("MistralAI-Index", "search_crawler"),
+    ("Applebot", "search_crawler"), ("Diffbot", "search_crawler"),
     ("GPTBot", "training_crawler"), ("ClaudeBot", "training_crawler"), ("anthropic-ai", "training_crawler"),
     ("Google-Extended", "training_crawler"), ("Applebot-Extended", "training_crawler"), ("Meta-ExternalAgent", "training_crawler"),
-    ("CCBot", "training_crawler"), ("Bytespider", "training_crawler"), ("cohere-ai", "training_crawler"), ("Diffbot", "training_crawler"),
+    ("MistralAI-Training", "training_crawler"), ("CCBot", "training_crawler"), ("Bytespider", "training_crawler"),
+    ("cohere-ai", "training_crawler"),
 )
+_GOOGLE_CRAWLERS = "https://developers.google.com/crawling/docs/crawlers-fetchers/"
+_OPENAI, _PERPLEXITY, _MISTRAL = "https://developers.openai.com/api/docs/bots", "https://docs.perplexity.ai/guides/bots", "https://docs.mistral.ai/robots"
+_ANTHROPIC = "https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler"
+_META = "https://developers.facebook.com/documentation/sharing/webmasters/web-crawlers"
+_AMAZON, _APPLE, _DIFFBOT = "https://developer.amazon.com/amazonbot", "https://support.apple.com/en-us/119829", "https://www.diffbot.com/docs/crawl/faq/robots-txt"
+# Vendor documentation that names each token (primary sources only, checked 2026-10-18). Tokens without an entry are
+# UNCONFIRMED_AGENT_TOKENS: kept because sites still list them, but no vendor page was found that spells them.
+AGENT_SOURCES: dict[str, str] = {
+    "ChatGPT-User": _OPENAI, "OAI-SearchBot": _OPENAI, "GPTBot": _OPENAI,
+    "Claude-User": _ANTHROPIC, "Claude-SearchBot": _ANTHROPIC, "ClaudeBot": _ANTHROPIC,
+    "Perplexity-User": _PERPLEXITY, "PerplexityBot": _PERPLEXITY,
+    "Meta-ExternalFetcher": _META, "Meta-WebIndexer": _META, "Meta-ExternalAgent": _META,
+    "MistralAI-User": _MISTRAL, "MistralAI-Index": _MISTRAL, "MistralAI-Training": _MISTRAL,
+    "Google-Agent": _GOOGLE_CRAWLERS + "google-user-triggered-fetchers", "Google-GeminiNotebook": _GOOGLE_CRAWLERS + "google-user-triggered-fetchers",
+    "Googlebot": _GOOGLE_CRAWLERS + "google-common-crawlers", "Google-Extended": _GOOGLE_CRAWLERS + "google-common-crawlers",
+    "Bingbot": "https://www.bing.com/webmasters/help/which-crawlers-does-bing-use-8c184ec0",
+    "DuckAssistBot": "https://duckduckgo.com/duckduckgo-help-pages/results/duckassistbot",
+    "DuckDuckBot": "https://duckduckgo.com/duckduckgo-help-pages/results/duckduckbot",
+    "Amazonbot": _AMAZON, "Amzn-User": _AMAZON, "Amzn-SearchBot": _AMAZON,
+    "Applebot": _APPLE, "Applebot-Extended": _APPLE,
+    "Diffbot": _DIFFBOT, "Diffbot-User": _DIFFBOT,
+    "CCBot": "https://commoncrawl.org/ccbot",
+}
+UNCONFIRMED_AGENT_TOKENS = frozenset({"anthropic-ai", "Bytespider", "cohere-ai"})
 USER_AGENT = "AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)"
 ROBOTS_CAP = 262_144
 LLMS_CAP = 4_096
