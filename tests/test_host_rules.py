@@ -25,6 +25,8 @@ def test_valid_host_accepts_public_names(host):
 @pytest.mark.parametrize("host,eligible", [
     ("github.com", True), ("twitch.tv", True), ("bbc.co.uk", True), ("naver.co.kr", True), ("news.ycombinator.com", False),
     ("user123.example.org", False), ("account.bbc.co.uk", False), ("xn--p1ai.com", False), ("example.test", False),
+    ("notion.so", True), ("who.int", True), ("mastodon.social", True), ("deepmind.google", True), ("cloud.microsoft", True),
+    ("workspace.notion.so", False), ("docs.deepmind.google", False), ("example.click", False),
 ])
 def test_aggregate_eligibility_is_apex_only(host, eligible):
     from ahn.service import aggregate_eligible_host

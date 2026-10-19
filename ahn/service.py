@@ -24,6 +24,11 @@ PUBLIC_AGGREGATE_TLDS = {
     "info", "biz", "xyz", "tech", "cloud", "site", "online", "store", "shop", "news", "blog", "media", "eu", "uk", "de",
     "fr", "jp", "kr", "ca", "au", "in", "br", "es", "it", "nl", "se", "ch", "ru", "cn", "tw", "hk", "sg", "nz", "ie", "be",
     "at", "pl", "mx", "ar", "za", "no", "dk", "fi", "pt", "cz", "il", "tr", "id", "th", "vn", "ph", "my",
+    # Added 2026-10-19 for curated hosts that were silently left unanswered (notion.so, who.int, mastodon.social,
+    # linktr.ee, deepmind.google, cloud.microsoft, ...). A two-label name under any of these is its registrant's apex;
+    # deeper names stay ineligible as everywhere else. Spam-heavy TLDs with no curated host are still left out.
+    "int", "so", "social", "markets", "ee", "pro", "one", "mobi", "gl", "ms", "mp", "page",
+    "google", "goog", "microsoft", "apple", "aws",
 }
 # Registrable apexes under two-label public suffixes (bbc.co.uk, naver.co.kr); no full PSL dependency.
 PUBLIC_SUFFIXES_2 = {
