@@ -37,6 +37,23 @@ Tests must not reach real hosts. [`tests/conftest.py`](tests/conftest.py) blanks
 - New `official_paths` entries must be publisher-owned developer documentation you actually checked. Leave a host out when unsure.
 - Contributions are licensed under [Apache-2.0](LICENSE), the project license.
 
+## When your change collects, stores or returns new data
+
+The privacy policy has to describe what the service does, and the first ChatGPT plugin review was rejected partly because it did not after the product changed. [`tests/test_policy_coverage.py`](tests/test_policy_coverage.py) enforces this without a database: it renders the English and Korean policy and fails when
+
+- an MCP tool exposed by `ahn/mcp_adapter.py` is not named in it,
+- an input field of the lookup or the report models (`ahn/models.py`, the REST parameters, the web forms) or a field of the lookup answer or receipt has no mapped policy wording,
+- a table created in `migrations/` has no retention statement (or an `Exempt` reason) in the `TABLES` mapping, or
+- a retention period in code (`prune_analytics`, `WITHDRAWN_REPORT_GRACE_DAYS`) differs from the number the policy states.
+
+If it fails, change the policy first, then the mapping in the test, which records why each name is or is not covered. Do not silence it by adding a name without wording. The same change usually needs:
+
+- the privacy policy in [`ahn/templates/policy.html`](ahn/templates/policy.html), in English and Korean, plus the technical-details strings in `ahn/main.py`, and the "Last updated" date;
+- the OpenAI plugin manifest [`plugins/agent-help-network/plugin.json`](plugins/agent-help-network/plugin.json): descriptions, capabilities and review test cases, with a version bump;
+- the MCP registry entry [`server.json`](server.json), if the server's description, tools or version change;
+- [README.md](README.md) and [README.ko.md](README.ko.md), if they describe the data or the tools.
+- the other surfaces ticked in the [pull request template](.github/pull_request_template.md), such as the API contract and `ahn/llms.txt`.
+
 ## Do not submit
 
 - Secrets: API keys, tokens, passwords, cookies, `.env` files, or your local config.
