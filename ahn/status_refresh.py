@@ -74,6 +74,16 @@ def failure_label(exc: BaseException) -> str:
 
 @dataclass(frozen=True)
 class Source:
+    """A verified publisher status feed.
+
+    kind picks the parser and the read cap (see FEED_KINDS):
+      statuspage    Atlassian Statuspage format, api_url = page_url + "api/v2/status.json" (incident.io pages answer it too)
+      instatus      api_url = page_url + "summary.json"
+      betterstack   api_url = page_url + "index.json"
+      google_gmail  Google Workspace Status Dashboard incident history, filtered to Gmail
+      discovered_statuspage  built at request time from a verified status.<host> CNAME; never listed in SOURCES
+    """
+
     name: str
     page_url: str
     api_url: str
@@ -1000,6 +1010,63 @@ def parse_status(body: dict) -> tuple[str, datetime | None]:
     return indicator, updated_at
 
 
+def _aware_time(raw, what: str) -> datetime:
+    if not isinstance(raw, str):
+        raise ValueError(f"invalid {what}")
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError(f"{what} has no timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+# Instatus public data, https://instatus.com/help/api/public-data : <page>/summary.json carries page.status,
+# one of UP, HASISSUES, UNDERMAINTENANCE, plus the active incidents and maintenances.
+INSTATUS_STATES = {"UP": "none", "HASISSUES": "minor", "UNDERMAINTENANCE": "maintenance"}
+
+
+def parse_instatus(body: dict) -> tuple[str, datetime | None]:
+    """Parse an Instatus summary.json; any page.status outside INSTATUS_STATES is rejected, never guessed."""
+    page = body.get("page") if isinstance(body, dict) else None
+    if not isinstance(page, dict) or not isinstance(page.get("status"), str):
+        raise ValueError("invalid provider status response")
+    state = page["status"]
+    if state not in INSTATUS_STATES:
+        raise ValueError("unknown provider status")
+    updated_at = None
+    if state != "UP":
+        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt).
+        times = []
+        for key in ("activeIncidents", "activeMaintenances"):
+            items = body.get(key)
+            if items is None:
+                continue
+            if not isinstance(items, list):
+                raise ValueError("invalid provider status response")
+            times += [_aware_time(item["updatedAt"], "provider update time")
+                      for item in items if isinstance(item, dict) and item.get("updatedAt") is not None]
+        updated_at = max(times) if times else None
+    return INSTATUS_STATES[state], updated_at
+
+
+# Better Stack Uptime status page API,
+# https://betterstack.com/docs/uptime/status-pages/subscribing-to-status-updates/subscribing-to-api/ :
+# <page>/index.json carries data.attributes.aggregate_state, one of operational, degraded, downtime, maintenance.
+BETTERSTACK_STATES = {"operational": "none", "degraded": "minor", "downtime": "major", "maintenance": "maintenance"}
+
+
+def parse_betterstack(body: dict) -> tuple[str, datetime | None]:
+    """Parse a Better Stack index.json; any aggregate_state outside BETTERSTACK_STATES is rejected, never guessed."""
+    data = body.get("data") if isinstance(body, dict) else None
+    attributes = data.get("attributes") if isinstance(data, dict) else None
+    if not isinstance(attributes, dict) or not isinstance(attributes.get("aggregate_state"), str):
+        raise ValueError("invalid provider status response")
+    state = attributes["aggregate_state"]
+    if state not in BETTERSTACK_STATES:
+        raise ValueError("unknown provider status")
+    raw_time = attributes.get("updated_at")
+    return BETTERSTACK_STATES[state], None if raw_time is None else _aware_time(raw_time, "provider update time")
+
+
 def parse_google_gmail(body: list) -> tuple[str, datetime | None]:
     """Interpret only active Gmail incidents in Google's official history feed."""
     if not isinstance(body, list):
@@ -1044,6 +1111,20 @@ def parse_google_gmail(body: list) -> tuple[str, datetime | None]:
     return indicator, max(updated_times) if updated_times else None
 
 
+# Per Source.kind: the hard read cap in bytes and the parser. Statuspage and Instatus answers are small (about 0.1 to
+# 1 KB measured; an Instatus summary lists only the active incidents), so they keep the 32 KiB cap. A Better Stack index.json
+# also embeds every resource with a daily status_history, so it grows with the page; measured 2026-10-19 on the
+# five mapped pages: 26,805 (openalex.org), 23,309 (firecrawl.dev), 80,087 (huggingface.co), 207,867 (together.ai)
+# and 266,919 (brave.com) bytes. 524,288 leaves about twice the largest as headroom; a larger page still fails
+# closed as too_large.
+FEED_KINDS = {
+    "statuspage": (32_768, parse_status),
+    "instatus": (32_768, parse_instatus),
+    "betterstack": (524_288, parse_betterstack),
+    "google_gmail": (1_048_576, parse_google_gmail),
+}
+
+
 def register_source(conn, site_host: str, source: Source | None = None) -> bool:
     """Persist a verified mapping only when a user looks up its host."""
     source = source or SOURCES.get(site_host)
@@ -1071,8 +1152,10 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
             raise FeedFailure("error")
         _, indicator, updated_at = _read_discovered_statuspage(host[7:])
         return indicator, updated_at
+    if source.kind not in FEED_KINDS:
+        raise FeedFailure("error")
+    cap, parse = FEED_KINDS[source.kind]
     # Follow no redirects, stream with a hard byte cap, and never send credentials.
-    cap = 1_048_576 if source.kind == "google_gmail" else 32_768
     with client.stream("GET", source.api_url, headers={"Accept": "application/json"}) as response:
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
@@ -1082,7 +1165,7 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
             if len(data) > cap:
                 raise FeedFailure("too_large")
     body = httpx.Response(200, content=bytes(data)).json()
-    return parse_google_gmail(body) if source.kind == "google_gmail" else parse_status(body)
+    return parse(body)
 
 
 def _cached_ok(settings: Settings, site_host: str) -> bool | None:

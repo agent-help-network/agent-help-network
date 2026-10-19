@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from ahn.models import valid_host
 from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host
-from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+from ahn.status_refresh import FEED_KINDS, OFFICIAL_STATUS_PAGES, SOURCES
 
 HOST = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
 _ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,13 @@ _spec.loader.exec_module(_verify)
 SHARED_HOSTING_SUFFIXES = _verify.PRIVATE_SUFFIXES
 # Platforms whose own status page answers for every customer site under their suffix (a deliberate, older mapping).
 PLATFORM_KEYS = frozenset({"github.io", "netlify.app", "vercel.app"})
+# Where each feed kind's machine-readable answer lives relative to the status page.
+API_PATH_BY_KIND = {
+    "statuspage": "api/v2/status.json",  # Atlassian Statuspage and the compatible incident.io endpoint
+    "instatus": "summary.json",
+    "betterstack": "index.json",
+    "google_gmail": "incidents.json",  # https://www.google.com/appsstatus/dashboard/incidents.json
+}
 
 
 def test_keys_are_plain_lowercase_apex_style_hosts():
@@ -47,8 +54,9 @@ def test_feed_sources_point_at_the_page_status_json():
         assert page.scheme == api.scheme == "https", host
         assert page.hostname == api.hostname and not page.query and not page.fragment, host
         assert source.page_url.endswith("/"), host
-        if source.kind == "statuspage":
-            assert source.api_url == source.page_url + "api/v2/status.json", host
+        assert source.kind in API_PATH_BY_KIND, host  # a new kind needs its own rule here and a parser in FEED_KINDS
+        assert source.kind in FEED_KINDS, host
+        assert source.api_url == source.page_url + API_PATH_BY_KIND[source.kind], host
 
 
 def test_official_page_links_are_https_and_named():
