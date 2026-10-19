@@ -63,7 +63,7 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 - **리디렉션은 최대 한 번:** 호스트에서 같은 경로의 자기 `www.` 별칭으로 가는 한 단계만 따른다. 다른 리디렉션은 `redirected` 로 기록하고 따라가지 않는다.
 - **답은 캐시하고 실패는 1시간 뒤 재시도.** 확정된 답(`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`)은 24시간 캐시한다. 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도하며 마지막 확정 답을 덮어쓰지 않는다. 한 번의 시도는 루트 호스트와 그 자신의 `www.` 별칭에 걸쳐 HTTPS 요청을 최대 다섯 번 한다: 루트 `robots.txt`, `www.` 별칭으로 가는 한 단계, `www.` 예비 읽기, `llms.txt`, 그리고 그 한 단계. 시간 제한은 짧고, 요청은 `AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)` UA 로 자신을 밝힌다.
 - **시드 목록은 주 1회.** 공개 시드 목록 [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 의 호스트는 조회되지 않았더라도 검토 크론이 5분마다 기본 10개씩(`AHN_WARM_BATCH`, `0` 이면 끔) 같은 한도 안에서 미리 읽고 약 주 1회 다시 읽는다([`ahn/profile_warm.py`](ahn/profile_warm.py)). 전송 실패는 이미 답이 있던 호스트라도 1시간 뒤 다시 시도한다.
-- **업체 상태**는 검증된 공식 출처만 쓴다: [`ahn/status_refresh.py`](ahn/status_refresh.py) 의 고정 연결 규칙(Statuspage 파서가 읽는 피드는 `SOURCES`, 링크만 있는 것은 `OFFICIAL_STATUS_PAGES`), 또는 첫 조회에서 확인하고 찾을 때까지 하루 한 번까지 다시 확인하는 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
+- **업체 상태**는 검증된 공식 출처만 쓴다: [`ahn/status_refresh.py`](ahn/status_refresh.py) 의 고정 연결 규칙(파서가 읽는 피드는 `SOURCES`, 링크만 있는 것은 `OFFICIAL_STATUS_PAGES`), 또는 첫 조회에서 확인하고 찾을 때까지 하루 한 번까지 다시 확인하는 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
 
 서비스가 절대 하지 않는 것:
 
