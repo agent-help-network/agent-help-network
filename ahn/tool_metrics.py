@@ -18,6 +18,6 @@ def provider_signal_from_result(result: dict) -> str:
     provider = result.get("provider_status")
     if not isinstance(provider, dict) or provider.get("freshness") != "fresh":
         return "unavailable"
-    if provider.get("indicator") in {"minor", "major", "critical"}:
+    if provider.get("indicator") in {"minor", "major", "critical", "maintenance"}:
         return "active"
     return "clear" if provider.get("indicator") == "none" else "unavailable"

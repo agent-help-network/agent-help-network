@@ -926,3 +926,12 @@ def test_launcher_picks_python_37_or_prints_nothing(tmp_path, os_name, versions,
     else:
         # Both the version probe and the exec skip site and user settings (-I -S): see run-hook.sh.
         assert done.stdout.decode() == f"{expected} -I -S {PLUGIN / 'hooks' / 'ahn_lookup.py'}"
+
+
+def test_maintenance_indicator_is_a_contract_value_and_an_unknown_one_still_falls_back():
+    assert "maintenance" in hook.INDICATORS
+    shown = {"source_name": "S", "source_url": "https://status.example.com/", "freshness": "fresh"}
+    ok = hook.summary("example.com", answer(provider_status={**shown, "indicator": "maintenance"}), "https://x")
+    assert "Provider status: maintenance/fresh." in ok
+    odd = hook.summary("example.com", answer(provider_status={**shown, "indicator": "scheduled_maintenance"}), "https://x")
+    assert "Provider status: unknown/fresh." in odd and "scheduled_maintenance" not in odd

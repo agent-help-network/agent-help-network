@@ -412,3 +412,12 @@ def test_package_has_no_dependencies_and_exports():
     assert set(ahn.__all__) == {"check", "classify", "clear_cache", "Result", "__version__"}
     pyproject = (ROOT / "clients" / "python" / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "ahn-client"' in pyproject and "dependencies = []" in pyproject and 'license = "Apache-2.0"' in pyproject
+
+
+def test_summary_shows_the_maintenance_indicator_and_drops_a_malformed_one(transport):
+    shown = {"source_name": "S", "source_url": "https://status.example.com/", "freshness": "fresh"}
+    transport(body={**ANSWER, "provider_status": {**shown, "indicator": "maintenance"}})
+    assert "Provider status: maintenance/fresh." in ahn.check("example.com").summary()
+    ahn.clear_cache()
+    transport(body={**ANSWER, "provider_status": {**shown, "indicator": "Under Maintenance!"}})
+    assert "Provider status: unknown/fresh." in ahn.check("example.com").summary()

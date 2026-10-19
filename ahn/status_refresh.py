@@ -903,7 +903,7 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "zoho.in": ("Zoho Status (India)", "https://in.zohostatus.com/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
-INDICATORS = frozenset({"none", "minor", "major", "critical", "unknown"})
+INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 _SOURCE_LOCKS = {host: threading.Lock() for host in SOURCES}
 _STATUSPAGE_CNAME = re.compile(r"^([a-z0-9]{8,32})\.stspg-customer\.com\.$")
 
