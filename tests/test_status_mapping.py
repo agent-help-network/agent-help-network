@@ -2,18 +2,30 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ahn.official_paths import OFFICIAL_PATHS
+from ahn.models import valid_host
+from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host
 from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
 
 HOST = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
-SEED_HOSTS = {
-    line.strip() for line in (Path(__file__).resolve().parents[1] / "ahn" / "seed_hosts.txt").read_text(encoding="utf-8").splitlines()
-    if line.strip() and not line.startswith("#")
-}
+_ROOT = Path(__file__).resolve().parents[1]
+_spec = importlib.util.spec_from_file_location("verify_official_paths", _ROOT / "scripts" / "verify_official_paths.py")
+_verify = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_verify)
+SHARED_HOSTING_SUFFIXES = _verify.PRIVATE_SUFFIXES
+# Platforms whose own status page answers for every customer site under their suffix (a deliberate, older mapping).
+PLATFORM_KEYS = frozenset({"github.io", "netlify.app", "vercel.app"})
+# Older keys whose top-level domain is not in PUBLIC_AGGREGATE_TLDS, so the service does not answer for them today.
+# Either the TLD joins that list or these keys go; until then they are named here so no new key can slip in the same way.
+NOT_YET_ELIGIBLE = frozenset({
+    "alpaca.markets",  # awaiting the TLD list update (separate runtime PR)
+    "mastodon.social",  # awaiting the TLD list update (separate runtime PR)
+    "notion.so",  # awaiting the TLD list update (separate runtime PR)
+})
 
 
 def test_keys_are_plain_lowercase_apex_style_hosts():
@@ -22,9 +34,13 @@ def test_keys_are_plain_lowercase_apex_style_hosts():
         assert not host.startswith("www."), host  # policy_host() already folds www.<apex> onto <apex>
 
 
-def test_every_key_is_a_curated_host():
+def test_every_key_is_an_eligible_public_host():
+    # The mapping itself is the curated list, so the check is structural: a key must be a host the service would look up as an apex.
     for host in [*SOURCES, *OFFICIAL_STATUS_PAGES]:
-        assert host in OFFICIAL_PATHS or host in SEED_HOSTS, host
+        assert valid_host(host), host
+        assert host not in PUBLIC_SUFFIXES_2, host  # a public suffix such as co.uk is nobody's host
+        assert host not in SHARED_HOSTING_SUFFIXES or host in PLATFORM_KEYS, host  # a shared-hosting suffix is many owners' host
+        assert aggregate_eligible_host(host) or host in NOT_YET_ELIGIBLE, host
 
 
 def test_a_host_has_a_feed_or_a_link_never_both():
