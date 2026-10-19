@@ -162,3 +162,57 @@ def test_registry_manifest_matches_the_published_schema_limits():
     assert manifest["repository"]["source"] == "github"
     assert manifest["repository"]["url"] == "https://github.com/agent-help-network/agent-help-network"
     assert manifest["remotes"] == [{"type": "streamable-http", "url": "https://agenthelpnetwork.com/mcp"}]
+
+
+def test_privacy_policy_covers_review_topics_and_tool_fields():
+    # OpenAI plugin review asks for data collected, purposes, recipients,
+    # retention and user controls that match the current tool inputs and outputs.
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True)
+    with TestClient(create_app(settings)) as client:
+        en = client.get("/en/policy").text
+        ko = client.get("/ko/policy").text
+    for heading in ("Who we are", "Data we collect", "What the tools return", "How we use data", "Who receives data", "Retention", "Your controls"):
+        assert f"<h2>{heading}</h2>" in en
+    for heading in ("운영 주체", "수집하는 데이터", "도구가 돌려주는 것", "이용 목적", "데이터를 받는 곳", "보존 기간", "이용자의 선택"):
+        assert f"<h2>{heading}</h2>" in ko
+    for field in ("site_host", "error_class", "task_step", "failure_stage", "check_incident", "report_observation"):
+        assert field in en and field in ko
+    for recipient in ("Cloudflare", "Render", "Porkbun"):
+        assert recipient in en and recipient in ko
+    assert "14 days" in en and "90 days" in en and "30 days" in en
+    assert "<title>Privacy policy" in en
+
+
+def test_policy_omits_report_tool_when_reporting_is_off():
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        en = client.get("/en/policy").text
+    assert "check_incident" in en
+    assert "report_observation" not in en
+
+
+def test_operator_name_is_shown_only_when_configured():
+    plain = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True)
+    named = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, operator_name="Example Operator")
+    with TestClient(create_app(plain)) as client:
+        for page in ("policy", "terms", "support"):
+            assert "operated by" not in client.get(f"/en/{page}").text
+    with TestClient(create_app(named)) as client:
+        for lang in ("en", "ko"):
+            for page in ("policy", "terms", "support"):
+                assert "Example Operator" in client.get(f"/{lang}/{page}").text
+
+
+def test_operator_name_from_env_rejects_control_characters(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://invalid/unused")
+    monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 32)
+    monkeypatch.setenv("AHN_OPERATOR_NAME", "  Example   Operator ")
+    assert Settings.from_env().operator_name == "Example Operator"
+    monkeypatch.setenv("AHN_OPERATOR_NAME", "Bad\x07Name")
+    with pytest.raises(RuntimeError):
+        Settings.from_env()
+    monkeypatch.setenv("AHN_OPERATOR_NAME", "x" * 81)
+    with pytest.raises(RuntimeError):
+        Settings.from_env()
