@@ -172,7 +172,7 @@ hmrc.gov.uk
 ons.gov.uk
 tfl.gov.uk
 legislation.gov.uk
-police.uk
+data.police.uk
 metoffice.gov.uk
 canada.ca
 worldbank.org

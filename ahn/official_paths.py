@@ -225,7 +225,7 @@ OFFICIAL_PATHS: dict[str, dict] = {
     "ons.gov.uk": _entry("ONS Developer Hub", None, "https://developer.ons.gov.uk/"),
     "tfl.gov.uk": _entry("TfL Unified API", "https://api.tfl.gov.uk/", "https://api-portal.tfl.gov.uk/"),
     "legislation.gov.uk": _entry("legislation.gov.uk API", "https://www.legislation.gov.uk/developer", None),
-    "police.uk": _entry("data.police.uk API", "https://data.police.uk/docs/", "https://data.police.uk/"),
+    "data.police.uk": _entry("data.police.uk API", "https://data.police.uk/docs/", "https://data.police.uk/"),
     "metoffice.gov.uk": _entry("Met Office Weather DataHub", None, "https://datahub.metoffice.gov.uk/"),
     "canada.ca": _entry("Government of Canada open data API", "https://open.canada.ca/en/access-our-application-programming-interface-api", None),
     "who.int": _entry("WHO GHO OData API", "https://www.who.int/data/gho/info/gho-odata-api", None),

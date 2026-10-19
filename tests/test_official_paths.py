@@ -46,6 +46,20 @@ def test_every_key_is_a_lowercase_apex_host_that_passes_valid_host():
     assert bad == []
 
 
+# Public-suffix-list entries independent of PUBLIC_SUFFIXES_2, so the key check above cannot pass by
+# leaving the same gap on both sides.
+KNOWN_PUBLIC_SUFFIXES = {"police.uk", "nhs.uk", "sch.uk", "mod.uk", "ltd.uk", "plc.uk", "net.uk", "gov.uk", "ac.uk", "co.uk",
+                         "org.uk", "go.kr", "co.kr", "or.kr", "go.jp", "co.jp", "gov.au", "com.au", "gov.br", "com.br"}
+
+
+def test_no_table_key_is_a_known_public_suffix_and_police_uk_is_covered():
+    assert OFFICIAL_PATHS.keys().isdisjoint(KNOWN_PUBLIC_SUFFIXES)
+    assert "police.uk" in PUBLIC_SUFFIXES_2
+    assert "data.police.uk" in OFFICIAL_PATHS and VERIFIER.registrable("data.police.uk") == "data.police.uk"
+    assert official_paths("police.uk") is None
+    assert official_paths("api.data.police.uk") == OFFICIAL_PATHS["data.police.uk"]
+
+
 def test_every_entry_has_a_name_and_some_content():
     for host, entry in OFFICIAL_PATHS.items():
         assert set(entry) == {"name", "api_docs", "developer_portal", "note"}, host

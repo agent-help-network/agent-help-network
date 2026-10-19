@@ -27,7 +27,7 @@ PUBLIC_AGGREGATE_TLDS = {
 }
 # Registrable apexes under two-label public suffixes (bbc.co.uk, naver.co.kr); no full PSL dependency.
 PUBLIC_SUFFIXES_2 = {
-    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "co.kr", "or.kr", "go.kr", "ne.kr", "ac.kr", "co.jp", "ne.jp", "or.jp",
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "police.uk", "co.kr", "or.kr", "go.kr", "ne.kr", "ac.kr", "co.jp", "ne.jp", "or.jp",
     "go.jp", "ac.jp", "com.au", "net.au", "org.au", "gov.au", "edu.au", "com.br", "org.br", "gov.br", "co.in", "net.in",
     "org.in", "gov.in", "com.tw", "com.cn", "net.cn", "org.cn", "gov.cn", "com.hk", "com.sg", "com.mx", "com.ar", "co.za",
     "co.nz", "org.nz", "com.tr", "co.il", "com.my", "co.th", "com.vn", "com.ph", "co.id", "com.pl", "com.es", "com.pt",
