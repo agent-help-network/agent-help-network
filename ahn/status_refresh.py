@@ -374,12 +374,9 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "withings.com": ("Withings Status", "https://status.withings.io/"),
     # Retry of the first batch's exclusions with scripts/discover_status_sources.py (2026-10-18); each shown by a same-domain page, the publisher's own status redirect, or a publisher documentation link.
     "booking.com": ("Booking.com Connectivity API Status", "https://connect.booking.com/status"),
-    "ebay.com": ("eBay API Status", "https://developer.ebay.com/support/api-status"),
     "fastly.com": ("Fastly API Status", "https://www.fastlystatus.com/"),
     "mastercard.com": ("Mastercard Developers API Status", "https://developer.mastercard.com/api-status"),
-    "mistral.ai": ("Mistral AI Status", "https://status.mistral.ai/"),
     "replicate.com": ("Cloudflare Status (Replicate's own status address redirects here)", "https://www.cloudflarestatus.com/services"),
-    "replit.com": ("Replit Status", "https://status.replit.com/"),
     "soundcloud.com": ("SoundCloud Status", "https://help.soundcloud.com/hc/en-us/articles/4413524848667-SoundCloud-Status"),
     "tencentcloud.com": ("Tencent Cloud API Status", "https://status.tencentcloud.com/"),
     "todoist.com": ("Todoist API Status", "https://status.todoist.net/"),
