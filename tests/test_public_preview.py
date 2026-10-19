@@ -216,3 +216,42 @@ def test_operator_name_from_env_rejects_control_characters(monkeypatch):
     monkeypatch.setenv("AHN_OPERATOR_NAME", "x" * 81)
     with pytest.raises(RuntimeError):
         Settings.from_env()
+
+
+def test_report_retention_setting_changes_policy_copy(monkeypatch):
+    import pytest
+
+    plain = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True)
+    timed = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, report_retention_days=365)
+    with TestClient(create_app(plain)) as client:
+        en = client.get("/en/policy").text
+        assert "Reports have no automatic deletion date" in en
+        assert "no automatic deletion schedule yet" in en
+    with TestClient(create_app(timed)) as client:
+        en = client.get("/en/policy").text
+        ko = client.get("/ko/policy").text
+    assert "Reports are deleted 365 days after they are received" in en
+    assert "no automatic deletion schedule yet" not in en
+    assert "접수 365일 뒤 삭제" in ko
+    assert "자동 삭제 일정은 아직 없습니다" not in ko
+
+    from ahn.settings import report_retention_days_from_env
+
+    monkeypatch.delenv("AHN_REPORT_RETENTION_DAYS", raising=False)
+    assert report_retention_days_from_env() == 0
+    monkeypatch.setenv("AHN_REPORT_RETENTION_DAYS", " 365 ")
+    assert report_retention_days_from_env() == 365
+    for bad in ("7", "99999", "a year"):
+        monkeypatch.setenv("AHN_REPORT_RETENTION_DAYS", bad)
+        with pytest.raises(RuntimeError):
+            report_retention_days_from_env()
+
+
+def test_report_pruning_is_off_without_a_retention_period():
+    from ahn.platform_metrics import prune_reports
+
+    class NoQueries:
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("pruning must not touch the database when retention is off")
+
+    assert prune_reports(NoQueries(), 0) == 0

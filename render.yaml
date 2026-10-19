@@ -30,6 +30,12 @@ services:
         generateValue: true
       - key: AHN_OWNER_ALLOWED_IPS
         sync: false
+      # Exact verified developer name shown on the privacy, terms and support pages.
+      - key: AHN_OPERATOR_NAME
+        sync: false
+      # Days to keep reports (30-3650); blank keeps them without an automatic deletion date.
+      - key: AHN_REPORT_RETENTION_DAYS
+        sync: false
 
   - type: cron
     name: agent-help-network-review
@@ -58,6 +64,9 @@ services:
           property: connectionString
       - key: AHN_GUARD_WEB_SERVICE_ID
         value: srv-db0hnkfavr4c73fp6et0
+      # Must match the web service so the policy page and the hourly cleanup agree.
+      - key: AHN_REPORT_RETENTION_DAYS
+        sync: false
       - key: RENDER_API_KEY
         sync: false
 

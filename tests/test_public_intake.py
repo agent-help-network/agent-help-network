@@ -852,3 +852,41 @@ def test_owner_allowed_ip_setting_rejects_ranges(monkeypatch):
     monkeypatch.setenv("AHN_OWNER_ALLOWED_IPS", "198.51.100.0/24")
     with pytest.raises(RuntimeError, match="individual IP addresses"):
         Settings.from_env()
+
+
+def test_prune_reports_deletes_expired_and_long_withdrawn_reports_only(public_client):
+    from ahn.platform_metrics import prune_reports
+
+    settings, _client = public_client
+    with connect(settings) as conn:
+        incident = conn.execute(
+            "INSERT INTO incidents (site_host,task_step,error_class) VALUES ('example.org','site_open','site_access') RETURNING id"
+        ).fetchone()["id"]
+
+        def add(received_days_ago, withdrawn_days_ago=None, supersedes=None):
+            row = conn.execute(
+                """INSERT INTO observations (incident_id,reporter_id,observed_at,received_at,agent_family,attempt_actor,attempt_env,
+                       outcome,challenge_vendor,challenge_kind,supersedes_id,withdrawn_at)
+                   VALUES (%s,%s,now(),now() - make_interval(days => %s),'other','agent','unknown','error','none','none',%s,
+                       CASE WHEN %s::int IS NULL THEN NULL ELSE now() - make_interval(days => %s::int) END) RETURNING id""",
+                (incident, PUBLIC_REPORTER_ID, received_days_ago, supersedes, withdrawn_days_ago, withdrawn_days_ago),
+            ).fetchone()["id"]
+            conn.execute(
+                "INSERT INTO report_submissions (reporter_id,idempotency_key,request_hash,observation_id) VALUES (%s,%s,repeat('a',64),%s)",
+                (PUBLIC_REPORTER_ID, uuid4(), row),
+            )
+            return row
+
+        expired = add(400)
+        fresh = add(10)
+        follow_up = add(5, supersedes=expired)
+        long_withdrawn = add(60, withdrawn_days_ago=45)
+        recently_withdrawn = add(20, withdrawn_days_ago=3)
+
+        assert prune_reports(conn, 0) == 0
+        assert prune_reports(conn, 365) == 2
+        left = {row["id"]: row["supersedes_id"] for row in conn.execute("SELECT id,supersedes_id FROM observations")}
+        assert set(left) == {fresh, follow_up, recently_withdrawn}
+        assert left[follow_up] is None
+        assert {row["observation_id"] for row in conn.execute("SELECT observation_id FROM report_submissions")} == set(left)
+        assert long_withdrawn not in left

@@ -214,7 +214,8 @@ def main() -> None:
     warning_gb = _threshold_env("AHN_GUARD_WARNING_GB", Decimal("10"))
     stop_gb = _threshold_env("AHN_GUARD_STOP_GB", Decimal("20"))
     from .platform_metrics import collect_render_metrics, prune_analytics
-    prune_analytics(database_url)
+    from .settings import report_retention_days_from_env
+    prune_analytics(database_url, report_retention_days_from_env())
     result = run_guard(database_url, api_key, resource_id, warning_gb=warning_gb, stop_gb=stop_gb)
     print(f"bandwidth_guard state={result['state']} usage_gb={result['usage_gb']} action={result['action']} coverage_gap={result['coverage_gap']}")
     metrics = collect_render_metrics(database_url, api_key, resource_id)

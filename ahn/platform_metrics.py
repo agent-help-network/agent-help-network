@@ -99,9 +99,31 @@ def collect_render_metrics(database_url: str, api_key: str, resource_id: str,
     return results
 
 
-def prune_analytics(database_url: str) -> None:
+# A withdrawn report is already excluded from every read; the row itself goes after this grace.
+WITHDRAWN_REPORT_GRACE_DAYS = 30
+
+
+def prune_reports(conn: psycopg.Connection, retention_days: int) -> int:
+    """Delete reports past the retention period and withdrawn reports past the grace.
+
+    Does nothing while retention_days is 0, which the policy page states as
+    "no automatic deletion date". Returns the number of deleted observations.
+    """
+    if retention_days <= 0:
+        return 0
+    expired = ("SELECT id FROM observations WHERE received_at < now() - make_interval(days => %s)"
+               " OR withdrawn_at < now() - make_interval(days => %s)")
+    params = (retention_days, WITHDRAWN_REPORT_GRACE_DAYS)
+    # Later outcomes may point at an expired observation; keep them, drop the link.
+    conn.execute(f"UPDATE observations SET supersedes_id=NULL WHERE supersedes_id IN ({expired})", params)
+    conn.execute(f"DELETE FROM report_submissions WHERE observation_id IN ({expired})", params)
+    return conn.execute(f"DELETE FROM observations WHERE id IN ({expired})", params).rowcount
+
+
+def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     """Keep daily pseudonyms short-lived even if Render's metrics API is down."""
     with psycopg.connect(database_url) as conn:
+        prune_reports(conn, report_retention_days)
         conn.execute("DELETE FROM traffic_client_daily WHERE day < CURRENT_DATE - 13")
         conn.execute("DELETE FROM traffic_attribution_daily WHERE day < CURRENT_DATE - 89")
         conn.execute("DELETE FROM mcp_check_metrics WHERE day < CURRENT_DATE - 89")

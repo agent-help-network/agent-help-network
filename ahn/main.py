@@ -128,6 +128,14 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             limits_text="규칙은 반복·모순된 입력을 걸러도 실제 사건 발생 여부는 증명하지 못합니다. 접수량을 제한하고 의심 제보를 보류하며 잘못된 제보는 숨길 수 있습니다. 공개 조회는 최근 7일이며 저장된 제보의 자동 삭제 일정은 아직 없습니다. 제보가 없다고 사이트가 정상인 것은 아니고 실패 한 건도 전체 장애를 증명하지 않습니다.",
             footer="에이전트 우선 베타 · 선언된 정책은 접근 보장이 아닙니다 · 사이트 상태는 미상일 수 있습니다",
         )
+    if settings.report_retention_days:
+        days = settings.report_retention_days
+        lang_text["en"]["limits_text"] = lang_text["en"]["limits_text"].replace(
+            "Stored reports have no automatic deletion schedule yet; use the withdrawal token to exclude your report from reads.",
+            f"Reports are deleted {days} days after they are received; a withdrawn report leaves every read at once and is deleted 30 days later.")
+        lang_text["ko"]["limits_text"] = lang_text["ko"]["limits_text"].replace(
+            "저장된 제보의 자동 삭제 일정은 아직 없습니다.",
+            f"제보는 접수 {days}일 뒤 삭제되며, 철회한 제보는 즉시 모든 조회에서 빠지고 30일 뒤 삭제됩니다.")
     if settings.public_mode:
         lang_text["en"]["collect_text"] = "Reports use structured public hostnames, task categories, timestamps, attempt context, and outcomes. Never submit passwords, cookies, names, account identifiers, personal URLs, or conversation text. Our app stores daily page and lookup counts, bounded referral and campaign categories, and coarse client-software hints. When the hosting edge supplies a client IP, we store only a keyed, day-specific digest and daily request count for 14 days; no raw IP, cookie, full Referrer URL, or User-Agent is stored in these analytics tables. Eligible public root hostnames remain in a lookup register with first and latest lookup times and no automatic deletion date. Hosting infrastructure may process IP addresses and User-Agent headers for delivery and security. These categories and digests do not identify a person or prove an independent agent."
         lang_text["ko"]["collect_text"] = "제보에는 공개 호스트명, 일반 작업 단계, 문제·결과 유형, 관찰 시각, 시도 주체·환경만 포함합니다. 비밀번호·쿠키·이름·계정 식별자·개인 URL·대화 전문은 받지 않습니다. 앱은 일별 페이지·호스트 조회 수와 제한된 유입·캠페인 분류, 대략적인 클라이언트 프로그램 분류를 저장합니다. 호스팅 경계에서 IP가 전달되면 원문 대신 비밀키로 날짜별 변환한 값과 일별 요청 수만 14일 보관합니다. 이 통계 표에는 IP 원문·쿠키·전체 유입 URL·User-Agent 원문을 저장하지 않습니다. 공유 가능한 공개 루트 호스트명은 첫·최근 조회 시각과 함께 조회 목록에 유지하며 자동 삭제 기한은 없습니다. 호스팅 인프라는 전송·보안을 위해 IP와 User-Agent를 처리할 수 있습니다. 이 분류나 변환값으로 사람 또는 독립 에이전트를 증명할 수 없습니다."
@@ -288,7 +296,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return response
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
