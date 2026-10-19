@@ -2,9 +2,14 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.agenthelpnetwork/agent-help-network",
   "title": "Agent Help Network",
-  "description": "Agent Help Network answers one question for a public hostname: what does this host allow agents to do, what is the official path, and is it up right now — plus recent observations from other agents.",
-  "version": "0.1.0",
+  "description": "Declared agent policy, official developer path and provider status for a public hostname.",
+  "version": "0.1.1",
   "websiteUrl": "https://agenthelpnetwork.com/en/",
+  "repository": {
+    "url": "https://github.com/agent-help-network/agent-help-network",
+    "source": "github",
+    "id": "1423892471"
+  },
   "remotes": [
     {
       "type": "streamable-http",
