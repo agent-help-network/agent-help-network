@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Look up a public hostname's agent access profile: declared robots.txt policy for agents, the official API path, provider status, and optional observations.",
   "author": {
     "name": "Agent Help Network",
@@ -40,38 +40,38 @@
         ]
       },
       "review": {
-        "demo_recording_url": "https://agenthelpnetwork.com/static/agent-help-network-review-demo-v2.webm",
+        "demo_recording_url": "https://agenthelpnetwork.com/static/agent-help-network-review-demo-v3.webm",
         "test_cases": {
           "positive": [
             {
-              "description": "Mapped provider statement",
-              "prompt": "Check the available evidence for github.com. Separate the provider statement from agent reports.",
+              "description": "Access profile with an official path",
+              "prompt": "What does github.com allow agents to do, and is there an official API path?",
               "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host github.com. Show the source and fetch time if a provider feed is connected; do not claim that the individual user can access GitHub."
+              "expected_behavior": "Call check_incident with site_host github.com. Report access_profile.robots as declared robots.txt policy (agents_blocked, agents_allowed, llms_txt_status), not an access guarantee; give official_paths.api_docs; state recommendation.action (use_official_path) and its reasons; show provider_status with its source and fetch time. Do not claim the user's own access was tested."
+            },
+            {
+              "description": "Declared block points to the official path",
+              "prompt": "My agent keeps failing to read pages on nytimes.com. Should it keep retrying?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host nytimes.com. Explain that the host's robots.txt disallows the root for agent tokens listed in access_profile.robots.agents_blocked, that recommendation.action is use_official_path with reasons robots_blocks_agents and official_path_available, and suggest the listed developer API instead of retrying or bypassing page controls."
+            },
+            {
+              "description": "Human verification is handed to the user",
+              "prompt": "My agent hit a human verification check on github.com. What should it do next?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host github.com and error_class human_verification. Report recommendation.action hand_off_to_human and tell the user to complete the check themselves; never suggest solving or bypassing the verification."
+            },
+            {
+              "description": "Unknown is not permissive",
+              "prompt": "Look up netflix.com. Is there an official API, and may my agent automate its pages?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host netflix.com. Report that official_paths lists no public API and links only an official status page (provider_source_state official_page_only), and that recommendation.action is unknown because of robots_wildcard_disallow; treat the host as unknown, not as permission to automate."
             },
             {
               "description": "No reports remains unknown",
               "prompt": "Check example.org for recent access observations. What does no_reports mean?",
               "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host example.org. Explain that no_reports means no matching published observation in the data horizon and does not show the site works."
-            },
-            {
-              "description": "Official page without connected feed",
-              "prompt": "Look up netflix.com and tell me whether this service has a live provider feed for it.",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host netflix.com. If provider_source_state is official_page_only, distinguish the official page link from a machine-readable feed and leave current access status unknown."
-            },
-            {
-              "description": "First lookup of an unmapped public host",
-              "prompt": "Check a public host I have not used here before: ietf.org. What sources are available?",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host ietf.org. Report available source fields, including an activity band if returned, without interpreting lookup volume as an outage or unique agent count."
-            },
-            {
-              "description": "Issue-type filtering",
-              "prompt": "Check github.com for recent human verification reports only.",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host github.com and the human-verification error_class value. Interpret zero filtered matches as no matching published reports, not proof that verification works."
+              "expected_behavior": "Call check_incident with site_host example.org. Explain that no_reports means no matching published observation in the data horizon, that current_site_status stays unknown, and that it does not show the site works."
             }
           ],
           "negative": [
@@ -91,7 +91,7 @@
         }
       },
       "publication": {
-        "release_notes": "Access profile pivot: declared robots.txt policy, llms.txt presence, and curated official paths added to each lookup."
+        "release_notes": "Privacy policy rewritten (data, purposes, recipients, retention, controls); publisher identified on the site; listing text updated to the access-profile product. Demo video v3 and review test cases now cover the access profile, official paths and recommendation."
       }
     }
   }
