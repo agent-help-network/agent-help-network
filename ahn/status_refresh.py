@@ -243,6 +243,22 @@ SOURCES: dict[str, Source] = {
     "xero.com": Source("Xero Status", "https://status.xero.com/", "https://status.xero.com/api/v2/status.json"),
     "zapier.com": Source("Zapier Status", "https://status.zapier.com/", "https://status.zapier.com/api/v2/status.json"),
     "zoom.us": Source("Zoom Status", "https://www.zoomstatus.com/", "https://www.zoomstatus.com/api/v2/status.json"),
+    # Retry of the first batch's exclusions with scripts/discover_status_sources.py (2026-10-18); each shown by a same-domain page, the publisher's own status redirect, or a publisher documentation link.
+    "canva.com": Source("Canva Connect APIs Status", "https://www.canvastatus.com/", "https://www.canvastatus.com/api/v2/status.json"),
+    "etherscan.io": Source("Etherscan API Status", "https://status.etherscan.io/", "https://status.etherscan.io/api/v2/status.json"),
+    "etsy.com": Source("Etsy Open API Status", "https://www.etsystatus.com/", "https://www.etsystatus.com/api/v2/status.json"),
+    "groq.com": Source("Groq Status", "https://groqstatus.com/", "https://groqstatus.com/api/v2/status.json"),
+    "intercom.com": Source("Fin Status (Intercom's status page)", "https://www.finstatus.com/", "https://www.finstatus.com/api/v2/status.json"),
+    "line.me": Source("LINE Developers Status", "https://api.line-status.info/", "https://api.line-status.info/api/v2/status.json"),
+    "llamaindex.ai": Source("LlamaIndex Docs Status", "https://llamaindex.statuspage.io/", "https://llamaindex.statuspage.io/api/v2/status.json"),
+    "massive.com": Source("Massive Status (formerly Polygon.io)", "https://massive-status.com/", "https://massive-status.com/api/v2/status.json"),
+    "npmjs.com": Source("npm registry Status", "https://status.npmjs.org/", "https://status.npmjs.org/api/v2/status.json"),
+    "perplexity.ai": Source("Perplexity API Status", "https://status.perplexity.com/", "https://status.perplexity.com/api/v2/status.json"),
+    "polygon.io": Source("Massive Status (formerly Polygon.io)", "https://massive-status.com/", "https://massive-status.com/api/v2/status.json"),
+    "resend.com": Source("Resend Status", "https://resend-status.com/", "https://resend-status.com/api/v2/status.json"),
+    "wise.com": Source("Wise Platform API Status", "https://status.wise.com/", "https://status.wise.com/api/v2/status.json"),
+    "wix.com": Source("Wix Developers Status", "https://status.wix.com/", "https://status.wix.com/api/v2/status.json"),
+    "yelp.com": Source("Yelp Fusion API Status", "https://status.developer.yelp.com/", "https://status.developer.yelp.com/api/v2/status.json"),
 }
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
@@ -356,6 +372,23 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "upstage.ai": ("Upstage Status", "https://status.upstage.ai/"),
     "whatsapp.com": ("Meta Status (business products and platform)", "https://metastatus.com/"),
     "withings.com": ("Withings Status", "https://status.withings.io/"),
+    # Retry of the first batch's exclusions with scripts/discover_status_sources.py (2026-10-18); each shown by a same-domain page, the publisher's own status redirect, or a publisher documentation link.
+    "booking.com": ("Booking.com Connectivity API Status", "https://connect.booking.com/status"),
+    "ebay.com": ("eBay API Status", "https://developer.ebay.com/support/api-status"),
+    "fastly.com": ("Fastly API Status", "https://www.fastlystatus.com/"),
+    "mastercard.com": ("Mastercard Developers API Status", "https://developer.mastercard.com/api-status"),
+    "mistral.ai": ("Mistral AI Status", "https://status.mistral.ai/"),
+    "replicate.com": ("Cloudflare Status (Replicate's own status address redirects here)", "https://www.cloudflarestatus.com/services"),
+    "replit.com": ("Replit Status", "https://status.replit.com/"),
+    "soundcloud.com": ("SoundCloud Status", "https://help.soundcloud.com/hc/en-us/articles/4413524848667-SoundCloud-Status"),
+    "tencentcloud.com": ("Tencent Cloud API Status", "https://status.tencentcloud.com/"),
+    "todoist.com": ("Todoist API Status", "https://status.todoist.net/"),
+    "twelvedata.com": ("Twelve Data Status", "https://twelvedata.isitup.cloud/"),
+    "twitter.com": ("X Developer Platform Status", "https://developer.x.com/status"),
+    "writer.com": ("Writer Status", "https://status.writer.com/"),
+    "x.ai": ("xAI Status", "https://status.x.ai/"),
+    "x.com": ("X Developer Platform Status", "https://developer.x.com/status"),
+    "zoho.com": ("Zoho Status (US data center view)", "https://us.zohostatus.com/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 INDICATORS = frozenset({"none", "minor", "major", "critical", "unknown"})
