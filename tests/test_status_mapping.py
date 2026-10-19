@@ -48,3 +48,11 @@ def test_official_page_links_are_https_and_named():
         assert name.strip() == name and name, host
         assert parts.scheme == "https" and parts.hostname and not parts.fragment, host
         assert not parts.username and not parts.password, host
+
+
+def test_no_mapping_points_at_a_placeholder_or_an_aggregator():
+    urls = [source.page_url for source in SOURCES.values()] + [url for _, url in OFFICIAL_STATUS_PAGES.values()]
+    for url in urls:
+        parts = urlsplit(url)
+        assert not parts.path.rstrip("/").endswith("/inactive"), url  # Statuspage's answer for a subdomain nobody runs
+        assert not any((parts.hostname or "").endswith(domain) for domain in ("statusgator.com", "downdetector.com", "fruits.co")), url
