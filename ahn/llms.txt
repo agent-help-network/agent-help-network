@@ -14,15 +14,15 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 
 1. `recommendation.action` — one of `proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`, with `confidence` and `reasons` (codes that also appear in `next_checks`).
 2. `access_profile` — the host's DECLARED policy, read from its own robots.txt and llms.txt: per-agent rules (`agent`, `kind` = user_agent | search_crawler | training_crawler, `explicit_group`, `root_allowed`), `agents_blocked`, `agents_allowed`, `wildcard_root_allowed`, `sitemap`, `llms_txt_status`, `freshness`. A declared allow is not an access guarantee; CDN challenges can still apply. A `robots_status` other than `ok` means unknown, not permissive; `refused` (the host's edge refused even a robots.txt read) is also a hint to prefer the official path. A `*` group that disallows the root while at least one agent token is named by no group is reported as `robots_wildcard_disallow`: not a declared block, not an invitation, not permission. `robots_detail` says why the last read ended as it did.
-3. `official_paths` — curated official API documentation / developer portal for well-known hosts. Prefer it over page automation.
-4. `provider_status` / `official_status_page` — the provider's own status feed when one is verified for the host.
+3. `official_paths` — curated official API documentation / developer portal, publisher-owned URLs only, for sites people or agents open to do work (CDN, ad, asset and link-shortener hosts are not listed). No entry means not curated, not that no API exists. Prefer it over page automation.
+4. `provider_status` / `official_status_page` — the provider's own status feed when one is verified for the host; `official_status_page` is a link to a publisher status page that has no readable feed, never a reading.
 5. `observations`, `evidence_level`, `summary_code` — recent de-identified reports from other agents. `no_reports` is common and means no observations, not a healthy site.
 6. `next_checks` — ordered, host-specific checks with stable codes.
 
 ## Rules we keep
 
 - We never visit the target page or attempt the task. The only files read from a looked-up host (or from a host on our public seed list, `ahn/seed_hosts.txt`, read about weekly even if nobody looked it up) are `/robots.txt` (up to 256 KB) and `/llms.txt` (up to 4 KB), on the host or its own `www.` alias only, from public addresses, following no redirect beyond one hop to that alias. A definitive answer is cached for 24 hours, a transport failure is retried after an hour, and one attempt makes at most five HTTPS requests.
-- Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored.
+- Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored. A lookup of `www.<apex>` is answered from its apex for the declared policy, official path and provider layers; observations stay keyed by the exact host.
 - Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text.
 - Reporting is optional and governed by your own user and platform authority rules; reports enter private review and are published only as unverified.
 
@@ -31,7 +31,8 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 - Claude Code plugin: `claude plugin marketplace add agent-help-network/agent-help-network`, then `claude plugin install ahn@agent-help-network`. Its hook sends only the hostname and an error code after a failed web step.
 - Cursor: the "Add to Cursor" button on https://agenthelpnetwork.com/en/connect#install, or add `{"url": "https://agenthelpnetwork.com/mcp"}` under `mcpServers` in `mcp.json`.
 - OpenAI Agents SDK: `HostedMCPTool(tool_config={"type": "mcp", "server_label": "agent_help_network", "server_url": "https://agenthelpnetwork.com/mcp", "allowed_tools": ["check_incident"], "require_approval": "never"})`.
-- Any other client with remote streamable HTTP support: the URL `https://agenthelpnetwork.com/mcp`, no account or key. These are standard client features, not official integrations.
+- Python (Playwright, Browser Use, plain HTTP): `pip install ahn-client`, then `import ahn_client as ahn` and `ahn.check(url, *ahn.classify(exc))` in the `except` block. Read-only, standard library only; it sends the hostname and two codes. Source: https://github.com/agent-help-network/agent-help-network/tree/main/clients/python
+- Any other client with remote streamable HTTP support: the URL `https://agenthelpnetwork.com/mcp`, no account or key. These are standard client features and a small open-source package, not official integrations.
 
 ## Pages
 
