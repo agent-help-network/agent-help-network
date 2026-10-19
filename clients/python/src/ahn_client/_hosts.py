@@ -1,0 +1,82 @@
+"""Hostname extraction and the list of hosts that are never looked up.
+
+Mirrors normalize_host and skip_host in plugins/claude-code/ahn/hooks/ahn_lookup.py;
+tests/test_ahn_client.py checks the two stay in step. Nothing here resolves a name.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import os
+import re
+import urllib.parse
+from typing import Optional
+
+OWN_HOST = "agenthelpnetwork.com"
+
+HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+# Special-use and private-network names (RFC 6761/6762/8375, Tor, common LAN suffixes).
+SKIP_TLDS = frozenset({"localhost", "local", "internal", "test", "lan", "arpa", "onion", "invalid", "example",
+                       "home", "corp", "intranet", "private", "localdomain", "alt"})
+
+
+def normalize_host(value: object) -> Optional[str]:
+    """A bare lowercase hostname from a URL or host string; None when there is none.
+
+    Scheme, userinfo, port, path, query and fragment are dropped, as is one leading
+    ``www.`` (the service reads declared policy for apex names only).
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value if "://" in value else "//" + value)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    host = host.rstrip(".").lower()
+    if not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    labels = host.split(".")
+    if not all(HOST_LABEL.fullmatch(label) for label in labels) or len(host) > 253:
+        return None
+    if len(labels) >= 3 and labels[0] == "www":
+        host = ".".join(labels[1:])
+    return host
+
+
+def skip_host(host: str, extra: str = "") -> bool:
+    """True for local, private, special-use, address-literal, single-label and own hosts."""
+    labels = host.split(".")
+    if len(labels) < 2:
+        return True
+    last = labels[-1]
+    # Public TLDs are alphabetic or IDN; an all-digit or hex last label is an address
+    # literal in inet_aton form (10.0.0.1, 127.1, 0x7f.1).
+    if last in SKIP_TLDS or not (last.isalpha() or last.startswith("xn--")):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    suffixes = [OWN_HOST] + [item.strip().lower().lstrip(".") for item in extra.split(",") if item.strip()]
+    return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
+
+
+def eligible_host(value: object, env=None) -> Optional[str]:
+    """The hostname to look up for ``value``, or None when nothing may be sent."""
+    env = os.environ if env is None else env
+    if env.get("AHN_CLIENT_DISABLE") == "1":
+        return None
+    host = normalize_host(value)
+    if host is None or skip_host(host, env.get("AHN_CLIENT_SKIP_HOSTS", "")):
+        return None
+    return host
