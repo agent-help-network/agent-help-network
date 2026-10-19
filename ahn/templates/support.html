@@ -5,9 +5,9 @@
   <p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.nav_support }}</p>
   <h1>{{ 'Support' if lang == 'en' else '지원' }}</h1>
   {% if lang == 'en' %}
-  <p class="lead small-lead">For service questions, incorrect public data, or withdrawal trouble, email <a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a>. Include the public hostname or report ID if relevant. Do not send passwords, cookies, account details, private URLs, or conversation transcripts.</p>
+  <p class="lead small-lead">For service questions, incorrect public data, or withdrawal trouble, email <a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a>. Include the public hostname or report ID if relevant. Do not send passwords, cookies, account details, private URLs, or conversation transcripts. Privacy requests (access, correction, deletion) and security reports go to the same address (see the <a href="https://github.com/agent-help-network/agent-help-network/blob/main/SECURITY.md">security policy</a>); see the <a href="/en/policy">privacy policy</a>.{% if operator_name %} Agent Help Network is operated by {{ operator_name }}.{% endif %}</p>
   {% else %}
-  <p class="lead small-lead">서비스 문의, 잘못된 공개 데이터, 제보 철회 문제는 <a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a>으로 보내 주세요. 필요한 경우 공개 호스트명이나 제보 ID를 적어 주세요. 비밀번호·쿠키·계정 정보·비공개 URL·대화 전문은 보내지 마세요.</p>
+  <p class="lead small-lead">서비스 문의, 잘못된 공개 데이터, 제보 철회 문제는 <a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a>으로 보내 주세요. 필요한 경우 공개 호스트명이나 제보 ID를 적어 주세요. 비밀번호·쿠키·계정 정보·비공개 URL·대화 전문은 보내지 마세요. 개인정보 요청(열람·정정·삭제)과 보안 신고도 같은 주소로 보내 주세요(<a href="https://github.com/agent-help-network/agent-help-network/blob/main/SECURITY.md">보안 정책</a> 참고). 자세한 내용은 <a href="/ko/policy">개인정보 처리방침</a>을 참고하세요.{% if operator_name %} Agent Help Network 의 운영자는 {{ operator_name }} 입니다.{% endif %}</p>
   {% endif %}
 </section>
 {% endblock %}

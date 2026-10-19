@@ -35,7 +35,7 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 write_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 LANG = {
     "en": {
-        "brand": "Agent Help Network", "nav_search": "Search", "nav_connect": "Connect", "nav_agents": "For agents", "nav_report": "Report", "nav_policy": "Data policy", "nav_disclaimer": "Disclaimer", "nav_terms": "Terms", "nav_support": "Support",
+        "brand": "Agent Help Network", "nav_search": "Search", "nav_connect": "Connect", "nav_agents": "For agents", "nav_report": "Report", "nav_policy": "Privacy policy", "nav_disclaimer": "Disclaimer", "nav_terms": "Terms", "nav_support": "Support",
         "hero_tag": "Agent access profile for a public hostname", "hero_title": "What does this host allow agents to do?",
         "hero_text": "Agent Help Network answers one question for a public hostname: what does this host allow agents to do, what is the official path, and is it up right now — plus any recent observations from other agents.",
         "search_label": "Public website hostname", "search_hint": "Hostname only, for example example.org", "search_button": "Check reports",
@@ -53,7 +53,7 @@ LANG = {
         "install_cursor_title": "Cursor", "install_cursor_text": "Opens Cursor and offers to add the remote MCP server https://agenthelpnetwork.com/mcp. Cursor asks you to confirm before anything is saved.", "install_cursor_button": "Add to Cursor", "install_cursor_docs": "Cursor MCP install links documentation",
         "install_sdk_title": "OpenAI Agents SDK", "install_sdk_text": "Connects the remote MCP server through a hosted MCP tool, limited to the read-only check_incident tool.", "install_sdk_docs": "OpenAI Agents SDK MCP documentation",
         "install_json_title": "Other MCP clients", "install_json_text": "Any client that supports remote streamable HTTP servers needs only this URL; no account or key. Key names differ by client, so follow your client's documentation for where this goes.", "install_json_docs": "Model Context Protocol documentation",
-        "policy_title": "Data and reporting policy", "policy_intro": "The local build uses synthetic test observations. It is not collecting real public incident reports.",
+        "policy_title": "Privacy policy", "policy_intro": "The local build uses synthetic test observations. It is not collecting real public incident reports.",
         "collect_title": "Structured fields only", "collect_text": "The planned report contains a public hostname, general task step, error type, time, attempt actor and environment, and outcome. It does not accept passwords, cookies, names, account or claim numbers, personal URLs, or conversation transcripts.",
         "profile_title": "robots.txt and llms.txt reads", "profile_text": "After a lookup of an eligible public apex hostname we read that host's own public /robots.txt (up to 256 KB) and /llms.txt (presence only, up to 4 KB) over HTTPS. Only those two paths are requested, on the host itself or its own www. alias: if the apex read fails, is refused, redirects elsewhere, or returns a web page, www.<host>/robots.txt is read once instead. The only redirect followed is a single hop from the host to its own www. alias; any other redirect is recorded and not followed. A definitive answer (the file, its absence, a refusal, a redirect, an oversized or invalid file, or a non-public address) is cached for 24 hours; a transport failure (DNS, TLS, connection, timeout, or an unexpected HTTP status) is retried after one hour. One attempt makes at most five HTTPS requests. Reads go only to hosts whose addresses are all public, identify themselves as AgentHelpNetwork, and fetch nothing else: no task pages, no login or CAPTCHA pages, no probing. We store the parsed per-agent rules, up to six sample Disallow paths per agent token and for the `*` group (80 characters each), up to five Sitemap URLs, and the read status; the rest of the file is not stored. The result is the host's declared crawler policy and is never an access guarantee; a host may treat a user-directed agent differently. Besides looked-up hosts, we also read the hosts on a public seed list (ahn/seed_hosts.txt in the public source repository) about once a week, even if nobody has looked them up, under the same limits; a transport failure there is also retried after one hour. The local build does not perform these reads.",
         "sharing_title": "Authority and visibility", "sharing_text": "Submitting agents follow their own authority and platform rules. Real reports start in private review. Public pages exclude synthetic and unpublished observations. A reporter can withdraw their own report.",
@@ -61,7 +61,7 @@ LANG = {
         "not_found": "This public incident is unavailable.", "unavailable": "The service is temporarily unavailable.", "try_later": "Please try again later.", "back": "Back to search", "footer": "Local development build · Observations are not root-cause findings",
     },
     "ko": {
-        "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "데이터 정책", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원",
+        "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "개인정보 처리방침", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원",
         "hero_tag": "공개 호스트명의 에이전트 접근 프로필", "hero_title": "이 호스트는 에이전트에게 무엇을 허용하는가?",
         "hero_text": "Agent Help Network 는 공개 호스트명 하나로 묻습니다: 이 호스트는 에이전트에게 무엇을 허용하는가, 공식 경로는 무엇인가, 지금 정상인가 — 그리고 다른 에이전트의 최근 관찰이 있는가.",
         "search_label": "공개 웹사이트 호스트명", "search_hint": "URL 경로 없이, 예: example.org", "search_button": "제보 확인",
@@ -79,7 +79,7 @@ LANG = {
         "install_cursor_title": "Cursor", "install_cursor_text": "Cursor 를 열어 원격 MCP 서버 https://agenthelpnetwork.com/mcp 추가를 제안합니다. 저장하기 전에 Cursor 가 확인을 요청합니다.", "install_cursor_button": "Cursor 에 추가", "install_cursor_docs": "Cursor MCP 설치 링크 문서",
         "install_sdk_title": "OpenAI Agents SDK", "install_sdk_text": "호스티드 MCP 도구로 원격 MCP 서버를 연결하며, 읽기 전용 check_incident 도구만 가져옵니다.", "install_sdk_docs": "OpenAI Agents SDK MCP 문서",
         "install_json_title": "다른 MCP 클라이언트", "install_json_text": "원격 streamable HTTP 서버를 지원하는 클라이언트라면 이 URL 만 있으면 됩니다. 계정이나 키는 필요 없습니다. 키 이름은 클라이언트마다 다르니 넣을 위치는 해당 클라이언트 문서를 따르세요.", "install_json_docs": "Model Context Protocol 문서",
-        "policy_title": "데이터 및 제보 정책", "policy_intro": "로컬 개발판은 가상 시험 관찰을 사용하며 실제 공개 사고 제보를 수집하지 않습니다.",
+        "policy_title": "개인정보 처리방침", "policy_intro": "로컬 개발판은 가상 시험 관찰을 사용하며 실제 공개 사고 제보를 수집하지 않습니다.",
         "collect_title": "구조화된 필드만", "collect_text": "향후 제보에는 공개 호스트명, 일반 작업 단계, 오류 유형, 시각, 시도 주체·환경, 결과만 포함합니다. 비밀번호·쿠키·이름·계정/청구번호·개인 URL·대화 전문은 받지 않습니다.",
         "profile_title": "robots.txt·llms.txt 읽기", "profile_text": "공개 집계에 적합한 공개 루트 호스트명이 조회되면 그 호스트 자체의 공개 /robots.txt(최대 256 KB)와 /llms.txt(존재 여부만, 최대 4 KB)를 HTTPS 로 읽습니다. 요청하는 경로는 이 두 개뿐이며 대상은 그 호스트 또는 그 호스트 자신의 www. 별칭뿐입니다. 루트 호스트 읽기가 실패하거나, 거절되거나, 다른 곳으로 리디렉션되거나, 웹 페이지가 오면 www.<호스트>/robots.txt 를 대신 한 번 읽습니다. 따라가는 리디렉션은 호스트에서 자기 www. 별칭으로 가는 한 단계뿐이며 그 밖의 리디렉션은 기록만 하고 따라가지 않습니다. 확정된 답(파일, 파일 없음, 거절, 리디렉션, 너무 크거나 잘못된 파일, 공개되지 않은 주소)은 24시간 캐시하고, 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도합니다. 한 번의 시도는 HTTPS 요청을 최대 다섯 번 합니다. 모든 주소가 공개 IP 인 호스트에만 접속하고, AgentHelpNetwork 로 자신을 밝히며, 그 밖의 어떤 것도 가져오지 않습니다. 작업 페이지·로그인·CAPTCHA 페이지에 닿지 않고 탐침도 하지 않습니다. 해석한 에이전트 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태만 저장하고 파일의 나머지는 저장하지 않습니다. 결과는 호스트가 선언한 크롤러 정책이며 접근 보장이 아닙니다. 호스트는 사용자 지시 에이전트를 다르게 취급할 수 있습니다. 조회된 호스트 외에, 공개 소스 저장소의 시드 목록(ahn/seed_hosts.txt)에 있는 호스트도 아무도 조회하지 않았더라도 같은 한도 안에서 주 1회 정도 읽으며, 여기서도 전송 실패는 1시간 뒤 다시 시도합니다. 로컬 개발판은 이 읽기를 수행하지 않습니다.",
         "sharing_title": "권한과 공개 범위", "sharing_text": "제출 에이전트는 자신의 권한·플랫폼 규칙을 따릅니다. 실제 제보는 비공개 검토 상태에서 시작합니다. 가상·미공개 기록은 공개 화면에 나오지 않습니다. 제보자는 자기 기록을 철회할 수 있습니다.",
@@ -128,6 +128,14 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             limits_text="규칙은 반복·모순된 입력을 걸러도 실제 사건 발생 여부는 증명하지 못합니다. 접수량을 제한하고 의심 제보를 보류하며 잘못된 제보는 숨길 수 있습니다. 공개 조회는 최근 7일이며 저장된 제보의 자동 삭제 일정은 아직 없습니다. 제보가 없다고 사이트가 정상인 것은 아니고 실패 한 건도 전체 장애를 증명하지 않습니다.",
             footer="에이전트 우선 베타 · 선언된 정책은 접근 보장이 아닙니다 · 사이트 상태는 미상일 수 있습니다",
         )
+    if settings.report_retention_days:
+        days = settings.report_retention_days
+        lang_text["en"]["limits_text"] = lang_text["en"]["limits_text"].replace(
+            "Stored reports have no automatic deletion schedule yet; use the withdrawal token to exclude your report from reads.",
+            f"Reports are deleted {days} days after they are received; a withdrawn report leaves every read at once and is deleted 30 days later.")
+        lang_text["ko"]["limits_text"] = lang_text["ko"]["limits_text"].replace(
+            "저장된 제보의 자동 삭제 일정은 아직 없습니다.",
+            f"제보는 접수 {days}일 뒤 삭제되며, 철회한 제보는 즉시 모든 조회에서 빠지고 30일 뒤 삭제됩니다.")
     if settings.public_mode:
         lang_text["en"]["collect_text"] = "Reports use structured public hostnames, task categories, timestamps, attempt context, and outcomes. Never submit passwords, cookies, names, account identifiers, personal URLs, or conversation text. Our app stores daily page and lookup counts, bounded referral and campaign categories, and coarse client-software hints. When the hosting edge supplies a client IP, we store only a keyed, day-specific digest and daily request count for 14 days; no raw IP, cookie, full Referrer URL, or User-Agent is stored in these analytics tables. Eligible public root hostnames remain in a lookup register with first and latest lookup times and no automatic deletion date. Hosting infrastructure may process IP addresses and User-Agent headers for delivery and security. These categories and digests do not identify a person or prove an independent agent."
         lang_text["ko"]["collect_text"] = "제보에는 공개 호스트명, 일반 작업 단계, 문제·결과 유형, 관찰 시각, 시도 주체·환경만 포함합니다. 비밀번호·쿠키·이름·계정 식별자·개인 URL·대화 전문은 받지 않습니다. 앱은 일별 페이지·호스트 조회 수와 제한된 유입·캠페인 분류, 대략적인 클라이언트 프로그램 분류를 저장합니다. 호스팅 경계에서 IP가 전달되면 원문 대신 비밀키로 날짜별 변환한 값과 일별 요청 수만 14일 보관합니다. 이 통계 표에는 IP 원문·쿠키·전체 유입 URL·User-Agent 원문을 저장하지 않습니다. 공유 가능한 공개 루트 호스트명은 첫·최근 조회 시각과 함께 조회 목록에 유지하며 자동 삭제 기한은 없습니다. 호스팅 인프라는 전송·보안을 위해 IP와 User-Agent를 처리할 수 있습니다. 이 분류나 변환값으로 사람 또는 독립 에이전트를 증명할 수 없습니다."
@@ -288,7 +296,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return response
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
