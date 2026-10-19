@@ -441,3 +441,9 @@ def test_recheck_applies_the_current_rule_to_cached_probes():
     assert discover.recheck(old, "itch.io").kind == "none"
     fine = discover.Probe(host="status.acme.com", origin="status_subdomain", kind="link", page="https://status.acme.com/", title="Acme Status", final_host="status.acme.com")
     assert discover.recheck(fine, "acme.com") is fine
+
+
+def test_a_hand_supplied_status_path_on_the_publishers_own_domain_is_accepted():
+    # The main-site rule would reject a generic title there; a curator-supplied /status address is the exception.
+    assert discover.looks_like_status_page("Mastercard Developers", "https://developer.mastercard.com/api-status", site_host="mastercard.com", supplied=True)
+    assert not discover.looks_like_status_page("Mastercard Developers", "https://developer.mastercard.com/api-status", site_host="mastercard.com")

@@ -296,6 +296,8 @@ def looks_like_status_page(title: str, final_url: str, *, site_host: str = "", c
     if BOT_WALL.search(title) or NOT_FOUND.search(title) or SITE_DOWN.search(title) or not title:
         return False
     status_host = any("status" in label for label in host.split(".")[:-1])
+    if supplied and any(STATUS_PATH_SEGMENT.fullmatch(segment) for segment in parts.path.lower().split("/")):
+        return True  # an address a curator found on the publisher's own pages, on a /status path
     if site_host and registrable(host) == registrable(site_host) and not status_host:
         return bool(STRONG_TITLE.search(title)) and not re.search(r"/(?:profile|user|users|u|members?)/", parts.path.lower() + "/")
     if STATUS_TITLE.search(title):
