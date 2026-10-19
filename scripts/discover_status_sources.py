@@ -54,7 +54,7 @@ import re
 import socket
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -131,7 +131,7 @@ NOT_A_PUBLISHER_PAGE = frozenset({
 })
 STATUS_LINK_TEXT = re.compile(r"^(?:(?:api|system|service|platform|network|cloud|developer|site|server|operational|current)\s+)?status"
                               r"(?:\s+(?:page|dashboard))?$|^(?:service|system)\s+health$|^uptime$", re.IGNORECASE)
-STATUS_TITLE = re.compile(r"\b(status|incidents?|uptime|operational|outages?|system health|service health|availability)\b", re.IGNORECASE)
+STATUS_TITLE = re.compile(r"\b(status|statut|estado|статус|состояние|incidents?|uptime|operational|outages?|health|availability)\b|障害|稼働|상태", re.IGNORECASE)
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
@@ -279,14 +279,30 @@ def status_links(page_html: str, base_url: str) -> list[str]:
     return list(found)
 
 
-def looks_like_status_page(title: str, final_url: str) -> bool:
-    host = (urlsplit(final_url).hostname or "").lower()
+STRONG_TITLE = re.compile(r"\b(?:system|service|api|platform|network|server|site|cloud)\s+(?:status|health)\b|all systems|operational|\bincidents?\b|\boutages?\b|uptime", re.IGNORECASE)
+STATUS_PATH_SEGMENT = re.compile(r"(?:[a-z]+[-_])?status(?:[-_]page)?")
+
+
+def looks_like_status_page(title: str, final_url: str, *, site_host: str = "", cname_service: str = "", supplied: bool = False) -> bool:
+    """Whether a fetched page is a status page rather than a home page, a parked name or a user-profile 'status'.
+
+    A page that landed on the publisher's own site (a redirect from status.<apex> to the main site) must say outright that it is a
+    system/service status or health page. Elsewhere a status word in the title is enough, or a status-named host delegated by DNS to a
+    known status product. A hand-supplied address is also accepted on a status path segment."""
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").lower()
     if host in NOT_A_CUSTOMER_PAGE or host.endswith(".atlassian.com") and host != "status.atlassian.com" or host == "atlassian.com":
         return False  # an unclaimed custom domain lands on the vendor's own marketing or help pages
-    if BOT_WALL.search(title) or NOT_FOUND.search(title) or SITE_DOWN.search(title):
+    if BOT_WALL.search(title) or NOT_FOUND.search(title) or SITE_DOWN.search(title) or not title:
         return False
-    path = urlsplit(final_url).path.lower()
-    return bool(title) and (any("status" in label for label in host.split(".")[:-1]) or any(re.fullmatch(r"(?:[a-z]+[-_])?status(?:[-_]page)?", segment) for segment in path.split("/")) or bool(STATUS_TITLE.search(title)))
+    status_host = any("status" in label for label in host.split(".")[:-1])
+    if site_host and registrable(host) == registrable(site_host) and not status_host:
+        return bool(STRONG_TITLE.search(title)) and not re.search(r"/(?:profile|user|users|u|members?)/", parts.path.lower() + "/")
+    if STATUS_TITLE.search(title):
+        return True
+    if status_host and cname_service:
+        return True
+    return supplied and any(STATUS_PATH_SEGMENT.fullmatch(segment) for segment in parts.path.lower().split("/"))
 
 
 def docs_publisher_domains(site_host: str, listed_url: str) -> set[str]:
@@ -451,7 +467,7 @@ class Probe:
     note: str = ""
 
 
-def probe_candidate(net: Net, host: str, origin: str, path: str = "/") -> Probe:
+def probe_candidate(net: Net, host: str, origin: str, path: str = "/", site_host: str = "") -> Probe:
     """Verify one candidate. A candidate with a path other than "/" is a specific page: only that page is read."""
     probe = Probe(host=host, origin=origin)
     if not net.public_host(host):
@@ -496,7 +512,7 @@ def probe_candidate(net: Net, host: str, origin: str, path: str = "/") -> Probe:
         probe.note = "sign_in_page"
     elif final.path.rstrip("/").endswith("/inactive"):
         probe.note = "inactive_statuspage_placeholder"  # Statuspage's answer for a subdomain nobody runs
-    elif looks_like_status_page(probe.title, page["final_url"]):
+    elif looks_like_status_page(probe.title, page["final_url"], site_host=site_host, cname_service=probe.cname_service, supplied=origin == "supplied"):
         probe.kind = "link"
         probe.page = f"https://{probe.final_host}{final.path or '/'}"
         if path == "/" and probe.final_host != host and final.path in {"", "/"}:
@@ -597,7 +613,7 @@ def discover_host(net: Net, site_host: str, statusphere: dict[str, list[str]], d
             candidates.setdefault((host, "/"), "statusphere")
     probes: list[tuple[Probe, tuple[str, str, str]]] = []
     for (host, path), origin in candidates.items():
-        probe = probe_candidate(net, host, origin, path)
+        probe = probe_candidate(net, host, origin, path, site_host)
         final_host = probe.final_host or host
         doc_pages = list(dict.fromkeys(docs.get(host, []) + docs.get(final_host, [])))
         own = f"status.{registrable(site_host)}"
@@ -616,6 +632,14 @@ def discover_host(net: Net, site_host: str, statusphere: dict[str, list[str]], d
             judged = ("needs_review", probe.note, "")
         probes.append((probe, judged))
     return {"site_host": site_host, "probes": probes}
+
+def recheck(probe: Probe, site_host: str) -> Probe:
+    """Apply the current page rule to a probe read from an older cache, so rule fixes never need new requests."""
+    if probe.kind == "link" and probe.title and not looks_like_status_page(probe.title, probe.page, site_host=site_host,
+                                                                          cname_service=probe.cname_service, supplied=probe.origin == "supplied"):
+        return replace(probe, kind="none", page="", note="not_a_status_page")
+    return probe
+
 
 def decide(site_host: str, probes: list[tuple[Probe, tuple[str, str, str]]]) -> tuple[str, Probe | None, tuple[str, str, str] | None, str]:
     """(disposition, best probe, its evidence, reason) with disposition final | needs_review | excluded."""
@@ -741,7 +765,7 @@ def run_discovery(args) -> int:
     try:
         for index, host in enumerate(todo, 1):
             if host in cache["hosts"]:
-                probes = [(Probe(**p), tuple(j)) for p, j in cache["hosts"][host]]
+                probes = [(recheck(Probe(**p), host), tuple(j)) for p, j in cache["hosts"][host]]
             else:
                 if deadline and datetime.now() >= deadline:
                     state["stopped"] = f"stop time {args.stop_at} reached"

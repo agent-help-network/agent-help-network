@@ -131,7 +131,7 @@ def test_status_links_survives_broken_markup():
 
 @pytest.mark.parametrize("title, url, expected", [
     ("Acme Status", "https://status.acme.com/", True),
-    ("Welcome to Acme", "https://acmestatus.com/", True),            # a "status" host label is enough
+    ("Welcome to Acme", "https://acmestatus.com/", False),           # a "status" host label alone, with nothing else on the page, is not enough
     ("Acme - All systems operational", "https://example.net/s", True),
     ("Acme - Home", "https://www.acme.com/", False),                  # status.<apex> redirected to the home page
     ("", "https://status.acme.com/", False),
@@ -370,7 +370,8 @@ def test_status_link_text_forms():
 
 
 def test_a_status_path_on_a_publisher_host_counts_as_a_status_page():
-    assert discover.looks_like_status_page("Connectivity Portal", "https://connect.example.com/status")
+    assert discover.looks_like_status_page("Connectivity Portal", "https://connect.example.com/status", supplied=True)
+    assert not discover.looks_like_status_page("Connectivity Portal", "https://connect.example.com/status")  # found by rule, not supplied
     assert not discover.looks_like_status_page("Connectivity Portal", "https://connect.example.com/home")
 
 
@@ -384,7 +385,7 @@ def test_a_refused_page_that_the_publishers_docs_name_is_c_and_plain_text_mentio
 
 
 def test_status_path_means_a_status_segment_not_any_path_containing_the_word():
-    assert discover.looks_like_status_page("Developer Portal", "https://developer.example.com/support/api-status")
+    assert discover.looks_like_status_page("Developer Portal", "https://developer.example.com/support/api-status", supplied=True)
     assert not discover.looks_like_status_page("Buy this domain", "https://www.atom.com/name/SnapStatus")
 
 
@@ -418,3 +419,25 @@ def test_next_clock_time_is_always_in_the_future():
     from datetime import datetime
     target = discover.next_clock_time("07:30")
     assert target > datetime.now() and (target.hour, target.minute) == (7, 30)
+
+
+def test_a_redirect_onto_the_publishers_own_site_must_say_it_is_a_system_status_page():
+    kwargs = {"site_host": "itch.io"}
+    assert not discover.looks_like_status_page("Status - itch.io", "https://itch.io/profile/status", **kwargs)           # a profile 'status'
+    assert not discover.looks_like_status_page("status on DeviantArt", "https://www.deviantart.com/status", site_host="deviantart.com")
+    assert not discover.looks_like_status_page("Speedtest by Ookla", "https://www.speedtest.net/server/status", site_host="speedtest.net")
+    assert discover.looks_like_status_page("Acme System Status", "https://www.acme.com/system-status", site_host="acme.com")
+    assert discover.looks_like_status_page("Acme Status", "https://status.acme.com/", site_host="acme.com")  # a status-named host is not 'the main site'
+
+
+def test_a_status_named_host_with_a_generic_title_needs_a_known_status_product_behind_it():
+    generic = "Access via Synology"
+    assert not discover.looks_like_status_page(generic, "https://status.quickconnect.to/", site_host="quickconnect.to")
+    assert discover.looks_like_status_page(generic, "https://status.quickconnect.to/", site_host="quickconnect.to", cname_service="Instatus")
+
+
+def test_recheck_applies_the_current_rule_to_cached_probes():
+    old = discover.Probe(host="status.itch.io", origin="status_subdomain", kind="link", page="https://itch.io/profile/status", title="Status - itch.io", final_host="itch.io")
+    assert discover.recheck(old, "itch.io").kind == "none"
+    fine = discover.Probe(host="status.acme.com", origin="status_subdomain", kind="link", page="https://status.acme.com/", title="Acme Status", final_host="status.acme.com")
+    assert discover.recheck(fine, "acme.com") is fine
