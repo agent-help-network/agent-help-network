@@ -73,3 +73,22 @@ def test_no_mapping_points_at_a_placeholder_or_an_aggregator():
         parts = urlsplit(url)
         assert not parts.path.rstrip("/").endswith("/inactive"), url  # Statuspage's answer for a subdomain nobody runs
         assert not any((parts.hostname or "").endswith(domain) for domain in ("statusgator.com", "downdetector.com", "fruits.co")), url
+
+
+# Hosts whose status page was read once on 2026-10-19 and moved from a link to a feed.
+INSTATUS_HOSTS = {"bsky.app", "exa.ai", "fastmail.com", "joinmastodon.org", "kagi.com", "mastodon.social", "mollie.com",
+                  "tiingo.com", "todoist.com"}
+BETTERSTACK_HOSTS = {"brave.com", "firecrawl.dev", "huggingface.co", "openalex.org", "together.ai"}
+STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com"}
+
+
+def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
+    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS
+    for host in STATUSPAGE_COMPATIBLE_HOSTS:
+        assert SOURCES[host].kind == "statuspage", host
+    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS) & set(OFFICIAL_STATUS_PAGES)
+
+
+def test_datadog_stays_a_link_because_its_feed_covers_one_region_only():
+    assert "datadoghq.com" in OFFICIAL_STATUS_PAGES and "datadoghq.com" not in SOURCES
