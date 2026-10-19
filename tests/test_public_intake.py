@@ -429,18 +429,18 @@ def test_first_lookup_discovers_first_party_statuspage(public_client, monkeypatc
         )
     monkeypatch.setattr("ahn.service.discover_source", fake_discover)
     monkeypatch.setattr("ahn.service.refresh_one", lambda *_args, **_kwargs: True)
-    first = client.get("/v1/incidents/check", params={"site_host": "twilio.com"})
+    first = client.get("/v1/incidents/check", params={"site_host": "discovered-example.org"})
     assert first.status_code == 200
     assert first.json()["provider_status"]["indicator"] == "minor"
     assert first.json()["provider_status"]["freshness"] == "fresh"
     assert first.json()["current_site_status"] == "unknown"
-    assert calls == ["twilio.com"]
-    second = client.get("/v1/incidents/check", params={"site_host": "twilio.com"})
+    assert calls == ["discovered-example.org"]
+    second = client.get("/v1/incidents/check", params={"site_host": "discovered-example.org"})
     assert second.json()["provider_status"]["source_url"] == "https://status.twilio.com/"
-    assert calls == ["twilio.com"]
+    assert calls == ["discovered-example.org"]
     with connect(settings) as conn:
-        assert conn.execute("SELECT count(*) AS n FROM queried_hosts WHERE site_host='twilio.com'").fetchone()["n"] == 1
-        assert conn.execute("SELECT count(*) AS n FROM status_sources WHERE site_host='twilio.com'").fetchone()["n"] == 1
+        assert conn.execute("SELECT count(*) AS n FROM queried_hosts WHERE site_host='discovered-example.org'").fetchone()["n"] == 1
+        assert conn.execute("SELECT count(*) AS n FROM status_sources WHERE site_host='discovered-example.org'").fetchone()["n"] == 1
 
 
 def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypatch):
