@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Agent Help Network lookup hook for Claude Code. Standard library only.
+"""Agent Help Network lookup hook for Claude Code. Standard library only, Python 3.7+.
 
 Claude Code pipes a PostToolUseFailure or PostToolUse payload on stdin. When a
 web step failed, this script keeps only the target hostname, asks Agent Help
 Network what the host declares and what it recommends, and prints a short
 additionalContext for Claude. It sends a hostname and enum codes, nothing else,
-and it never blocks or fails the tool call: every path exits 0.
+it only reads, and it never blocks or fails the tool call: every path exits 0.
 
 Environment:
   AHN_HOOK_DISABLE=1          do nothing
   AHN_HOOK_SKIP_HOSTS=a.com,b  never look up these hosts or their subdomains
   AHN_HOOK_DEBUG=1            one-line note on stderr about what happened
   AHN_HOOK_FAKE_RESPONSE=path read the answer from a JSON file (no network)
+  CLAUDE_PLUGIN_DATA          set by Claude Code; the rate-limit cache lives there
 """
 
 from __future__ import annotations
@@ -22,49 +23,92 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+
+try:
+    import ssl
+except ImportError:  # A Python built without ssl cannot look anything up; the hook stays silent.
+    ssl = None
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
 USER_AGENT = "ahn-claude-code-plugin/0.1"
 OWN_HOST = "agenthelpnetwork.com"
-TIMEOUT_SECONDS = 4
+SOCKET_TIMEOUT_SECONDS = 4  # each socket operation (connect, read)
+TOTAL_TIMEOUT_SECONDS = 4.0  # the whole lookup, DNS included
+WORKER_NAME = "ahn-lookup"
 CACHE_FILE = "ahn-hook-cache.json"
 CACHE_TTL_SECONDS = 600
 CACHE_MAX_ENTRIES = 200
+CACHE_MAX_BYTES = 131_072
 MAX_CONTEXT = 700
 MAX_STDIN_BYTES = 8_000_000
 MAX_RESPONSE_BYTES = 262_144
 
-HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 # Special-use and private-network names (RFC 6761/6762/8375, Tor, common LAN
 # suffixes). Decided by name only: the hook never resolves anything.
 SKIP_TLDS = frozenset({"localhost", "local", "internal", "test", "lan", "arpa", "onion", "invalid", "example",
                        "home", "corp", "intranet", "private", "localdomain", "alt"})
 URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>()\[\]{}`]+", re.IGNORECASE)
-BARE_HOST = re.compile(r"(?<![\w.@/:-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62})(?![\w-]|\.\w)",
-                       re.IGNORECASE)
-# A bare token like "index.js" or "notes.md" is a file name, not a host.
-FILE_SUFFIXES = frozenset({"js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "pyc", "json", "jsonl", "txt", "md", "html", "htm",
-                           "css", "scss", "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "pdf", "csv", "xml", "yml",
-                           "yaml", "toml", "ini", "cfg", "conf", "log", "lock", "sh", "ps1", "bat", "cmd", "exe", "dll",
-                           "so", "zip", "gz", "tar", "rs", "go", "rb", "java", "kt", "swift", "php", "sql", "db", "env",
-                           "map", "wasm", "woff", "woff2", "ttf", "mp4", "mp3", "wav", "mov", "tmp", "bak"})
+# Claude Code's own WebFetch refusal ("Claude Code is unable to fetch from <host>") is the only
+# place a bare, scheme-less hostname is read from error text. Elsewhere dotted tokens are code
+# (document.querySelector, locator.click, urllib3.exceptions...) or path segments (C:\acme.budget).
+REFUSAL = re.compile(r"\bis unable to fetch from\s+(?:https?://)?"
+                     r"((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62})(?![\w-]|\.\w)", re.IGNORECASE)
+FULL_URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
+# A scheme-less tool argument: host[:port] then a path, query, fragment or nothing. "about:blank",
+# "javascript:..." and "mailto:..." do not match.
+SCHEMELESS = re.compile(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:[/?#].*)?", re.DOTALL)
+# Fields of an MCP tool's input that name the page it acted on. WebFetch has only "url".
+URL_FIELDS = ("url", "uri", "href", "link", "page_url", "pageUrl", "target_url", "targetUrl")
 CLASSES = (
-    ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge|cloudflare", re.I)),
+    # Not the bare brand name: "cloudflare" also appears in Cloudflare 5xx pages and block pages (error 1020).
+    ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge"
+                                      r"|checking your browser|just a moment", re.I)),
     ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b401\b|\bauthenticat(?:e|ion)\b", re.I)),
-    ("service_error", re.compile(r"\b5\d\d\b|time ?out|timed ?out|unavailable|reset|bad gateway", re.I)),
+    ("service_error", re.compile(r"\b5\d\d\b|time ?out|timed[ _]?out|unavailable|reset|bad gateway", re.I)),
 )
-BEFORE_RESPONSE = re.compile(r"connection refused|could not resolve|timed ?out|ENOTFOUND|ECONNREFUSED|getaddrinfo"
-                             r"|is unable to fetch from", re.I)
-CODE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
-TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
-SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._~/%+=&?#-]*)?$")
+# Nothing was received from the site: Node errno names, Chrome "net::ERR_*" codes (browser MCP tools), and
+# Claude Code's pre-request WebFetch refusals.
+BEFORE_RESPONSE = re.compile(r"connection[ _]refused|could not resolve|timed[ _]?out|ENOTFOUND|ECONNREFUSED|getaddrinfo"
+                             r"|is unable to fetch from|unable to verify if domain|is blocked by the network"
+                             r"|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_ADDRESS_UNREACHABLE", re.I)
+HOST_LIKE = re.compile(r"[A-Za-z0-9.-]+")
+# Characters IDNA2003 (Python's "idna" codec) maps to a different domain than IDNA2008 (browsers) uses.
+IDNA_DEVIATIONS = frozenset("ßς‌‍")
+MAX_AGENT_TOKENS = 64
+
+# Closed enums of the response contract (docs/api-contract.en.md; ahn/models.py is the machine form).
+# A value outside them is dropped, never shown.
+ACTIONS = frozenset({"proceed", "use_official_path", "hand_off_to_human", "wait_provider_incident",
+                     "stop_declared_block", "unknown"})
+CONFIDENCES = frozenset({"low", "medium", "high"})
+ROBOTS_STATUSES = frozenset({"ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public",
+                             "pending"})
+LLMS_STATUSES = frozenset({"present", "absent", "redirected", "refused", "error", "not_public", "pending"})
+INDICATORS = frozenset({"none", "minor", "major", "critical", "unknown"})
+FRESHNESS = frozenset({"fresh", "stale", "pending"})
+EVIDENCE_LEVELS = frozenset({"no_reports", "single_observation", "multiple_observations", "later_success_observed",
+                             "stale_reports"})
+NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "response_observed", "access_denial_observed",
+                         "human_handoff", "account_handoff", "robots_fetch_refused", "robots_unknown",
+                         "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "profile_not_read",
+                         "llms_txt_present",
+                         "official_path_available", "provider_scope", "provider_clear", "provider_unknown",
+                         "reports_unknown", "reports_stale", "reports_unverified"})
+AGENT_KINDS = frozenset({"user_agent", "search_crawler", "training_crawler"})
+AGENT_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9-]{1,31}")
+# https, a hostname, an optional path of at most 80 characters; no userinfo, port, query or fragment.
+OFFICIAL_URL = re.compile(r"https://([A-Za-z0-9.-]{1,253})(/[A-Za-z0-9._~:/+-]{0,79})?")
+CLOSING = "Declared policy is not an access guarantee; bypassing site controls is not advised."
 
 
-def normalize_host(value: str | None) -> str | None:
-    """A bare lowercase hostname from a URL or host string; None when there is none."""
+def hostname(value: str | None) -> str | None:
+    """The bare lowercase hostname in a URL or host string, or None when there is none."""
     if not isinstance(value, str):
         return None
     value = value.strip()
@@ -79,21 +123,45 @@ def normalize_host(value: str | None) -> str | None:
         return None
     host = host.rstrip(".").lower()
     if not host.isascii():
+        if IDNA_DEVIATIONS.intersection(host):
+            return None
         try:
             host = host.encode("idna").decode("ascii")
         except UnicodeError:
             return None
-    labels = host.split(".")
-    if not all(HOST_LABEL.fullmatch(label) for label in labels) or len(host) > 253:
+    if len(host) > 253 or not all(HOST_LABEL.fullmatch(label) for label in host.split(".")):
         return None
-    # AHN reads declared policy for apex names; "www." is the same site.
-    if len(labels) >= 3 and labels[0] == "www":
-        host = ".".join(labels[1:])
     return host
 
 
-def skip_host(host: str, extra: str = "") -> bool:
-    """True for local, private, special-use, address-literal, single-label and own hosts."""
+def apex(host: str) -> str:
+    """Drop a leading "www." label: AHN reads declared policy for apex names, and "www." is the same site."""
+    labels = host.split(".")
+    return ".".join(labels[1:]) if len(labels) >= 3 and labels[0] == "www" else host
+
+
+def normalize_host(value: str | None) -> str | None:
+    """The hostname AHN is asked about: hostname() without a leading "www."."""
+    host = hostname(value)
+    return apex(host) if host else None
+
+
+def url_host(value) -> str | None:
+    """Hostname of an http(s) URL or of a scheme-less host[:port][/path] tool argument; None for other schemes."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    scheme = FULL_URL.match(value)
+    if scheme:
+        if scheme.group(1).lower() not in ("http", "https"):
+            return None
+    elif not SCHEMELESS.fullmatch(value):
+        return None
+    return hostname(value)
+
+
+def special_use(host: str) -> bool:
+    """True for single-label, special-use and private-network names and for address literals."""
     labels = host.split(".")
     if len(labels) < 2:
         return True
@@ -106,33 +174,58 @@ def skip_host(host: str, extra: str = "") -> bool:
         ipaddress.ip_address(host)
         return True
     except ValueError:
-        pass
-    suffixes = [OWN_HOST] + [item.strip().lower().lstrip(".") for item in extra.split(",") if item.strip()]
-    return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
+        return False
 
 
-def host_from_text(text: str) -> str | None:
-    for match in URL_IN_TEXT.finditer(text):
-        host = normalize_host(match.group(0))
-        if host:
-            return host
-    for match in BARE_HOST.finditer(text):
-        token = match.group(1)
-        if token.rsplit(".", 1)[-1].lower() in FILE_SUFFIXES:
+def skip_host(host: str, extra: str = "") -> bool:
+    """True for special-use names, AHN's own hosts, and AHN_HOOK_SKIP_HOSTS entries and their subdomains.
+
+    Both the host as given and its "www."-less form are compared, against each entry as given and
+    normalised the same way, so "www.secret.example" in the list also covers "secret.example".
+    """
+    if special_use(host):
+        return True
+    names = {host, apex(host)}
+    suffixes = {OWN_HOST}
+    for item in extra.split(","):
+        item = item.strip().lstrip("*.")
+        if not item:
             continue
-        host = normalize_host(token)
+        entry = hostname(item) or item.lower().rstrip(".")
+        suffixes.update({entry, apex(entry)})
+    return any(name == suffix or name.endswith("." + suffix) for name in names for suffix in suffixes)
+
+
+def host_from_text(text: str, refusal: bool = True) -> str | None:
+    """The hostname of the first http(s) URL in an error text, else (when refusal) the host in Claude Code's refusal."""
+    for match in URL_IN_TEXT.finditer(text):
+        host = hostname(match.group(0).rstrip(".,;:!?"))
         if host:
             return host
+    if refusal:
+        match = REFUSAL.search(text)
+        if match:
+            return hostname(match.group(1))
     return None
 
 
-def without_urls(text: str) -> str:
-    """Replace each URL by its hostname so paths and queries never shape the classification."""
-    return URL_IN_TEXT.sub(lambda match: normalize_host(match.group(0)) or "", text)
+def without_urls(text: str, host: str | None = None) -> str:
+    """Blank each URL and every token naming host or one of its subdomains, so neither a path, a query nor the
+    site's own name (developers.cloudflare.com, login.example.com) shapes the classification."""
+    text = URL_IN_TEXT.sub(" ", text)
+    if not host:
+        return text
+    host = host.lower()
+
+    def blank(match) -> str:
+        token = match.group(0).lower().rstrip(".")
+        return " " if token == host or token.endswith("." + host) else match.group(0)
+
+    return HOST_LIKE.sub(blank, text)
 
 
-def classify(text: str) -> tuple[str, str | None]:
-    text = without_urls(text or "")
+def classify(text: str, host: str | None = None) -> tuple[str, str | None]:
+    text = without_urls(text or "", host)
     error_class = next((name for name, pattern in CLASSES if pattern.search(text)), "site_access")
     stage = "before_target_response" if BEFORE_RESPONSE.search(text) else None
     return error_class, stage
@@ -152,23 +245,27 @@ def http_status(tool_response) -> tuple[int, str] | None:
 
 
 def failure(payload: dict) -> tuple[str, str, str | None] | None:
-    """(host, error_class, failure_stage) for a failed web step, or None."""
+    """(hostname, error_class, failure_stage) for a failed web step, or None. The hostname keeps any "www."."""
     if not isinstance(payload, dict) or payload.get("tool_name") == "WebSearch":
         return None
+    tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else ""
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     event = payload.get("hook_event_name")
     if event == "PostToolUseFailure":
         if payload.get("is_interrupt"):
             return None
         text = payload.get("error") if isinstance(payload.get("error"), str) else ""
-        host = normalize_host(tool_input.get("url")) or host_from_text(text)
+        mcp = tool.startswith("mcp__")
+        # An MCP failure is looked up only when its input or its error names an http(s) URL.
+        candidates = (url_host(tool_input.get(field)) for field in (URL_FIELDS if mcp else ("url",)))
+        host = next((name for name in candidates if name), None) or host_from_text(text, refusal=not mcp)
         if not host:
             return None
-        error_class, stage = classify(text)
+        error_class, stage = classify(text, host)
         return host, error_class, stage
     if event == "PostToolUse":
         status = http_status(payload.get("tool_response"))
-        host = normalize_host(tool_input.get("url"))
+        host = url_host(tool_input.get("url"))
         if not status or not host:
             return None
         code, reason = status
@@ -177,35 +274,71 @@ def failure(payload: dict) -> tuple[str, str, str | None] | None:
     return None
 
 
-def cache_path() -> str:
-    return os.path.join(tempfile.gettempdir(), CACHE_FILE)
+def cache_dir(env=None, windows: bool | None = None) -> str | None:
+    """$CLAUDE_PLUGIN_DATA, else a per-user directory: %LOCALAPPDATA%\\ahn on Windows, ~/.cache/ahn elsewhere.
+
+    None when no absolute directory is known; a relative one would land in the project being worked on.
+    """
+    env = os.environ if env is None else env
+    windows = os.name == "nt" if windows is None else windows
+    directory = env.get("CLAUDE_PLUGIN_DATA") or ""
+    if not os.path.isabs(directory):
+        home = os.path.expanduser("~")
+        if windows:
+            base = env.get("LOCALAPPDATA") or ""
+            base = base if os.path.isabs(base) else os.path.join(home, "AppData", "Local")
+            directory = os.path.join(base, "ahn")
+        else:
+            directory = os.path.join(home, ".cache", "ahn")
+    return directory if os.path.isabs(directory) else None
 
 
-def recently_seen(host: str, now: float | None = None) -> bool:
+def cache_path(env=None, windows: bool | None = None) -> str | None:
+    directory = cache_dir(env, windows)
+    return os.path.join(directory, CACHE_FILE) if directory else None
+
+
+def recently_seen(host: str, now: float | None = None, env=None) -> bool:
     """True when host was looked up within the TTL; otherwise records it. Cache errors never stop a lookup."""
     now = time.time() if now is None else now
-    path = cache_path()
+    path = cache_path(env)
+    if not path:
+        return False
     try:
         with open(path, encoding="utf-8") as handle:
-            entries = json.load(handle)
+            text = handle.read(CACHE_MAX_BYTES + 1)
+        entries = json.loads(text) if len(text) <= CACHE_MAX_BYTES else {}
         if not isinstance(entries, dict):
             entries = {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         entries = {}
+    # The magnitude bound keeps now - stamp from overflowing on a hand-written huge integer.
     entries = {key: stamp for key, stamp in entries.items()
-               if isinstance(key, str) and isinstance(stamp, (int, float)) and 0 <= now - stamp < CACHE_TTL_SECONDS}
+               if isinstance(key, str) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+               and -1e12 < stamp < 1e12 and 0 <= now - stamp < CACHE_TTL_SECONDS}
     if host in entries:
         return True
     entries[host] = now
     if len(entries) > CACHE_MAX_ENTRIES:
         entries = dict(sorted(entries.items(), key=lambda item: item[1])[-CACHE_MAX_ENTRIES:])
+    directory = os.path.dirname(path)
+    temporary = None
     try:
-        temporary = f"{path}.{os.getpid()}.tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(entries, handle)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        # mkstemp: an unpredictable name, created 0600, in the user's own directory.
+        handle, temporary = tempfile.mkstemp(prefix=".ahn-hook-cache.", suffix=".tmp", dir=directory)
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(entries, stream)
         os.replace(temporary, path)
-    except OSError:
+        temporary = None
+    except (OSError, ValueError, TypeError):
         pass
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
     return False
 
 
@@ -216,8 +349,22 @@ def lookup_url(host: str, error_class: str, stage: str | None) -> str:
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
+class RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Every 3xx is an error: the answer must come from API_URL itself, never another URL or plain HTTP."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
+
+
+def build_opener() -> urllib.request.OpenerDirector:
+    """An opener that verifies TLS certificates and hostnames and follows no redirect."""
+    if ssl is None:
+        raise RuntimeError("this Python has no ssl module")
+    return urllib.request.build_opener(RefuseRedirects(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+
+
 def urlopen(request, timeout):
-    return urllib.request.urlopen(request, timeout=timeout)
+    return build_opener().open(request, timeout=timeout)
 
 
 def fetch(url: str) -> dict:
@@ -226,20 +373,72 @@ def fetch(url: str) -> dict:
         with open(fake, encoding="utf-8") as handle:
             return json.load(handle)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-        return json.loads(response.read(MAX_RESPONSE_BYTES).decode("utf-8"))
+    with urlopen(request, timeout=SOCKET_TIMEOUT_SECONDS) as response:
+        body = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ValueError("response over the size limit")
+    return json.loads(body.decode("utf-8"))
 
 
-def _code(value, default: str = "unknown") -> str:
-    return value if isinstance(value, str) and CODE.fullmatch(value) else default
+def fetch_within(url: str, seconds: float | None = None) -> dict:
+    """fetch(url) in a daemon thread; TimeoutError when it has not finished in time, DNS included."""
+    seconds = TOTAL_TIMEOUT_SECONDS if seconds is None else seconds
+    result = {}
+
+    def work():
+        try:
+            result["data"] = fetch(url)
+        except BaseException as exc:  # Handed to the caller below.
+            result["error"] = exc
+
+    worker = threading.Thread(target=work, name=WORKER_NAME, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimeoutError("no answer in time")
+    if "error" in result:
+        raise result["error"]
+    return result["data"]
 
 
-def _url(value) -> str | None:
-    return value if isinstance(value, str) and len(value) <= 200 and SAFE_URL.fullmatch(value) else None
+def _enum(value, allowed: frozenset, default: str | None = "unknown") -> str | None:
+    return value if isinstance(value, str) and value in allowed else default
+
+
+def official_url(value) -> str | None:
+    """The URL rebuilt from its validated parts, or None."""
+    match = OFFICIAL_URL.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        return None
+    host = match.group(1).lower()
+    if not all(HOST_LABEL.fullmatch(label) for label in host.split(".")) or special_use(host):
+        return None
+    return "https://" + host + (match.group(2) or "")
+
+
+def blocked_agents(robots: dict) -> tuple[list[str], int]:
+    """(declared-block agent tokens, number of training-crawler tokens) from robots.agents_blocked.
+
+    Training-crawler blocks are not declared blocks for user-directed agents (contract: Recommendation),
+    so they are counted separately when robots.rules gives each token's kind.
+    """
+    rules = robots.get("rules") if isinstance(robots.get("rules"), list) else []
+    kinds = {rule.get("agent"): _enum(rule.get("kind"), AGENT_KINDS, None)
+             for rule in rules if isinstance(rule, dict) and isinstance(rule.get("agent"), str)}
+    listed = robots.get("agents_blocked") if isinstance(robots.get("agents_blocked"), list) else []
+    tokens, seen = [], set()
+    for item in listed:
+        if len(tokens) >= MAX_AGENT_TOKENS:
+            break
+        if isinstance(item, str) and item not in seen and AGENT_TOKEN.fullmatch(item):
+            seen.add(item)
+            tokens.append(item)
+    declared = [token for token in tokens if kinds.get(token) != "training_crawler"]
+    return declared, len(tokens) - len(declared)
 
 
 def summary(host: str, data: dict, url: str) -> str:
-    """The additionalContext line, at most MAX_CONTEXT characters, built only from validated fields."""
+    """The additionalContext line, at most MAX_CONTEXT characters, built only from contract enums and validated values."""
     if not isinstance(data, dict):
         raise ValueError("unexpected response")
     rec = data.get("recommendation") if isinstance(data.get("recommendation"), dict) else {}
@@ -248,47 +447,56 @@ def summary(host: str, data: dict, url: str) -> str:
     provider = data.get("provider_status") if isinstance(data.get("provider_status"), dict) else None
     checks = data.get("next_checks") if isinstance(data.get("next_checks"), list) else []
 
+    blocked, training = None, 0
     if profile:
-        robots = _code(profile.get("robots_status"))
-        rules = profile.get("robots") if isinstance(profile.get("robots"), dict) else {}
-        listed = rules.get("agents_blocked") if isinstance(rules.get("agents_blocked"), list) else []
-        blocked = [item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item)]
-        llms = _code(profile.get("llms_txt_status"))
+        robots_status = _enum(profile.get("robots_status"), ROBOTS_STATUSES)
+        policy = robots_status + (" (stale)" if profile.get("freshness") == "stale" else "")
+        llms = _enum(profile.get("llms_txt_status"), LLMS_STATUSES)
+        # Agent lists mean something only when robots.txt was actually read.
+        if robots_status == "ok":
+            blocked, training = blocked_agents(profile.get("robots") if isinstance(profile.get("robots"), dict) else {})
     else:
-        robots, blocked, llms = "not read for this hostname", None, "unknown"
-    path = _url(official.get("api_docs")) or _url(official.get("developer_portal"))
+        policy, llms = "not read for this hostname", "unknown"
+    path = official_url(official.get("api_docs")) or official_url(official.get("developer_portal"))
     path_listed = bool(official.get("api_docs") or official.get("developer_portal"))
     if provider:
-        status = f"{_code(provider.get('indicator'))}/{_code(provider.get('freshness'))}"
+        status = f"{_enum(provider.get('indicator'), INDICATORS)}/{_enum(provider.get('freshness'), FRESHNESS)}"
     else:
         status = "not connected (official page listed)" if isinstance(data.get("official_status_page"), dict) else "not connected"
-    codes = [_code(item.get("code")) for item in checks if isinstance(item, dict)][:2]
+    codes = []
+    for item in checks:
+        code = _enum(item.get("code"), NEXT_CHECKS, None) if isinstance(item, dict) else None
+        if code and code not in codes:
+            codes.append(code)
+        if len(codes) == 2:
+            break
 
     def render(agent_limit: int | None, show_path: bool, show_url: bool) -> str:
         if blocked is None:
             agents = "unknown"
         elif not blocked:
-            agents = "none" if robots == "ok" else "unknown"
+            agents = "none"
         elif agent_limit is None or len(blocked) <= agent_limit:
             agents = ", ".join(blocked)
         elif agent_limit == 0:
             agents = f"{len(blocked)} agent tokens"
         else:
             agents = ", ".join(blocked[:agent_limit]) + f" (+{len(blocked) - agent_limit} more)"
+        if training:
+            agents += f" (+{training} training crawler{'s' if training != 1 else ''})"
         official_text = path if path and show_path else "listed" if path_listed else "none"
         full = url if show_url else "GET /v1/incidents/check on agenthelpnetwork.com"
-        return (f"AHN {host}: recommendation={_code(rec.get('action'))} ({_code(rec.get('confidence'))}). "
-                f"Declared policy: {robots}; blocked agents: {agents}; llms.txt: {llms}. "
+        return (f"AHN {host}: recommendation={_enum(rec.get('action'), ACTIONS)} ({_enum(rec.get('confidence'), CONFIDENCES)}). "
+                f"Declared policy: {policy}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
-                f"Reports: {_code(data.get('evidence_level'))}. Next: {', '.join(codes) or 'none'}. "
-                f"Full JSON: {full}. "
-                "Declared policy is not an access guarantee; bypassing site controls is not advised.")
+                f"Reports: {_enum(data.get('evidence_level'), EVIDENCE_LEVELS)}. Next: {', '.join(codes) or 'none'}. "
+                f"Full JSON: {full}. {CLOSING}")
 
     for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False)):
         text = render(*options)
         if len(text) <= MAX_CONTEXT:
             return text
-    tail = " Declared policy is not an access guarantee; bypassing site controls is not advised."
+    tail = " " + CLOSING
     return text[:MAX_CONTEXT - len(tail) - 1].rstrip() + "…" + tail
 
 
@@ -300,13 +508,14 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     found = failure(payload)
     if not found:
         return None, "no failed web step with a hostname"
-    host, error_class, stage = found
-    if skip_host(host, env.get("AHN_HOOK_SKIP_HOSTS", "")):
+    name, error_class, stage = found
+    if skip_host(name, env.get("AHN_HOOK_SKIP_HOSTS", "")):
         return None, "skipped host"
-    if recently_seen(host):
+    host = apex(name)
+    if recently_seen(host, env=env):
         return None, f"{host} looked up within 10 minutes"
     url = lookup_url(host, error_class, stage)
-    text = summary(host, fetch(url), url)
+    text = summary(host, fetch_within(url), url)
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 
@@ -328,5 +537,18 @@ def main() -> int:
     return 0
 
 
+def entry() -> int:
+    """main(), then leave at once: a lookup still stuck in DNS or connect must not keep the process alive."""
+    status = main()
+    if any(thread.name == WORKER_NAME and thread.is_alive() for thread in threading.enumerate()):
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(status)
+    return status
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(entry())

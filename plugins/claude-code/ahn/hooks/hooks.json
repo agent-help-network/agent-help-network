@@ -3,7 +3,7 @@
   "hooks": {
     "PostToolUseFailure": [
       {
-        "matcher": "^WebFetch$|^mcp__((?!__).)*([Bb]rowser|[Cc]hrome|[Pp]laywright|[Pp]uppeteer|[Ff]etch)((?!__).)*__",
+        "matcher": "^WebFetch$|^mcp__(?!plugin_ahn_).*([Bb]rowser|[Cc]hrome|[Pp]laywright|[Pp]uppeteer|[Ff]etch)((?!__).)*__",
         "hooks": [
           {
             "type": "command",

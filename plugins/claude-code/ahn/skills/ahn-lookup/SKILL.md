@@ -1,15 +1,15 @@
 ---
 name: ahn-lookup
-description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. Hostname only; read-only.
+description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing.
 ---
 
 # Agent Help Network lookup
 
-Agent Help Network (AHN, agenthelpnetwork.com) is an independent, read-only lookup. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes, and it never visits the target page.
+Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service; looking a host up is read-only. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes, and it never visits the target page.
 
 ## When it runs
 
-- **Automatically.** This plugin's hook runs after a `WebFetch` that returns HTTP 4xx/5xx or fails, and after a failed browser or fetch MCP tool (Claude in Chrome, the desktop browser pane, Playwright, Puppeteer, fetch servers). It adds one line starting `AHN <host>:` next to the tool result. The same host is looked up at most once per 10 minutes, so a missing line can mean "already looked up", "skipped" (local, private, or special-use name), or "service unreachable". Never claim a lookup happened when no `AHN` line or tool result shows it.
+- **Automatically.** This plugin's hook runs after a `WebFetch` that returns HTTP 4xx/5xx or fails, and after a failed browser or fetch MCP tool (Claude in Chrome, the desktop browser pane, Playwright, Puppeteer, fetch servers) whose input or error names an `http(s)://` URL. It adds one line starting `AHN <host>:` next to the tool result. It waits about 4 seconds total for the answer, and the same host is looked up at most once per 10 minutes, so a missing line can mean "already looked up", "skipped" (local, private, or special-use name, or no URL in the failure), or "service unreachable or too slow". Never claim a lookup happened when no `AHN` line or tool result shows it.
 - **Manually.** Call it when a step is blocked and no `AHN` line appeared, when the user asks whether a site is down or blocks agents, or before you start automating a site you have not used:
   - MCP: the `check_incident` tool of the `agent-help-network` server bundled with this plugin (`mcp__plugin_ahn_agent-help-network__check_incident`), with `site_host` and optionally `error_class` and `failure_stage`.
   - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>`.
@@ -42,10 +42,12 @@ Never send URL paths, queries, page text, cookies, tokens, account names, claim 
 
 ### `access_profile` — declared policy, not a guarantee
 
-- `robots_status`: `ok` means robots.txt was read. Any other value (`absent`, `redirected`, `too_large`, `not_public`, `error`) means the policy is **unknown** — not permissive and not a block.
-- `robots.agents_blocked` / `robots.agents_allowed`: agent tokens (for example `Claude-User`, `ChatGPT-User`, `GPTBot`) with an explicit robots group that disallows or allows the site root. `Claude-User` is Anthropic's token for user-directed fetches.
-- `llms_txt_status`: `present` means the host publishes `/llms.txt`, its own guidance for language-model agents; read it before automating pages.
-- `access_profile` is `null` for subdomains and names AHN does not read (only eligible public apex hostnames are read, about once a day). Treat that as unknown.
+- `robots_status`: `ok` means robots.txt was read. `refused` means the host's edge refused even a plain robots.txt read (HTTP 401/403/429/503 to a data-center address): a hint that page automation from a similar environment will be refused too, so prefer the official path. It is a hint, not a declaration. Every other value (`absent`, `redirected`, `invalid` (a web page came back instead of a policy file), `error`, `too_large`, `not_public`, `pending`) means the policy is **unknown** — not permissive and not a block. The hook line lists blocked agents only when `robots_status` is `ok`, and shows `ok (stale)` when the profile's `freshness` is `stale`.
+- `robots.agents_blocked` / `robots.agents_allowed`: agent tokens (for example `Claude-User`, `ChatGPT-User`, `GPTBot`) with an explicit robots group that disallows or allows the site root. `Claude-User` is Anthropic's token for user-directed fetches. Training crawlers (`robots.rules[].kind` is `training_crawler`, for example `GPTBot`, `ClaudeBot`) can be listed in `agents_blocked`, but blocking them is not a declared block for user-directed agents; the hook line counts them separately as `(+N training crawlers)`.
+- `llms_txt_status`: `present` means the host publishes `/llms.txt`, its own guidance for language-model agents; read it before automating pages. `absent`, `refused` (the host's edge refused the read), `redirected`, `error`, `not_public` and `pending` mean no llms.txt was read.
+- `read_host`: the host that actually supplied the files, the apex or its own `www.` alias; `source_urls` point there.
+- `access_profile` is `null` for subdomains and names AHN does not read (only eligible public apex hostnames are read). Treat that as unknown.
+- Read cadence: a definitive robots.txt/llms.txt answer (`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`) is cached for 24 hours; a transport failure (DNS, TLS, connect, timeout, unexpected HTTP status) is retried after one hour. One attempt makes at most five HTTPS requests across the apex and its own `www.` alias.
 
 Declared policy is what the host says, read from its own files. It does not prove a page is reachable, and a CDN may treat a user-directed agent differently from a crawler.
 
@@ -55,7 +57,7 @@ Declared policy is what the host says, read from its own files. It does not prov
 
 ### `provider_status`
 
-The provider's own status feed, with `source_name`, `indicator` (`none`, `minor`, `major`, `critical`, …), `fetched_at` and `freshness` (`fresh`, `stale`, `pending`). `null` means no feed is connected; `official_status_page` may still link a human-readable status page. A provider incident may or may not explain the failure; "no active issue" does not prove access from this environment.
+The provider's own status feed, with `source_name`, `indicator` (`none`, `minor`, `major`, `critical`, `unknown`), `fetched_at`, `freshness` (`fresh`, `stale`, `pending`) and `error_detail` (`null` unless the last feed read failed; then a short label such as `http_503` or `timeout`, describing the feed read, not the target site). `null` means no feed is connected; `official_status_page` may still link a human-readable status page. A provider incident may or may not explain the failure; "no active issue" does not prove access from this environment.
 
 ### `observations` and `evidence_level`
 
@@ -71,7 +73,7 @@ Optional reports from other agents over a 7-day horizon:
 
 ## Reporting
 
-This plugin never reports anything. It only reads. Do not submit observations as part of this skill, even if the MCP server lists a reporting tool; reporting is a separate, future opt-in and needs the user's explicit authorization for each submission. Never manufacture a failure to have something to report.
+The hook only reads: it sends a hostname and enum codes and never reports anything. The bundled `agent-help-network` MCP server, however, also offers `report_observation`, a write tool that submits an observation to Agent Help Network. Call it only with the user's explicit approval for that specific submission, never automatically: not after an `AHN` line, not as part of a lookup, and not from this skill on your own initiative. Never manufacture a failure to have something to report, and never put page content, URL paths or personal data in a report.
 
 ## More
 
