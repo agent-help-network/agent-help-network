@@ -521,6 +521,20 @@ def test_host_cap_and_pause(public_client):
     assert post_public(client, sample(site_host="another.org")).status_code == 503
 
 
+def test_host_cap_counts_www_with_its_apex(public_client):
+    settings, client = public_client
+    for host in ("capexample.org", "www.capexample.org", "capexample.org", "www.capexample.org", "capexample.org"):
+        assert post_public(client, sample(site_host=host)).status_code == 201
+    assert post_public(client, sample(site_host="www.capexample.org")).status_code == 429
+    assert post_public(client, sample(site_host="capexample.org")).status_code == 429
+    assert post_public(client, sample(site_host="shop.capexample.org")).status_code == 201
+    with connect(settings) as conn:
+        counters = conn.execute("SELECT site_host,reports FROM public_intake_host_daily WHERE site_host LIKE %s ORDER BY site_host", ("%capexample.org",)).fetchall()
+        hosts = conn.execute("SELECT site_host,count(*) AS n FROM incidents WHERE site_host LIKE %s GROUP BY site_host ORDER BY site_host", ("%capexample.org",)).fetchall()
+    assert counters == [{"site_host": "capexample.org", "reports": 5}, {"site_host": "shop.capexample.org", "reports": 1}]
+    assert hosts == [{"site_host": "capexample.org", "n": 1}, {"site_host": "shop.capexample.org", "n": 1}, {"site_host": "www.capexample.org", "n": 1}]
+
+
 def test_manual_review_then_hide(public_client, monkeypatch, capsys):
     from ahn.cli import main as cli_main
     import sys
