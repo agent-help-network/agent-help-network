@@ -128,6 +128,19 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "otto.de": {"otto.market"},
     "shopee.com.br": {"shopee.com"},
     "shopee.co.id": {"shopee.com"},
+    "biomedcentral.com": {"springernature.com"},  # BMC is part of Springer Nature
+    "metacpan.org": {"github.com"},  # MetaCPAN's own GitHub organisation
+    "npmjs.org": {"github.com", "npmjs.com"},  # npm registry docs live in the npm GitHub organisation
+    "golang.org": {"go.dev"},  # Go project moved to go.dev
+    "pypa.io": {"python.org"},  # Python Packaging Authority specifications are hosted at packaging.python.org
+    "ghcr.io": {"github.com"},  # GitHub Packages documentation
+    "leagueoflegends.com": {"riotgames.com"},  # Riot Games developer portal
+    "skyscanner.com": {"skyscanner.net"},  # Skyscanner's partner developer domain
+    "orbitz.com": {"expediagroup.com"},
+    "travelocity.com": {"expediagroup.com"},
+    "shein.com": {"sheincorp.com"},  # SHEIN corporate open platform domain
+    "fedoraproject.org": {"fedora-infra.github.io"},  # Fedora Infrastructure Pages site that bodhi.fedoraproject.org/docs redirects to
+    "wayfair.com": {"wayfair.io"},  # Wayfair developer site that developer.wayfair.com redirects to
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)
