@@ -235,12 +235,38 @@ def test_display_name_and_scope_flag():
 
 def test_statusphere_file_is_optional(tmp_path):
     assert discover.load_statusphere(None)[0] == {} and "skipped" in discover.load_statusphere(None)[1]
-    missing = discover.load_statusphere(tmp_path / "none.json")
+    missing = discover.load_statusphere(tmp_path / "none.go")
     assert missing[0] == {} and "not found" in missing[1]
-    path = tmp_path / "statusphere.json"
-    path.write_text(json.dumps({"example.com": "https://status.example.net/"}), encoding="utf-8")
+
+
+def test_statusphere_go_list_is_matched_by_brand_label(tmp_path):
+    path = tmp_path / "status_pages.go"
+    path.write_text('''package status_pages
+var StatusPages = []api.StatusPage{
+	{
+		URL:  "https://status.circleci.com",
+		Name: "Circle CI",
+	}, {
+		URL:  "http://codeship.statuspage.io",
+		Name: "codeship",
+	}, {
+		URL:  "https://currents.instatus.com",
+		Name: "Currents",
+	},
+}
+''', encoding="utf-8")
     data, note = discover.load_statusphere(path)
-    assert data == {"example.com": ["status.example.net"]} and "loaded" in note
+    assert data["circleci"] == ["status.circleci.com"] and "loaded 3 entries" in note
+    assert data["codeship"] == ["codeship.statuspage.io"]      # shared hosting: the first label is the brand
+    assert "statuspage" not in data and "instatus" not in data  # never matched to the hosting product itself
+    assert data["currents"] == ["currents.instatus.com"]
+
+
+def test_statusphere_candidates_are_probed_but_never_trusted(tmp_path):
+    net = StubNet({"https://circle-status.example.net/api/v2/status.json": (200, FEED)})
+    result = discover.discover_host(net, "circleci.com", {"circleci": ["circle-status.example.net"]}, {})
+    probe, judged = next((p, j) for p, j in result["probes"] if p.host == "circle-status.example.net")
+    assert probe.origin == "statusphere" and probe.kind == "feed" and judged[0] == "needs_review"
 
 
 def test_a_run_never_goes_below_one_request_per_second(monkeypatch, capsys):
@@ -386,3 +412,9 @@ def test_a_redirect_that_drops_the_path_still_finds_the_feed_on_the_landing_host
     disposition, best, judged, _ = discover.decide("acme.com", result["probes"])
     assert (disposition, best.kind, judged[0]) == ("final", "feed", "B")
     assert best.page == "https://www.acmestatus.net/" and best.api == "https://www.acmestatus.net/api/v2/status.json"
+
+
+def test_next_clock_time_is_always_in_the_future():
+    from datetime import datetime
+    target = discover.next_clock_time("07:30")
+    assert target > datetime.now() and (target.hour, target.minute) == (7, 30)

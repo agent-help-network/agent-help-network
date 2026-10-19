@@ -55,7 +55,7 @@ import socket
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -593,7 +593,7 @@ def discover_host(net: Net, site_host: str, statusphere: dict[str, list[str]], d
             candidates.setdefault((host, "/"), origin)
         for host in docs:
             candidates.setdefault((host, "/"), "docs_link")
-        for host in statusphere.get(registrable(site_host), []):
+        for host in statusphere.get(re.sub(r"[^a-z0-9]", "", name_label(site_host)), []):
             candidates.setdefault((host, "/"), "statusphere")
     probes: list[tuple[Probe, tuple[str, str, str]]] = []
     for (host, path), origin in candidates.items():
@@ -647,21 +647,40 @@ def write_csv(path: Path, fields: list[str], rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def statusphere_labels(url_host: str, name: str) -> set[str]:
+    """Brand labels a Statusphere entry can be matched to: its listed name and the brand part of its address."""
+    labels = {re.sub(r"[^a-z0-9]", "", name.lower())}
+    brand = url_host.split(".")[0] if is_shared_hosting(url_host) else name_label(url_host)
+    labels.add(re.sub(r"[^a-z0-9]", "", brand.lower()))
+    return {label for label in labels if len(label) >= 3}
+
+
 def load_statusphere(path: Path | None) -> tuple[dict[str, list[str]], str]:
-    """Registrable domain -> status hosts from a local Statusphere export (JSON list of URLs or {domain: url}); (empty, reason) when absent."""
+    """Brand label -> status hosts from Statusphere's list (https://github.com/metoro-io/statusphere, MIT; the Go
+    source ``status_pages.go`` or a JSON list of URLs). (empty, reason) when no file is given or it is missing.
+    A listing is only a candidate: ownership still has to come from rule A, B or C."""
     if path is None:
         return {}, "skipped: no --statusphere file given"
     if not path.exists():
         return {}, f"skipped: {path} not found"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    pairs = data.items() if isinstance(data, dict) else ((u, u) for u in data)
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".go":
+        entries = re.findall(r'URL:\s*"([^"]+)"\s*,\s*Name:\s*"([^"]*)"', text)
+    else:
+        data = json.loads(text)
+        entries = [(url, "") for url in (data.values() if isinstance(data, dict) else data)]
     out: dict[str, list[str]] = {}
-    for key, value in pairs:
-        for url in value if isinstance(value, list) else [value]:
-            host = urlsplit(url if "://" in url else f"https://{url}").hostname
-            if host:
-                out.setdefault(registrable(normalise_host(key)), []).append(host)
-    return out, f"loaded {sum(map(len, out.values()))} entries"
+    for url, name in entries:
+        host = urlsplit(url if "://" in url else f"https://{url}").hostname
+        if host and public_name(host):
+            for label in statusphere_labels(host, name):
+                if host not in out.setdefault(label, []):
+                    out[label].append(host)
+    return out, f"loaded {len(entries)} entries, {len(out)} brand labels"
+
+
+def public_name(host: str) -> bool:
+    return "." in host and not host.endswith(".local")
 
 
 def prewarm_dns(net: Net, hosts: list[str], workers: int = 16) -> None:
@@ -701,47 +720,72 @@ def run_discovery(args) -> int:
     counts = {"final": 0, "needs_review": 0, "excluded": 0}
     evidence_counts: dict[str, int] = {}
     started = time.monotonic()
-    for index, host in enumerate(todo, 1):
-        if host in cache["hosts"]:
-            probes = [(Probe(**p), tuple(j)) for p, j in cache["hosts"][host]]
-        else:
-            try:
-                probes = discover_host(net, host, statusphere, cache["docs"], supplied.get(host) if args.candidates_csv else None)["probes"]
-            except RuntimeError as exc:  # request budget
-                print(f"stopping: {exc}", flush=True)
-                break
-            cache["hosts"][host] = [[asdict(p), list(j)] for p, j in probes]
+    deadline = next_clock_time(args.stop_at) if args.stop_at else None
+    state = {"complete": False, "stopped": ""}
+
+    def flush() -> None:
+        """Everything done so far goes to disk: a run that is killed loses at most the last few hosts, and a rerun resumes from cache.json."""
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+        write_csv(batch_dir / "candidates.csv", CANDIDATE_FIELDS, candidate_rows)
+        write_csv(batch_dir / "final.csv", FINAL_FIELDS, final_rows)
+        write_csv(batch_dir / "excluded.csv", EXCLUDED_FIELDS, excluded_rows)
+        summary = {
+            "batch": args.batch, "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "user_agent": USER_AGENT,
+            "complete": state["complete"], "stopped": state["stopped"], "hosts_in": len(hosts),
+            "skipped": {reason: len(items) for reason, items in skipped.items()}, "to_process": len(todo), "processed": sum(counts.values()),
+            **counts, "evidence": evidence_counts, "requests": net.requests, "statusphere": statusphere_note,
+            "seconds": round(time.monotonic() - started),
+        }
+        (batch_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+    try:
+        for index, host in enumerate(todo, 1):
+            if host in cache["hosts"]:
+                probes = [(Probe(**p), tuple(j)) for p, j in cache["hosts"][host]]
+            else:
+                if deadline and datetime.now() >= deadline:
+                    state["stopped"] = f"stop time {args.stop_at} reached"
+                    print(f"stopping: {state['stopped']}", flush=True)
+                    break
+                try:
+                    probes = discover_host(net, host, statusphere, cache["docs"], supplied.get(host) if args.candidates_csv else None)["probes"]
+                except RuntimeError as exc:  # request budget
+                    state["stopped"] = str(exc)
+                    print(f"stopping: {exc}", flush=True)
+                    break
+                cache["hosts"][host] = [[asdict(p), list(j)] for p, j in probes]
+            disposition, best, judged, reason = decide(host, probes)
+            for probe, j in probes:
+                candidate_rows.append({"host": host, "candidate_host": probe.host, "origin": probe.origin, "kind": probe.kind, "page": probe.page,
+                                       "api": probe.api, "indicator": probe.indicator, "title": probe.title, "final_host": probe.final_host,
+                                       "redirect_chain": ">".join(probe.chain), "cname_service": probe.cname_service,
+                                       "evidence": j[0] if probe.kind in {"feed", "link"} else "", "evidence_detail": j[1],
+                                       "evidence_url": j[2], "note": probe.note})
+            counts[disposition] += 1
+            if disposition == "final":
+                evidence_counts[judged[0]] = evidence_counts.get(judged[0], 0) + 1
+                final_rows.append({"host": host, "name": display_name(host, best), "kind": "feed" if best.kind == "feed" else "page",
+                                   "page": best.page, "api": best.api, "indicator": best.indicator,
+                                   "evidence": f"{judged[0]}:{judged[1]}", "evidence_url": judged[2], "scope_flag": scope_flag(host, best)})
+            else:
+                excluded_rows.append({"host": host, "candidate": (best.page or f"https://{best.host}/") if best else "", "reason": reason, "disposition": disposition})
+            print(f"[{index}/{len(todo)}] {host:<28} {disposition:<12} {(judged[0] if judged else '-'):<13} {best.page if best and best.page else ''}", flush=True)
             if index % 10 == 0:
-                cache_path.write_text(json.dumps(cache), encoding="utf-8")
-        disposition, best, judged, reason = decide(host, probes)
-        for probe, j in probes:
-            candidate_rows.append({"host": host, "candidate_host": probe.host, "origin": probe.origin, "kind": probe.kind, "page": probe.page,
-                                   "api": probe.api, "indicator": probe.indicator, "title": probe.title, "final_host": probe.final_host,
-                                   "redirect_chain": ">".join(probe.chain), "cname_service": probe.cname_service,
-                                   "evidence": j[0] if probe.kind in {"feed", "link"} else "", "evidence_detail": j[1],
-                                   "evidence_url": j[2], "note": probe.note})
-        counts[disposition] += 1
-        if disposition == "final":
-            evidence_counts[judged[0]] = evidence_counts.get(judged[0], 0) + 1
-            final_rows.append({"host": host, "name": display_name(host, best), "kind": "feed" if best.kind == "feed" else "page",
-                               "page": best.page, "api": best.api, "indicator": best.indicator,
-                               "evidence": f"{judged[0]}:{judged[1]}", "evidence_url": judged[2], "scope_flag": scope_flag(host, best)})
+                flush()
         else:
-            excluded_rows.append({"host": host, "candidate": best.page or f"https://{best.host}/" if best else "", "reason": reason, "disposition": disposition})
-        print(f"[{index}/{len(todo)}] {host:<28} {disposition:<12} {(judged[0] if judged else '-'):<13} {best.page if best and best.page else ''}", flush=True)
-    cache_path.write_text(json.dumps(cache), encoding="utf-8")
-    write_csv(batch_dir / "candidates.csv", CANDIDATE_FIELDS, candidate_rows)
-    write_csv(batch_dir / "final.csv", FINAL_FIELDS, final_rows)
-    write_csv(batch_dir / "excluded.csv", EXCLUDED_FIELDS, excluded_rows)
-    summary = {
-        "batch": args.batch, "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "user_agent": USER_AGENT,
-        "hosts_in": len(hosts), "skipped": {reason: len(items) for reason, items in skipped.items()}, "processed": sum(counts.values()),
-        **counts, "evidence": evidence_counts, "requests": net.requests, "statusphere": statusphere_note,
-        "seconds": round(time.monotonic() - started),
-    }
-    (batch_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(summary, indent=2))
+            state["complete"] = True
+    finally:
+        flush()
+    print(json.dumps(json.loads((batch_dir / "summary.json").read_text(encoding="utf-8")), indent=2))
     return 0
+
+
+def next_clock_time(clock: str) -> datetime:
+    """The next local occurrence of HH:MM (so --stop-at 07:30 started at night means the coming morning)."""
+    hour, minute = (int(part) for part in clock.split(":"))
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return target if target > now else target + timedelta(days=1)
 
 
 def run_classify(args) -> int:
@@ -805,6 +849,7 @@ def main() -> int:
     parser.add_argument("--classify", action="store_true", help="classify the provider of every linked status page instead of discovering")
     parser.add_argument("--pages-csv", type=Path, help="with --classify: extra host,page rows to classify")
     parser.add_argument("--min-interval", type=float, default=MIN_INTERVAL, help="seconds between requests (never below the default in a real run)")
+    parser.add_argument("--stop-at", help="local HH:MM at which to stop starting new hosts (progress is saved; a rerun resumes)")
     parser.add_argument("--max-requests", type=int, help="stop after this many HTTP requests")
     args = parser.parse_args()
     if args.min_interval < MIN_INTERVAL:
