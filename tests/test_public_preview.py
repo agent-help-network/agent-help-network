@@ -167,7 +167,9 @@ def test_connect_page_embeds_the_pinned_demo_video_without_autoplay():
             assert "controls" in tag and 'preload="metadata"' in tag and 'crossorigin="anonymous"' in tag
             assert "autoplay" not in tag
             assert re.search(rf'<source src="{base}\.webm"', page.text)
-            assert re.search(rf'<track kind="captions" srclang="en" label="English" src="{base}\.vtt" default>', page.text)
+            assert re.search(rf'<track kind="captions" srclang="en" label="English" src="{base}\.vtt">', page.text)
+            # The video has burned-in captions, so the track stays off until the viewer turns it on.
+            assert "default" not in re.search(r"<track\b[^>]*>", page.text).group(0)
             assert "<figcaption>" in page.text
             # The page sets no Content-Security-Policy, so the CDN needs no allow-list entry.
             assert "content-security-policy" not in page.headers
