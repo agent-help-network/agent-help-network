@@ -301,6 +301,44 @@ def test_summary_matches_the_plugin_line(transport):
     assert result.summary().startswith("AHN example.com: recommendation=use_official_path (high).")
 
 
+PENDING = {**ANSWER,
+           "access_profile": {"robots_status": "pending", "robots": None, "llms_txt_status": "pending", "freshness": "pending",
+                              "retry_after_seconds": 5, "fetched_at": None},
+           "recommendation": {"action": "use_official_path", "confidence": "medium", "reasons": ["profile_pending", "official_path_available"]},
+           "next_checks": [{"code": "locate_failure_stage", "text": "..."}, {"code": "profile_pending", "text": "..."}]}
+
+
+def test_pending_answer_matches_the_plugin_line_and_exposes_the_wait(transport):
+    transport(body=PENDING)
+    result = ahn.check("example.com", "site_access")
+    assert result.retry_after_seconds == 5 and result.reasons == ("profile_pending", "official_path_available")
+    assert "profile_pending" in result.next_checks
+    assert result.summary() == hook.summary("example.com", PENDING, result.url)
+    assert "Declared policy: pending (being read now; look up once more in 5 s, do not poll)" in result.summary()
+    assert result.blocked_agents == ()
+
+
+def test_pending_answer_is_cached_only_until_the_retry_time(monkeypatch, transport):
+    calls = transport(body=PENDING)
+    clock = [1000.0]
+    monkeypatch.setattr(_client.time, "monotonic", lambda: clock[0])
+    ahn.check("example.com")
+    clock[0] += 4
+    ahn.check("example.com")
+    assert len(calls) == 1
+    clock[0] += 2
+    ahn.check("example.com")  # the advice says ask once more after retry_after_seconds: that call reaches the service
+    assert len(calls) == 2
+
+
+def test_retry_after_is_ignored_unless_the_profile_is_pending(transport):
+    transport(body={**ANSWER, "access_profile": {**ANSWER["access_profile"], "freshness": "fresh", "retry_after_seconds": 5}})
+    assert ahn.check("example.com").retry_after_seconds is None
+    ahn.clear_cache()
+    transport(body={**PENDING, "access_profile": {**PENDING["access_profile"], "retry_after_seconds": "soon"}})
+    assert ahn.check("example.com").retry_after_seconds is None
+
+
 def test_summary_length_is_bounded(transport):
     crowded = {**ANSWER,
                "access_profile": {"robots_status": "ok", "llms_txt_status": "present",

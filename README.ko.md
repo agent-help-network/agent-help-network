@@ -57,13 +57,14 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 서비스가 읽는 것(공개 운영에서만, 로컬 개발판은 읽지 않는다):
 
 - **경로 두 개만:** 공개 집계에 적합한 루트 호스트 또는 그 호스트 자신의 `www.` 별칭의 `/robots.txt`(최대 256 KB)와 `/llms.txt`(존재 여부만, 최대 4 KB). 루트 호스트의 `robots.txt` 읽기가 실패하거나, 거절되거나, 다른 곳으로 리디렉션되거나, HTML 페이지가 오면 `https://www.<호스트>/robots.txt` 를 예비로 한 번 읽는다. `llms.txt` 는 `robots.txt` 를 실제로 내준 호스트(`read_host`)에서 읽는다.
-- **해석 결과만 저장한다.** `host_access_profile` 에는 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태만 저장한다. 파일의 나머지는 저장하지 않으며 `llms.txt` 내용은 저장하거나 전달하지 않는다.
+- **해석 결과만 저장한다.** `host_access_profile` 에는 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태와 출처(받은 파일의 SHA-256 해시, 읽기 프로그램 버전, 운영자, 선언한 네트워크 위치)만 저장한다. 파일의 나머지는 저장하지 않으며 `llms.txt` 내용은 저장하거나 전달하지 않는다.
 - **공개 집계에 적합한 공개 루트 호스트만** (예: `example.com`, `example.co.uk`). 적합하다는 것은 고정 목록 `PUBLIC_AGGREGATE_TLDS` 의 최상위 도메인 아래 두 라벨 이름이거나 `co.uk` 같은 두 라벨 접미사(`PUBLIC_SUFFIXES_2`) 아래 세 라벨 이름이라는 뜻이며 둘 다 [`ahn/service.py`](ahn/service.py) 에 있다. 첫 라벨이 `xn--` 로 시작하는 이름은 적합하지 않다. 계정형 하위 도메인은 읽거나 집계하지 않는다. 적합한 루트 호스트 앞에 `www.` 하나만 붙은 이름은 그 루트 호스트 기준으로 답한다.
 - **공개 주소만.** 해석된 모든 주소가 공개(global) IP 여야 하며 연결은 그 주소에 고정한다.
 - **리디렉션은 최대 한 번:** 호스트에서 같은 경로의 자기 `www.` 별칭으로 가는 한 단계만 따른다. 다른 리디렉션은 `redirected` 로 기록하고 따라가지 않는다.
 - **답은 캐시하고 실패는 1시간 뒤 재시도.** 확정된 답(`ok`, `absent`, `refused`, `redirected`, `invalid`, `too_large`, `not_public`)은 24시간 캐시한다. 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도하며 마지막 확정 답을 덮어쓰지 않는다. 한 번의 시도는 루트 호스트와 그 자신의 `www.` 별칭에 걸쳐 HTTPS 요청을 최대 다섯 번 한다: 루트 `robots.txt`, `www.` 별칭으로 가는 한 단계, `www.` 예비 읽기, `llms.txt`, 그리고 그 한 단계. 시간 제한은 짧고, 요청은 `AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)` UA 로 자신을 밝힌다.
+- **조회가 기다리는 동안에는 읽지 않는다.** 조회는 데이터베이스만으로 답한다. 없거나 만료된 읽기는 `background_reads` 에 넣고, 웹 프로세스 안의 작은 작업자(`AHN_BACKGROUND_READS=0` 이면 끔)와 5분 검토 크론이 프로세스당 초당 최대 두 번 읽는다([`ahn/background_reads.py`](ahn/background_reads.py)). 처음 보는 호스트의 첫 조회는 `access_profile.freshness: pending` 과 `retry_after_seconds` 를 돌려주고, 만료된 프로필·피드는 캐시값을 `stale` 로 돌려주면서 다시 읽는다.
 - **시드 목록은 주 1회.** 공개 시드 목록 [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 의 호스트는 조회되지 않았더라도 검토 크론이 5분마다 기본 10개씩(`AHN_WARM_BATCH`, `0` 이면 끔) 같은 한도 안에서 미리 읽고 약 주 1회 다시 읽는다([`ahn/profile_warm.py`](ahn/profile_warm.py)). 전송 실패는 이미 답이 있던 호스트라도 1시간 뒤 다시 시도한다.
-- **업체 상태**는 검증된 공식 출처만 쓴다: [`ahn/status_refresh.py`](ahn/status_refresh.py) 의 고정 연결 규칙(파서가 읽는 피드는 `SOURCES`, 링크만 있는 것은 `OFFICIAL_STATUS_PAGES`), 또는 첫 조회에서 확인하고 찾을 때까지 하루 한 번까지 다시 확인하는 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
+- **업체 상태**는 검증된 공식 출처만 쓴다: [`ahn/status_refresh.py`](ahn/status_refresh.py) 의 고정 연결 규칙(파서가 읽는 피드는 `SOURCES`, 링크만 있는 것은 `OFFICIAL_STATUS_PAGES`), 또는 첫 조회 뒤 백그라운드에서 확인하고 찾을 때까지 하루 한 번까지 다시 확인하는 `status.<호스트>` 의 Statuspage 위임. 등록된 피드는 약 1시간마다 갱신한다.
 
 서비스가 절대 하지 않는 것:
 

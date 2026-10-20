@@ -44,6 +44,8 @@
       <strong>{{ 'Host edge refused an automated robots.txt read' if lang == 'en' else '호스트 경계가 자동 robots.txt 읽기를 거절' }}</strong> · {{ 'Not a declared policy, but a strong hint that automation from similar environments is refused.' if lang == 'en' else '선언된 정책은 아니지만 비슷한 환경의 자동화가 거절된다는 강한 신호입니다.' }}
     {% elif ap and ap.get('robots_status') == 'absent' %}
       <strong>{{ 'No robots.txt' if lang == 'en' else 'robots.txt 없음' }}</strong> · {{ 'The host declares no crawler rules at /robots.txt. This says nothing about CDN or login controls.' if lang == 'en' else '호스트가 /robots.txt 에 크롤러 규칙을 두지 않았습니다. CDN 이나 로그인 제한과는 무관합니다.' }}
+    {% elif ap and ap.get('retry_after_seconds') %}
+      <strong>{{ 'Reading robots.txt and llms.txt now' if lang == 'en' else 'robots.txt·llms.txt 를 지금 읽는 중' }}</strong> · {{ 'This host had no cached declared policy, so a read was queued. Reload this page in about' if lang == 'en' else '이 호스트는 캐시된 선언 정책이 없어 읽기를 예약했습니다. 약' }} {{ ap.get('retry_after_seconds') }}{{ ' seconds; nothing is inferred about the host until then.' if lang == 'en' else '초 뒤 이 페이지를 다시 여세요. 그때까지 이 호스트에 대해 추정한 내용은 없습니다.' }}
     {% elif ap %}
       <strong>{{ 'Declared policy unknown' if lang == 'en' else '선언된 정책 미상' }}</strong> · {{ 'robots.txt could not be read under our safety limits (status: ' if lang == 'en' else '안전 한도 안에서 robots.txt 를 읽지 못했습니다 (상태: ' }}{{ ap.get('robots_status') or 'pending' }}). {{ 'Treat the policy layer as inconclusive.' if lang == 'en' else '정책 층은 판단 불가로 취급하세요.' }}
     {% else %}
@@ -72,6 +74,8 @@
         <p><strong>{{ 'robots.txt exceeded our 256 KB cap; not parsed.' if lang == 'en' else 'robots.txt 가 256 KB 한도를 넘어 해석하지 않음.' }}</strong></p>
       {% elif ap and ap.get('robots_status') == 'not_public' %}
         <p><strong>{{ 'Host did not resolve to public addresses only; nothing was read.' if lang == 'en' else '호스트가 공개 주소로만 해석되지 않아 아무것도 읽지 않음.' }}</strong></p>
+      {% elif ap and ap.get('retry_after_seconds') %}
+        <p><strong>{{ 'robots.txt and llms.txt are being read' if lang == 'en' else 'robots.txt·llms.txt 를 읽는 중' }}</strong>{% if ap.get('robots_detail') %} ({{ 'last attempt' if lang == 'en' else '지난 시도' }}: {{ ap.get('robots_detail') }}){% endif %}. {{ 'Lookups answer from our cache at once and read the files in the background; the declared policy appears here shortly. Until then it is unknown, not permissive.' if lang == 'en' else '조회는 캐시로 바로 답하고 파일은 뒤에서 읽습니다. 선언 정책은 곧 여기에 나타나며, 그때까지는 허용이 아니라 미상입니다.' }}</p>
       {% elif ap %}
         <p><strong>{{ 'robots.txt read failed or is pending' if lang == 'en' else 'robots.txt 읽기 실패 또는 대기 중' }}</strong> ({{ ap.get('robots_status') or 'pending' }}{% if ap.get('robots_detail') %} · {{ ap.get('robots_detail') }}{% endif %}). {{ 'The declared policy is unknown; this is not evidence of a block. Transport failures are retried after an hour.' if lang == 'en' else '선언된 정책은 미상이며 차단의 증거가 아닙니다. 전송 실패는 1시간 뒤 다시 시도합니다.' }}</p>
       {% else %}

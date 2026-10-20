@@ -97,7 +97,7 @@ EVIDENCE_LEVELS = frozenset({"no_reports", "single_observation", "multiple_obser
 NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "response_observed", "access_denial_observed",
                          "human_handoff", "account_handoff", "robots_fetch_refused", "robots_unknown",
                          "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "profile_not_read",
-                         "llms_txt_present",
+                         "profile_pending", "llms_txt_present",
                          "official_path_available", "provider_scope", "provider_clear", "provider_unknown",
                          "reports_unknown", "reports_stale", "reports_unverified"})
 AGENT_KINDS = frozenset({"user_agent", "search_crawler", "training_crawler"})
@@ -405,6 +405,14 @@ def _enum(value, allowed: frozenset, default: str | None = "unknown") -> str | N
     return value if isinstance(value, str) and value in allowed else default
 
 
+def retry_after(profile: dict) -> int | None:
+    """Seconds to wait before one more lookup while the host's files are being read, or None."""
+    value = profile.get("retry_after_seconds")
+    if profile.get("freshness") != "pending" or isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3600:
+        return None
+    return value
+
+
 def official_url(value) -> str | None:
     """The URL rebuilt from its validated parts, or None."""
     match = OFFICIAL_URL.fullmatch(value) if isinstance(value, str) else None
@@ -451,6 +459,10 @@ def summary(host: str, data: dict, url: str) -> str:
     if profile:
         robots_status = _enum(profile.get("robots_status"), ROBOTS_STATUSES)
         policy = robots_status + (" (stale)" if profile.get("freshness") == "stale" else "")
+        wait = retry_after(profile)
+        if wait is not None:
+            # The service answers at once and reads robots.txt/llms.txt in the background.
+            policy += f" (being read now; look up once more in {wait} s, do not poll)"
         llms = _enum(profile.get("llms_txt_status"), LLMS_STATUSES)
         # Agent lists mean something only when robots.txt was actually read.
         if robots_status == "ok":

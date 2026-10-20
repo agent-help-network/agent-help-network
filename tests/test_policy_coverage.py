@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
-from ahn import platform_metrics
+from ahn import background_reads, platform_metrics
 from ahn.main import create_app
 from ahn.models import AttemptFields, CheckObservation, CheckResponse, ObservationIn, OutcomeIn, Receipt
 from ahn.settings import Settings
@@ -284,6 +284,12 @@ class Kept:
 
 
 @dataclass(frozen=True)
+class Transient:
+    """A work item deleted by code as soon as it has been handled. The policy must say so."""
+    wording: Phrase              # names the table's contents; its sentence must say when it is deleted
+
+
+@dataclass(frozen=True)
 class ReportRows:
     """Report rows: deleted after AHN_REPORT_RETENTION_DAYS, withdrawn ones after the grace period."""
 
@@ -321,6 +327,9 @@ TABLES = {
                              "제보를 호스트명·작업 단계·오류 유형으로 묶는 사건 기록")),  # survives deletion of its reports
     "audit_events": Kept(Phrase("audit-log entries (event type, report ID and time)", "감사 기록(이벤트 유형·제보 ID·시각)")),
     "public_intake_daily": Kept(Phrase("Daily report-intake totals", "일별 제보 접수 합계")),
+    # Work items: a lookup's request for a background robots.txt/llms.txt or status read, deleted once handled.
+    "background_reads": Transient(Phrase("background-read request (the public hostname, the kind of read and when it was asked for)",
+                                         "뒤에서 읽기 요청(공개 호스트명, 읽기 종류, 요청 시각)")),
     "observations": ReportRows(),
     "report_submissions": ReportRows(),  # idempotency key and request hash of a report; goes with its observation
     # Not request-derived: nothing for the policy to describe.
@@ -379,7 +388,7 @@ def test_deleted_tables_match_the_policy_mapping():
         "prune_analytics deletes a different set of tables than TABLES marks as Pruned. "
         "Update the mapping and the policy together.")
     # Tables mapped as 'no automatic deletion' must not be deleted anywhere, or the policy would be wrong.
-    expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, ReportRows)}
+    expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient))}
     assert deleted_tables_in_code() == expected_deleted, (
         f"Code deletes from {sorted(deleted_tables_in_code())}, the mapping expects {sorted(expected_deleted)}.")
 
@@ -404,6 +413,31 @@ def test_tables_kept_without_deletion_say_so():
             assert wording in text, f"{table}: the {lang} retention section lacks {wording!r}"
             sentence = sentence_with(text, wording)
             assert no_deadline in sentence, f"{table}: its {lang} sentence does not say it has {no_deadline!r}: {sentence!r}"
+
+
+def test_transient_tables_say_when_they_are_deleted():
+    for table, entry in TABLES.items():
+        if not isinstance(entry, Transient):
+            continue
+        for lang, when in (("en", "deleted as soon as the read is done, or after five failed attempts"),
+                           ("ko", "읽기가 끝나면 바로, 다섯 번 실패하면 그때 삭제")):
+            text = section(lang, "06")
+            wording = getattr(entry.wording, lang)
+            assert wording in text, f"{table}: the {lang} retention section lacks {wording!r}"
+            assert when in sentence_with(text, wording), f"{table}: its {lang} sentence does not say {when!r}"
+    # "five" in that sentence is the code's limit.
+    assert background_reads.MAX_ATTEMPTS == 5
+
+
+def test_stored_provenance_is_described_in_the_policy():
+    # Migration 020 stores, with each cached read, a hash of the bytes received and who read it from where,
+    # and, with each report, the interface it arrived through.
+    wanted = {"hash": Phrase("SHA-256 hash of the file or feed as received (never the file itself)",
+                             "받은 파일·피드의 SHA-256 해시(원문은 저장하지 않음)"),
+              "provenance": Phrase("the reader version, and the operator and declared network location that made the read",
+                                   "읽기 프로그램 버전, 읽은 운영자와 선언한 네트워크 위치"),
+              "channel": Phrase("which interface a report arrived through", "제보가 들어온 경로")}
+    assert_phrases("provenance", {lang: policy_text(lang) for lang in LANGS}, wanted)
 
 
 def test_report_retention_periods_match_the_policy():

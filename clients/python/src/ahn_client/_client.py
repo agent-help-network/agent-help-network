@@ -79,7 +79,8 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
     ``AHN_CLIENT_DISABLE=1``, or when ``error_class`` / ``failure_stage`` is not one of
     the service's values. Network errors, timeouts and unreadable answers also give None;
     this function does not raise. Answers are cached in memory for 10 minutes per host,
-    error class and stage (a failed lookup for 1 minute).
+    error class and stage (a failed lookup for 1 minute, and an answer whose declared policy is
+    still being read only for its ``retry_after_seconds``).
     """
     try:
         if error_class is not None and error_class not in ERROR_CLASSES:
@@ -102,7 +103,11 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
                 del _cache[stale]
             if len(_cache) >= CACHE_MAX_ENTRIES:
                 del _cache[min(_cache, key=lambda k: _cache[k][0])]
-            _cache[key] = (now + (CACHE_TTL_SECONDS if result else FAILURE_TTL_SECONDS), result)
+            ttl = CACHE_TTL_SECONDS if result else FAILURE_TTL_SECONDS
+            if result is not None and result.retry_after_seconds is not None:
+                # A "being read" answer is kept only until the service expects to have the files.
+                ttl = min(ttl, result.retry_after_seconds)
+            _cache[key] = (now + ttl, result)
         return result
     except Exception:
         return None
