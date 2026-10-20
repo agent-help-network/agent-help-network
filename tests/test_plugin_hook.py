@@ -833,7 +833,8 @@ def test_next_check_codes_match_the_contract_list():
     assert hook.NEXT_CHECKS == {
         "locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed",
         "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale",
-        "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_unknown",
+        "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow",
+        "robots_grouping_differs_by_parser", "robots_unknown",
         "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "official_path_available"}
 
 
