@@ -55,7 +55,7 @@ LANG = {
         "install_json_title": "Other MCP clients", "install_json_text": "Any client that supports remote streamable HTTP servers needs only this URL; no account or key. Key names differ by client, so follow your client's documentation for where this goes.", "install_json_docs": "Model Context Protocol documentation",
         "policy_title": "Privacy policy", "policy_intro": "The local build uses synthetic test observations. It is not collecting real public incident reports.",
         "collect_title": "Structured fields only", "collect_text": "The planned report contains a public hostname, general task step, error type, time, attempt actor and environment, and outcome. It does not accept passwords, cookies, names, account or claim numbers, personal URLs, or conversation transcripts.",
-        "profile_title": "robots.txt and llms.txt reads", "profile_text": "After a lookup of an eligible public apex hostname we read that host's own public /robots.txt (up to 256 KB) and /llms.txt (presence only, up to 4 KB) over HTTPS. Only those two paths are requested, on the host itself or its own www. alias: if the apex read fails, is refused, redirects elsewhere, or returns a web page, www.<host>/robots.txt is read once instead. The only redirect followed is a single hop from the host to its own www. alias; any other redirect is recorded and not followed. A definitive answer (the file, its absence, a refusal, a redirect, an oversized or invalid file, or a non-public address) is cached for 24 hours; a transport failure (DNS, TLS, connection, timeout, or an unexpected HTTP status) is retried after one hour. One attempt makes at most five HTTPS requests. Reads go only to hosts whose addresses are all public, identify themselves as AgentHelpNetwork, and fetch nothing else: no task pages, no login or CAPTCHA pages, no probing. We store the parsed per-agent rules, up to six sample Disallow paths per agent token and for the `*` group (80 characters each), up to five Sitemap URLs, and the read status; the rest of the file is not stored. The result is the host's declared crawler policy and is never an access guarantee; a host may treat a user-directed agent differently. Besides looked-up hosts, we also read the hosts on a public seed list (ahn/seed_hosts.txt in the public source repository) about once a week, even if nobody has looked them up, under the same limits; a transport failure there is also retried after one hour. The local build does not perform these reads.",
+        "profile_title": "robots.txt and llms.txt reads", "profile_text": "After a lookup of an eligible public apex hostname we read, in the background and not while the lookup waits, that host's own public /robots.txt (up to 256 KB) and /llms.txt (presence only, up to 4 KB) over HTTPS. Only those two paths are requested, on the host itself or its own www. alias: if the apex read fails, is refused, redirects elsewhere, or returns a web page, www.<host>/robots.txt is read once instead. The only redirect followed is a single hop from the host to its own www. alias; any other redirect is recorded and not followed. A definitive answer (the file, its absence, a refusal, a redirect, an oversized or invalid file, or a non-public address) is cached for 24 hours; a transport failure (DNS, TLS, connection, timeout, or an unexpected HTTP status) is retried after one hour. One attempt makes at most five HTTPS requests. Reads go only to hosts whose addresses are all public, identify themselves as AgentHelpNetwork, and fetch nothing else: no task pages, no login or CAPTCHA pages, no probing. We store the parsed per-agent rules, up to six sample Disallow paths per agent token and for the `*` group (80 characters each), up to five Sitemap URLs, the read status, and a SHA-256 hash of each file as received; the rest of the file is not stored. The result is the host's declared crawler policy and is never an access guarantee; a host may treat a user-directed agent differently. Besides looked-up hosts, we also read the hosts on a public seed list (ahn/seed_hosts.txt in the public source repository) about once a week, even if nobody has looked them up, under the same limits; a transport failure there is also retried after one hour. The local build does not perform these reads.",
         "sharing_title": "Authority and visibility", "sharing_text": "Submitting agents follow their own authority and platform rules. Real reports start in private review. Public pages exclude synthetic and unpublished observations. A reporter can withdraw their own report.",
         "limits_title": "Limits", "limits_text": "Reports are observations, not proof of an outage or intentional block. Retention and public publication thresholds will be set before a real pilot.",
         "not_found": "This public incident is unavailable.", "unavailable": "The service is temporarily unavailable.", "try_later": "Please try again later.", "back": "Back to search", "footer": "Local development build · Observations are not root-cause findings",
@@ -81,7 +81,7 @@ LANG = {
         "install_json_title": "다른 MCP 클라이언트", "install_json_text": "원격 streamable HTTP 서버를 지원하는 클라이언트라면 이 URL 만 있으면 됩니다. 계정이나 키는 필요 없습니다. 키 이름은 클라이언트마다 다르니 넣을 위치는 해당 클라이언트 문서를 따르세요.", "install_json_docs": "Model Context Protocol 문서",
         "policy_title": "개인정보 처리방침", "policy_intro": "로컬 개발판은 가상 시험 관찰을 사용하며 실제 공개 사고 제보를 수집하지 않습니다.",
         "collect_title": "구조화된 필드만", "collect_text": "향후 제보에는 공개 호스트명, 일반 작업 단계, 오류 유형, 시각, 시도 주체·환경, 결과만 포함합니다. 비밀번호·쿠키·이름·계정/청구번호·개인 URL·대화 전문은 받지 않습니다.",
-        "profile_title": "robots.txt·llms.txt 읽기", "profile_text": "공개 집계에 적합한 공개 루트 호스트명이 조회되면 그 호스트 자체의 공개 /robots.txt(최대 256 KB)와 /llms.txt(존재 여부만, 최대 4 KB)를 HTTPS 로 읽습니다. 요청하는 경로는 이 두 개뿐이며 대상은 그 호스트 또는 그 호스트 자신의 www. 별칭뿐입니다. 루트 호스트 읽기가 실패하거나, 거절되거나, 다른 곳으로 리디렉션되거나, 웹 페이지가 오면 www.<호스트>/robots.txt 를 대신 한 번 읽습니다. 따라가는 리디렉션은 호스트에서 자기 www. 별칭으로 가는 한 단계뿐이며 그 밖의 리디렉션은 기록만 하고 따라가지 않습니다. 확정된 답(파일, 파일 없음, 거절, 리디렉션, 너무 크거나 잘못된 파일, 공개되지 않은 주소)은 24시간 캐시하고, 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도합니다. 한 번의 시도는 HTTPS 요청을 최대 다섯 번 합니다. 모든 주소가 공개 IP 인 호스트에만 접속하고, AgentHelpNetwork 로 자신을 밝히며, 그 밖의 어떤 것도 가져오지 않습니다. 작업 페이지·로그인·CAPTCHA 페이지에 닿지 않고 탐침도 하지 않습니다. 해석한 에이전트 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태만 저장하고 파일의 나머지는 저장하지 않습니다. 결과는 호스트가 선언한 크롤러 정책이며 접근 보장이 아닙니다. 호스트는 사용자 지시 에이전트를 다르게 취급할 수 있습니다. 조회된 호스트 외에, 공개 소스 저장소의 시드 목록(ahn/seed_hosts.txt)에 있는 호스트도 아무도 조회하지 않았더라도 같은 한도 안에서 주 1회 정도 읽으며, 여기서도 전송 실패는 1시간 뒤 다시 시도합니다. 로컬 개발판은 이 읽기를 수행하지 않습니다.",
+        "profile_title": "robots.txt·llms.txt 읽기", "profile_text": "공개 집계에 적합한 공개 루트 호스트명이 조회되면 조회가 기다리는 동안이 아니라 조회 뒤에 따로 그 호스트 자체의 공개 /robots.txt(최대 256 KB)와 /llms.txt(존재 여부만, 최대 4 KB)를 HTTPS 로 읽습니다. 요청하는 경로는 이 두 개뿐이며 대상은 그 호스트 또는 그 호스트 자신의 www. 별칭뿐입니다. 루트 호스트 읽기가 실패하거나, 거절되거나, 다른 곳으로 리디렉션되거나, 웹 페이지가 오면 www.<호스트>/robots.txt 를 대신 한 번 읽습니다. 따라가는 리디렉션은 호스트에서 자기 www. 별칭으로 가는 한 단계뿐이며 그 밖의 리디렉션은 기록만 하고 따라가지 않습니다. 확정된 답(파일, 파일 없음, 거절, 리디렉션, 너무 크거나 잘못된 파일, 공개되지 않은 주소)은 24시간 캐시하고, 전송 실패(DNS·TLS·연결·시간 초과·예상 밖 HTTP 상태)는 1시간 뒤 다시 시도합니다. 한 번의 시도는 HTTPS 요청을 최대 다섯 번 합니다. 모든 주소가 공개 IP 인 호스트에만 접속하고, AgentHelpNetwork 로 자신을 밝히며, 그 밖의 어떤 것도 가져오지 않습니다. 작업 페이지·로그인·CAPTCHA 페이지에 닿지 않고 탐침도 하지 않습니다. 해석한 에이전트 토큰별 규칙, 에이전트 토큰별·`*` 그룹별 Disallow 경로 표본 최대 6개(각 80자), Sitemap URL 최대 5개, 읽기 상태, 받은 파일의 SHA-256 해시만 저장하고 파일의 나머지는 저장하지 않습니다. 결과는 호스트가 선언한 크롤러 정책이며 접근 보장이 아닙니다. 호스트는 사용자 지시 에이전트를 다르게 취급할 수 있습니다. 조회된 호스트 외에, 공개 소스 저장소의 시드 목록(ahn/seed_hosts.txt)에 있는 호스트도 아무도 조회하지 않았더라도 같은 한도 안에서 주 1회 정도 읽으며, 여기서도 전송 실패는 1시간 뒤 다시 시도합니다. 로컬 개발판은 이 읽기를 수행하지 않습니다.",
         "sharing_title": "권한과 공개 범위", "sharing_text": "제출 에이전트는 자신의 권한·플랫폼 규칙을 따릅니다. 실제 제보는 비공개 검토 상태에서 시작합니다. 가상·미공개 기록은 공개 화면에 나오지 않습니다. 제보자는 자기 기록을 철회할 수 있습니다.",
         "limits_title": "한계", "limits_text": "제보는 관찰일 뿐 전체 장애나 의도적 차단의 증거가 아닙니다. 보존 기간과 공개 문턱은 실제 파일럿 전에 결정합니다.",
         "not_found": "이 공개 사건은 제공되지 않습니다.", "unavailable": "서비스를 일시적으로 사용할 수 없습니다.", "try_later": "잠시 후 다시 시도해 주세요.", "back": "검색으로 돌아가기", "footer": "로컬 개발판 · 관찰은 원인 확정이 아닙니다",
@@ -295,6 +295,12 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 pass
         return response
 
+    def received_channel(request: Request) -> str:
+        """Provenance of a report: the MCP adapter's authenticated loopback hop, the site's report form, or REST."""
+        if is_mcp_metric_request(request.headers.get("X-AHN-MCP-Call"), settings.key_pepper):
+            return "mcp"
+        return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
+
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
         return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
@@ -378,21 +384,21 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
     if settings.public_mode and settings.reporting_enabled and not settings.test_mode:
         @app.post("/v1/observations", response_model=Receipt, response_model_exclude_none=True, status_code=201, responses={200: {"model": Receipt}})
-        def report_observation(body: ObservationIn, response: Response):
-            result, created = submit(settings, "", body)
+        def report_observation(body: ObservationIn, response: Response, request: Request):
+            result, created = submit(settings, "", body, channel=received_channel(request))
             response.status_code = 201 if created else 200
             response.headers["Cache-Control"] = "no-store"
             return result
     else:
         @app.post("/v1/observations", response_model=Receipt, response_model_exclude_none=True, status_code=201, responses={200: {"model": Receipt}}, include_in_schema=settings.test_mode)
-        def report_observation(body: ObservationIn, response: Response, x_api_key: str | None = Security(write_key)):
-            result, created = submit(settings, x_api_key or "", body)
+        def report_observation(body: ObservationIn, response: Response, request: Request, x_api_key: str | None = Security(write_key)):
+            result, created = submit(settings, x_api_key or "", body, channel=received_channel(request))
             response.status_code = 201 if created else 200
             return result
 
     @app.post("/v1/observations/{observation_id}/outcomes", response_model=Receipt, status_code=201, responses={200: {"model": Receipt}}, include_in_schema=settings.test_mode)
-    def update_outcome(observation_id: UUID, body: OutcomeIn, response: Response, x_api_key: str | None = Security(write_key)):
-        result, created = submit(settings, x_api_key or "", body, observation_id)
+    def update_outcome(observation_id: UUID, body: OutcomeIn, response: Response, request: Request, x_api_key: str | None = Security(write_key)):
+        result, created = submit(settings, x_api_key or "", body, observation_id, channel=received_channel(request))
         response.status_code = 201 if created else 200
         return result
 
