@@ -79,15 +79,27 @@ def test_no_mapping_points_at_a_placeholder_or_an_aggregator():
 INSTATUS_HOSTS = {"bsky.app", "exa.ai", "fastmail.com", "joinmastodon.org", "kagi.com", "mastodon.social", "mollie.com",
                   "tiingo.com", "todoist.com"}
 BETTERSTACK_HOSTS = {"brave.com", "firecrawl.dev", "huggingface.co", "openalex.org", "together.ai"}
+# Hosts moved from a link to a feed by the 2026-10-20 re-verification (the page's public feed parsed with the existing parser).
+REVERIFIED_INSTATUS_HOSTS = {
+    "1rpc.io", "appfolio.com", "aternos.org", "cloudez.io", "code.org", "decodo.com", "discogs.com", "doofinder.com",
+    "fetlife.com", "flashbots.net", "freeconvert.com", "gamma.app", "growthbook.io", "mediavine.com", "narvar.com",
+    "optable.co", "padlet.com", "polymarket.com", "wistia.com",
+}
+REVERIFIED_BETTERSTACK_HOSTS = {
+    "apollo.io", "atom.com", "bitdrift.io", "drpc.org", "eclipse.org", "elegantthemes.com", "feedly.com",
+    "framer.com", "freeipapi.com", "higgsfield.ai", "linkvertise.com", "modrinth.com", "nordvpn.com", "plausible.io",
+    "raspberrypi.org", "signupgenius.com", "sportskeeda.com", "studocu.com", "time.com", "trezor.io", "userway.org",
+    "wordfence.com",
+}
 STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com"}
 
 
 def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
-    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS
-    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS | REVERIFIED_INSTATUS_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS | REVERIFIED_BETTERSTACK_HOSTS
     for host in STATUSPAGE_COMPATIBLE_HOSTS:
         assert SOURCES[host].kind == "statuspage", host
-    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS) & set(OFFICIAL_STATUS_PAGES)
+    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS | REVERIFIED_INSTATUS_HOSTS | REVERIFIED_BETTERSTACK_HOSTS) & set(OFFICIAL_STATUS_PAGES)
 
 
 def test_datadog_stays_a_link_because_its_feed_covers_one_region_only():
