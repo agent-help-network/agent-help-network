@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from mcp.server.transport_security import TransportSecuritySettings
 
+from . import background_reads
 from .main import create_app
 from .mcp_adapter import mcp
 
@@ -30,9 +31,16 @@ mcp_app = mcp.streamable_http_app(
 
 
 @asynccontextmanager
-async def lifespan(_app):
-    async with mcp_app.router.lifespan_context(mcp_app):
-        yield
+async def lifespan(app):
+    # The background reader fills the robots.txt/llms.txt and status caches that lookups answer from;
+    # AHN_BACKGROUND_READS=0 leaves that to the review cron alone.
+    started = background_reads.start_worker(app.state.settings)
+    try:
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+    finally:
+        if started:
+            background_reads.stop_worker()
 
 
 app = create_app(lifespan=lifespan)

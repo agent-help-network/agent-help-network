@@ -7,6 +7,7 @@ it cannot establish whether the reported website event actually happened.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import psycopg
@@ -137,14 +138,25 @@ def main() -> None:
         print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} failed={source_result['failed']}")
     except Exception as exc:  # one step's failure (e.g. a migration the web service has not applied yet) must not skip the rest
         print(f"status_refresh failed={type(exc).__name__}")
-    from .profile_warm import warm_profiles
+    # Reads queued by lookups first, then the seed pre-read, within one shared time budget.
+    from .background_reads import drain
+    from .profile_warm import TIME_BUDGET_SECONDS, warm_profiles
+    started = time.monotonic()
+    try:
+        queue = drain(Settings(database_url, "unused-by-status-refresh"), time_budget=TIME_BUDGET_SECONDS)
+        print(f"background_reads done={queue['done']} failed={queue['failed']} dropped={queue['dropped']} remaining={queue['remaining']}")
+    except Exception as exc:  # e.g. migration 020 not applied yet: the seed step still runs
+        print(f"background_reads failed={type(exc).__name__}")
     try:
         warm_batch = max(0, min(50, int(os.environ.get("AHN_WARM_BATCH", "10"))))
     except ValueError:
         warm_batch = 10
-    if warm_batch:
+    budget = TIME_BUDGET_SECONDS - (time.monotonic() - started)
+    if warm_batch and budget <= 0:
+        print("profile_warm skipped=time_budget")
+    elif warm_batch:
         try:
-            warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch)
+            warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch, time_budget=budget)
             print(f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}")
         except Exception as exc:  # the seed pre-read is best effort and must not fail the review cron
             print(f"profile_warm failed={type(exc).__name__}")

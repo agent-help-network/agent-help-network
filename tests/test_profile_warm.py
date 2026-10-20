@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ahn import auto_review, profile_warm, status_refresh
+from ahn import auto_review, background_reads, profile_warm, status_refresh
 from ahn.db import connect, migrate
 from ahn.official_paths import OFFICIAL_PATHS
 from ahn.service import aggregate_eligible_host
@@ -17,6 +17,7 @@ from ahn.settings import Settings
 
 TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
 SEEDS = ["seed-a.com", "seed-b.com", "seed-c.org", "seed-d.net", "seed-e.io"]
+QUEUE_IDLE = {"claimed": 0, "done": 0, "failed": 0, "dropped": 0, "remaining": 0}
 ROBOTS = b"User-agent: GPTBot\nDisallow: /\n"
 
 
@@ -219,7 +220,7 @@ def test_warm_profiles_with_zero_batch_reads_nothing_and_reports_the_backlog(war
 def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypatch, capsys):
     seen = []
 
-    def fake_warm(received_settings, *, batch):
+    def fake_warm(received_settings, *, batch, **_options):
         seen.append(batch)
         return {"candidates": 7, "read": 3, "ok": 2, "errors": 1}
 
@@ -228,6 +229,7 @@ def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypat
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
     monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
     monkeypatch.setattr(profile_warm, "warm_profiles", fake_warm)
+    monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
 
     monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
     auto_review.main()
@@ -252,7 +254,8 @@ def test_cron_main_survives_a_failing_status_step(monkeypatch, capsys):
         raise RuntimeError("column last_error_detail does not exist")
 
     monkeypatch.setattr(status_refresh, "refresh_batch", broken)
-    monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch: {"candidates": 1, "read": 1, "ok": 1, "errors": 0})
+    monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
+    monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch, **_options: {"candidates": 1, "read": 1, "ok": 1, "errors": 0})
     auto_review.main()
     out = capsys.readouterr().out
     assert "status_refresh failed=RuntimeError" in out and "does not exist" not in out
@@ -260,14 +263,56 @@ def test_cron_main_survives_a_failing_status_step(monkeypatch, capsys):
 
 
 def test_cron_main_survives_a_failing_warm_step(monkeypatch, capsys):
-    def broken(received_settings, *, batch):
+    def broken(received_settings, *, batch, **_options):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
     monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
     monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
     monkeypatch.setattr(profile_warm, "warm_profiles", broken)
     auto_review.main()
     out = capsys.readouterr().out
     assert "profile_warm failed=RuntimeError" in out and "database unavailable" not in out
+
+
+def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(monkeypatch, capsys):
+    calls = []
+    ticks = {"values": iter([0.0, 100.0])}
+
+    def fake_drain(received_settings, *, time_budget):
+        calls.append(("queue", time_budget))
+        return {"claimed": 3, "done": 2, "failed": 1, "dropped": 0, "remaining": 4}
+
+    def fake_warm(received_settings, *, batch, time_budget):
+        calls.append(("seeds", time_budget))
+        return {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
+
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
+    monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
+    monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(background_reads, "drain", fake_drain)
+    monkeypatch.setattr(profile_warm, "warm_profiles", fake_warm)
+    monkeypatch.setattr(auto_review.time, "monotonic", lambda: next(ticks["values"]))
+    auto_review.main()
+    out = capsys.readouterr().out
+    assert "background_reads done=2 failed=1 dropped=0 remaining=4" in out
+    # The queue had the whole seed budget; the seeds get what it left.
+    assert calls == [("queue", profile_warm.TIME_BUDGET_SECONDS), ("seeds", profile_warm.TIME_BUDGET_SECONDS - 100.0)]
+    # A queue that used up the budget leaves the seeds for the next run.
+    calls.clear()
+    ticks["values"] = iter([0.0, 500.0])
+    auto_review.main()
+    assert "profile_warm skipped=time_budget" in capsys.readouterr().out and calls == [("queue", profile_warm.TIME_BUDGET_SECONDS)]
+
+    # A broken queue step (for example before migration 020) does not stop the seed step.
+    def broken(received_settings, *, time_budget):
+        raise RuntimeError("relation background_reads does not exist")
+
+    monkeypatch.setattr(background_reads, "drain", broken)
+    ticks["values"] = iter([0.0, 1.0])
+    auto_review.main()
+    out = capsys.readouterr().out
+    assert "background_reads failed=RuntimeError" in out and "does not exist" not in out and "profile_warm read=1" in out
