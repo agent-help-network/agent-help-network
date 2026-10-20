@@ -44,7 +44,8 @@ MCP 연결부는 중앙 API를 호출하며 DB에 직접 접속하지 않는다.
 | `audit_events` | `id`, `event_type`, `record_id`, `created_at` | 최소 운영 이벤트. 요청 원문·비밀·개인 정보는 남기지 않는다. |
 | `lookup_metrics` | `day`, `site_host`, `error_class`, `checks` | 조회 수요의 일별 합계. 관찰·사건·독립 사용자 수와 구분한다. |
 | `queried_hosts` | `site_host`, `first_seen_at`, `last_seen_at` | 실제 조회된 공유 가능한 공개 루트 호스트의 지속 목록. 임의 하위 도메인은 제외하며 자동 삭제 기한은 현재 없다. |
-| `status_sources`, `status_cache` | 호스트, 확인된 업체 상태 출처, 마지막 API 결과·시각 | 첫 조회 뒤에만 출처를 등록하고 즉시 읽으며, 등록된 출처는 약 1시간마다 재조회한다. |
+| `status_sources`, `status_cache` | 호스트, 확인된 업체 상태 출처(자동 발견이면 근거), 마지막 API 결과·시각, 출처 열(운영자·관측 위치·읽기 프로그램 버전·응답 해시) | 첫 조회 뒤에만 출처를 등록하고 뒤에서 읽으며, 등록된 출처는 약 1시간마다 재조회한다. |
+| `background_reads` | `kind`, `site_host`, `requested_at`, `not_before`, `attempts`, `claimed_at` | 조회가 남긴 뒤에서 읽기 요청(robots.txt·llms.txt, 상태 피드, Statuspage 발견). 최대 2,000행. 처리되면 바로, 처리 자체가 다섯 번 실패하면 삭제한다. |
 
 사건 묶음의 고유 키는 `(site_host, task_step, error_class)`다. 서로 다른 시간대의 문제를 합칠 가능성이 있으므로 조회는 **해당 시간 범위의 관찰**로 설명한다. 사건의 호스트/오류 유형과 관찰의 사건/시간에 인덱스를 둔다. 한 사람의 에이전트 시도와 그 사람이 에이전트 브라우저에서 누른 시도는 같은 제보 주체의 두 시도다. 출처 수가 독립된 사람·기기·네트워크 수를 보장하지 않는다.
 

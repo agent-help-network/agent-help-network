@@ -52,7 +52,8 @@ if (reportForm) {
     try {
       const response = await fetch("/v1/observations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Marks the report as sent from this form (stored as its received channel, nothing else).
+        headers: { "Content-Type": "application/json", "X-AHN-Channel": "web" },
         body: JSON.stringify(payload),
       });
       const result = await response.json();

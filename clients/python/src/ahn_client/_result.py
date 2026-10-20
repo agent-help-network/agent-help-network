@@ -27,6 +27,16 @@ def _dict(value: Any) -> Optional[Dict[str, Any]]:
     return value if isinstance(value, dict) else None
 
 
+def _retry_after(profile: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Seconds to wait before one more lookup while the host's files are being read, or None."""
+    if not profile or profile.get("freshness") != "pending":
+        return None
+    value = profile.get("retry_after_seconds")
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3600:
+        return None
+    return value
+
+
 def _summary(host: str, data: Dict[str, Any], url: str) -> str:
     """The same line the Claude Code plugin prints, at most MAX_SUMMARY characters, from validated fields only."""
     rec = _dict(data.get("recommendation")) or {}
@@ -37,6 +47,10 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
 
     if profile:
         robots = _code(profile.get("robots_status"))
+        wait = _retry_after(profile)
+        if wait is not None:
+            # The service answers at once and reads robots.txt/llms.txt in the background.
+            robots += f" (being read now; look up once more in {wait} s, do not poll)"
         rules = _dict(profile.get("robots")) or {}
         listed = rules.get("agents_blocked") if isinstance(rules.get("agents_blocked"), list) else []
         blocked: Optional[List[str]] = [item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item)]
@@ -129,6 +143,12 @@ class Result:
             url=url,
             raw=data,
         )
+
+    @property
+    def retry_after_seconds(self) -> Optional[int]:
+        """While the host's robots.txt and llms.txt are still being read (``access_profile.freshness``
+        is ``pending``), the seconds to wait before asking once more; otherwise None."""
+        return _retry_after(self.access_profile)
 
     @property
     def official_url(self) -> Optional[str]:

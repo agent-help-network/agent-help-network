@@ -18,7 +18,7 @@ The hook is read-only: it sends a hostname and enum codes and reports nothing. T
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.1.0 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.0 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -56,7 +56,7 @@ At most one request per failure:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>[&failure_stage=<stage>]
-User-Agent: ahn-claude-code-plugin/0.1
+User-Agent: ahn-claude-code-plugin/0.2
 ```
 
 - `site_host` is the bare lowercase hostname taken from `tool_input.url` (for MCP tools, also `uri`, `href`, `link`, `page_url` or `target_url`; only `http(s)://` or scheme-less host values), or else from the first `http(s)://` URL in the error text, or else, for `WebFetch` only, from Claude Code's own refusal `is unable to fetch from <host>`. No other bare dotted word in an error is read as a hostname (`document.querySelector`, `locator.click`, `urllib3.exceptions...`, Windows path segments). Scheme, userinfo, port, path, query and fragment are dropped, and a leading `www.` is removed.
@@ -75,7 +75,7 @@ It sends nothing when:
 
 The lookup gets about 4 seconds total, DNS included: it runs in a background thread, and if no answer has arrived by then the hook prints nothing and exits 0 (each socket operation also has a 4-second timeout; Claude Code itself cancels the hook after 10 seconds). TLS certificates and hostnames are always verified, and redirects are never followed: any 3xx counts as no answer. Any error — network, TLS, timeout, redirect, a response over 256 KB, bad JSON — produces no output. The hook always exits 0, so it can never block or fail the tool call.
 
-The answer is checked field by field against the [API contract](../../../docs/api-contract.en.md): every code must be one of the contract's enum values (`recommendation.action` and `confidence`, `robots_status`, `llms_txt_status`, `provider_status.indicator` and `freshness`, `evidence_level`, `next_checks[].code`), agent tokens must match `^[A-Za-z][A-Za-z0-9-]{1,31}$`, and an official path is shown only as an `https://` URL rebuilt from a public hostname and a path of at most 80 characters, without userinfo, port, query or fragment. Anything else becomes `unknown` or is left out, and the line is cut to 700 characters.
+The answer is checked field by field against the [API contract](../../../docs/api-contract.en.md): every code must be one of the contract's enum values (`recommendation.action` and `confidence`, `robots_status`, `llms_txt_status`, `provider_status.indicator` and `freshness`, `evidence_level`, `next_checks[].code`), agent tokens must match `^[A-Za-z][A-Za-z0-9-]{1,31}$`, and an official path is shown only as an `https://` URL rebuilt from a public hostname and a path of at most 80 characters, without userinfo, port, query or fragment. Anything else becomes `unknown` or is left out, and the line is cut to 700 characters. From version 0.2.0 the hook accepts `pending` with `retry_after_seconds` and the `profile_pending` check: the service answers at once and reads the host's files in the background, and the line then says `pending (being read now; look up once more in N s, do not poll)`.
 
 The hook never reports observations. It makes no POST requests and never calls `report_observation`.
 

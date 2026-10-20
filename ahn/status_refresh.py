@@ -13,6 +13,8 @@ import re
 import socket
 import ssl
 import threading
+import time
+import concurrent.futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -21,8 +23,13 @@ import dns.exception
 import dns.resolver
 import httpx
 import urllib3
+from psycopg.types.json import Jsonb
 
+# The service's reader version recorded with every stored read (provenance), as for robots.txt reads.
+from .access_profile import USER_AGENT as READER_VERSION
+from .access_profile import _resolve, read_capped
 from .db import connect
+from .provenance import operator_id, sha256_hex, vantage
 from .settings import Settings
 
 
@@ -1026,6 +1033,8 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "uvm.edu": ("University of Vermont IT Service Status", "https://itstatus.uvm.edu/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
+FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts
+_clock = time.monotonic  # patched in tests
 INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 _SOURCE_LOCKS = {host: threading.Lock() for host in SOURCES}
 _STATUSPAGE_CNAME = re.compile(r"^([a-z0-9]{8,32})\.stspg-customer\.com\.$")
@@ -1052,14 +1061,17 @@ def _statuspage_target(site_host: str) -> tuple[str, str] | None:
     return (target.rstrip("."), match.group(1)) if match else None
 
 
-def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime | None]:
-    """Fetch a publisher-owned Statuspage endpoint using a pinned public IP."""
+def _read_discovered_statuspage(site_host: str, digest: dict | None = None) -> tuple[Source, str, datetime | None]:
+    """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256."""
     target = _statuspage_target(site_host)
     if target is None:
         raise FeedFailure("no_cname")
     cname, page_id = target
     status_host = f"status.{site_host}"
-    addresses = {item[4][0] for item in socket.getaddrinfo(cname, 443, type=socket.SOCK_STREAM)}
+    try:
+        addresses = _resolve(cname, 2.0)  # in a worker thread: a stalled resolver cannot hold the reader
+    except concurrent.futures.TimeoutError:
+        raise FeedFailure("timeout") from None
     if not addresses or len(addresses) > 16 or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
         raise FeedFailure("not_public")
     pool = urllib3.HTTPSConnectionPool(
@@ -1074,13 +1086,15 @@ def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime |
         try:
             if response.status != 200:
                 raise FeedFailure(f"http_{response.status}")
-            body = response.read(32_769)
-            if len(body) > 32_768:
-                raise FeedFailure("too_large")
+            body, failure = read_capped(response, 32_768, budget=FEED_READ_BUDGET)
+            if failure:
+                raise FeedFailure("too_large" if failure == "too_large" else "timeout")
         finally:
             response.release_conn()
     finally:
         pool.close()
+    if digest is not None:
+        digest["body_sha256"] = sha256_hex(body)
     payload = json.loads(body)
     page = payload.get("page") if isinstance(payload, dict) else None
     if not isinstance(page, dict) or page.get("id") != page_id:
@@ -1093,10 +1107,10 @@ def _read_discovered_statuspage(site_host: str) -> tuple[Source, str, datetime |
     return source, indicator, updated_at
 
 
-def discover_source(site_host: str) -> tuple[Source, str, datetime | None] | None:
-    """Bounded best-effort discovery; unknown hosts remain unknown."""
+def discover_source(site_host: str, digest: dict | None = None) -> tuple[Source, str, datetime | None] | None:
+    """Bounded best-effort discovery; unknown hosts remain unknown. digest, if given, receives body_sha256."""
     try:
-        return _read_discovered_statuspage(site_host)
+        return _read_discovered_statuspage(site_host, digest)
     except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError, RecursionError):
         return None
 
@@ -1258,12 +1272,13 @@ def register_source(conn, site_host: str, source: Source | None = None) -> bool:
     return bool(row["enabled"])
 
 
-def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | None]:
+def _read_source(source: Source, client: httpx.Client, digest: dict | None = None) -> tuple[str, datetime | None]:
+    """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received."""
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
             raise FeedFailure("error")
-        _, indicator, updated_at = _read_discovered_statuspage(host[7:])
+        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest)
         return indicator, updated_at
     if source.kind not in FEED_KINDS:
         raise FeedFailure("error")
@@ -1273,10 +1288,16 @@ def _read_source(source: Source, client: httpx.Client) -> tuple[str, datetime | 
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
         data = bytearray()
+        deadline = _clock() + FEED_READ_BUDGET
         for chunk in response.iter_bytes():
             data.extend(chunk)
             if len(data) > cap:
                 raise FeedFailure("too_large")
+            if _clock() > deadline:
+                # httpx's timeout is per operation; a feed that trickles bytes is cut off here.
+                raise FeedFailure("timeout")
+    if digest is not None:
+        digest["body_sha256"] = sha256_hex(bytes(data))
     body = httpx.Response(200, content=bytes(data)).json()
     return parse(body)
 
@@ -1331,14 +1352,18 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
         own_client = client is None
         client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
         try:
-            indicator, updated_at = _read_source(source, client)
+            digest: dict = {}
+            indicator, updated_at = _read_source(source, client, digest)
             with connect(settings) as conn:
                 conn.execute(
-                    """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail)
-                       VALUES (%s,%s,%s,now(),NULL,NULL) ON CONFLICT (site_host) DO UPDATE SET
+                    """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
+                                                 origin_operator,vantage,reader_version,body_sha256)
+                       VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                        indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
-                       fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL""",
-                    (site_host, indicator, updated_at),
+                       fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
+                       origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
+                       reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256""",
+                    (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256")),
                 )
             return True
         except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError) as exc:

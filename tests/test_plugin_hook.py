@@ -374,7 +374,7 @@ def test_request_carries_only_hostname_and_codes(monkeypatch, capsys, captured):
     assert (parts.scheme, parts.netloc, parts.path) == ("https", "agenthelpnetwork.com", "/v1/incidents/check")
     assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"]}
     assert request.get_method() == "GET" and request.data is None
-    assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.1"
+    assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.2"
     for secret in ("user", "pw", "8443", "account", "claims", "12345", "token", "secret"):
         assert secret not in request.full_url
         assert secret not in out
@@ -693,7 +693,37 @@ def test_next_check_codes_match_the_contract_list():
         "locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed",
         "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale",
         "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_unknown",
-        "robots_fetch_refused", "profile_not_read", "llms_txt_present", "official_path_available"}
+        "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "official_path_available"}
+
+
+def test_next_check_codes_match_the_service_model():
+    from typing import get_args
+
+    from ahn.models import NextCheck
+    assert hook.NEXT_CHECKS == set(get_args(NextCheck.model_fields["code"].annotation))
+
+
+PENDING_PROFILE = {"robots_status": "pending", "robots": None, "robots_detail": None, "llms_txt_status": "pending",
+                   "llms_detail": None, "read_host": "example.com", "fetched_at": None, "freshness": "pending",
+                   "retry_after_seconds": 5,
+                   "source_urls": {"robots_txt": "https://example.com/robots.txt", "llms_txt": "https://example.com/llms.txt"}}
+
+
+def test_pending_profile_says_it_is_being_read_and_when_to_look_again():
+    data = answer(access_profile=dict(PENDING_PROFILE),
+                  recommendation={"action": "use_official_path", "confidence": "medium", "reasons": ["profile_pending", "official_path_available"]},
+                  next_checks=[{"code": "locate_failure_stage", "text": "t"}, {"code": "profile_pending", "text": "t"}])
+    context = hook.summary("example.com", data, "https://x")
+    assert ("Declared policy: pending (being read now; look up once more in 5 s, do not poll); blocked agents: unknown; "
+            "llms.txt: pending.") in context
+    assert "Next: locate_failure_stage, profile_pending." in context and len(context) <= hook.MAX_CONTEXT
+    # Without a usable retry_after_seconds the plain status is shown, as before.
+    for bad in (None, 0, True, "5", 99999):
+        data["access_profile"]["retry_after_seconds"] = bad
+        assert "Declared policy: pending; blocked agents: unknown" in hook.summary("example.com", data, "https://x")
+    # A stale profile is never "being read" in this line, even if a retry time is present.
+    data["access_profile"].update(robots_status="ok", freshness="stale", retry_after_seconds=5)
+    assert "being read now" not in hook.summary("example.com", data, "https://x")
 
 
 def test_long_values_are_shortened_to_the_limit():
@@ -750,7 +780,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == "0.1.0"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.0"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}

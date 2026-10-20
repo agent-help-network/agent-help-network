@@ -70,7 +70,7 @@ mcp = MCPServer(
 
 
 @mcp.tool(
-    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Does not visit the target page; reads only the host's robots.txt/llms.txt (a definitive answer is cached 24 h, a transport failure is retried after an hour) and records a coarse per-host lookup count. A no_reports result means no observations, not a healthy site.",
+    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup is counted anonymously, and the service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site.",
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
