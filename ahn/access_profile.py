@@ -82,7 +82,7 @@ def robots_text(text: str | bytes) -> str:
     """The file as text: capped at ROBOTS_CAP, decoded leniently, without a BOM, every line ending a newline."""
     if isinstance(text, bytes):
         text = text[:ROBOTS_CAP].decode("utf-8", errors="replace")
-    return text[:ROBOTS_CAP].lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    return text[:ROBOTS_CAP].lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
 
 
 # How lines form groups, from the two primary sources (read 2026-10-20):
@@ -93,11 +93,21 @@ def robots_text(text: str | bytes) -> str:
 #   new group only when seen_separator_ is set; Sitemap and unknown keys are no-ops (HandleSitemap,
 #   HandleUnknownAction). robots_test.cc ID_LineSyntax_Groups_OtherRules pins this with a Sitemap line and an unknown
 #   line between two user-agent lines. https://github.com/google/robotstxt
-# So a user-agent line opens a new group only at the start or after an allow/disallow line. Every other line, known
+# So a user-agent line opens a new group at the start or after an allow/disallow line, and every other line, known
 # (Sitemap, Crawl-delay) or unknown (Content-Signal, Host, typos), leaves the grouping as it is.
-def split_groups(text: str | bytes) -> tuple[list[dict], list[str]]:
+#
+# One exception by default, where parsers disagree: once a group's agent lines have been followed by another record
+# (Crawl-delay, Content-Signal, Sitemap, an unknown key) and then by a blank line, the next user-agent line opens a new
+# group. `User-agent: *` / `Crawl-delay: 10` / blank / `User-agent: BadBot` / `Disallow: /` means "everyone, slowly;
+# BadBot not at all", and Python's urllib.robotparser also ends a group there (a blank line ends an entry, and
+# Crawl-delay or Request-rate ends its agent lines). Google's parser merges the two and blocks `*` too. Reading the
+# stricter way would report working sites as closed, so the answer uses this reading, and parse_robots reports where
+# google_style=True (strict RFC 9309 and robots.cc) would answer differently. A blank line alone, with no other record
+# before it (agent / blank / agent), still joins the agent lines as RFC 9309 says.
+def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list[dict], list[str]]:
     """The file's groups and sitemaps; the one group split every reader of robots.txt uses. Never raises.
 
+    ``google_style=True`` drops the blank-line exception above and groups exactly as RFC 9309 and Google's robots.cc.
     Returns ``(groups, sitemaps)``. ``groups`` is a list in file order; each group is a dict:
       ``agents``: list[str], the product tokens its user-agent lines name, lowercased (first word of the value, cut at
                   ``/``). A line with no such word (empty value, ``/bot``) adds no name but still belongs to the group.
@@ -111,25 +121,36 @@ def split_groups(text: str | bytes) -> tuple[list[dict], list[str]]:
     groups: list[dict] = []
     current: dict | None = None
     in_agent_lines = False  # from a user-agent line until the next allow/disallow line
+    other_record = False    # a non-rule record came after this group's agent lines, before any rule
+    break_pending = False   # ... and a blank line followed it: the next user-agent line opens a new group
     sitemaps: list[str] = []
     for line in robots_text(text).splitlines()[:MAX_LINES]:
+        if not line.strip():
+            if in_agent_lines and other_record and not google_style:
+                break_pending = True
+            continue
         key, separator, value = line.split("#", 1)[0].partition(":")
         if not separator:
             continue
         key, value = key.strip().lower().replace(" ", ""), value.strip()
         if key in ("user-agent", "useragent"):
-            if current is None or not in_agent_lines:
+            if current is None or not in_agent_lines or break_pending:
                 current = {"agents": [], "rules": [], "crawl_delay": None, "other": []}
                 groups.append(current)
+                other_record = break_pending = False
             words = value.split("/", 1)[0].split()
             if words:
                 current["agents"].append(words[0].lower())
             in_agent_lines = True
-        elif key in ("allow", "disallow"):
-            in_agent_lines = False
+            continue
+        if key in ("allow", "disallow"):
+            in_agent_lines = other_record = break_pending = False
             if current is not None:
                 current["rules"].append((key, value))
-        elif key == "sitemap":
+            continue
+        if in_agent_lines:
+            other_record = True
+        if key == "sitemap":
             if value.startswith(("https://", "http://")) and len(value) <= 300 and len(sitemaps) < MAX_SITEMAPS and value not in sitemaps:
                 sitemaps.append(value)
         elif current is not None:
@@ -181,8 +202,27 @@ def _applies(agent: str, token: str) -> bool:
 
 
 def parse_robots(text: str | bytes) -> dict:
-    """Pure. Declared root ('/') policy per known agent token; tolerant of junk, BOM, CRLF, comments."""
+    """Pure. Declared root ('/') policy per known agent token; tolerant of junk, BOM, CRLF, comments.
+
+    ``grouping_differs_by_parser`` lists ``*`` and the known tokens whose root decision (explicit_group, root_allowed)
+    would differ if the file were grouped the Google way (split_groups google_style=True); empty when both agree.
+    """
+    text = robots_text(text)
     groups, sitemaps = split_groups(text)
+    summary = _summarize(groups, sitemaps)
+    google_groups, _ = split_groups(text, google_style=True)
+    differs: list[str] = []
+    if google_groups != groups:
+        google = _summarize(google_groups, sitemaps)
+        if google["wildcard_root_allowed"] != summary["wildcard_root_allowed"]:
+            differs.append("*")
+        differs += [ours["agent"] for ours, theirs in zip(summary["rules"], google["rules"])
+                    if (ours["explicit_group"], ours["root_allowed"]) != (theirs["explicit_group"], theirs["root_allowed"])]
+    summary["grouping_differs_by_parser"] = differs
+    return summary
+
+
+def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     wildcard = [group for group in groups if "*" in group["agents"]]
     wildcard_rules = [rule for group in wildcard for rule in group["rules"]]
     wildcard_root_allowed = _root_allowed(wildcard_rules)

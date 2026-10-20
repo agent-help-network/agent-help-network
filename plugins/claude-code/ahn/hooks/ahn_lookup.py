@@ -108,7 +108,8 @@ EVIDENCE_LEVELS = frozenset({"no_reports", "single_observation", "multiple_obser
                              "stale_reports"})
 NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "response_observed", "access_denial_observed",
                          "human_handoff", "account_handoff", "robots_fetch_refused", "robots_unknown",
-                         "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "profile_not_read",
+                         "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow",
+                         "robots_grouping_differs_by_parser", "profile_not_read",
                          "profile_pending", "llms_txt_present",
                          "official_path_available", "provider_scope", "provider_clear", "provider_unknown",
                          "reports_unknown", "reports_stale", "reports_unverified"})

@@ -224,6 +224,8 @@ class RobotsSummary(StrictModel):
     wildcard_disallow_paths: list[str] = Field(default_factory=list)
     agents_blocked: list[str] = Field(default_factory=list)
     agents_allowed: list[str] = Field(default_factory=list)
+    # "*" and agent tokens whose root decision differs under Google-style grouping (strict RFC 9309); informational.
+    grouping_differs_by_parser: list[str] = Field(default_factory=list)
 
 
 class AccessProfile(StrictModel):
@@ -256,7 +258,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "official_path_available"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "official_path_available"]
     text: str
 
 

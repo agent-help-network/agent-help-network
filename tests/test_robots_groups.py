@@ -1,9 +1,12 @@
 """Group split of robots.txt (RFC 9309 section 2.1/2.2.4 and Google's robots.cc): only an allow/disallow line ends a
-group's user-agent lines, every other line leaves the grouping alone, and no input makes the parser raise."""
+group's user-agent lines and other lines leave the grouping alone, except that another record followed by a blank line
+ends them too (where parsers disagree, see split_groups); and no input makes the parser raise."""
 
 import random
 
-from ahn.access_profile import AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, parse_robots, split_groups
+from ahn.access_profile import AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, _summarize, parse_robots, split_groups
+from ahn.models import RobotsSummary
+from ahn.triage import next_checks, recommendation
 
 
 def _rule(parsed: dict, agent: str) -> dict:
@@ -32,12 +35,73 @@ def test_every_non_rule_key_between_user_agent_lines_is_ignored_for_grouping():
         assert len(split_groups(text)[0]) == 1, line
 
 
-def test_crawl_delay_between_user_agent_lines_applies_to_the_whole_group():
-    groups, _ = split_groups("User-agent: Bingbot\nCrawl-delay: 5\n\nUser-agent: GPTBot\nDisallow: /private\n")
+def test_crawl_delay_between_user_agent_lines_without_a_blank_line_applies_to_the_whole_group():
+    text = "User-agent: Bingbot\nCrawl-delay: 5\nUser-agent: GPTBot\nDisallow: /private\n"
+    groups, _ = split_groups(text)
     assert groups == [{"agents": ["bingbot", "gptbot"], "rules": [("disallow", "/private")], "crawl_delay": 5.0,
                        "other": [("crawl-delay", "5")]}]
-    parsed = parse_robots("User-agent: Bingbot\nCrawl-delay: 5\n\nUser-agent: GPTBot\nDisallow: /private\n")
+    parsed = parse_robots(text)
     assert _rule(parsed, "Bingbot")["crawl_delay"] == 5.0 and _rule(parsed, "Bingbot")["disallow_paths"] == ["/private"]
+    assert parsed["grouping_differs_by_parser"] == []
+    # Merged here as by Google, so a merged group that blocks reads blocked.
+    blocked = parse_robots("User-agent: *\nCrawl-delay: 10\nUser-agent: BadBot\nDisallow: /\n")
+    assert blocked["wildcard_root_allowed"] is False and blocked["grouping_differs_by_parser"] == []
+
+
+# ---- the blank-line exception: where parsers disagree, the answer does not take the strictest reading --------------
+
+WILDCARD_DELAY_THEN_BADBOT = "User-agent: *\nCrawl-delay: 10\n\nUser-agent: BadBot\nDisallow: /\n"
+
+
+def test_other_record_then_blank_line_starts_a_new_group():
+    # "Everyone, slowly; BadBot not at all." Google merges the two and blocks '*'; Python's urllib.robotparser does not.
+    groups, _ = split_groups(WILDCARD_DELAY_THEN_BADBOT)
+    assert groups == [{"agents": ["*"], "rules": [], "crawl_delay": 10.0, "other": [("crawl-delay", "10")]},
+                      {"agents": ["badbot"], "rules": [("disallow", "/")], "crawl_delay": None, "other": []}]
+    parsed = parse_robots(WILDCARD_DELAY_THEN_BADBOT)
+    assert parsed["wildcard_root_allowed"] is True and parsed["wildcard_crawl_delay"] == 10.0
+    assert parsed["agents_blocked"] == [] and all(rule["root_allowed"] for rule in parsed["rules"])
+    google, _ = split_groups(WILDCARD_DELAY_THEN_BADBOT, google_style=True)
+    assert google == [{"agents": ["*", "badbot"], "rules": [("disallow", "/")], "crawl_delay": 10.0, "other": [("crawl-delay", "10")]}]
+    # Every unnamed token inherits '*', so all of them change with it.
+    assert parsed["grouping_differs_by_parser"] == ["*"] + [token for token, _kind in AGENT_USER_AGENTS]
+
+
+def test_blank_line_exception_needs_both_another_record_and_a_blank_line():
+    # agent / blank / agent: RFC 9309 joins them (no other record came first).
+    assert len(split_groups("User-agent: *\n\nUser-agent: BadBot\nDisallow: /\n")[0]) == 1
+    assert len(split_groups("User-agent: *\n  \t\nUser-agent: BadBot\nDisallow: /\n")[0]) == 1
+    # agent / other record / agent: joined (no blank line).
+    for line in ("Crawl-delay: 10", "Content-Signal: ai-input=no", "Sitemap: https://example.com/s.xml", "Host: example.com"):
+        assert len(split_groups(f"User-agent: *\n{line}\nUser-agent: BadBot\nDisallow: /\n")[0]) == 1, line
+        # agent / other record / blank / agent: a new group.
+        assert len(split_groups(f"User-agent: *\n{line}\n\nUser-agent: BadBot\nDisallow: /\n")[0]) == 2, line
+    # The blank line may come later, after more lines; a comment-only line is not a blank line.
+    assert len(split_groups("User-agent: *\nCrawl-delay: 1\nHost: x\n\nNoindex: /a\nUser-agent: B\nDisallow: /\n")[0]) == 2
+    assert len(split_groups("User-agent: *\nCrawl-delay: 1\n# bad bots\nUser-agent: B\nDisallow: /\n")[0]) == 1
+    # A blank line before the other record does not count.
+    assert len(split_groups("User-agent: *\n\nCrawl-delay: 1\nUser-agent: B\nDisallow: /\n")[0]) == 1
+    # After a rule line a user-agent line opens a new group anyway; both readings agree.
+    text = "User-agent: A\nDisallow: /x\nCrawl-delay: 1\n\nUser-agent: B\nDisallow: /\n"
+    assert split_groups(text) == split_groups(text, google_style=True)
+
+
+def test_content_signal_between_agent_lines_follows_the_same_boundary():
+    joined = "User-agent: ChatGPT-User\nContent-Signal: ai-input=no\nUser-agent: Claude-User\nDisallow: /\n"
+    assert parse_robots(joined)["agents_blocked"] == ["ChatGPT-User", "Claude-User"]
+    assert parse_robots(joined)["grouping_differs_by_parser"] == []
+    split = joined.replace("ai-input=no\n", "ai-input=no\n\n")
+    parsed = parse_robots(split)
+    assert parsed["agents_blocked"] == ["Claude-User"] and parsed["agents_allowed"] == ["ChatGPT-User"]
+    assert parsed["grouping_differs_by_parser"] == ["ChatGPT-User"]
+
+
+def test_no_disagreement_is_reported_when_both_readings_give_the_same_answer():
+    for text in ("", "User-agent: *\nDisallow: /\n", "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
+                 # Groups differ, but '*' and every token come out the same: nothing to report.
+                 "User-agent: *\nCrawl-delay: 10\n\nUser-agent: SomeOtherBot\nDisallow: /private\n",
+                 "User-agent: Applebot\nCrawl-delay: 5\n\nUser-agent: GPTBot\nAllow: /\n"):
+        assert parse_robots(text)["grouping_differs_by_parser"] == [], text
 
 
 def test_several_user_agent_lines_share_one_group_and_a_rule_line_ends_it():
@@ -99,7 +163,7 @@ def test_bytes_bom_and_line_endings_match_the_text_form():
     text = "User-agent: ChatGPT-User\r\nContent-Signal: x\rUser-agent: *\r\nDisallow: /\n"
     expected = split_groups(text.replace("\r\n", "\n").replace("\r", "\n"))
     assert split_groups(text) == expected
-    assert split_groups(("﻿" + text).encode("utf-8")) == expected
+    assert split_groups(("\ufeff" + text).encode("utf-8")) == expected
     assert split_groups(b"# \xff\xfe\nUser-agent: GPTBot\nX-\xc3: \xff\nDisallow: /\n")[0] == [
         {"agents": ["gptbot"], "rules": [("disallow", "/")], "crawl_delay": None, "other": [("x-�", "�")]}]
 
@@ -111,7 +175,7 @@ _KEYS = ["User-agent", "user-agent", "USER-AGENT", "User agent", "useragent", "A
 _AGENTS = [token for token, _kind in AGENT_USER_AGENTS] + ["*", "* ", "/bot", "/", "", " ", "Claude", "GPT", "Go", "*bot",
                                                            "gptbot/1.1", "Mozilla/5.0 (X)", "chatgpt-user,claude-user", "ü-bot"]
 _VALUES = ["/", "", "/*", "/$", "/private", "/*.pdf$", "*", "$", "https://example.com/s.xml", "10", "-1", "nan", "inf",
-           "1e400", "ai-input=no", "/ /", "# not a comment value", ":", "::", "\x00", " ", "\x0c"]
+           "1e400", "ai-input=no", "/ /", "# not a comment value", ":", "::", "\x00", "\u2028", "\x0c"]
 
 
 def _random_line(rng: random.Random) -> str:
@@ -119,7 +183,7 @@ def _random_line(rng: random.Random) -> str:
     if roll < 0.05:
         return ""
     if roll < 0.08:
-        return "".join(rng.choice(" :#/*$\t\x00 \x85abcAZ-_é﻿\r") for _ in range(rng.randint(0, 12)))
+        return "".join(rng.choice(" :#/*$\t\x00\u2028\x85abcAZ-_é\ufeff\r") for _ in range(rng.randint(0, 12)))
     key = rng.choice(_KEYS)
     if key.strip().lower().replace(" ", "") in ("user-agent", "useragent"):
         value = rng.choice(_AGENTS)
@@ -179,10 +243,56 @@ def _reference_root(text: str, token: str) -> tuple[bool, bool]:
 
 def test_parser_agrees_with_the_reference_group_model_on_random_files():
     rng = random.Random(2026_10_20)
+    differing_files = 0
     for _ in range(3000):
-        text = "\n".join(_random_line(rng).replace("\r", "").replace(" ", "").replace("\x85", "").replace("\x0c", "")
-                         .replace("\x1c", "").replace("\x1d", "").replace("\x1e", "").replace("\x0b", "").replace("﻿", "")
+        text = "\n".join(_random_line(rng).replace("\r", "").replace("\u2028", "").replace("\x85", "").replace("\x0c", "")
+                         .replace("\x1c", "").replace("\x1d", "").replace("\x1e", "").replace("\x0b", "").replace("\ufeff", "")
                          for _ in range(rng.randint(0, 25)))
-        parsed = parse_robots(text)
-        for rule in parsed["rules"]:
+        google = _summarize(*split_groups(text, google_style=True))
+        for rule in google["rules"]:
             assert (rule["explicit_group"], rule["root_allowed"]) == _reference_root(text, rule["agent"]), (text, rule["agent"])
+        parsed = parse_robots(text)
+        expected = ["*"] if parsed["wildcard_root_allowed"] != google["wildcard_root_allowed"] else []
+        for ours, theirs in zip(parsed["rules"], google["rules"]):
+            if (ours["explicit_group"], ours["root_allowed"]) != (theirs["explicit_group"], theirs["root_allowed"]):
+                expected.append(ours["agent"])
+        assert parsed["grouping_differs_by_parser"] == expected, text
+        differing_files += bool(expected)
+    assert differing_files > 0  # the generator does reach the blank-line exception
+
+
+# ---- the informational next check ----------------------------------------------------------------------------------
+
+def _profile(robots: dict) -> dict:
+    return {"robots_status": "ok", "robots": robots, "llms_txt_status": "absent", "freshness": "fresh"}
+
+
+def _codes(profile: dict) -> list[str]:
+    return [check["code"] for check in next_checks("site_access", None, "no_reports", None, profile, None)]
+
+
+def test_disagreement_adds_an_informational_check_and_the_recommendation_keeps_the_default_reading():
+    parsed = parse_robots(WILDCARD_DELAY_THEN_BADBOT)
+    RobotsSummary(**parsed)  # the stored and returned shape accepts the new list
+    profile = _profile(parsed)
+    assert _codes(profile) == ["locate_failure_stage", "robots_allows_agents", "robots_grouping_differs_by_parser",
+                               "provider_unknown", "reports_unknown"]
+    assert recommendation("site_access", None, profile, None) == {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents"]}
+    # Read the Google way, the same file would have been a wildcard-only disallow.
+    google = _summarize(*split_groups(WILDCARD_DELAY_THEN_BADBOT, google_style=True))
+    assert recommendation("site_access", None, _profile(google), None)["reasons"] == ["robots_wildcard_disallow"]
+    # The check also rides along with another robots code, here a declared block.
+    blocked = parse_robots("User-agent: GPTBot\nContent-Signal: ai-train=no\n\nUser-agent: ChatGPT-User\nDisallow: /\n")
+    assert blocked["agents_blocked"] == ["ChatGPT-User"] and blocked["grouping_differs_by_parser"] == ["GPTBot"]
+    assert _codes(_profile(blocked))[1:3] == ["robots_blocks_agents", "robots_grouping_differs_by_parser"]
+
+
+def test_no_check_when_the_readings_agree_or_the_profile_predates_the_field():
+    merged = parse_robots("User-agent: *\nCrawl-delay: 10\nUser-agent: BadBot\nDisallow: /\n")
+    assert "robots_grouping_differs_by_parser" not in _codes(_profile(merged))
+    assert "robots_wildcard_disallow" in _codes(_profile(merged))
+    older_row = {key: value for key, value in parse_robots(WILDCARD_DELAY_THEN_BADBOT).items() if key != "grouping_differs_by_parser"}
+    RobotsSummary(**older_row)
+    assert "robots_grouping_differs_by_parser" not in _codes(_profile(older_row))
+    unread = {"robots_status": "absent", "robots": None, "llms_txt_status": "absent", "freshness": "fresh"}
+    assert "robots_grouping_differs_by_parser" not in _codes(unread)
