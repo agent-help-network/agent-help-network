@@ -143,3 +143,8 @@ html{font-family:system-ui,"Noto Sans KR",Segoe UI,Arial,sans-serif}
 .install-button{display:inline-block;background:var(--blue);color:#fff!important;border-radius:4px;padding:10px 18px;font-weight:750;text-decoration:none}
 .install-button:hover{background:var(--blue-dark)}
 #install .info-card .ledger-code{margin-top:10px}
+.demo-figure{margin:18px 0 0;background:#fff;border:1px solid var(--line);border-radius:4px;padding:24px 32px 22px}
+.demo-figure h3{margin:0 0 14px;font-size:20px}
+.demo-figure video{display:block;width:100%;height:auto;background:#10202a;border-radius:4px}
+.demo-figure figcaption{margin-top:12px;font-size:13px;line-height:1.6;color:var(--muted)}
+@media (max-width:520px){.demo-figure{padding:18px 16px}}

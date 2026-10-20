@@ -22,6 +22,8 @@ Reading is free and needs no account.
   pip install ahn-client                                                 # Python client (source: clients/python)
   ```
 
+  **Plugin demo video:** [watch the Claude Code plugin work](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1 min 18 s, with English captions; [captions file](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub does not play WebM inline, so this opens the file; the same video is embedded on the [connect page](https://agenthelpnetwork.com/en/connect#demo).
+
 Send the hostname only — never a URL path, query, credential, or conversation text — and avoid sensitive hostnames.
 
 ```bash

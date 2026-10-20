@@ -152,6 +152,31 @@ def test_connect_page_install_section_in_both_languages():
         assert "공식 통합이 아니" in pages["ko"].text
 
 
+def test_connect_page_embeds_the_pinned_demo_video_without_autoplay():
+    import re
+
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    base = "https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@[0-9a-f]{40}/docs/media/agent-help-network-demo-v4"
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/connect")
+            assert page.status_code == 200
+            video = re.search(r"<video\b[^>]*>", page.text)
+            assert video, lang
+            tag = video.group(0)
+            assert "controls" in tag and 'preload="metadata"' in tag and 'crossorigin="anonymous"' in tag
+            assert "autoplay" not in tag
+            assert re.search(rf'<source src="{base}\.webm"', page.text)
+            assert re.search(rf'<track kind="captions" srclang="en" label="English" src="{base}\.vtt">', page.text)
+            # The video has burned-in captions, so the track stays off until the viewer turns it on.
+            assert "default" not in re.search(r"<track\b[^>]*>", page.text).group(0)
+            assert "<figcaption>" in page.text
+            # The page sets no Content-Security-Policy, so the CDN needs no allow-list entry.
+            assert "content-security-policy" not in page.headers
+    with TestClient(create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=False))) as client:
+        assert "<video" not in client.get("/en/connect").text
+
+
 def test_registry_manifest_matches_the_published_schema_limits():
     import json
 
