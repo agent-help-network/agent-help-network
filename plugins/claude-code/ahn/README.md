@@ -18,7 +18,7 @@ The hook is read-only: it sends a hostname and enum codes and reports nothing. T
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.0 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.1 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -46,7 +46,7 @@ Requirements: Python 3.7 or newer on `PATH` (`py`, `python3` or `python`) and a 
 | Event | Matcher | When it fires |
 | :- | :- | :- |
 | `PostToolUseFailure` | `^WebFetch$` and MCP tools with `browser`, `chrome`, `playwright`, `puppeteer` or `fetch` (either case of the first letter) in any segment of the name before the tool name, except the plugin's own `mcp__plugin_ahn_*` tools | The tool threw an error or an MCP tool returned an error result, for example `Claude Code is unable to fetch from <host>`, DNS failures, connection resets, browser navigation errors. An MCP failure is looked up only when its input has a URL field (`url`, `uri`, `href`, `link`, `page_url`, `target_url`) or its error text contains an `http(s)://` URL |
-| `PostToolUse` | `WebFetch` | The fetch completed but the server answered HTTP 400–599. WebFetch reports these as a successful call with `tool_response.code`, so `PostToolUseFailure` never sees them |
+| `PostToolUse` | `WebFetch` | The fetch completed but the server answered with a status that reports a block or an outage: 401, 403, 407, 429, 451 or 5xx (see [Which errors are looked up](#which-errors-are-looked-up)). WebFetch reports these as a successful call with `tool_response.code`, so `PostToolUseFailure` never sees them |
 
 That covers, for example, `mcp__Claude_Browser__navigate` (desktop browser pane), `mcp__remote-devices__Claude_Browser__navigate` (the browser pane reached from a cloud session), `mcp__claude-in-chrome__navigate`, `mcp__playwright__browser_navigate`, `mcp__plugin_playwright_playwright__browser_navigate` and `mcp__fetch__fetch`. It does not cover a browser step that "succeeds" while showing a block or CAPTCHA page, or `curl` run through Bash; use the `ahn-lookup` skill or the MCP tool by hand there.
 
@@ -60,16 +60,32 @@ User-Agent: ahn-claude-code-plugin/0.2
 ```
 
 - `site_host` is the bare lowercase hostname taken from `tool_input.url` (for MCP tools, also `uri`, `href`, `link`, `page_url` or `target_url`; only `http(s)://` or scheme-less host values), or else from the first `http(s)://` URL in the error text, or else, for `WebFetch` only, from Claude Code's own refusal `is unable to fetch from <host>`. No other bare dotted word in an error is read as a hostname (`document.querySelector`, `locator.click`, `urllib3.exceptions...`, Windows path segments). Scheme, userinfo, port, path, query and fragment are dropped, and a leading `www.` is removed.
-- `error_class` is one of `human_verification`, `login_auth`, `service_error`, `site_access`; `failure_stage` is `before_target_response`, `response_observed`, or omitted. Both are derived locally from the error text with URLs reduced to hostnames, so a path or query never influences them.
+- `error_class` is one of `human_verification`, `login_auth`, `service_error`, `site_access`; `failure_stage` is `before_target_response`, `response_observed`, or omitted. Both are derived locally from the HTTP status or from the error text with URLs reduced to hostnames, so a path or query never influences them. There is no default class: an error that is neither a block nor an outage sends nothing (next section).
 - Nothing else leaves your machine: no URL paths or queries, no page content, no error text, no conversation text, no credentials, cookies or account names, no session or user identifiers.
 
+### Which errors are looked up
+
+A mistyped address is not a site that refuses agents, so only statuses that report a block or an outage are looked up (RFC 9110 sections 15.5 and 15.6, RFC 6585, RFC 7725). The status table applies to `WebFetch` results; the same numbers and wording in an error text classify the same way.
+
+| HTTP status | `error_class` sent | Note |
+| :- | :- | :- |
+| 401, 407 | `login_auth` | credentials required |
+| 403, 451 | `site_access` | `human_verification` instead when a `cf-mitigated: challenge` header or the page text (CAPTCHA, "verify you are human", "checking your browser") points to a challenge |
+| 429 | `service_error` | the contract has no rate-limit class; a `Retry-After` of whole seconds, when the tool result carries one, is added to the line as `HTTP 429, the site asks to retry after N s.` and is not sent anywhere |
+| 500–599 | `service_error` | the server failed |
+| every other 4xx (400, 404, 405, 409, 410, 411, 413, 414, 415, 422 ...) | none: no lookup, nothing added | the address or the request was wrong, not blocked |
+
+For thrown errors (`PostToolUseFailure`), text that names none of a block, a login, a challenge, a timeout or a 5xx, such as `Not Found`, `404` or `422 Unprocessable`, is not looked up either. Nothing received from the site at all (DNS failure, refused connection, Claude Code's own `is unable to fetch from` refusal) is still sent as `site_access` with `before_target_response`.
+
 It sends nothing when:
+
 
 - the host is local, private or special-use by name: `localhost`, IP literals including short and hex forms such as `127.1` or `0x7f.1`, single-label names, and names under `.local`, `.internal`, `.test`, `.lan`, `.arpa`, `.onion`, `.invalid`, `.example`, `.home`, `.corp`, `.intranet`, `.private`, `.localdomain`, `.alt` (nothing is resolved);
 - the host is `agenthelpnetwork.com` or one of its subdomains;
 - the host or a parent domain is listed in `AHN_HOOK_SKIP_HOSTS` (compared with and without a leading `www.` on both sides);
 - an MCP tool failed without any URL in its input or error;
 - the same host was looked up in the last 10 minutes;
+- the response is a 4xx other than 401, 403, 407, 429 and 451, or the error text names no block and no outage;
 - the tool call was interrupted (`is_interrupt`), or the tool was `WebSearch`;
 - `AHN_HOOK_DISABLE=1` is set.
 
@@ -112,12 +128,12 @@ echo '{"hook_event_name":"PostToolUse","tool_name":"WebFetch","tool_input":{"url
 
 The plugin was specified in an internal design note on 2026-10-18 and adapted to the Claude Code documentation (hooks, plugins, plugin marketplaces) and to Claude Code 2.1.296 behaviour on that date:
 
-1. **Events.** `PostToolUseFailure` exists and is used for thrown errors (top-level `error` and `is_interrupt` fields). A second hook on `PostToolUse` for `WebFetch` was added because WebFetch returns HTTP 4xx/5xx as a successful result (`tool_response` = `{code, codeText, url, ...}`), observed in this version; without it the most common case, a 403, never triggers the lookup.
+1. **Events.** `PostToolUseFailure` exists and is used for thrown errors (top-level `error` and `is_interrupt` fields). A second hook on `PostToolUse` for `WebFetch` was added because WebFetch returns HTTP 4xx/5xx as a successful result (`tool_response` = `{code, codeText, url, ...}`), observed in this version; without it the most common case, a 403, never triggers the lookup. Since 0.2.1 only the block and outage statuses of the table above are looked up; before, every 400–599 was, and a 404 or 422 was sent as `site_access`.
 2. **Matcher.** Claude Code matchers are case-sensitive, unanchored JavaScript regular expressions, and real tool names are `mcp__Claude_Browser__*`, `mcp__remote-devices__Claude_Browser__*`, `mcp__claude-in-chrome__*`, `mcp__playwright__*` and `mcp__plugin_<plugin>_<server>__*`. The matcher therefore looks for a keyword in any segment of an MCP name before the tool name (so `mcp__github__fetch_issue` is not matched), with both cases of each keyword's first letter, and excludes the plugin's own `mcp__plugin_ahn_*` tools. `WebSearch` was left out: it has no target host, its input is conversation text, and its failures are search-service failures, not site blocks. The script also ignores `WebSearch` payloads.
 3. **Launcher.** Hook commands run through a shell (Git Bash on Windows), and `python3` does not reliably exist on Windows (it can be the Microsoft Store alias), so `hooks/run-hook.sh` picks the interpreter: `py -3` first on Windows, `python3` first elsewhere, each used only after it proves to be Python 3.7 or newer (an older Python would fail on the script's syntax and exit non-zero). `.gitattributes` keeps it LF on Windows checkouts.
 4. **`www.`** A leading `www.` label is removed, because the service reads declared policy and lookup counts only for apex hostnames; `www.nytimes.com` would otherwise return no declared policy.
 5. **`failure_stage`.** Text-based detection follows the contract, plus Claude Code's own refusal (`is unable to fetch from`, no request reaches the site) and `getaddrinfo` as `before_target_response`. On the `PostToolUse` path an HTTP status was received, so it sends `response_observed`.
-6. **Classification.** Runs on the error text with every URL reduced to its hostname. Patterns accept common variants (`log in`/`log-in`, `sign-in`, `authentication`, `are you a robot`, `bad gateway`, `ETIMEDOUT`). Interrupted calls are skipped.
+6. **Classification.** Runs on the HTTP status (`PostToolUse`) or on the error text with every URL reduced to its hostname (`PostToolUseFailure`); text that matches no class gets none, there is no `site_access` default. Patterns accept common variants (`log in`/`log-in`, `sign-in`, `authentication`, `are you a robot`, `bad gateway`, `ETIMEDOUT`). Interrupted calls are skipped.
 7. **Wording.** The closing sentence is a statement ("bypassing site controls is not advised") rather than an imperative, because the hooks documentation warns that imperative, system-style text in `additionalContext` can trigger prompt-injection defenses.
 8. **Validation.** Only values from the contract's closed enums, agent tokens of at most 32 letters, digits and hyphens, and official-path URLs rebuilt from validated parts reach Claude's context; anything else becomes `unknown` or is dropped. A regular expression for "code-like" text was not enough: a spoofed or compromised server could fill every field with valid-looking instruction words. Blocked agents are listed only when `robots_status` is `ok`, `(stale)` marks a stale profile, and training crawlers are counted separately because the contract does not treat them as declared blocks.
 9. **MCP type.** `.mcp.json` uses `"type": "http"`, Claude Code's name for streamable HTTP.

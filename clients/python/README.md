@@ -24,9 +24,11 @@ In an `except` block:
 try:
     page.goto(url)
 except Exception as exc:
-    answer = ahn.check(url, *ahn.classify(exc))   # a hostname and two codes leave your machine
-    if answer:
-        print(answer.recommendation, answer.official_url)
+    error_class, stage = ahn.classify(exc)
+    if error_class:  # None: a 404 or a bad request, not a block or an outage
+        answer = ahn.check(url, error_class, stage)   # a hostname and two codes leave your machine
+        if answer:
+            print(answer.recommendation, answer.official_url)
 ```
 
 Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](examples/playwright_example.py), [`examples/browser_use_example.py`](examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
@@ -34,7 +36,7 @@ Examples with a real `except` block and a decision per recommendation: [`example
 ### API
 
 - `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0) -> Result | None` — asks about the host of a hostname or URL. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
-- `ahn.classify(exc_or_text) -> (error_class, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth`, `service_error` or `site_access`, and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](../../plugins/claude-code/ahn/README.md).
+- `ahn.classify(exc_or_text) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (429, 5xx, timeout) or `site_access` (403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](../../plugins/claude-code/ahn/README.md). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
 - `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, and `summary()`, a one-line text of at most 700 characters, the same line the plugin prints.
 - `ahn.clear_cache()` — forget cached answers.
 

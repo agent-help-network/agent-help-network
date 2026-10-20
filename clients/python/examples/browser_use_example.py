@@ -19,9 +19,10 @@ from browser_use import Agent
 def handle_failure(target_url, exc):
     """Print what to do next. Returns True when another attempt is reasonable."""
     error_class, stage = ahn.classify(exc)
-    answer = ahn.check(target_url, error_class, stage)  # blocking, 4 s at most; never raises
+    # error_class is None for a 404 or a bad request: not a block, so nothing is looked up
+    answer = ahn.check(target_url, error_class, stage) if error_class else None  # blocking, 4 s at most; never raises
     if answer is None:
-        print("No answer from Agent Help Network (or an excluded host). Not retrying automatically.")
+        print("No answer from Agent Help Network (not a block or an outage, or an excluded host). Not retrying automatically.")
         return False
     print(answer.summary())
     if answer.recommendation == "use_official_path":
