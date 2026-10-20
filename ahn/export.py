@@ -149,6 +149,8 @@ def access_profile_envelope(row: dict) -> dict:
             "robots_status": row["robots_status"], "robots": row["robots"], "robots_detail": row["robots_detail"],
             "llms_txt_status": row["llms_txt_status"], "llms_detail": row["llms_detail"],
             "llms_txt_url": f"https://{read_host}/llms.txt", "llms_sha256": row.get("llms_sha256"),
+            # Parsed content-use preferences as stored (null for a row read before migration 021).
+            "content_use": row.get("content_use"),
         },
     )
 
@@ -245,7 +247,7 @@ def _rows(conn, kind: str, since: datetime | None):
     if kind == "access_profile":
         return conn.execute(
             """SELECT site_host,fetched_at,robots_status,robots,robots_detail,llms_txt_status,llms_detail,read_host,
-                      origin_operator,vantage,reader_version,robots_sha256,llms_sha256
+                      origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use
                FROM host_access_profile
                WHERE fetched_at IS NOT NULL AND fetched_at >= %s AND (last_error_at IS NULL OR last_error_at <= fetched_at)
                ORDER BY fetched_at,site_host""",

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import ipaddress
+import json
 import re
 import socket
 import ssl
@@ -249,6 +250,297 @@ def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     }
 
 
+# Content-use preferences declared inside robots.txt: Cloudflare Content Signals (`Content-Signal:`) and IETF AIPREF
+# (`Content-Usage:`, draft-ietf-aipref-attach-05 with the draft-ietf-aipref-vocab-08 vocabulary). They are read from the
+# file already fetched for the robots rules (no extra request), reported as information only, and never change a
+# recommendation: they say how the host wants content used, not whether it may be fetched.
+# The parser version leads the string: a stored result written by another parser version is not shown as current.
+CONTENT_USE_VOCAB = ("ahn-content-use/1; Cloudflare Content Signals; "
+                     "IETF AIPREF draft-ietf-aipref-attach-05 / draft-ietf-aipref-vocab-08 (drafts)")
+CONTENT_USE_NOTE = (
+    "Content-use preferences the host declares in robots.txt (Cloudflare Content-Signal, IETF AIPREF Content-Usage draft). "
+    "Information only: not an access rule, not permission, and not a legal reading. Whether a preference covers a "
+    "user-directed agent is up to each agent's operator."
+)
+_SIGNAL_KEYS = {"search": "search", "ai-input": "ai_input", "ai-train": "ai_train"}
+_SIGNAL_USE = ("immediate", "reference", "full")  # Cloudflare's experimental `use`, most to least restrictive
+_AIPREF_KEYS = {"train-ai": "train_ai", "ai-use": "ai_use", "search": "search"}
+# Storage limits, stated in the privacy policy (tests/test_policy_coverage.py checks the numbers).
+MAX_USE_PATH_SAMPLES = 3     # path samples in total, across the * group and all named groups
+MAX_USE_NAMED_GROUPS = 5
+MAX_USE_GROUP_AGENTS = 8     # names per named group, only tokens from AGENT_USER_AGENTS; other names are only counted
+MAX_USE_IGNORED = 5
+_SF_KEY = re.compile(r"^[a-z*][a-z0-9_\-.*]*$")
+_SF_BARE_ITEM = re.compile(r"""^(?:[A-Za-z*][A-Za-z0-9!#$%&'*+\-.^_`|~:/]*|-?[0-9][0-9.]*|"[^"]*"|\?[01]|:[A-Za-z0-9+/=]*:)$""")
+_USE_LABEL = re.compile(r"^[a-z0-9_\-.*]{1,32}$")
+_ALL_PATHS = ("", "/", "/*")
+_KNOWN_TOKENS = {token.lower(): (token, kind) for token, kind in AGENT_USER_AGENTS}
+_USER_AGENT_TOKENS = tuple(token for token, kind in AGENT_USER_AGENTS if kind == "user_agent")
+
+
+def _use_label(key: str) -> str:
+    """A key the parser did not use, reported by name only; anything that is not a short token is 'unparsable'."""
+    key = key.strip().lower()
+    return key if _USE_LABEL.match(key) else "unparsable"
+
+
+def _split_use_path(value: str) -> tuple[str, str]:
+    """Both formats allow an optional leading path: a value that starts with '/' carries one, up to the first blank."""
+    if not value.startswith("/"):
+        return "", value
+    parts = value.split(None, 1)
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
+def _parse_content_signal(value: str, ignored: list[str]) -> dict:
+    """`search=yes, ai-train=no[, use=reference]`: names and values case-insensitive, only yes/no (and the three use values)."""
+    found: dict = {}
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        key, sep, val = item.partition("=")
+        key, val = key.strip().lower(), val.strip().lower()
+        if sep and key in _SIGNAL_KEYS and val in ("yes", "no"):
+            _merge_use(found, {_SIGNAL_KEYS[key]: val})
+        elif sep and key == "use" and val in _SIGNAL_USE:
+            _merge_use(found, {"use": val})
+        else:
+            ignored.append(_use_label(key))
+    return found
+
+
+def _parse_content_usage(value: str, ignored: list[str]) -> dict:
+    """AIPREF preferences: a Structured Fields dictionary whose known keys take the tokens y or n.
+
+    Per draft-ietf-aipref-vocab-08: keys are case-sensitive and a dictionary that does not parse (an uppercase key,
+    an empty member) leaves every category unknown; unknown keys are ignored; a value other than y/n leaves that
+    category unknown; parameters are ignored; a repeated key keeps its last value.
+    """
+    members: dict[str, str] = {}
+    for member in value.split(","):
+        member = member.split(";", 1)[0].strip()
+        key, sep, val = member.partition("=")
+        key, val = key.strip(), val.strip()
+        if not _SF_KEY.match(key) or (sep and not _SF_BARE_ITEM.match(val)):
+            ignored.append("unparsable")
+            return {}
+        members[key] = val if sep else "?1"
+    found: dict = {}
+    for key, val in members.items():
+        if key in _AIPREF_KEYS and val in ("y", "n"):
+            found[_AIPREF_KEYS[key]] = "yes" if val == "y" else "no"
+        else:
+            ignored.append(_use_label(key))
+    return found
+
+
+def _merge_use(target: dict, new: dict) -> None:
+    """Several statements for the same scope: the most restrictive one applies (draft-ietf-aipref-vocab-08 section 5.1).
+
+    The same rule is applied to repeated Content-Signal lines, which Cloudflare's documentation does not address.
+    """
+    for key, val in new.items():
+        old = target.get(key)
+        if old is None:
+            target[key] = val
+        elif key == "use":
+            target[key] = min(old, val, key=_SIGNAL_USE.index)
+        elif "no" in (old, val):
+            target[key] = "no"
+
+
+def _signals_shape(found: dict, seen: bool) -> dict | None:
+    if not seen:
+        return None
+    return {"search": found.get("search", "unset"), "ai_input": found.get("ai_input", "unset"),
+            "ai_train": found.get("ai_train", "unset"), "use": found.get("use")}
+
+
+def _usage_shape(found: dict, seen: bool) -> dict | None:
+    if not seen:
+        return None
+    return {"train_ai": found.get("train_ai", "unset"), "ai_use": found.get("ai_use", "unset"), "search": found.get("search", "unset")}
+
+
+def _use_lines(group: dict) -> list[tuple[str, str]]:
+    """The group's Content-Signal and Content-Usage records, from split_groups' `other` list (keys already lowercased)."""
+    return [(key, value) for key, value in group["other"] if key in ("content-signal", "content-usage")]
+
+
+def _group_use(group: dict, ignored: list[str]) -> dict:
+    """One group's site-wide signals and usage (most restrictive wins), plus the paths of path-scoped lines."""
+    signals: dict = {}
+    usage: dict = {}
+    seen = {"content-signal": False, "content-usage": False}
+    paths: list[str] = []
+    formats: set[str] = set()
+    for key, value in _use_lines(group):
+        formats.add("cloudflare_content_signal" if key == "content-signal" else "ietf_aipref")
+        path, rest = _split_use_path(value)
+        parsed = _parse_content_signal(rest, ignored) if key == "content-signal" else _parse_content_usage(rest, ignored)
+        if path not in _ALL_PATHS:
+            # A path-scoped preference covers part of the site only; it is sampled, never folded into the site-wide value.
+            if path[:80] not in paths and len(paths) < MAX_USE_PATH_SAMPLES:
+                paths.append(path[:80])
+            continue
+        seen[key] = True
+        _merge_use(signals if key == "content-signal" else usage, parsed)
+    return {"formats": formats, "signals": signals, "usage": usage, "seen": seen, "paths": paths}
+
+
+def _says_no_ai_input(signals: dict, usage: dict) -> bool:
+    return signals.get("ai_input") == "no" or usage.get("ai_use") == "no"
+
+
+def _ai_input_no_agents(groups: list[dict], results: list[dict | None], star: tuple[dict, dict]) -> list[str]:
+    """User-directed agent tokens whose effective site-wide preference is ai-input=no or ai-use=n.
+
+    Same group rule as the robots rules: a token named by any group (with or without Content-* lines) takes the
+    declarations of the groups that name it, and only a token named by no group falls back to the `*` group.
+    """
+    found = []
+    for token in _USER_AGENT_TOKENS:
+        lowered = token.lower()
+        matched = [index for index, group in enumerate(groups) if any(_applies(agent, lowered) for agent in group["agents"])]
+        if matched:
+            signals: dict = {}
+            usage: dict = {}
+            for index in matched:
+                if results[index] is not None:
+                    _merge_use(signals, results[index]["signals"])
+                    _merge_use(usage, results[index]["usage"])
+        else:
+            signals, usage = star
+        if _says_no_ai_input(signals, usage):
+            found.append(token)
+    return found
+
+
+def _agent_rank(token: str) -> int:
+    return 0 if _KNOWN_TOKENS[token.lower()][1] == "user_agent" else 1
+
+
+def parse_content_use(text: str | bytes) -> dict:
+    """Pure. Content-use preferences declared in robots.txt, normalized to yes/no/unset; nothing else of the file is kept.
+
+    `signals`/`usage` describe the `User-agent: *` group for the whole site (no path, `/` or `/*`); `named_groups` the
+    groups that name other user agents (up to 5, identical declarations folded); path-scoped lines are only sampled (at
+    most 3 paths in total). Agent names are kept only when they are tokens of AGENT_USER_AGENTS; other names are counted.
+    `ignored_keys` names keys or values that were not understood ('unparsable' for anything that is not a short token).
+    `ai_input_no_agents` is computed from every group before any cap applies.
+    """
+    formats: set[str] = set()
+    ignored: list[str] = []
+    star_signals: dict = {}
+    star_usage: dict = {}
+    star_seen = {"content-signal": False, "content-usage": False}
+    star_paths: list[str] = []
+    named: dict[str, dict] = {}  # serialized declaration -> entry, so folding stays linear in the number of groups
+    # The same groups as the robots answer (split_groups with its default reading, as parse_robots uses), so the
+    # declarations and the ai-input decision below follow exactly the grouping the robots rules are judged by.
+    groups, _sitemaps = split_groups(text)
+    results: list[dict | None] = []
+    for group in groups:
+        result = _group_use(group, ignored) if _use_lines(group) else None
+        results.append(result)
+        if result is None:
+            continue
+        formats |= result["formats"]
+        if "*" in group["agents"]:
+            _merge_use(star_signals, result["signals"])
+            _merge_use(star_usage, result["usage"])
+            for key in star_seen:
+                star_seen[key] = star_seen[key] or result["seen"][key]
+            star_paths += [path for path in result["paths"] if path not in star_paths]
+            continue
+        entry = {
+            "signals": _signals_shape(result["signals"], result["seen"]["content-signal"]),
+            "usage": _usage_shape(result["usage"], result["seen"]["content-usage"]),
+            "path_specific_samples": result["paths"],
+        }
+        key = json.dumps(entry, sort_keys=True)
+        item = named.get(key)
+        if item is None:
+            item = named[key] = {"agents": set(), "other_agents": set(), **entry}
+        for agent in group["agents"]:
+            # Only names from this service's agent-token table are kept; any other name is only counted.
+            if agent in _KNOWN_TOKENS:
+                item["agents"].add(_KNOWN_TOKENS[agent][0])
+            else:
+                item["other_agents"].add(agent)
+    no_agents = _ai_input_no_agents(groups, results, (star_signals, star_usage))
+    # Declarations that restrict AI input come first, so the cap never drops the ones an agent most needs.
+    ordered = sorted(named.values(), key=lambda item: not _says_no_ai_input(item["signals"] or {}, item["usage"] or {}))
+    budget = MAX_USE_PATH_SAMPLES - len(star_paths[:MAX_USE_PATH_SAMPLES])
+    named_groups = []
+    for item in ordered[:MAX_USE_NAMED_GROUPS]:
+        agents = sorted(item["agents"], key=lambda token: (_agent_rank(token), token.lower()))
+        paths = item["path_specific_samples"][:max(budget, 0)]
+        budget -= len(paths)
+        named_groups.append({
+            "agents": agents[:MAX_USE_GROUP_AGENTS],
+            "other_agents": len(item["other_agents"]) + max(len(agents) - MAX_USE_GROUP_AGENTS, 0),
+            "signals": item["signals"], "usage": item["usage"], "path_specific_samples": paths,
+        })
+    return {
+        "vocab": CONTENT_USE_VOCAB,
+        "formats": sorted(formats),
+        "signals": _signals_shape(star_signals, star_seen["content-signal"]),
+        "usage": _usage_shape(star_usage, star_seen["content-usage"]),
+        "path_specific_samples": star_paths[:MAX_USE_PATH_SAMPLES],
+        "named_groups": named_groups,
+        "named_groups_total": len(named),
+        # Cloudflare's managed robots.txt inserts `search=yes, ai-train=no` (now with `use=reference`) by default, so a
+        # match may be a default the site owner never chose. A hint, not a finding: an owner can write the same line.
+        "vendor_default_hint": (star_signals.get("search") == "yes" and star_signals.get("ai_train") == "no"
+                                and "ai_input" not in star_signals and star_signals.get("use") in (None, "reference")),
+        "ai_input_declared_no": bool(no_agents),
+        "ai_input_no_agents": no_agents,
+        "ignored_keys": sorted(set(ignored))[:MAX_USE_IGNORED],
+    }
+
+
+_STORED_KEYS = ("formats", "signals", "usage", "path_specific_samples", "named_groups", "named_groups_total",
+                "vendor_default_hint", "ai_input_declared_no", "ai_input_no_agents", "ignored_keys")
+
+
+def content_use_view(robots_status: str, stored: dict | None, read_host: str, fetched_at, freshness: str,
+                     robots_sha256: str | None = None) -> dict:
+    """access_profile.content_use: what was declared, or why nothing can be said. Not reading is never 'none declared'.
+
+    A stored result counts only when it was written by this parser version for the robots.txt the row now describes
+    (same SHA-256); otherwise (a row cached before migration 021, or rewritten by another version after a rollback)
+    it reads as not_read / read_before_content_use until the next read. Anything but a declaration is a compact answer.
+    """
+    view = {"status": "not_read", "reason": None, "source_url": f"https://{read_host}/robots.txt",
+            "fetched_at": fetched_at, "freshness": freshness}
+    current = (stored is not None and stored.get("vocab") == CONTENT_USE_VOCAB
+               and (robots_sha256 is None or stored.get("robots_sha256") == robots_sha256))
+    if robots_status == "ok" and current:
+        if not stored.get("formats"):
+            view["status"] = "none_declared"
+            return view
+        view.update({key: stored.get(key) for key in _STORED_KEYS})
+        view["status"] = "declared"
+        view["scope"] = ("all_paths" if view["signals"] is not None or view["usage"] is not None
+                         else "path_specific" if view["path_specific_samples"] else None)
+        view["vocab"], view["note"] = CONTENT_USE_VOCAB, CONTENT_USE_NOTE
+    elif robots_status == "ok":
+        view["reason"] = "read_before_content_use"  # no current result for this file; the next read fills it
+    elif robots_status == "absent":
+        view.update(status="none_declared", reason="robots_absent")  # no robots.txt: nothing declared, definitively
+    elif robots_status == "pending":
+        view["reason"] = "pending"
+    else:
+        view["reason"] = f"robots_{robots_status}"
+    return view
+
+
+def ai_input_declared_no(content_use: dict | None) -> bool:
+    """A user-directed agent token's effective site-wide preference is ai-input=no or ai-use=n (computed before any cap)."""
+    return bool(content_use and content_use.get("status") == "declared" and content_use.get("ai_input_declared_no"))
+
+
 def _resolve(site_host: str, timeout: float) -> set[str]:
     """getaddrinfo in a worker thread so a stalled resolver cannot hold the request."""
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -442,11 +734,14 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
         if alt_status in ("ok", "absent", "too_large"):
             robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
     robots = parse_robots(robots_body) if robots_status == "ok" and robots_body is not None else None
+    # Parsed from the same bytes as the robots rules: content-use preferences cost no extra request.
+    # The robots.txt hash travels with the result, so a later rewrite of the row by another reader is detectable.
+    content_use = {**parse_content_use(robots_body), "robots_sha256": sha256_hex(robots_body)} if robots is not None else None
     llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
     # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.
     llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {
-        "robots_status": robots_status, "robots": robots, "robots_detail": robots_detail,
+        "robots_status": robots_status, "robots": robots, "robots_detail": robots_detail, "content_use": content_use,
         "llms_txt_status": llms_txt_status, "llms_detail": llms_detail, "read_host": read_host,
         "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
         # Provenance only: hashes of the bytes received; the files themselves are never stored.
@@ -463,18 +758,21 @@ def _freshness(fetched_at, error_at, now: datetime, max_age: timedelta) -> str:
     return "stale"
 
 
-_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host"
+_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,content_use,robots_sha256"
 
 
 def _as_profile(site_host: str, row, now: datetime, max_age: timedelta) -> dict:
     # The host that supplied the files: the apex, or its www alias after the fallback. Rows written
     # before the column existed, and rows that never got an answer, name the looked-up host.
     read_host = row["read_host"] or site_host
+    freshness = _freshness(row["fetched_at"], row["last_error_at"], now, max_age)
     return {
         "robots_status": row["robots_status"], "robots": row["robots"], "robots_detail": row["robots_detail"],
         "llms_txt_status": row["llms_txt_status"], "llms_detail": row["llms_detail"], "read_host": read_host,
         "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
-        "fetched_at": row["fetched_at"], "freshness": _freshness(row["fetched_at"], row["last_error_at"], now, max_age),
+        "fetched_at": row["fetched_at"], "freshness": freshness,
+        "content_use": content_use_view(row["robots_status"], row.get("content_use"), read_host, row["fetched_at"], freshness,
+                                        row.get("robots_sha256")),
     }
 
 
@@ -491,6 +789,7 @@ def pending_profile(site_host: str, retry_after_seconds: int | None) -> dict:
         "llms_txt_status": "pending", "llms_detail": None, "read_host": site_host,
         "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
         "fetched_at": None, "freshness": "pending",
+        "content_use": content_use_view("pending", None, site_host, None, "pending"),
     }
     if retry_after_seconds is not None:
         profile["retry_after_seconds"] = retry_after_seconds
@@ -543,16 +842,17 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 # Provenance travels with the definitive answer it describes; a later transport failure keeps both.
                 row = conn.execute(
                     f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
-                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
                         robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host,
                         origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
-                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256
+                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
                      profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"],
-                     operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256")),
+                     operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
+                     Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None),
                 ).fetchone()
         return _as_profile(site_host, row, now, max_age)
