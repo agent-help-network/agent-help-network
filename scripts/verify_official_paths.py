@@ -197,6 +197,10 @@ PUBLISHER_GITHUB_ORGS: dict[str, set[str]] = {
     "stripe.com": {"stripe"},  # docs.stripe.com/sdks links the official SDKs in this organisation
     "openai.com": {"openai"}, "chatgpt.com": {"openai"},  # developers.openai.com quickstart links the SDKs in this organisation
     "cloudflare.com": {"cloudflare"},  # developers.cloudflare.com links cloudflare-docs and its MCP servers in this organisation
+    "asana.com": {"asana"},  # developers.asana.com/reference links raw.githubusercontent.com/Asana/openapi as the OpenAPI definition
+    "figma.com": {"figma"},  # developers.figma.com/docs/rest-api links github.com/figma/rest-api-spec as the OpenAPI specification
+    "netlify.com": {"netlify"},  # docs.netlify.com get-started-with-api links github.com/netlify/open-api as the OpenAPI specification
+    "plaid.com": {"plaid"},  # plaid.com/docs/api links github.com/plaid/plaid-openapi as the OpenAPI specification
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)

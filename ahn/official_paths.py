@@ -1083,10 +1083,384 @@ OFFICIAL_ACCESS: dict[str, dict] = {
                            "or using OAuth), you do so at your sole risk"},
         "verified_at": "2026-10-20",
     },
+    "gitlab.com": {
+        "auth": [
+            {"method": "oauth2", "source_url": "https://docs.gitlab.com/api/rest/authentication/"},
+            {"method": "pat", "source_url": "https://docs.gitlab.com/api/rest/authentication/"},
+            {"method": "none", "source_url": "https://docs.gitlab.com/api/rest/authentication/"},
+        ],
+        "key_signup_url": "https://docs.gitlab.com/user/profile/personal_access_tokens/",
+        "rate_limits_url": "https://docs.gitlab.com/user/gitlab_com/rate_limits/",
+        "terms": {"url": "https://handbook.gitlab.com/handbook/legal/api-terms/",
+                  "quote": "GitLab may place limits on your use of the GitLab APIs (like limits on call volumes or requests "
+                           "that can be sent and received by the GitLab APIs during a defined period of time)"},
+        "verified_at": "2026-10-20",
+    },
+    "bitbucket.org": {
+        "auth": [
+            {"method": "pat", "source_url": "https://developer.atlassian.com/cloud/bitbucket/rest/intro/"},
+            {"method": "api_key", "source_url": "https://developer.atlassian.com/cloud/bitbucket/rest/intro/"},
+            {"method": "oauth2", "source_url": "https://developer.atlassian.com/cloud/bitbucket/rest/intro/"},
+        ],
+        "key_signup_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-tokens/",
+        "rate_limits_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-request-limits/",
+        "openapi_url": "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json?_v=2.300.200",
+        "terms": {"url": "https://developer.atlassian.com/platform/marketplace/atlassian-developer-terms/",
+                  "quote": "Atlassian may place limits on access to the Atlassian Platform (e.g., limits on numbers of calls or "
+                           "requests, or on points that reflect the work performed in response to an API request)."},
+        "verified_at": "2026-10-20",
+    },
+    "google.dev": {
+        "auth": [
+            {"method": "api_key", "source_url": "https://ai.google.dev/gemini-api/docs/api-key"},
+            {"method": "oauth2", "source_url": "https://ai.google.dev/gemini-api/docs/oauth"},
+        ],
+        "key_signup_url": "https://ai.google.dev/gemini-api/docs/api-key",
+        "rate_limits_url": "https://ai.google.dev/gemini-api/docs/rate-limits",
+        "terms": {"url": "https://ai.google.dev/gemini-api/terms",
+                  "quote": "You will not automatically bypass any requests for human confirmation."},
+        "verified_at": "2026-10-20",
+    },
+    "stackexchange.com": {
+        "auth": [
+            {"method": "oauth2", "source_url": "https://api.stackexchange.com/docs/authentication"},
+            {"method": "api_key", "source_url": "https://api.stackexchange.com/docs"},
+            {"method": "none", "source_url": "https://api.stackexchange.com/docs"},
+        ],
+        "key_signup_url": "https://api.stackexchange.com/docs",
+        "free_tier": {"quote": "If an application does have an access_token, then the application is on a distinct user/app pair "
+                               "daily quota (default size of 10,000).",
+                      "source_url": "https://api.stackexchange.com/docs/throttle"},
+        "rate_limits_url": "https://api.stackexchange.com/docs/throttle",
+        "verified_at": "2026-10-20",
+    },
+    "discord.com": {
+        "auth": [
+            {"method": "api_key", "source_url": "https://docs.discord.com/developers/reference"},
+            {"method": "oauth2", "source_url": "https://docs.discord.com/developers/reference"},
+        ],
+        "key_signup_url": "https://docs.discord.com/developers/bots/overview",
+        "rate_limits_url": "https://docs.discord.com/developers/topics/rate-limits",
+        "verified_at": "2026-10-20",
+    },
+    "telegram.org": {
+        "auth": [{"method": "api_key", "source_url": "https://core.telegram.org/bots/api"}],
+        "key_signup_url": "https://core.telegram.org/bots",
+        "free_tier": {"quote": "Each message broadcasted over the free amount of 30 per second incurs a cost of 0.1 Stars per "
+                               "message, paid with Telegram Stars from the bot's balance.",
+                      "source_url": "https://core.telegram.org/bots/faq"},
+        "rate_limits_url": "https://core.telegram.org/bots/faq",
+        "terms": {"url": "https://telegram.org/tos/bot-developers",
+                  "quote": "Your TPA must not attempt to circumvent or otherwise undermine Telegram rate limits and moderation."},
+        "verified_at": "2026-10-20",
+    },
+    "zoom.us": {
+        "auth": [{"method": "oauth2", "source_url": "https://developers.zoom.us/docs/api/using-zoom-apis/"}],
+        "key_signup_url": "https://developers.zoom.us/docs/integrations/oauth/",
+        "rate_limits_url": "https://developers.zoom.us/docs/api/rate-limits/",
+        "terms": {"url": "https://explore.zoom.us/docs/en-us/zoom_api_license_and_tou.html",
+                  "quote": "Limitations may include technical limitations, such as call, volume and/or rate limits, or limits "
+                           "on your access to some or all of the Zoom APIs."},
+        "verified_at": "2026-10-20",
+    },
+    "asana.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://developers.asana.com/docs/authentication"},
+            {"method": "oauth2", "source_url": "https://developers.asana.com/docs/authentication"},
+            {"method": "api_key", "source_url": "https://developers.asana.com/docs/authentication"},
+        ],
+        "key_signup_url": "https://developers.asana.com/docs/personal-access-token",
+        "rate_limits_url": "https://developers.asana.com/docs/rate-limits",
+        "sandbox_url": "https://developers.asana.com/docs/developer-sandbox",
+        "openapi_url": "https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml",
+        "official_mcp": [{"endpoint": "https://mcp.asana.com/v2/mcp", "doc_url": "https://developers.asana.com/docs/using-asanas-mcp-server"}],
+        "terms": {"url": "https://asana.com/terms/api-terms",
+                  "quote": "Asana may monitor and limit the User Content that may be accessed, the rate at which such User Content "
+                           "may be accessed, and/or the number of network calls that your App may make to our APIs."},
+        "verified_at": "2026-10-20",
+    },
+    "figma.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://developers.figma.com/docs/rest-api/authentication/"},
+            {"method": "oauth2", "source_url": "https://developers.figma.com/docs/rest-api/authentication/"},
+        ],
+        "key_signup_url": "https://developers.figma.com/docs/rest-api/personal-access-tokens/",
+        "rate_limits_url": "https://developers.figma.com/docs/rest-api/rate-limits/",
+        "openapi_url": "https://raw.githubusercontent.com/figma/rest-api-spec/main/openapi/openapi.yaml",
+        "terms": {"url": "https://www.figma.com/legal/developer-terms/",
+                  "quote": "Figma may change the fees it charges for access to or use of the Developer Resources (including by "
+                           "introducing or modifying rate limits) on thirty days' written notice"},
+        "verified_at": "2026-10-20",
+    },
+    "twilio.com": {
+        "auth": [{"method": "api_key", "source_url": "https://www.twilio.com/docs/usage/requests-to-twilio"}],
+        "key_signup_url": "https://www.twilio.com/docs/usage/requests-to-twilio",
+        "rate_limits_url": "https://www.twilio.com/docs/usage/rest-api-best-practices",
+        "official_mcp": [{"endpoint": "https://mcp.twilio.com/docs", "doc_url": "https://www.twilio.com/docs/ai/mcp"}],
+        "terms": {"url": "https://www.twilio.com/en-us/legal/aup",
+                  "quote": "Transmitting code, files, scripts, agents, or programs intended to do harm, including viruses or "
+                           "malware, or using automated means, such as bots, to gain access to or use the Services."},
+        "verified_at": "2026-10-20",
+    },
+    "vercel.com": {
+        "auth": [{"method": "api_key", "source_url": "https://vercel.com/docs/rest-api"}],
+        "key_signup_url": "https://vercel.com/docs/rest-api/getting-started",
+        "rate_limits_url": "https://vercel.com/docs/rest-api",
+        "verified_at": "2026-10-20",
+    },
+    "netlify.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/"},
+            {"method": "oauth2", "source_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/"},
+        ],
+        "key_signup_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/",
+        "rate_limits_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/",
+        "openapi_url": "https://raw.githubusercontent.com/netlify/open-api/master/swagger.yml",
+        "verified_at": "2026-10-20",
+    },
+    "digitalocean.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://docs.digitalocean.com/reference/api/create-personal-access-token/"},
+            {"method": "oauth2", "source_url": "https://docs.digitalocean.com/reference/api/oauth/"},
+        ],
+        "key_signup_url": "https://docs.digitalocean.com/reference/api/create-personal-access-token/",
+        "official_mcp": [{"endpoint": "https://mcp.digitalocean.com/mcp",
+                          "doc_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"}],
+        "verified_at": "2026-10-20",
+    },
+    "sentry.io": {
+        "auth": [
+            {"method": "pat", "source_url": "https://docs.sentry.io/api/auth/"},
+            {"method": "api_key", "source_url": "https://docs.sentry.io/api/auth/"},
+            {"method": "oauth2", "source_url": "https://docs.sentry.io/api/auth/"},
+        ],
+        "key_signup_url": "https://docs.sentry.io/api/guides/create-auth-token/",
+        "rate_limits_url": "https://docs.sentry.io/api/ratelimits/",
+        "verified_at": "2026-10-20",
+    },
+    "datadoghq.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.datadoghq.com/api/latest/"}],
+        "key_signup_url": "https://docs.datadoghq.com/account_management/api-app-keys/",
+        "rate_limits_url": "https://docs.datadoghq.com/api/latest/rate-limits/",
+        "verified_at": "2026-10-20",
+    },
+    "huggingface.co": {
+        "auth": [
+            {"method": "pat", "source_url": "https://huggingface.co/docs/hub/security-tokens"},
+            {"method": "oauth2", "source_url": "https://huggingface.co/docs/hub/oauth"},
+        ],
+        "key_signup_url": "https://huggingface.co/docs/hub/security-tokens",
+        "rate_limits_url": "https://huggingface.co/docs/hub/rate-limits",
+        "openapi_url": "https://huggingface.co/.well-known/openapi.json",
+        "official_mcp": [{"endpoint": "https://huggingface.co/mcp", "doc_url": "https://huggingface.co/docs/hub/agents-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "anthropic.com": {
+        "auth": [{"method": "api_key", "source_url": "https://platform.claude.com/docs/en/manage-claude/authentication"}],
+        "key_signup_url": "https://platform.claude.com/docs/en/get-api-key",
+        "rate_limits_url": "https://platform.claude.com/docs/en/api/rate-limits",
+        "terms": {"url": "https://www.anthropic.com/legal/commercial-terms",
+                  "quote": "Customer is responsible for all activity under its account."},
+        "verified_at": "2026-10-20",
+    },
+    "perplexity.ai": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.perplexity.ai/docs/getting-started/quickstart"}],
+        "key_signup_url": "https://docs.perplexity.ai/docs/getting-started/quickstart",
+        "rate_limits_url": "https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers",
+        "official_mcp": [{"endpoint": "https://api.perplexity.ai/mcp",
+                          "doc_url": "https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server"}],
+        "verified_at": "2026-10-20",
+    },
+    "mistral.ai": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key"}],
+        "key_signup_url": "https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key",
+        "free_tier": {"quote": "Free mode: API access is enabled by default with no credit card required. Usage and rate limits apply.",
+                      "source_url": "https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key"},
+        "terms": {"url": "https://legal.mistral.ai/terms/commercial-terms-of-service/",
+                  "quote": "Customer is solely responsible for all use of the Outputs and evaluating the Output for improper "
+                           "bias, accuracy, responsiveness, and appropriateness for Customer’s use case."},
+        "verified_at": "2026-10-20",
+    },
+    "groq.com": {
+        "auth": [{"method": "api_key", "source_url": "https://console.groq.com/docs/quickstart"}],
+        "key_signup_url": "https://console.groq.com/docs/quickstart",
+        "rate_limits_url": "https://console.groq.com/docs/rate-limits",
+        "terms": {"url": "https://console.groq.com/docs/legal/services-agreement",
+                  "quote": "Customer may not resell or lease access to its Account."},
+        "verified_at": "2026-10-20",
+    },
+    "together.ai": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.together.ai/docs/api-keys-authentication"}],
+        "key_signup_url": "https://docs.together.ai/docs/api-keys-authentication",
+        "rate_limits_url": "https://docs.together.ai/docs/serverless/rate-limits",
+        "verified_at": "2026-10-20",
+    },
+    "deepseek.com": {
+        "auth": [{"method": "api_key", "source_url": "https://api-docs.deepseek.com/"}],
+        "key_signup_url": "https://api-docs.deepseek.com/",
+        "rate_limits_url": "https://api-docs.deepseek.com/quick_start/rate_limit/",
+        "verified_at": "2026-10-20",
+    },
+    "x.ai": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.x.ai/developers/quickstart"}],
+        "key_signup_url": "https://docs.x.ai/developers/quickstart",
+        "rate_limits_url": "https://docs.x.ai/developers/rate-limits",
+        "official_mcp": [{"endpoint": "https://docs.x.ai/api/mcp", "doc_url": "https://docs.x.ai/developers/docs-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "openrouter.ai": {
+        "auth": [
+            {"method": "api_key", "source_url": "https://openrouter.ai/docs/api_reference/authentication"},
+            {"method": "oauth2", "source_url": "https://openrouter.ai/docs/guides/overview/auth/oauth"},
+        ],
+        "key_signup_url": "https://openrouter.ai/docs/api_reference/authentication",
+        "rate_limits_url": "https://openrouter.ai/docs/api_reference/limits",
+        "openapi_url": "https://openrouter.ai/openapi.json",
+        "official_mcp": [{"endpoint": "https://mcp.openrouter.ai/mcp", "doc_url": "https://openrouter.ai/docs/guides/overview/mcp-server"}],
+        "verified_at": "2026-10-20",
+    },
+    "elevenlabs.io": {
+        "auth": [{"method": "api_key", "source_url": "https://elevenlabs.io/docs/overview/administration/workspaces/api-keys"}],
+        "key_signup_url": "https://elevenlabs.io/docs/eleven-api/quickstart",
+        "verified_at": "2026-10-20",
+    },
+    "supabase.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://supabase.com/docs/reference/api/introduction"},
+            {"method": "oauth2", "source_url": "https://supabase.com/docs/reference/api/introduction"},
+        ],
+        "key_signup_url": "https://supabase.com/docs/guides/platform/personal-access-tokens",
+        "rate_limits_url": "https://supabase.com/docs/reference/api/introduction",
+        "openapi_url": "https://api.supabase.com/api/v1-json",
+        "terms": {"url": "https://supabase.com/terms",
+                  "quote": "Customer shall not use the Services for any purposes beyond the scope of the access granted in this Agreement."},
+        "verified_at": "2026-10-20",
+    },
+    "linear.app": {
+        "auth": [
+            {"method": "pat", "source_url": "https://linear.app/developers/graphql"},
+            {"method": "oauth2", "source_url": "https://linear.app/developers/graphql"},
+        ],
+        "key_signup_url": "https://linear.app/developers/graphql",
+        "rate_limits_url": "https://linear.app/developers/rate-limiting",
+        "verified_at": "2026-10-20",
+    },
+    "shopify.com": {
+        "auth": [
+            {"method": "oauth2", "source_url": "https://shopify.dev/docs/api/usage/authentication"},
+            {"method": "api_key", "source_url": "https://shopify.dev/docs/api/usage/authentication"},
+        ],
+        "key_signup_url": "https://shopify.dev/docs/api/usage/authentication",
+        "rate_limits_url": "https://shopify.dev/docs/api/usage/limits",
+        "sandbox_url": "https://shopify.dev/docs/apps/build/stores/development-stores",
+        "terms": {"url": "https://www.shopify.com/legal/api-terms",
+                  "quote": "Stay within the limits we set for API calls, and keep your app up to date with API changes."},
+        "verified_at": "2026-10-20",
+    },
+    "paypal.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://developer.paypal.com/api/rest/authentication"}],
+        "key_signup_url": "https://developer.paypal.com/api/rest/authentication",
+        "sandbox_url": "https://developer.paypal.com/sandbox-testing/overview",
+        "terms": {"url": "https://www.paypal.com/us/legalhub/paypal/xdeveloper-full",
+                  "quote": "PayPal may also impose limits on certain features and services or restrict your access to parts of "
+                           "or all of the Developer’s Tools without notice or liability."},
+        "verified_at": "2026-10-20",
+    },
+    "squareup.com": {
+        "auth": [
+            {"method": "pat", "source_url": "https://developer.squareup.com/docs/build-basics/access-tokens"},
+            {"method": "oauth2", "source_url": "https://developer.squareup.com/docs/build-basics/access-tokens"},
+        ],
+        "key_signup_url": "https://developer.squareup.com/docs/get-started/create-account-and-application",
+        "sandbox_url": "https://developer.squareup.com/docs/devtools/sandbox/overview",
+        "official_mcp": [{"endpoint": "https://mcp.squareup.com/mcp", "doc_url": "https://developer.squareup.com/docs/mcp"}],
+        "terms": {"url": "https://squareup.com/us/en/legal/general/developers",
+                  "quote": "If Square believes that you have attempted to exceed or circumvent these limitations, your ability to "
+                           "use the Developer Tools and Content may be temporarily or permanently blocked."},
+        "verified_at": "2026-10-20",
+    },
+    "spotify.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://developer.spotify.com/documentation/web-api/concepts/authorization"}],
+        "key_signup_url": "https://developer.spotify.com/documentation/web-api/concepts/apps",
+        "rate_limits_url": "https://developer.spotify.com/documentation/web-api/concepts/rate-limits",
+        "terms": {"url": "https://developer.spotify.com/terms",
+                  "quote": "Except as otherwise set out in these Developer Terms, you may not store, aggregate or create "
+                           "compilations or databases of Spotify Content, other than as strictly necessary to operate your SDA."},
+        "verified_at": "2026-10-20",
+    },
+    "twitch.tv": {
+        "auth": [
+            {"method": "oauth2", "source_url": "https://dev.twitch.tv/docs/authentication/"},
+            {"method": "device_code", "source_url": "https://dev.twitch.tv/docs/authentication/"},
+        ],
+        "key_signup_url": "https://dev.twitch.tv/docs/authentication/register-app/",
+        "rate_limits_url": "https://dev.twitch.tv/docs/api/guide/",
+        "verified_at": "2026-10-20",
+    },
+    "kakao.com": {
+        "auth": [
+            {"method": "api_key", "source_url": "https://developers.kakao.com/docs/ko/getting-started/app-key-migration"},
+            {"method": "oauth2", "source_url": "https://developers.kakao.com/docs/ko/kakaologin/rest-api"},
+        ],
+        "key_signup_url": "https://developers.kakao.com/docs/ko/getting-started/kakao-developers",
+        "rate_limits_url": "https://developers.kakao.com/docs/ko/getting-started/quota",
+        "verified_at": "2026-10-20",
+    },
+    "tosspayments.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.tosspayments.com/reference/using-api/authorization"}],
+        "key_signup_url": "https://docs.tosspayments.com/reference/using-api/api-keys",
+        "verified_at": "2026-10-20",
+    },
+    "replicate.com": {
+        "auth": [{"method": "api_key", "source_url": "https://replicate.com/docs/topics/security/api-tokens"}],
+        "key_signup_url": "https://replicate.com/docs/topics/security/api-tokens",
+        "rate_limits_url": "https://replicate.com/docs/topics/predictions/rate-limits",
+        "openapi_url": "https://api.replicate.com/openapi.json",
+        "terms": {"url": "https://replicate.com/terms",
+                  "quote": "You are responsible for any and all activities or actions that occur under your Account and/or Login Credentials"},
+        "verified_at": "2026-10-20",
+    },
+    "coinbase.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.cdp.coinbase.com/api-reference/v2/authentication"}],
+        "key_signup_url": "https://docs.cdp.coinbase.com/get-started/initial-setup",
+        "rate_limits_url": "https://docs.cdp.coinbase.com/api-reference/v2/rate-limits",
+        "openapi_url": "https://docs.cdp.coinbase.com/api-reference/v2/cdp-api-v2.yaml",
+        "official_mcp": [{"endpoint": "https://agents.coinbase.com/mcp",
+                          "doc_url": "https://docs.cdp.coinbase.com/ai-agents/coinbase-for-agents/coinbase-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "plaid.com": {
+        "auth": [{"method": "api_key", "source_url": "https://plaid.com/docs/api/"}],
+        "key_signup_url": "https://plaid.com/docs/api/",
+        "sandbox_url": "https://plaid.com/docs/api/sandbox/",
+        "openapi_url": "https://raw.githubusercontent.com/plaid/plaid-openapi/master/2020-09-14.yml",
+        "verified_at": "2026-10-20",
+    },
+    "mongodb.com": {
+        "auth": [
+            {"method": "oauth2", "source_url": "https://www.mongodb.com/docs/atlas/api/api-authentication/"},
+            {"method": "api_key", "source_url": "https://www.mongodb.com/docs/atlas/api/api-authentication/"},
+        ],
+        "key_signup_url": "https://www.mongodb.com/docs/atlas/api/api-authentication/",
+        "rate_limits_url": "https://www.mongodb.com/docs/atlas/api/api-rate-limit/",
+        "verified_at": "2026-10-20",
+    },
+    "sendgrid.com": {
+        "auth": [{"method": "api_key", "source_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication"}],
+        "key_signup_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication",
+        "rate_limits_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits",
+        "verified_at": "2026-10-20",
+    },
+    "render.com": {
+        "auth": [{"method": "api_key", "source_url": "https://api-docs.render.com/reference/authentication"}],
+        "key_signup_url": "https://api-docs.render.com/reference/authentication",
+        "rate_limits_url": "https://api-docs.render.com/reference/rate-limiting",
+        "verified_at": "2026-10-20",
+    },
 }
 # Separate hosts of the same publisher and API share one bundle.
 for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so", "twitter.com": "x.com",
-                         "wikimedia.org": "wikipedia.org"}.items():
+                         "wikimedia.org": "wikipedia.org", "stackoverflow.com": "stackexchange.com"}.items():
     OFFICIAL_ACCESS[_alias] = OFFICIAL_ACCESS[_primary]
 
 
