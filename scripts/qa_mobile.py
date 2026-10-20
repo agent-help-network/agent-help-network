@@ -52,12 +52,7 @@ def main() -> None:
                             const box = el.getBoundingClientRect();
                             return {tag: el.tagName, text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 30), outline: getComputedStyle(el).outlineStyle, visible: box.width > 0 && box.height > 0 && box.left < innerWidth && box.right > 0 && box.top < innerHeight && box.bottom > 0};
                         }""")
-                        # <video controls> is exempt from the outline measurement: Chrome keeps document.activeElement on the
-                        # <video> while Tab moves through its built-in controls (4 stops), and draws each focus indicator
-                        # inside the native control UI, so the host element's own outline is always "none" by design.
-                        # The indicators were confirmed by screenshot in real Chrome; the element must still be on screen.
-                        native_focus_ui = state["tag"] == "VIDEO"
-                        if (state["outline"] == "none" and not native_focus_ui) or not state["visible"]:
+                        if state["outline"] == "none" or not state["visible"]:
                             failures.append((width, route, "keyboard focus", state))
                         focused.add((state["tag"], state["text"]))
                     if len(focused) < min(expected, 2):
