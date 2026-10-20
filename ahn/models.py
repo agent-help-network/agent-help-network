@@ -236,8 +236,9 @@ class AccessProfile(StrictModel):
     source_urls: dict[str, str]
     fetched_at: datetime | None = None
     freshness: Literal["fresh", "stale", "pending"]
-    # Present only while a read is queued and no definitive answer exists: ask again once after this many seconds.
-    retry_after_seconds: int | None = Field(default=None, ge=1, le=3600)
+    # Present only while a read is queued and no definitive answer exists: ask again once after this many
+    # seconds. Left out of the JSON otherwise (never serialized as null).
+    retry_after_seconds: int | None = Field(default=None, ge=1, le=3600, exclude_if=lambda value: value is None)
     note: str
 
 

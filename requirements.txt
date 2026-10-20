@@ -7,3 +7,4 @@ dnspython>=2.6,<3
 urllib3>=2,<3
 mcp==2.3.0
 cryptography>=42
+pydantic>=2.12,<3

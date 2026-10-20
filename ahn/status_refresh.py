@@ -13,6 +13,8 @@ import re
 import socket
 import ssl
 import threading
+import time
+import concurrent.futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -25,6 +27,7 @@ from psycopg.types.json import Jsonb
 
 # The service's reader version recorded with every stored read (provenance), as for robots.txt reads.
 from .access_profile import USER_AGENT as READER_VERSION
+from .access_profile import _resolve, read_capped
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 from .settings import Settings
@@ -1030,6 +1033,8 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "uvm.edu": ("University of Vermont IT Service Status", "https://itstatus.uvm.edu/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
+FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts
+_clock = time.monotonic  # patched in tests
 INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 _SOURCE_LOCKS = {host: threading.Lock() for host in SOURCES}
 _STATUSPAGE_CNAME = re.compile(r"^([a-z0-9]{8,32})\.stspg-customer\.com\.$")
@@ -1063,7 +1068,10 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None) -> t
         raise FeedFailure("no_cname")
     cname, page_id = target
     status_host = f"status.{site_host}"
-    addresses = {item[4][0] for item in socket.getaddrinfo(cname, 443, type=socket.SOCK_STREAM)}
+    try:
+        addresses = _resolve(cname, 2.0)  # in a worker thread: a stalled resolver cannot hold the reader
+    except concurrent.futures.TimeoutError:
+        raise FeedFailure("timeout") from None
     if not addresses or len(addresses) > 16 or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
         raise FeedFailure("not_public")
     pool = urllib3.HTTPSConnectionPool(
@@ -1078,9 +1086,9 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None) -> t
         try:
             if response.status != 200:
                 raise FeedFailure(f"http_{response.status}")
-            body = response.read(32_769)
-            if len(body) > 32_768:
-                raise FeedFailure("too_large")
+            body, failure = read_capped(response, 32_768, budget=FEED_READ_BUDGET)
+            if failure:
+                raise FeedFailure("too_large" if failure == "too_large" else "timeout")
         finally:
             response.release_conn()
     finally:
@@ -1280,10 +1288,14 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
         data = bytearray()
+        deadline = _clock() + FEED_READ_BUDGET
         for chunk in response.iter_bytes():
             data.extend(chunk)
             if len(data) > cap:
                 raise FeedFailure("too_large")
+            if _clock() > deadline:
+                # httpx's timeout is per operation; a feed that trickles bytes is cut off here.
+                raise FeedFailure("timeout")
     if digest is not None:
         digest["body_sha256"] = sha256_hex(bytes(data))
     body = httpx.Response(200, content=bytes(data)).json()

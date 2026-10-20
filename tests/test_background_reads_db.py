@@ -104,7 +104,7 @@ def test_processing_fills_the_cache_with_provenance_and_empties_the_queue(db, mo
     monkeypatch.setenv("AHN_OPERATOR_ID", "ops.example.net")
     first = service.check(db, "fill-example.org")
     assert first["access_profile"]["freshness"] == "pending"
-    assert background_reads.process_due(db) == {"claimed": 2, "done": 2, "failed": 0, "dropped": 0}
+    assert background_reads.process_due(db) == {"claimed": 2, "done": 2, "failed": 0, "dropped": 0, "skipped": 0}
     assert rows(db, "SELECT * FROM background_reads") == []
     answer = service.check(db, "fill-example.org")
     profile = answer["access_profile"]
@@ -137,7 +137,7 @@ def test_a_job_that_raises_backs_off_and_is_dropped_after_five_attempts(db, monk
         background_reads.enqueue(conn, [("access_profile", "broken-example.org")])
     for attempt in range(1, 5):
         result = background_reads.process_due(db)
-        assert result == {"claimed": 1, "done": 0, "failed": 1, "dropped": 0}
+        assert result == {"claimed": 1, "done": 0, "failed": 1, "dropped": 0, "skipped": 0}
         job, = rows(db, "SELECT attempts,claimed_at,not_before - now() AS wait FROM background_reads")
         assert job["attempts"] == attempt and job["claimed_at"] is None
         expected = timedelta(minutes=min(2 ** attempt, 60))
@@ -145,7 +145,7 @@ def test_a_job_that_raises_backs_off_and_is_dropped_after_five_attempts(db, monk
         assert background_reads.process_due(db)["claimed"] == 0  # not due again before the backoff ends
         with connect(db) as conn:
             conn.execute("UPDATE background_reads SET not_before=now()")
-    assert background_reads.process_due(db) == {"claimed": 1, "done": 0, "failed": 1, "dropped": 1}
+    assert background_reads.process_due(db) == {"claimed": 1, "done": 0, "failed": 1, "dropped": 1, "skipped": 0}
     assert rows(db, "SELECT * FROM background_reads") == []
 
 
@@ -157,11 +157,12 @@ def test_claims_skip_locked_rows_and_honour_the_lease(db):
     with connect(db) as holder:
         # Another processor is in the middle of claiming a-example.org.
         holder.execute("SELECT * FROM background_reads WHERE site_host='a-example.org' FOR UPDATE")
-        claimed = background_reads._claim(db, 5)
+        claimed, _ = background_reads._claim(db, 5)
         assert [job["site_host"] for job in claimed] == ["b-example.org"]  # a is locked, c is leased
+        assert claimed[0]["attempts"] == 1  # the attempt is counted when the job is claimed
     with connect(db) as conn:
         conn.execute("UPDATE background_reads SET claimed_at=now() - interval '6 minutes' WHERE site_host='c-example.org'")
-    assert sorted(job["site_host"] for job in background_reads._claim(db, 5)) == ["a-example.org", "c-example.org"]
+    assert sorted(job["site_host"] for job in background_reads._claim(db, 5)[0]) == ["a-example.org", "c-example.org"]
 
 
 def test_two_processors_never_read_the_same_host_twice(db, monkeypatch):
@@ -249,6 +250,7 @@ def test_export_keeps_only_published_real_unwithdrawn_reports(db, monkeypatch):
     record = json.loads(out.getvalue())
     assert record["kind"] == "observation" and record["payload"]["site_host"] == "export-example.org"
     assert record["observed_at"].endswith(":00:00Z") and record["signature"] is None
+    assert "received_channel" not in record["payload"]  # the export holds only what the public answer shows
     text = out.getvalue()
     for own in (kept, hidden, pending, synthetic, withdrawn):
         assert str(own) not in text
@@ -266,3 +268,116 @@ def test_export_of_profiles_and_status_rows(db, monkeypatch):
     assert record["payload"]["llms_sha256"] == hashlib.sha256(LLMS).hexdigest()
     assert record["vantage"]["kind"] == "datacenter" and record["reader_version"].startswith("AgentHelpNetwork/")
     assert export.export(db, "status", io.StringIO()) == 0  # no status feed was read
+
+
+def test_exhausted_rows_are_dropped_instead_of_claimed(db):
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", "spent-example.org"), ("access_profile", "crashed-example.org")])
+        conn.execute("UPDATE background_reads SET attempts=%s WHERE site_host='spent-example.org'", (background_reads.MAX_ATTEMPTS,))
+        # A processor died mid-job on its last attempt: the expired lease makes the row exhausted too.
+        conn.execute("UPDATE background_reads SET attempts=%s, claimed_at=now() - interval '10 minutes' WHERE site_host='crashed-example.org'",
+                     (background_reads.MAX_ATTEMPTS,))
+    assert background_reads.process_due(db) == {"claimed": 0, "done": 0, "failed": 0, "dropped": 2, "skipped": 0}
+    assert rows(db, "SELECT * FROM background_reads") == []
+
+
+def test_a_job_taken_over_after_the_claim_is_skipped(db, monkeypatch):
+    reader = Reader()
+    monkeypatch.setattr(background_reads, "read_profile_file", reader)
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", "taken-example.org")])
+    real_claim = background_reads._claim
+
+    def claim_then_lose_the_lease(settings, limit):
+        jobs, dropped = real_claim(settings, limit)
+        with connect(settings) as conn:  # another processor re-claimed it after our lease looked expired
+            conn.execute("UPDATE background_reads SET claimed_at=clock_timestamp() WHERE site_host='taken-example.org'")
+        return jobs, dropped
+
+    monkeypatch.setattr(background_reads, "_claim", claim_then_lose_the_lease)
+    assert background_reads.process_due(db)["skipped"] == 1
+    assert reader.calls == [] and len(rows(db, "SELECT * FROM background_reads")) == 1
+
+
+def test_profiles_go_first_then_discovery_then_feeds(db):
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("status_feed", "order-example.org")])
+        conn.execute("UPDATE background_reads SET requested_at=now() - interval '1 hour'")
+        background_reads.enqueue(conn, [("status_discovery", "order-example.org"), ("access_profile", "order-example.org")])
+    jobs, _ = background_reads._claim(db, 3)
+    assert [job["kind"] for job in jobs] == ["access_profile", "status_discovery", "status_feed"]
+    assert [job["kind"] for job in background_reads._claim(db, 3)[0]] == []
+
+
+def test_the_queue_is_capped(db, monkeypatch):
+    monkeypatch.setattr(background_reads, "QUEUE_CAP", 2)
+    with connect(db) as conn:
+        assert background_reads.enqueue(conn, [("access_profile", "one-example.org"), ("access_profile", "two-example.org")]) == [
+            ("access_profile", "one-example.org"), ("access_profile", "two-example.org")]
+        assert background_reads.enqueue(conn, [("access_profile", "three-example.org"), ("access_profile", "one-example.org")]) == [
+            ("access_profile", "one-example.org")]  # the full queue takes nothing new; a queued job still counts
+    answer = service.check(db, "four-example.org")
+    assert answer["access_profile"]["robots_status"] == "pending" and "retry_after_seconds" not in answer["access_profile"]
+
+
+def test_only_hosts_inside_the_lookup_register_get_a_read(db, monkeypatch):
+    monkeypatch.setattr(service, "QUERIED_HOST_CAP", 0)
+    answer = service.check(db, "unregistered-example.org")
+    assert "retry_after_seconds" not in answer["access_profile"]
+    assert rows(db, "SELECT kind FROM background_reads") == []
+    assert rows(db, "SELECT site_host FROM queried_hosts") == []
+
+
+def test_retry_after_follows_the_queue_position(db, monkeypatch):
+    monkeypatch.setattr(background_reads, "worker_running", lambda: True)
+    assert service.check(db, "alone-example.org")["access_profile"]["retry_after_seconds"] == background_reads.RETRY_AFTER_MIN
+    with connect(db) as conn:
+        conn.execute("DELETE FROM background_reads")
+        background_reads.enqueue(conn, [("access_profile", f"ahead{index}-example.org") for index in range(30)])
+        conn.execute("UPDATE background_reads SET requested_at=now() - interval '1 minute' WHERE site_host LIKE 'ahead%%'")
+    # 30 jobs ahead, two threads at about JOB_SECONDS each: (30 + 1) * 2 / 2 = 31 seconds.
+    assert service.check(db, "behind-example.org")["access_profile"]["retry_after_seconds"] == 31
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", "later-example.org")])
+        conn.execute("UPDATE background_reads SET not_before=now() + interval '1 hour' WHERE site_host='later-example.org'")
+    assert service.check(db, "later-example.org")["access_profile"]["retry_after_seconds"] == background_reads.RETRY_AFTER_MAX
+
+
+def test_discovery_records_its_attempt_time_when_it_runs(db):
+    service.check(db, "discover-later-example.org")
+    assert rows(db, "SELECT last_discovery_at FROM queried_hosts") == [{"last_discovery_at": None}]
+    assert ("status_discovery",) in {(row["kind"],) for row in rows(db, "SELECT kind FROM background_reads")}
+    background_reads.process_due(db)
+    assert rows(db, "SELECT last_discovery_at FROM queried_hosts")[0]["last_discovery_at"] is not None
+    # Within a day nothing is queued again.
+    service.check(db, "discover-later-example.org")
+    assert rows(db, "SELECT kind FROM background_reads WHERE kind='status_discovery'") == []
+
+
+def test_export_leaves_out_reads_whose_last_attempt_failed(db):
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,llms_txt_status,last_error_at,robots_detail)
+                        VALUES ('mixed-example.org', now() - interval '3 hours', 'absent', 'absent', now(), 'dns_timeout'),
+                               ('clean-example.org', now() - interval '3 hours', 'absent', 'absent', NULL, 'http_404')""")
+        conn.execute("""INSERT INTO status_sources (site_host,source_name,status_page_url,api_url) VALUES
+                        ('mixed-example.org','Mixed Status','https://status.mixed-example.org/','https://status.mixed-example.org/api/v2/status.json')""")
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail)
+                        VALUES ('mixed-example.org','none',now() - interval '3 hours',now(),'http_502')""")
+    out = io.StringIO()
+    assert export.export(db, "access_profile", out) == 1
+    assert json.loads(out.getvalue())["payload"]["site_host"] == "clean-example.org"
+    assert export.export(db, "status", io.StringIO()) == 0
+
+
+def test_report_export_defaults_to_the_public_seven_days(db):
+    with connect(db) as conn:
+        incident = conn.execute("INSERT INTO incidents (site_host,task_step,error_class,visibility) VALUES "
+                                "('old-export-example.org','site_open','site_access','published') RETURNING id").fetchone()["id"]
+        conn.execute(
+            """INSERT INTO observations (incident_id,reporter_id,observed_at,received_at,agent_family,attempt_actor,attempt_env,outcome,
+                   challenge_vendor,challenge_kind,synthetic,review_state)
+               VALUES (%s,%s,now() - interval '10 days',now() - interval '10 days','other','agent','unknown','blocked','none','none',false,'published')""",
+            (incident, PUBLIC_REPORTER_ID),
+        )
+    assert export.export(db, "observation", io.StringIO()) == 0
+    assert export.export(db, "observation", io.StringIO(), all_reports=True) == 1

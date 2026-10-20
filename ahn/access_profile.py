@@ -198,7 +198,35 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
 
 MAX_ADDRESSES_TRIED = 3
 CONNECT_BUDGET_FACTOR = 2  # all connection attempts of one read share timeout_connect * this
+# Whole-body time limit. The per-receive read timeout alone lets a host that trickles one byte at a
+# time hold a reader indefinitely; past this budget the read ends as read_timeout.
+BODY_READ_BUDGET = 10.0
 _clock = time.monotonic  # patched in tests
+
+
+def read_capped(response, cap_bytes: int, *, budget: float = BODY_READ_BUDGET, clock=None) -> tuple[bytes | None, str | None]:
+    """Read at most cap_bytes + 1 bytes of a streamed urllib3 response within ``budget`` seconds.
+
+    Returns (body, None), or (None, 'too_large') / (None, 'read_timeout'). Chunks are read with
+    read1, one receive at a time, so the budget is checked between receives: a read ends at most one
+    receive timeout after the budget. A stand-in without read1 gets one bounded read.
+    """
+    read1 = getattr(response, "read1", None)
+    if read1 is None:
+        body = response.read(cap_bytes + 1)
+        return (None, "too_large") if len(body) > cap_bytes else (body, None)
+    clock = clock or _clock
+    deadline = clock() + budget
+    data = bytearray()
+    while True:
+        if clock() > deadline:
+            return None, "read_timeout"
+        chunk = read1(min(65_536, cap_bytes + 1 - len(data)))
+        if not chunk:
+            return bytes(data), None
+        data.extend(chunk)
+        if len(data) > cap_bytes:
+            return None, "too_large"
 
 
 def _transport_label(exc: BaseException) -> str:
@@ -309,9 +337,11 @@ def fetch_public_file(
                     return ("refused", None, f"http_{status}")
                 if status != 200:
                     return ("error", None, f"http_{status}")
-                body = response.read(cap_bytes + 1)
-                if len(body) > cap_bytes:
+                body, failure = read_capped(response, cap_bytes)
+                if failure == "too_large":
                     return ("too_large", None, "too_large")
+                if failure:
+                    return ("error", None, failure)
                 if body.lstrip()[:12].lower().startswith(_HTML_MARKERS):
                     # A web page served for an unknown path (soft 404) is not a policy file.
                     return ("invalid", None, "html_body")
@@ -391,14 +421,17 @@ def _cache_window(row, max_age: timedelta) -> timedelta:
     return min(max_age, ERROR_RETRY) if failed_last else max_age
 
 
-def pending_profile(site_host: str, retry_after_seconds: int) -> dict:
-    """The answer for an eligible host with no cached read yet: a read is queued, nothing is known."""
-    return {
+def pending_profile(site_host: str, retry_after_seconds: int | None) -> dict:
+    """The answer for an eligible host with no cached read yet; retry_after_seconds only when a read is queued."""
+    profile = {
         "robots_status": "pending", "robots": None, "robots_detail": None,
         "llms_txt_status": "pending", "llms_detail": None, "read_host": site_host,
         "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
-        "fetched_at": None, "freshness": "pending", "retry_after_seconds": retry_after_seconds,
+        "fetched_at": None, "freshness": "pending",
     }
+    if retry_after_seconds is not None:
+        profile["retry_after_seconds"] = retry_after_seconds
+    return profile
 
 
 def cached_profile(conn, site_host: str, *, now: datetime | None = None, max_age_hours: int = 24) -> tuple[dict | None, bool]:

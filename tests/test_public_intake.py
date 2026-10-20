@@ -215,7 +215,7 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
                 assert first["provider_status"]["freshness"] == "pending" and first["provider_status"]["indicator"] is None
                 assert first["provider_source_state"] == "feed_connected"
                 assert queued(settings) == [("status_feed", "github.com")]
-                assert run_queue(settings) == {"claimed": 1, "done": 1, "failed": 0, "dropped": 0}
+                assert run_queue(settings) == {"claimed": 1, "done": 1, "failed": 0, "dropped": 0, "skipped": 0}
                 assert queued(settings) == []
         after = response.json()
         assert after["provider_status"]["indicator"] == "none"
@@ -239,15 +239,21 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
     for attempt in range(5):
         unmapped = client.get("/v1/incidents/check", params={"site_host": "example.org"}).json()
         if attempt == 0:
-            # Discovery of status.example.org is queued once a day, not run inside the lookup.
+            # Discovery of status.example.org is queued once a day, not run inside the lookup; the attempt
+            # time is recorded when it actually runs.
             assert queued(settings) == [("status_discovery", "example.org")]
+            assert unmapped["provider_discovery_attempted_at"] is None
+            run_queue(settings)
+        else:
+            assert unmapped["provider_discovery_attempted_at"] is not None
         assert unmapped["provider_status"] is None
         assert unmapped["provider_source_state"] == "not_verified_by_current_methods"
-        assert unmapped["provider_discovery_attempted_at"] is not None
         assert unmapped["lookup_activity"]["volume_band"] == ("1-4" if attempt < 4 else "5-9")
     for _ in range(5):
         unmapped = client.get("/v1/incidents/check", params={"site_host": "example.org"}).json()
     assert unmapped["lookup_activity"]["volume_band"] == "10-49"
+    client.get("/en/search", params={"site_host": "newexample.net"})
+    run_queue(settings)
     first_page = client.get("/en/search", params={"site_host": "newexample.net"})
     assert first_page.status_code == 200
     assert "1-4 requests" in first_page.text
@@ -286,10 +292,10 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     pending = client.get("/v1/incidents/check", params={"site_host": "newsite.org"}).json()
     assert reads == []
     assert pending["access_profile"]["robots_status"] == "pending" and pending["access_profile"]["freshness"] == "pending"
-    assert pending["access_profile"]["retry_after_seconds"] == background_reads.RETRY_AFTER_CRON_SECONDS
+    assert pending["access_profile"]["retry_after_seconds"] == background_reads.RETRY_AFTER_MAX  # no worker in tests
     assert pending["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["profile_pending"]}
     assert "profile_pending" in [item["code"] for item in pending["next_checks"]]
-    assert CheckResponse(**pending).access_profile.retry_after_seconds == background_reads.RETRY_AFTER_CRON_SECONDS
+    assert CheckResponse(**pending).access_profile.retry_after_seconds == background_reads.RETRY_AFTER_MAX
     assert ("access_profile", "newsite.org") in queued(settings)
     assert "Reading robots.txt and llms.txt now" in client.get("/en/search", params={"site_host": "newsite.org"}).text
     run_queue(settings)
@@ -476,7 +482,7 @@ def test_first_lookup_discovers_first_party_statuspage(public_client, monkeypatc
     assert queued_first.status_code == 200 and calls == []
     assert queued_first.json()["provider_status"] is None
     assert queued_first.json()["provider_source_state"] == "not_verified_by_current_methods"
-    assert queued_first.json()["provider_discovery_attempted_at"] is not None
+    assert queued_first.json()["provider_discovery_attempted_at"] is None  # recorded when discovery runs
     assert run_queue(settings)["done"] == 1
     first = client.get("/v1/incidents/check", params={"site_host": "discovered-example.org"})
     assert first.status_code == 200
@@ -514,14 +520,15 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
         monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
         client.get("/v1/incidents/check", params={"site_host": "github.com"})
         run_queue(settings)
-    # A lookup within 15 seconds of the last read queues nothing; an older one answers from the cache and queues a refresh.
+    # A fresh statement queues nothing; once it would read as stale (2 hours) a lookup answers from the cache
+    # and queues a refresh.
     client.get("/v1/incidents/check", params={"site_host": "github.com"})
     assert queued(settings) == []
-    age_status_cache(settings, "github.com")
+    age_status_cache(settings, "github.com", 3 * 3600)
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(502))) as remote:
         monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
         before = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
-        assert before["freshness"] == "fresh" and before["indicator"] == "none"  # stale-while-revalidate: the cached value
+        assert before["freshness"] == "stale" and before["indicator"] == "none"  # stale-while-revalidate: the cached value
         assert queued(settings) == [("status_feed", "github.com")]
         run_queue(settings)
         status = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
@@ -533,8 +540,10 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
         assert "Feed read failed:" in page and "http_502" in page
     with connect(settings) as conn:
         assert conn.execute("SELECT last_error_detail FROM status_cache WHERE site_host='github.com'").fetchone()["last_error_detail"] == "http_502"
-    # A later successful read clears the reason again.
-    age_status_cache(settings, "github.com")
+    # A failed refresh is not retried by lookups for FEED_RETRY_MINUTES; a later successful read clears the reason.
+    client.get("/v1/incidents/check", params={"site_host": "github.com"})
+    assert queued(settings) == []
+    age_status_cache(settings, "github.com", 3 * 3600)
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={
         "page": {"updated_at": "2026-10-03T18:00:00Z"}, "status": {"indicator": "none"},
     }))) as remote:

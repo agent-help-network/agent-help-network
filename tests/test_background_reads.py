@@ -7,6 +7,7 @@ on any of them would both be slow and leave a trace.
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import contextmanager
 import time
@@ -70,9 +71,14 @@ class FakeConnection:
             return FakeResult(self.db.profile_row)
         if "count(*) AS n FROM queried_hosts" in sql:
             return FakeResult({"n": 0})
-        if sql.lstrip().startswith("INSERT INTO queried_hosts"):
-            return FakeResult()
+        if sql.lstrip().startswith("INSERT INTO background_reads"):
+            return FakeResult({"kind": params[0]})
+        if sql.lstrip().startswith("WITH me AS"):
+            return FakeResult({"not_before": datetime.now(timezone.utc), "ahead": 0})
         return FakeResult()
+
+    def commit(self):
+        self.db.statements.append("COMMIT")
 
 
 @pytest.fixture
@@ -108,7 +114,7 @@ def lookup(monkeypatch, db, host="fresh-example.org", **kwargs):
 
 def queued(db):
     """The (kind, host) of every background read the lookup queued."""
-    return [params for sql, params in zip(db.statements, db.params) if sql.startswith("INSERT INTO background_reads")]
+    return [tuple(params[:2]) for sql, params in zip(db.statements, db.params) if sql.startswith("INSERT INTO background_reads")]
 
 
 def test_first_lookup_answers_within_100ms_while_every_reader_would_take_3s(monkeypatch, slow_network):
@@ -119,7 +125,7 @@ def test_first_lookup_answers_within_100ms_while_every_reader_would_take_3s(monk
     profile = result["access_profile"]
     assert profile["robots_status"] == "pending" and profile["llms_txt_status"] == "pending"
     assert profile["freshness"] == "pending" and profile["fetched_at"] is None and profile["robots"] is None
-    assert profile["retry_after_seconds"] == background_reads.RETRY_AFTER_CRON_SECONDS  # no worker runs in tests
+    assert profile["retry_after_seconds"] == background_reads.RETRY_AFTER_MAX  # no worker runs in tests: the cron's 5 minutes
     assert profile["read_host"] == "fresh-example.org" and profile["note"] == service.ACCESS_PROFILE_NOTE
     assert profile["source_urls"]["robots_txt"] == "https://fresh-example.org/robots.txt"
     assert result["recommendation"] == {"action": "use_official_path", "confidence": "medium",
@@ -164,6 +170,32 @@ def test_queue_and_metrics_failures_never_fail_the_lookup(monkeypatch, slow_netw
     result, elapsed = lookup(monkeypatch, db)
     assert elapsed < 0.1 and result["access_profile"]["robots_status"] == "pending"
     assert result["evidence_level"] == "no_reports"
+    # Nothing was queued, so nothing tells the caller to come back: no retry time, no profile_pending.
+    assert "retry_after_seconds" not in result["access_profile"]
+    assert "profile_pending" not in [item["code"] for item in result["next_checks"]]
+
+
+def test_registration_is_committed_before_the_reads(monkeypatch, slow_network):
+    db = FakeDatabase()
+    lookup(monkeypatch, db)
+    commit = db.statements.index("COMMIT")
+    assert any(s.startswith("INSERT INTO lookup_metrics") for s in db.statements[:commit])
+    assert any("FROM observations" in s for s in db.statements[commit:])
+
+
+def test_a_full_queue_queues_nothing_and_promises_no_retry(monkeypatch, slow_network):
+    class FullQueue(FakeConnection):
+        def execute(self, sql, params=None):
+            if sql.lstrip().startswith("INSERT INTO background_reads"):
+                self.db.statements.append(" ".join(sql.split()))
+                self.db.params.append(params)
+                return FakeResult(None)  # WHERE count(*) < QUEUE_CAP was false
+            return super().execute(sql, params)
+
+    db = FakeDatabase()
+    monkeypatch.setattr(db, "connect", lambda _settings: FullQueue(db))
+    result, _ = lookup(monkeypatch, db)
+    assert result["access_profile"]["robots_status"] == "pending" and "retry_after_seconds" not in result["access_profile"]
 
 
 def test_subdomains_still_say_profile_not_read_and_queue_nothing(monkeypatch, slow_network):
@@ -253,3 +285,181 @@ def test_the_guard_keeps_tests_off_the_network():
         background_reads.refresh_feed(SETTINGS, "example.org")
     with pytest.raises(RuntimeError):
         background_reads.discover("example.org")
+
+
+# --- whole-body time limits ------------------------------------------------------------------------
+
+class Trickle:
+    """A streamed response that sends one byte per receive, forever."""
+
+    status = 200
+    headers = {}
+
+    def __init__(self, clock):
+        self.clock = clock
+
+    def read1(self, _amount):
+        self.clock[0] += 1.0  # each receive takes a second
+        return b"a"
+
+    def release_conn(self):
+        pass
+
+
+def test_a_trickling_robots_txt_ends_as_read_timeout(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(access_profile, "_clock", lambda: clock[0])
+    monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+
+    class Pool:
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def request(self, *_a, **_kw):
+            return Trickle(clock)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", Pool)
+    assert access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=262_144) == ("error", None, "read_timeout")
+    assert clock[0] <= access_profile.BODY_READ_BUDGET + 2
+
+
+def test_read_capped_returns_the_body_or_too_large():
+    class Chunks:
+        def __init__(self, parts):
+            self.parts = list(parts)
+
+        def read1(self, amount):
+            return self.parts.pop(0)[:amount] if self.parts else b""
+
+    assert access_profile.read_capped(Chunks([b"ab", b"cd"]), 10) == (b"abcd", None)
+    assert access_profile.read_capped(Chunks([b"abcdef", b"gh"]), 6) == (None, "too_large")
+
+
+def test_a_trickling_status_feed_and_discovery_end_as_timeout(monkeypatch):
+    import httpx
+
+    clock = [0.0]
+    monkeypatch.setattr(status_refresh, "_clock", lambda: clock[0])
+
+    def trickle():
+        while True:
+            clock[0] += 1.0
+            yield b" "
+
+    feed = status_refresh.Source("Example Status", "https://status.example.org/", "https://status.example.org/api/v2/status.json")
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=trickle()))) as client:
+        with pytest.raises(status_refresh.FeedFailure) as failure:
+            status_refresh._read_source(feed, client)
+    assert failure.value.label == "timeout" and clock[0] <= status_refresh.FEED_READ_BUDGET + 2
+
+    clock[0] = 0.0
+    monkeypatch.setattr(access_profile, "_clock", lambda: clock[0])
+    monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
+    monkeypatch.setattr(status_refresh, "_resolve", lambda host, timeout: {"93.184.216.34"})
+
+    class Pool:
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def request(self, *_a, **_kw):
+            return Trickle(clock)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(status_refresh.urllib3, "HTTPSConnectionPool", Pool)
+    with pytest.raises(status_refresh.FeedFailure) as failure:
+        status_refresh._read_discovered_statuspage("example.org")
+    assert failure.value.label == "timeout"
+
+
+def test_the_cron_drain_returns_at_its_budget_even_when_a_read_hangs(monkeypatch):
+    started_job = threading.Event()
+
+    def hanging(settings, *, limit, time_budget, stop):
+        started_job.set()
+        time.sleep(3)
+        return {"claimed": 1, "done": 1, "failed": 0, "dropped": 0, "skipped": 0}
+
+    class Count:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=None):
+            return FakeResult({"n": 7})
+
+    monkeypatch.setattr(background_reads, "process_due", hanging)
+    monkeypatch.setattr(background_reads, "connect", lambda _settings: Count())
+    began = time.perf_counter()
+    result = background_reads.drain(SETTINGS, time_budget=0.3)
+    assert time.perf_counter() - began < 1.0 and started_job.is_set()
+    assert result["cut"] == 1 and result["remaining"] == 7
+
+
+def test_the_drain_reports_a_failure_of_its_own_thread(monkeypatch):
+    def broken(settings, *, limit, time_budget, stop):
+        raise RuntimeError("relation background_reads does not exist")
+
+    monkeypatch.setattr(background_reads, "process_due", broken)
+    with pytest.raises(RuntimeError):
+        background_reads.drain(SETTINGS, time_budget=2.0)
+
+
+# --- retry_after_seconds is absent from the JSON unless a read is queued ---------------------------
+
+def _answer(profile):
+    return {
+        "site_host": "example.org", "generated_at": "2026-10-20T00:00:00Z", "synthetic": False, "window_hours": 24,
+        "data_horizon_hours": 168, "current_site_status": "unknown", "evidence_level": "no_reports",
+        "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN", "summary": "x", "failures": 0, "successes": 0,
+        "reporting_sources": 0, "observations": [], "provider_status": None,
+        "provider_source_state": "not_verified_by_current_methods", "access_profile": profile,
+        "recommendation": {"action": "unknown", "confidence": "low", "reasons": []}, "next_checks": [],
+    }
+
+
+FRESH = {"robots_status": "absent", "robots": None, "llms_txt_status": "absent", "read_host": "example.org",
+         "source_urls": {"robots_txt": "https://example.org/robots.txt", "llms_txt": "https://example.org/llms.txt"},
+         "fetched_at": None, "freshness": "fresh", "note": "n"}
+
+
+def test_rest_json_leaves_retry_after_out_unless_a_read_is_queued(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    # ahn.main builds a module-level app from the environment when first imported.
+    monkeypatch.setenv("AHN_DATABASE_URL", os.environ.get("AHN_DATABASE_URL") or "postgresql://invalid/unused")
+    monkeypatch.setenv("AHN_KEY_PEPPER", os.environ.get("AHN_KEY_PEPPER") or "x" * 32)
+    from ahn.main import create_app
+
+    answers = iter([_answer(dict(FRESH)), _answer(dict(FRESH, retry_after_seconds=None)),
+                    _answer({**access_profile.pending_profile("example.org", 7), "note": "n"})])
+    monkeypatch.setattr("ahn.main.check", lambda *args, **kwargs: next(answers))
+    client = TestClient(create_app(SETTINGS))
+    for expected in (False, False, True):
+        response = client.get("/v1/incidents/check", params={"site_host": "example.org"})
+        assert response.status_code == 200
+        assert ('"retry_after_seconds"' in response.text) is expected
+        assert ("retry_after_seconds" in response.json()["access_profile"]) is expected
+    assert response.json()["access_profile"]["retry_after_seconds"] == 7
+
+
+def test_mcp_json_leaves_retry_after_out_unless_a_read_is_queued(monkeypatch):
+    import asyncio
+
+    from ahn import mcp_adapter
+
+    async def fake_api(method, path, *, params=None, payload=None, write=False):
+        return fake_api.answer
+
+    monkeypatch.setattr(mcp_adapter, "call_api", fake_api)
+    for profile, expected in ((dict(FRESH), False), ({**access_profile.pending_profile("example.org", 7), "note": "n"}, True)):
+        fake_api.answer = _answer(profile)
+        result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.org"}))
+        assert ("retry_after_seconds" in result.structured_content["access_profile"]) is expected
+        assert ('"retry_after_seconds"' in result.content[0].text) is expected

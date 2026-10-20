@@ -144,7 +144,8 @@ def main() -> None:
     started = time.monotonic()
     try:
         queue = drain(Settings(database_url, "unused-by-status-refresh"), time_budget=TIME_BUDGET_SECONDS)
-        print(f"background_reads done={queue['done']} failed={queue['failed']} dropped={queue['dropped']} remaining={queue['remaining']}")
+        print(f"background_reads done={queue['done']} failed={queue['failed']} dropped={queue['dropped']} "
+              f"cut={queue.get('cut', 0)} remaining={queue['remaining']}")
     except Exception as exc:  # e.g. migration 020 not applied yet: the seed step still runs
         print(f"background_reads failed={type(exc).__name__}")
     try:

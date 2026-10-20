@@ -298,7 +298,7 @@ def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(mo
     monkeypatch.setattr(auto_review.time, "monotonic", lambda: next(ticks["values"]))
     auto_review.main()
     out = capsys.readouterr().out
-    assert "background_reads done=2 failed=1 dropped=0 remaining=4" in out
+    assert "background_reads done=2 failed=1 dropped=0 cut=0 remaining=4" in out
     # The queue had the whole seed budget; the seeds get what it left.
     assert calls == [("queue", profile_warm.TIME_BUDGET_SECONDS), ("seeds", profile_warm.TIME_BUDGET_SECONDS - 100.0)]
     # A queue that used up the budget leaves the seeds for the next run.

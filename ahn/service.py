@@ -228,11 +228,11 @@ def withdraw(settings: Settings, key: str, observation_id: UUID):
 def _record_lookup(conn, settings: Settings, host: str, error_class: str | None, *, public: bool) -> tuple[bool, bool, bool]:
     """Register the host, count the lookup and gate discovery inside a savepoint; never raises.
 
-    Returns (registered, mapped_source, discovery_queued). Only local database writes happen here:
-    no third-party host is contacted on the lookup path, and a failed write is rolled back to the
-    savepoint without failing the lookup.
+    Returns (registered, mapped_source, discovery_due). Only local database writes happen here:
+    no third-party host is contacted on the lookup path, and a failed write is rolled back without
+    failing the lookup.
     """
-    registered = mapped_source = queued = False
+    registered = mapped_source = discovery_due = False
     eligible = aggregate_eligible_host(host)
     try:
         with conn.transaction():
@@ -252,17 +252,14 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
                     registered = True
                     mapped_source = register_source(conn, host)
                     if not mapped_source and host not in SOURCES:
-                        # At most one discovery attempt per host per day; the read itself is queued.
-                        discover = conn.execute(
-                            """UPDATE queried_hosts SET last_discovery_at=now()
+                        # At most one discovery attempt per host per day. The worker records the attempt
+                        # time (last_discovery_at) when it actually runs the discovery.
+                        discovery_due = bool(conn.execute(
+                            """SELECT 1 AS due FROM queried_hosts
                                WHERE site_host=%s AND (last_discovery_at IS NULL OR last_discovery_at < now() - interval '1 day')
-                               AND NOT EXISTS (SELECT 1 FROM status_sources WHERE site_host=%s AND enabled=true)
-                               RETURNING site_host""",
+                               AND NOT EXISTS (SELECT 1 FROM status_sources WHERE site_host=%s AND enabled=true)""",
                             (host, host),
-                        ).fetchone()
-                        if discover:
-                            background_reads.enqueue(conn, [("status_discovery", host)])
-                            queued = True
+                        ).fetchone())
             if settings.collect_lookup_metrics and eligible and (not public or registered):
                 conn.execute(
                     "INSERT INTO lookup_metrics (day,site_host,error_class,checks) VALUES (CURRENT_DATE,%s,%s,1) ON CONFLICT (day,site_host,error_class) DO UPDATE SET checks=lookup_metrics.checks+1",
@@ -272,20 +269,29 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
         # Registration and metrics are bookkeeping: a failure must not turn a lookup into an error.
         LOG.warning("lookup_record_unavailable")
         return False, False, False
-    return registered, mapped_source, queued
+    return registered, mapped_source, discovery_due
 
 
-def _queue_reads(conn, jobs: list[tuple[str, str]]) -> bool:
-    """Queue background reads inside a savepoint; never raises. True when the worker should look."""
+def _queue_reads(conn, jobs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Queue background reads inside a savepoint; never raises. Returns the jobs now in the queue."""
     if not jobs:
-        return False
+        return []
     try:
         with conn.transaction():
-            background_reads.enqueue(conn, jobs)
+            return background_reads.enqueue(conn, jobs)
     except Exception:
         LOG.warning("background_reads_enqueue_unavailable")
-        return False
-    return True
+        return []
+
+
+def _retry_after(conn, host: str) -> int | None:
+    """When to ask again for a queued profile read, or None (never fails the lookup)."""
+    try:
+        with conn.transaction():
+            return background_reads.estimate_wait(conn, "access_profile", host)
+    except Exception:
+        LOG.warning("background_reads_estimate_unavailable")
+        return None
 
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
@@ -318,7 +324,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     # answers for the site, so www.<apex> reads and counts as <apex>.
     host = policy_host(site_host)
     eligible = aggregate_eligible_host(host)
-    mapped_source = woke = False
+    registered = mapped_source = False
     now = datetime.now(timezone.utc)
     provider_status = None
     provider_discovery_attempted_at = None
@@ -330,11 +336,16 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     profile_due = False
     jobs: list[tuple[str, str]] = []
     official = official_paths(host) if public else None
-    # One connection and one short transaction: bookkeeping writes, the reads the answer needs, and
-    # the queue inserts. Database round trips only.
+    # One connection: the bookkeeping writes (committed at once, so their row locks are not held for
+    # the rest of the lookup), the reads the answer needs, and the queue inserts. Database round trips only.
+    retry_after = None
+    queued: list[tuple[str, str]] = []
     with connect(settings) as conn:
         if (public and (eligible or host in SOURCES)) or (not settings.public_mode and settings.collect_lookup_metrics and eligible):
-            _registered, mapped_source, woke = _record_lookup(conn, settings, host, error_class, public=public)
+            registered, mapped_source, discovery_due = _record_lookup(conn, settings, host, error_class, public=public)
+            conn.commit()
+            if discovery_due:
+                jobs.append(("status_discovery", host))
         rows = conn.execute(sql, params).fetchall()
         if public:
             discovery = conn.execute(
@@ -361,10 +372,12 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     "error_detail": source["last_error_detail"] if failed_later else None,
                 }
                 if mapped_source:
-                    # Stale-while-revalidate: answer with the cached statement and refresh it behind the
-                    # lookup, with the same spacing the inline refresh used to apply.
+                    # Stale-while-revalidate: answer with the cached statement; once it would read as
+                    # stale by age (or was never read), refresh it behind the lookup, not again within
+                    # FEED_RETRY_MINUTES of the last attempt.
                     latest = max((t for t in (fetched_at, source["last_error_at"]) if t is not None), default=None)
-                    if latest is None or latest < now - timedelta(seconds=background_reads.FEED_REFRESH_SECONDS):
+                    aged = fetched_at is None or fetched_at < now - timedelta(hours=background_reads.FEED_STALE_HOURS)
+                    if aged and (latest is None or latest < now - timedelta(minutes=background_reads.FEED_RETRY_MINUTES)):
                         jobs.append(("status_feed", host))
             if eligible:
                 volume = conn.execute(
@@ -389,20 +402,23 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     LOG.warning("access_profile_cache_unavailable")
                     access_profile, profile_due = None, False
                 else:
-                    if profile_due:
+                    # Only hosts inside the bounded lookup register (QUERIED_HOST_CAP) get a read queued.
+                    if profile_due and registered:
                         jobs.append(("access_profile", host))
             else:
                 # Subdomain or tenant host: say so instead of leaving the layer silently empty.
                 profile_not_read = True
-        woke = _queue_reads(conn, jobs) or woke
-    if woke:
+        queued = _queue_reads(conn, jobs)
+        if ("access_profile", host) in queued:
+            retry_after = _retry_after(conn, host)
+    if queued:
         background_reads.wake()
     if access_profile is None and profile_due:
-        # First lookup of this host: nothing is cached yet and a read is queued.
-        access_profile = pending_profile(host, background_reads.retry_after_seconds())
-    elif access_profile is not None and profile_due and access_profile["freshness"] == "pending":
+        # First lookup of this host: nothing is cached yet. retry_after_seconds only when a read is queued.
+        access_profile = pending_profile(host, retry_after)
+    elif access_profile is not None and retry_after is not None and access_profile["freshness"] == "pending":
         # Only failed attempts so far, and the retry is due: a read is queued again.
-        access_profile = {**access_profile, "retry_after_seconds": background_reads.retry_after_seconds()}
+        access_profile = {**access_profile, "retry_after_seconds": retry_after}
     if access_profile is not None:
         access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
     recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
