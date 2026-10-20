@@ -180,12 +180,22 @@ class _Response:
     ("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://example.com/", ("site_access", "before_target_response")),
     ("Page.goto: net::ERR_CONNECTION_REFUSED at https://example.com/", ("site_access", "before_target_response")),
     ("403 Forbidden", ("site_access", None)),
-    ("something odd happened", ("site_access", None)),
-    ("", ("site_access", None)),
-    (None, ("site_access", None)),
+    # Neither a block nor an outage: no class, nothing to look up.
+    ("something odd happened", (None, None)),
+    ("", (None, None)),
+    (None, (None, None)),
+    ("404 Not Found", (None, None)),
+    ("410 Gone", (None, None)),
+    ("422 Unprocessable Entity", (None, None)),
+    ("400 Bad Request", (None, None)),
+    ("407 Proxy Authentication Required", ("login_auth", None)),
+    ("429 Too Many Requests", ("service_error", None)),
+    ("402 Payment Required", ("site_access", None)),
+    ("408 Request Timeout", ("service_error", None)),
+    ("451 Unavailable For Legal Reasons", ("site_access", None)),
     (b"503 Service Unavailable", ("service_error", None)),
     # A path or query in a URL never decides the class.
-    ("GET https://example.com/login?captcha=1 failed: 404", ("site_access", None)),
+    ("GET https://example.com/login?captcha=1 failed: 404", (None, None)),
     # Exceptions: class names, messages and statuses, with no library imported.
     (_exc("TimeoutError", "Timeout 30000ms exceeded."), ("service_error", None)),
     (_exc("TimeoutError", "Page.goto: Timeout 30000ms exceeded. navigating to https://x.com/"), ("service_error", None)),
@@ -201,8 +211,17 @@ class _Response:
      ("login_auth", "response_observed")),
     (_exc("HTTPStatusError", "Server error for url 'https://example.com/'", response=_Response(500)),
      ("service_error", "response_observed")),
-    (_exc("ClientResponseError", "boom", status=429), ("site_access", "response_observed")),
-    (_exc("HTTPError", "no status", response=None), ("site_access", None)),
+    (_exc("ClientResponseError", "boom", status=429), ("service_error", "response_observed")),
+    (_exc("HTTPError", "no status", response=None), (None, None)),
+    (_exc("HTTPStatusError", "Client error '404 Not Found' for url 'https://example.com/a'", response=_Response(404)), (None, None)),
+    (_exc("HTTPStatusError", "Client error for url 'https://example.com/a'", response=_Response(410)), (None, None)),
+    (_exc("ClientResponseError", "boom", status=422), (None, None)),
+    (_exc("HTTPStatusError", "Client error", response=_Response(400)), (None, None)),
+    (_exc("HTTPStatusError", "Client error", response=_Response(401)), ("login_auth", "response_observed")),
+    (_exc("HTTPStatusError", "Client error", response=_Response(451)), ("site_access", "response_observed")),
+    (_exc("HTTPStatusError", "Client error", response=_Response(402)), ("site_access", "response_observed")),
+    (_exc("HTTPStatusError", "Client error", response=_Response(408)), ("service_error", "response_observed")),
+    (_exc("HTTPStatusError", "Server error", response=_Response(503)), ("service_error", "response_observed")),
     (ValueError("Verify that you are a human"), ("human_verification", None)),
 ])
 def test_classify_table(subject, expected):
@@ -220,10 +239,12 @@ def test_classify_reads_the_cause_chain():
 
 
 def test_classify_output_is_always_valid_for_the_service():
-    for subject in ["x", None, 5, _exc("Weird", "?"), "403", "Cloudflare timed out"]:
+    for subject in ["x", None, 5, _exc("Weird", "?"), "403", "Cloudflare timed out", "404"]:
         error_class, stage = ahn.classify(subject)
-        assert error_class in ("human_verification", "login_auth", "service_error", "site_access")
+        # (None, None) is "not a block or an outage"; check() accepts a missing error_class.
+        assert error_class in (None, "human_verification", "login_auth", "service_error", "site_access")
         assert stage in (None, "before_target_response", "response_observed")
+        assert error_class is not None or stage is None
 
 
 # --- the request -----------------------------------------------------------------------------------------

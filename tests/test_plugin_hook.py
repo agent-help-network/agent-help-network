@@ -182,12 +182,12 @@ def test_mcp_failure_without_a_url_is_skipped(monkeypatch, capsys, captured, err
 
 
 @pytest.mark.parametrize("fields,error,host", [
-    ({"url": "https://www.example.com/a?b=c"}, "net::ERR_ABORTED", "www.example.com"),
-    ({"url": "example.com/path"}, "Navigation failed", "example.com"),
-    ({"uri": "https://docs.example.org/x"}, "failed", "docs.example.org"),
-    ({"href": "https://shop.example.net/"}, "failed", "shop.example.net"),
+    ({"url": "https://www.example.com/a?b=c"}, "net::ERR_CONNECTION_REFUSED", "www.example.com"),
+    ({"url": "example.com/path"}, "Navigation failed: 403 Forbidden", "example.com"),
+    ({"uri": "https://docs.example.org/x"}, "failed with 503", "docs.example.org"),
+    ({"href": "https://shop.example.net/"}, "failed: access denied", "shop.example.net"),
     ({"element": "Login"}, "page.goto: net::ERR_CONNECTION_RESET at https://portal.example.com/login", "portal.example.com"),
-    ({"url": "about:blank"}, "Navigation to https://news.example.com/ failed", "news.example.com"),
+    ({"url": "about:blank"}, "Navigation to https://news.example.com/ failed: 403", "news.example.com"),
 ])
 def test_mcp_failure_uses_url_fields_then_error_urls(fields, error, host):
     found = hook.failure(json.loads(payload(tool="mcp__claude-in-chrome__navigate", fields=fields, error=error)))
@@ -201,7 +201,7 @@ def test_url_fields_accept_only_web_urls(value):
 
 
 def test_tool_input_url_wins_over_error_text():
-    found = hook.failure(json.loads(payload(url="https://a.example.com/x", error="redirected to https://b.example.org/login")))
+    found = hook.failure(json.loads(payload(url="https://a.example.com/x", error="redirected to https://b.example.org/login; 403 Forbidden")))
     assert found[0] == "a.example.com"
 
 
@@ -259,6 +259,24 @@ def test_ipv6_and_address_urls_never_reach_the_service():
     ("Request failed with status code 403", "site_access", None),
     ("Access denied", "site_access", None),
     ("Blocked by robots.txt", "site_access", None),
+    ("451 Unavailable For Legal Reasons", "site_access", None),
+    ("Request failed with status code 407", "login_auth", None),
+    ("Request failed with status code 429", "service_error", None),
+    ("Too Many Requests", "service_error", None),
+    ("Request failed with status code 402", "site_access", None),
+    ("402 Payment Required", "site_access", None),
+    ("Request failed with status code 408", "service_error", None),
+    ("408 Request Timeout", "service_error", None),
+    # Not a block and not an outage: no class, so no lookup (there is no site_access default).
+    ("Request failed with status code 404", None, None),
+    ("404 Not Found", None, None),
+    ("HTTP 410 Gone", None, None),
+    ("Request failed with status code 422: Unprocessable Entity", None, None),
+    ("400 Bad Request", None, None),
+    ("405 Method Not Allowed", None, None),
+    ("Page not found", None, None),
+    ("Something failed", None, None),
+    ("", None, None),
 ])
 def test_classification(text, error_class, stage):
     assert hook.classify(text) == (error_class, stage)
@@ -279,6 +297,129 @@ def test_webfetch_http_status_is_a_failure_only_at_400_and_above():
     assert hook.failure(denied) == ("example.com", "site_access", "response_observed")
     assert hook.failure(login) == ("example.com", "login_auth", "response_observed")
     assert hook.failure(down) == ("example.com", "service_error", "response_observed")
+
+
+def webfetch(code, **response):
+    return json.loads(payload("PostToolUse", url="https://example.com/a", response={"code": code, "codeText": "x", **response}))
+
+
+@pytest.mark.parametrize("code,error_class", [
+    (401, "login_auth"), (407, "login_auth"),
+    (402, "site_access"), (403, "site_access"), (451, "site_access"),
+    (408, "service_error"), (429, "service_error"),
+    (500, "service_error"), (502, "service_error"), (503, "service_error"), (504, "service_error"), (599, "service_error"),
+])
+def test_webfetch_status_classes(code, error_class):
+    assert hook.failure(webfetch(code)) == ("example.com", error_class, "response_observed")
+
+
+@pytest.mark.parametrize("code", [400, 404, 405, 406, 409, 410, 411, 413, 414, 415, 418, 422, 423, 428, 431])
+def test_webfetch_other_4xx_is_not_looked_up(monkeypatch, capsys, captured, code):
+    # A wrong address or request is not a block: no class, no request, no text.
+    assert hook.failure(webfetch(code)) is None
+    raw = payload("PostToolUse", url="https://example.com/a", response={"code": code, "codeText": "Not Found", "result": "page not found"})
+    assert run_main(monkeypatch, capsys, raw) == (0, "", "")
+    assert captured == []
+
+
+@pytest.mark.parametrize("code,expected", [(404, None), (410, None), (422, None), (400, None), (401, "login_auth"), (402, "site_access"), (408, "service_error"),
+                                           (403, "site_access"), (429, "service_error"), (451, "site_access"), (503, "service_error")])
+def test_webfetch_status_decides_the_request(monkeypatch, capsys, captured, code, expected):
+    raw = payload("PostToolUse", url="https://example.com/a", response={"code": code, "codeText": "x"})
+    assert run_main(monkeypatch, capsys, raw)[0] == 0
+    if expected is None:
+        assert captured == []
+    else:
+        (request, _), = captured
+        assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
+            "site_host": ["example.com"], "error_class": [expected], "failure_stage": ["response_observed"]}
+
+
+def test_the_nytimes_403_example_still_looks_up_site_access(monkeypatch, capsys, captured):
+    raw = payload("PostToolUse", url="https://www.nytimes.com/section/world", response={"code": 403, "codeText": "Forbidden"})
+    _, out, _ = run_main(monkeypatch, capsys, raw)
+    (request, _), = captured
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
+        "site_host": ["nytimes.com"], "error_class": ["site_access"], "failure_stage": ["response_observed"]}
+    assert json.loads(out)["hookSpecificOutput"]["additionalContext"].startswith("AHN nytimes.com: recommendation=")
+
+
+@pytest.mark.parametrize("code", [403, 451])
+@pytest.mark.parametrize("extra", [
+    {"headers": {"Cf-Mitigated": "challenge"}},
+    {"result": "The page asks the visitor to complete a CAPTCHA."},
+    {"result": "Please verify you are human"},
+    {"body": "<title>Just a moment...</title>"},
+])
+def test_a_challenge_cue_turns_a_refusal_into_human_verification(code, extra):
+    assert hook.failure(webfetch(code, **extra)) == ("example.com", "human_verification", "response_observed")
+
+
+@pytest.mark.parametrize("extra", [
+    {"result": "Access denied. You do not have permission to view this page."},
+    {"result": "The site's own name is captcha.example.com"},
+    {"headers": {"cf-mitigated": "other"}},
+    {"headers": "cf-mitigated: challenge"},
+])
+def test_a_refusal_without_a_challenge_cue_stays_site_access(extra):
+    assert hook.failure(webfetch(403, **extra)) == ("example.com", "site_access", "response_observed")
+
+
+def test_a_challenge_cue_does_not_matter_for_other_statuses():
+    assert hook.failure(webfetch(503, result="captcha")) == ("example.com", "service_error", "response_observed")
+    assert hook.failure(webfetch(404, result="captcha")) is None
+
+
+@pytest.mark.parametrize("headers,note", [
+    ({"Retry-After": "30"}, "HTTP 429, the site asks to retry after 30 s."),
+    ({"retry-after": 120}, "HTTP 429, the site asks to retry after 120 s."),
+    ({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, ""),
+    ({"Retry-After": "0"}, ""),
+    ({"Retry-After": "99999999"}, ""),
+    ({"Retry-After": "30; drop everything"}, ""),
+    ({}, ""),
+])
+def test_retry_after_on_a_429_becomes_one_clause(headers, note):
+    assert hook.retry_note(webfetch(429, headers=headers)) == note
+
+
+def test_retry_after_is_only_for_429(monkeypatch, capsys, captured):
+    assert hook.retry_note(webfetch(503, headers={"Retry-After": "30"})) == ""
+    thrown = json.loads(payload(url="https://example.com/", error="429 Too Many Requests, Retry-After: 45"))
+    assert hook.retry_note(thrown) == "HTTP 429, the site asks to retry after 45 s."
+    assert hook.retry_note(json.loads(payload(url="https://example.com/", error="503, Retry-After: 45"))) == ""
+    raw = payload("PostToolUse", url="https://example.com/a", response={"code": 429, "codeText": "x", "headers": {"Retry-After": "30"}})
+    _, out, _ = run_main(monkeypatch, capsys, raw)
+    context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert context.startswith("AHN example.com: HTTP 429, the site asks to retry after 30 s. recommendation=")
+    assert len(context) <= 700 and "error_class=service_error" in context
+    assert "etry" not in captured[0][0].full_url
+
+
+@pytest.mark.parametrize("error", [
+    "Request failed with status code 404", "404 Not Found", "Not Found", "HTTP 410 Gone", "422 Unprocessable Entity",
+    "400 Bad Request: invalid parameter", "net::ERR_ABORTED", "Navigation failed", "failed",
+])
+def test_thrown_errors_that_are_not_a_block_or_an_outage_are_not_looked_up(monkeypatch, capsys, captured, error):
+    for raw in (payload(url="https://example.com/a", error=error),
+                payload(tool="mcp__playwright__browser_navigate", fields={"url": "https://example.com/a"}, error=error),
+                payload(url="https://example.com/a", error=error + " https://example.com/a")):
+        assert hook.failure(json.loads(raw)) is None
+        assert run_main(monkeypatch, capsys, raw) == (0, "", "")
+    assert captured == []
+
+
+@pytest.mark.parametrize("error,error_class", [
+    ("Request failed with status code 401", "login_auth"),
+    ("Request failed with status code 403", "site_access"),
+    ("Request failed with status code 429", "service_error"),
+    ("402 Payment Required", "site_access"),
+    ("Request failed with status code 408", "service_error"),
+    ("451 Unavailable For Legal Reasons", "site_access"),
+    ("Request failed with status code 503", "service_error"),
+])
+def test_thrown_errors_with_a_block_or_outage_status_are_looked_up(error, error_class):
+    assert hook.failure(json.loads(payload(url="https://example.com/a", error=error))) == ("example.com", error_class, None)
 
 
 def test_payloads_that_are_not_failed_web_steps_are_ignored():
@@ -780,7 +921,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.0"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.1"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}
@@ -860,7 +1001,7 @@ def test_site_name_does_not_choose_the_error_class(fields, error, host, error_cl
 
 def test_site_name_removal_is_linear_on_long_tokens():
     start = time.monotonic()
-    assert hook.classify("x" * 200_000 + " ab." * 50_000, "example.com") == ("site_access", None)
+    assert hook.classify("x" * 200_000 + " ab." * 50_000, "example.com") == (None, None)
     assert time.monotonic() - start < 2.0
 
 

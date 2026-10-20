@@ -2,10 +2,12 @@
 """Agent Help Network lookup hook for Claude Code. Standard library only, Python 3.7+.
 
 Claude Code pipes a PostToolUseFailure or PostToolUse payload on stdin. When a
-web step failed, this script keeps only the target hostname, asks Agent Help
-Network what the host declares and what it recommends, and prints a short
-additionalContext for Claude. It sends a hostname and enum codes, nothing else,
-it only reads, and it never blocks or fails the tool call: every path exits 0.
+web step was blocked or the service failed, this script keeps only the target
+hostname, asks Agent Help Network what the host declares and what it recommends,
+and prints a short additionalContext for Claude. It sends a hostname and enum
+codes, nothing else, it only reads, and it never blocks or fails the tool call:
+every path exits 0. An error that is neither a block nor an outage (404, 410, 400,
+422 and every other 4xx outside status_class) gets no lookup and adds no text.
 
 Environment:
   AHN_HOOK_DISABLE=1          do nothing
@@ -65,12 +67,22 @@ FULL_URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
 SCHEMELESS = re.compile(r"[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:[/?#].*)?", re.DOTALL)
 # Fields of an MCP tool's input that name the page it acted on. WebFetch has only "url".
 URL_FIELDS = ("url", "uri", "href", "link", "page_url", "pageUrl", "target_url", "targetUrl")
+# Not the bare brand name: "cloudflare" also appears in Cloudflare 5xx pages and block pages (error 1020).
+HUMAN_VERIFICATION = re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge"
+                                r"|checking your browser|just a moment", re.I)
+# The first match wins. Text that matches none of these is neither a block nor an outage (a 404 page, a 422
+# from a bad request, "something failed"), and classify() gives it no class.
 CLASSES = (
-    # Not the bare brand name: "cloudflare" also appears in Cloudflare 5xx pages and block pages (error 1020).
-    ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge"
-                                      r"|checking your browser|just a moment", re.I)),
-    ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b401\b|\bauthenticat(?:e|ion)\b", re.I)),
-    ("service_error", re.compile(r"\b5\d\d\b|time ?out|timed[ _]?out|unavailable|reset|bad gateway", re.I)),
+    ("human_verification", HUMAN_VERIFICATION),
+    # 401 and 407: credentials required (RFC 9110 15.5.2, 15.5.8).
+    ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b40[17]\b|\bauthenticat(?:e|ion)\b", re.I)),
+    # 5xx (RFC 9110 15.6), 408 (RFC 9110 15.5.9) and 429 (RFC 6585 4), for which the contract has no class of its
+    # own. "Unavailable For Legal Reasons" is the 451 reason phrase (RFC 7725): a block, not an outage.
+    ("service_error", re.compile(r"\b5\d\d\b|\b408\b|\b429\b|too many requests|rate[ -]?limit|time ?out|timed[ _]?out"
+                                 r"|unavailable(?! for legal reasons)|reset|bad gateway", re.I)),
+    # 403 (RFC 9110 15.5.4), 451 (RFC 7725) and 402 (RFC 9110 15.5.3, see status_class), plus the usual wording
+    # of a refusal.
+    ("site_access", re.compile(r"\b(?:402|403|451)\b|payment required|forbidden|\bdenied\b|blocked|disallow|legal reasons", re.I)),
 )
 # Nothing was received from the site: Node errno names, Chrome "net::ERR_*" codes (browser MCP tools), and
 # Claude Code's pre-request WebFetch refusals.
@@ -224,28 +236,105 @@ def without_urls(text: str, host: str | None = None) -> str:
     return HOST_LIKE.sub(blank, text)
 
 
-def classify(text: str, host: str | None = None) -> tuple[str, str | None]:
+def classify(text: str, host: str | None = None) -> tuple[str | None, str | None]:
+    """(error_class, failure_stage) for an error text; (None, None) when it names no block and no outage.
+
+    There is no default class: text that matches nothing (404, 422, "Not Found", an unknown error) is not
+    looked up. Nothing received from the site (DNS, refused connection, Claude Code's own refusal) is
+    site_access unless the text says timeout or login.
+    """
     text = without_urls(text or "", host)
-    error_class = next((name for name, pattern in CLASSES if pattern.search(text)), "site_access")
+    error_class = next((name for name, pattern in CLASSES if pattern.search(text)), None)
     stage = "before_target_response" if BEFORE_RESPONSE.search(text) else None
+    if error_class is None and stage:
+        error_class = "site_access"
     return error_class, stage
 
 
-def http_status(tool_response) -> tuple[int, str] | None:
-    """WebFetch reports an HTTP error as a successful call with code/codeText; return them when >= 400."""
+# Fields of WebFetch's tool_response that can carry page text, and how much of it is read for a cue.
+BODY_FIELDS = ("result", "body", "content", "text", "message")
+BODY_SCAN_CHARS = 4000
+RETRY_AFTER_TEXT = re.compile(r"retry[- ]after\W{0,4}(\d{1,6})\b", re.I)
+RETRY_AFTER_VALUE = re.compile(r"\d{1,6}")
+MAX_RETRY_SECONDS = 86_400
+
+
+def http_status(tool_response) -> int | None:
+    """WebFetch reports an HTTP error as a successful call with code/codeText; return the code when >= 400."""
     if not isinstance(tool_response, dict):
         return None
     for key in ("code", "status", "statusCode"):
         code = tool_response.get(key)
         if isinstance(code, int) and not isinstance(code, bool) and 400 <= code <= 599:
-            reason = tool_response.get("codeText")
-            reason = reason if isinstance(reason, str) and re.fullmatch(r"[A-Za-z ]{1,40}", reason) else ""
-            return code, reason
+            return code
     return None
 
 
+def challenge_cue(tool_response: dict, host: str) -> bool:
+    """True when a response header or the page text says the refusal is a bot challenge or CAPTCHA."""
+    headers = tool_response.get("headers")
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            # Cloudflare's documented marker of a challenge response.
+            if isinstance(key, str) and key.lower() == "cf-mitigated" and isinstance(value, str) and "challenge" in value.lower():
+                return True
+    for field in BODY_FIELDS:
+        value = tool_response.get(field)
+        if isinstance(value, str) and HUMAN_VERIFICATION.search(without_urls(value[:BODY_SCAN_CHARS], host)):
+            return True
+    return False
+
+
+def status_class(code: int, tool_response: dict, host: str) -> str | None:
+    """error_class for an HTTP status, or None when the status is neither a block nor an outage.
+
+    Only these statuses are looked up (RFC 9110 sections 15.5 and 15.6, RFC 6585, RFC 7725):
+      401, 407  credentials required                    -> login_auth
+      402       payment required (RFC 9110 15.5.3)     -> site_access: a crawl-for-payment answer such as
+                                                           Cloudflare Pay per Crawl is the site's declared
+                                                           access policy, which a lookup can report
+                                                           https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/
+      403, 451  refused / unavailable for legal reasons -> site_access, or human_verification when a header
+                                                           or the page text points to a challenge
+      408       request timeout (RFC 9110 15.5.9)       -> service_error
+      429       too many requests (RFC 6585)            -> service_error (the contract has no rate_limited class)
+      5xx       the server failed                       -> service_error
+    Every other 4xx (400, 404, 405, 409, 410, 411, 413, 414, 415, 422 ...) says the address or the request
+    was wrong, not that access is blocked. It gets no lookup: calling it a block would send the agent to an
+    official API because of a typo.
+    """
+    if code in (401, 407):
+        return "login_auth"
+    if code in (403, 451):
+        return "human_verification" if challenge_cue(tool_response, host) else "site_access"
+    if code == 402:
+        return "site_access"
+    if code in (408, 429) or 500 <= code <= 599:
+        return "service_error"
+    return None
+
+
+def retry_note(payload: dict) -> str:
+    """A short clause when a 429 came with a Retry-After of whole seconds, else "". Only that integer is kept."""
+    seconds = None
+    if payload.get("hook_event_name") == "PostToolUse":
+        response = payload.get("tool_response")
+        if http_status(response) == 429 and isinstance(response.get("headers"), dict):
+            for key, value in response["headers"].items():
+                if isinstance(key, str) and key.lower() == "retry-after" and RETRY_AFTER_VALUE.fullmatch(str(value).strip()):
+                    seconds = int(str(value).strip())
+    else:
+        text = payload.get("error")
+        if isinstance(text, str) and re.search(r"\b429\b|too many requests", text, re.I):
+            match = RETRY_AFTER_TEXT.search(text)
+            seconds = int(match.group(1)) if match else None
+    if seconds is None or not 1 <= seconds <= MAX_RETRY_SECONDS:
+        return ""
+    return f"HTTP 429, the site asks to retry after {seconds} s."
+
+
 def failure(payload: dict) -> tuple[str, str, str | None] | None:
-    """(hostname, error_class, failure_stage) for a failed web step, or None. The hostname keeps any "www."."""
+    """(hostname, error_class, failure_stage) for a blocked or failing web step, or None. The hostname keeps any "www."."""
     if not isinstance(payload, dict) or payload.get("tool_name") == "WebSearch":
         return None
     tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else ""
@@ -262,15 +351,14 @@ def failure(payload: dict) -> tuple[str, str, str | None] | None:
         if not host:
             return None
         error_class, stage = classify(text, host)
-        return host, error_class, stage
+        return (host, error_class, stage) if error_class else None
     if event == "PostToolUse":
-        status = http_status(payload.get("tool_response"))
+        code = http_status(payload.get("tool_response"))
         host = url_host(tool_input.get("url"))
-        if not status or not host:
+        if not code or not host:
             return None
-        code, reason = status
-        error_class, _ = classify(f"HTTP {code} {reason}")
-        return host, error_class, "response_observed"
+        error_class = status_class(code, payload["tool_response"], host)
+        return (host, error_class, "response_observed") if error_class else None
     return None
 
 
@@ -445,7 +533,7 @@ def blocked_agents(robots: dict) -> tuple[list[str], int]:
     return declared, len(tokens) - len(declared)
 
 
-def summary(host: str, data: dict, url: str) -> str:
+def summary(host: str, data: dict, url: str, note: str = "") -> str:
     """The additionalContext line, at most MAX_CONTEXT characters, built only from contract enums and validated values."""
     if not isinstance(data, dict):
         raise ValueError("unexpected response")
@@ -498,7 +586,7 @@ def summary(host: str, data: dict, url: str) -> str:
             agents += f" (+{training} training crawler{'s' if training != 1 else ''})"
         official_text = path if path and show_path else "listed" if path_listed else "none"
         full = url if show_url else "GET /v1/incidents/check on agenthelpnetwork.com"
-        return (f"AHN {host}: recommendation={_enum(rec.get('action'), ACTIONS)} ({_enum(rec.get('confidence'), CONFIDENCES)}). "
+        return (f"AHN {host}: {note + ' ' if note else ''}recommendation={_enum(rec.get('action'), ACTIONS)} ({_enum(rec.get('confidence'), CONFIDENCES)}). "
                 f"Declared policy: {policy}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_enum(data.get('evidence_level'), EVIDENCE_LEVELS)}. Next: {', '.join(codes) or 'none'}. "
@@ -527,7 +615,7 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     if recently_seen(host, env=env):
         return None, f"{host} looked up within 10 minutes"
     url = lookup_url(host, error_class, stage)
-    text = summary(host, fetch_within(url), url)
+    text = summary(host, fetch_within(url), url, retry_note(payload) if error_class == "service_error" else "")
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 
