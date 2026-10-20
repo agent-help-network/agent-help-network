@@ -175,6 +175,11 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 - 한 에이전트 세션에서 사람이 클릭한 시도를 그 세션과 독립된 제보자로 세지 않는다.
 - 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다. 운영상의 남은 위험과 중지 절차는 [공개 제보 검토·중지 절차](docs/public-intake-operations.md)에 기록한다.
 
+## 데이터 출처
+
+- **시드 호스트 목록.** [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 는 호스트 이름만 담는다. 맨 앞은 정리된 공식 경로 표의 호스트이고, 그다음 에이전트가 가장 자주 필요로 하는 호스트([D35](docs/decisions.md)), 정리된 한국 서비스, 앞서 정리한 범주 순이다. 마지막 블록은 Tranco 상위 1,000위에서 고른 호스트를 알파벳순으로 두어, 파일에서 순위가 드러나지 않는다.
+- **Tranco.** 그 마지막 블록은 2026-10-03에 생성된 Tranco 상위 1,000위, 목록 [`Y83KG`](https://tranco-list.eu/list/Y83KG) 의 호스트 이름을 쓴다. 인용: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Korczyński, Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation", NDSS 2019, [doi:10.14722/ndss.2019.23386](https://doi.org/10.14722/ndss.2019.23386). 이 목록은 Cisco Umbrella, Majestic, Farsight, Chrome User Experience Report(CrUX), Cloudflare Radar의 순위를 합친 것이다. 각 제공처 자신의 페이지가 밝힌 라이선스는 Majestic CC BY 3.0, CrUX CC BY 4.0(Google), Cloudflare Radar CC BY-NC 4.0(Cloudflare 개발자 문서, API로 제공되는 데이터 기준)이다. Cisco Umbrella와 Farsight는 라이선스 문구를 찾지 못했다. Tranco는 목록 자체의 이용 조건을 공개하지 않으며, 제공처 라이선스가 합친 목록에 어떻게 적용되는지도 밝히지 않는다. Tranco는 이 제공처들과 제휴 관계가 없고 우리도 마찬가지다.
+
 ## 운영 기록
 
 운영 일지, 검증 기록, 커뮤니티 게시 기록, 호스팅 비용 기록은 운영자의 비공개 저장소에 두며, 이 공개 저장소는 코드와 설계·정책 문서의 정본이다.

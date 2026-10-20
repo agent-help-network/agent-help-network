@@ -244,6 +244,11 @@ The local development build uses synthetic `.test` observations, and `prototype/
 - A person clicking inside an agent's session is not counted as an independent reporter from that session.
 - Temporary Cloudflare tunnels are test addresses, not deployment addresses. Remaining operational risks and the pause procedure are in the [public intake review and pause procedure](docs/public-intake-operations.md).
 
+## Data sources
+
+- **Seed host list.** [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) holds host names only. It starts with the hosts of the curated official-paths table, then the hosts that AI agents most often need ([D35](docs/decisions.md)), curated Korean services and the earlier curated categories. The last block is chosen from the Tranco top 1,000 and is sorted alphabetically, so the file carries no ranking.
+- **Tranco.** That last block uses host names from the Tranco top 1,000, list [`Y83KG`](https://tranco-list.eu/list/Y83KG), generated 2026-10-03. Cite: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Korczyński and Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation", NDSS 2019, [doi:10.14722/ndss.2019.23386](https://doi.org/10.14722/ndss.2019.23386). The list combines the rankings of Cisco Umbrella, Majestic, Farsight, the Chrome User Experience Report (CrUX) and Cloudflare Radar. The providers' own pages state these licenses: Majestic CC BY 3.0, CrUX CC BY 4.0 (Google), Cloudflare Radar CC BY-NC 4.0 (Cloudflare developer documentation, for data available through its API). We found no license text for Cisco Umbrella or Farsight. Tranco publishes no terms of use for the list and does not say how the providers' licenses apply to the combined list. Tranco is not affiliated with these providers, and neither are we.
+
 ## Operations records
 
 Operations records (operations journal, verification logs, community posting history, hosting cost notes) live in a private operator repository; this public repository is the source of truth for code and design and policy documents.
