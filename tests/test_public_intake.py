@@ -793,6 +793,38 @@ def test_bandwidth_guard_warns_then_suspends_once(public_client, monkeypatch):
     assert state["coverage_gap_since"] is None and state["warning_gb"] == 10 and state["stop_gb"] == 20
 
 
+def test_bandwidth_guard_every_15_minutes_notifies_and_suspends_once(public_client, monkeypatch):
+    """Render lists one point per hour, so runs 15 minutes apart re-read the same points."""
+    settings, _ = public_client
+    from ahn import bandwidth_guard
+
+    start = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+    resource = "srv-db0hnkfavr4c73fp6et0"
+    values = [{"timestamp": start.isoformat(), "value": 11}]
+    client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": resource}], "values": values, "unit": "GB"}])
+    ))
+    stopped, calls = [], []
+    monkeypatch.setattr(bandwidth_guard, "_suspend_service", lambda key, service_id: (calls.append(service_id), stopped.append(service_id)))
+    monkeypatch.setattr(bandwidth_guard, "_is_service_suspended", lambda key, service_id: service_id in stopped)
+
+    def run(minutes):
+        return run_guard(TEST_URL, "fake-test-key", resource, now=start + timedelta(minutes=minutes), client=client)
+
+    assert run(0)["action"] == "warning"
+    assert [run(minutes)["action"] for minutes in (15, 30, 45)] == ["none", "none", "none"]
+    values.append({"timestamp": (start + timedelta(hours=1)).isoformat(), "value": 10})
+    assert [run(minutes)["action"] for minutes in (60, 75, 90)] == ["suspended", "already_suspended", "already_suspended"]
+    assert calls == [resource]
+    with connect(settings) as conn:
+        samples = conn.execute("SELECT count(*) AS n FROM bandwidth_guard_samples WHERE resource_id=%s", (resource,)).fetchone()["n"]
+        state = conn.execute("SELECT usage_gb,state,warning_sent_at,suspended_at,checked_at FROM bandwidth_guard_state WHERE name='web'").fetchone()
+    assert samples == 2
+    assert state["usage_gb"] == 21 and state["state"] == "suspended"
+    assert state["warning_sent_at"] == start and state["suspended_at"] == start + timedelta(minutes=60)
+    assert state["checked_at"] == start + timedelta(minutes=90)
+
+
 def test_bandwidth_guard_api_error_redacts_key(public_client):
     key = "fake-sensitive-test-key"
     client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(

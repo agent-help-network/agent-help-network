@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 
+from ahn import bandwidth_guard
 from ahn.bandwidth_guard import _threshold_env, parse_bandwidth, run_guard
 
 
@@ -111,3 +112,21 @@ def test_threshold_env_rejects_invalid_or_non_finite_values(monkeypatch, raw):
 def test_run_guard_rejects_non_finite_or_inverted_thresholds(warning, stop):
     with pytest.raises(ValueError, match="invalid bandwidth thresholds"):
         run_guard("postgresql://unused", "fake-test-key", RESOURCE, now=NOW, warning_gb=warning, stop_gb=stop)
+
+
+def test_main_arms_a_watchdog_before_any_network_or_database_work(monkeypatch):
+    """A hung run would hold back every later cron run, so the process must abort on its own."""
+    order = []
+    monkeypatch.setattr(bandwidth_guard.faulthandler, "dump_traceback_later",
+                        lambda seconds, exit=False: order.append(("watchdog", seconds, exit)))
+    monkeypatch.setattr("ahn.platform_metrics.prune_analytics", lambda *args, **kwargs: order.append(("prune",)))
+    monkeypatch.setattr("ahn.platform_metrics.collect_render_metrics", lambda *args, **kwargs: {"cpu": "ok"})
+    monkeypatch.setattr(bandwidth_guard, "run_guard", lambda *args, **kwargs: (order.append(("guard",)) or
+                        {"state": "normal", "usage_gb": Decimal("1"), "action": "none", "coverage_gap": False, "coverage_gap_new": False}))
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("RENDER_API_KEY", "fake-test-key")
+    monkeypatch.setenv("AHN_GUARD_WEB_SERVICE_ID", RESOURCE)
+    bandwidth_guard.main()
+    assert order[0] == ("watchdog", bandwidth_guard.WATCHDOG_SECONDS, True)
+    assert 0 < bandwidth_guard.WATCHDOG_SECONDS <= 600
+    assert ("guard",) in order

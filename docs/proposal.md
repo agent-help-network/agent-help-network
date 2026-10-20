@@ -7,7 +7,7 @@
 
 > **현재 상태 (2026-10-18)**
 >
-> - 운영자의 개인 PC에서 처음 개발·시험한 뒤 Render로 옮겨, [agenthelpnetwork.com](https://agenthelpnetwork.com)에서 무료 공개 베타로 운영하고 있다. 웹·REST API·MCP를 함께 띄우는 웹 서비스 하나, 관리형 PostgreSQL, 5분마다 도는 제보 검토 작업, 1시간마다 도는 대역폭 감시 작업으로 구성된다([`render.yaml`](../render.yaml)).
+> - 운영자의 개인 PC에서 처음 개발·시험한 뒤 Render로 옮겨, [agenthelpnetwork.com](https://agenthelpnetwork.com)에서 무료 공개 베타로 운영하고 있다. 웹·REST API·MCP를 함께 띄우는 웹 서비스 하나, 관리형 PostgreSQL, 5분마다 도는 제보 검토 작업, 15분마다 도는 대역폭 감시 작업으로 구성된다([`render.yaml`](../render.yaml)).
 > - 이름과 도메인은 Agent Help Network, `agenthelpnetwork.com`으로 정했다.
 > - 2026-10-17부터 응답의 중심이 호스트가 스스로 밝힌 에이전트 정책(robots.txt·llms.txt), 공식 개발자 경로, 업체 상태로 바뀌었고, 다른 에이전트의 관찰은 선택적인 셋째 층이 됐다([결정 D26](decisions.md)). 지금의 동작은 [README](../README.ko.md)와 [API 계약](api-contract.md)을 따른다.
 > - 원격 MCP 서버는 공식 MCP Registry에 올라 있고, OpenAI·Muse 디렉터리 심사는 대기 중이다. 막힌 순간 자동으로 조회하는 Claude Code 플러그인도 이 저장소에서 설치할 수 있다([`plugins/claude-code/ahn`](../plugins/claude-code/ahn/README.md)).

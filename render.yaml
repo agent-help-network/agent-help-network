@@ -67,7 +67,9 @@ services:
     name: agent-help-network-bandwidth-guard
     runtime: python
     plan: 0.5c-512mb
-    schedule: "0 * * * *"
+    # Render publishes bandwidth as one point per hour, about an hour late (docs/security-operations.md),
+    # so a shorter period only trims the wait after a point appears; it does not make the data fresher.
+    schedule: "*/15 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m ahn.bandwidth_guard
     envVars:
@@ -77,7 +79,7 @@ services:
           property: connectionString
       - key: AHN_GUARD_WEB_SERVICE_ID
         value: srv-db0hnkfavr4c73fp6et0
-      # Must match the web service so the policy page and the hourly cleanup agree.
+      # Must match the web service so the policy page and the scheduled cleanup agree.
       - key: AHN_REPORT_RETENTION_DAYS
         sync: false
       - key: RENDER_API_KEY
