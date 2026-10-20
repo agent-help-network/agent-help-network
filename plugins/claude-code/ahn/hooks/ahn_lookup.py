@@ -76,12 +76,13 @@ CLASSES = (
     ("human_verification", HUMAN_VERIFICATION),
     # 401 and 407: credentials required (RFC 9110 15.5.2, 15.5.8).
     ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b40[17]\b|\bauthenticat(?:e|ion)\b", re.I)),
-    # 5xx (RFC 9110 15.6) and 429 (RFC 6585 4), for which the contract has no class of its own. "Unavailable For
-    # Legal Reasons" is the 451 reason phrase (RFC 7725): a block, not an outage.
-    ("service_error", re.compile(r"\b5\d\d\b|\b429\b|too many requests|rate[ -]?limit|time ?out|timed[ _]?out"
+    # 5xx (RFC 9110 15.6), 408 (RFC 9110 15.5.9) and 429 (RFC 6585 4), for which the contract has no class of its
+    # own. "Unavailable For Legal Reasons" is the 451 reason phrase (RFC 7725): a block, not an outage.
+    ("service_error", re.compile(r"\b5\d\d\b|\b408\b|\b429\b|too many requests|rate[ -]?limit|time ?out|timed[ _]?out"
                                  r"|unavailable(?! for legal reasons)|reset|bad gateway", re.I)),
-    # 403 (RFC 9110 15.5.4) and 451 (RFC 7725), plus the usual wording of a refusal.
-    ("site_access", re.compile(r"\b(?:403|451)\b|forbidden|\bdenied\b|blocked|disallow|legal reasons", re.I)),
+    # 403 (RFC 9110 15.5.4), 451 (RFC 7725) and 402 (RFC 9110 15.5.3, see status_class), plus the usual wording
+    # of a refusal.
+    ("site_access", re.compile(r"\b(?:402|403|451)\b|payment required|forbidden|\bdenied\b|blocked|disallow|legal reasons", re.I)),
 )
 # Nothing was received from the site: Node errno names, Chrome "net::ERR_*" codes (browser MCP tools), and
 # Claude Code's pre-request WebFetch refusals.
@@ -289,8 +290,13 @@ def status_class(code: int, tool_response: dict, host: str) -> str | None:
 
     Only these statuses are looked up (RFC 9110 sections 15.5 and 15.6, RFC 6585, RFC 7725):
       401, 407  credentials required                    -> login_auth
+      402       payment required (RFC 9110 15.5.3)     -> site_access: a crawl-for-payment answer such as
+                                                           Cloudflare Pay per Crawl is the site's declared
+                                                           access policy, which a lookup can report
+                                                           https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/
       403, 451  refused / unavailable for legal reasons -> site_access, or human_verification when a header
                                                            or the page text points to a challenge
+      408       request timeout (RFC 9110 15.5.9)       -> service_error
       429       too many requests (RFC 6585)            -> service_error (the contract has no rate_limited class)
       5xx       the server failed                       -> service_error
     Every other 4xx (400, 404, 405, 409, 410, 411, 413, 414, 415, 422 ...) says the address or the request
@@ -301,7 +307,9 @@ def status_class(code: int, tool_response: dict, host: str) -> str | None:
         return "login_auth"
     if code in (403, 451):
         return "human_verification" if challenge_cue(tool_response, host) else "site_access"
-    if code == 429 or 500 <= code <= 599:
+    if code == 402:
+        return "site_access"
+    if code in (408, 429) or 500 <= code <= 599:
         return "service_error"
     return None
 

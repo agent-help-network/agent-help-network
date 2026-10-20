@@ -46,7 +46,7 @@ Requirements: Python 3.7 or newer on `PATH` (`py`, `python3` or `python`) and a 
 | Event | Matcher | When it fires |
 | :- | :- | :- |
 | `PostToolUseFailure` | `^WebFetch$` and MCP tools with `browser`, `chrome`, `playwright`, `puppeteer` or `fetch` (either case of the first letter) in any segment of the name before the tool name, except the plugin's own `mcp__plugin_ahn_*` tools | The tool threw an error or an MCP tool returned an error result, for example `Claude Code is unable to fetch from <host>`, DNS failures, connection resets, browser navigation errors. An MCP failure is looked up only when its input has a URL field (`url`, `uri`, `href`, `link`, `page_url`, `target_url`) or its error text contains an `http(s)://` URL |
-| `PostToolUse` | `WebFetch` | The fetch completed but the server answered with a status that reports a block or an outage: 401, 403, 407, 429, 451 or 5xx (see [Which errors are looked up](#which-errors-are-looked-up)). WebFetch reports these as a successful call with `tool_response.code`, so `PostToolUseFailure` never sees them |
+| `PostToolUse` | `WebFetch` | The fetch completed but the server answered with a status that reports a block or an outage: 401, 402, 403, 407, 408, 429, 451 or 5xx (see [Which errors are looked up](#which-errors-are-looked-up)). WebFetch reports these as a successful call with `tool_response.code`, so `PostToolUseFailure` never sees them |
 
 That covers, for example, `mcp__Claude_Browser__navigate` (desktop browser pane), `mcp__remote-devices__Claude_Browser__navigate` (the browser pane reached from a cloud session), `mcp__claude-in-chrome__navigate`, `mcp__playwright__browser_navigate`, `mcp__plugin_playwright_playwright__browser_navigate` and `mcp__fetch__fetch`. It does not cover a browser step that "succeeds" while showing a block or CAPTCHA page, or `curl` run through Bash; use the `ahn-lookup` skill or the MCP tool by hand there.
 
@@ -70,7 +70,9 @@ A mistyped address is not a site that refuses agents, so only statuses that repo
 | HTTP status | `error_class` sent | Note |
 | :- | :- | :- |
 | 401, 407 | `login_auth` | credentials required |
+| 402 | `site_access` | payment required: a site that asks for payment to be crawled (for example [Cloudflare Pay per Crawl](https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/)) has declared an access policy, and the lookup reports what the host declares. The plugin never suggests a way around a paywall |
 | 403, 451 | `site_access` | `human_verification` instead when a `cf-mitigated: challenge` header or the page text (CAPTCHA, "verify you are human", "checking your browser") points to a challenge |
+| 408 | `service_error` | request timeout |
 | 429 | `service_error` | the contract has no rate-limit class; a `Retry-After` of whole seconds, when the tool result carries one, is added to the line as `HTTP 429, the site asks to retry after N s.` and is not sent anywhere |
 | 500–599 | `service_error` | the server failed |
 | every other 4xx (400, 404, 405, 409, 410, 411, 413, 414, 415, 422 ...) | none: no lookup, nothing added | the address or the request was wrong, not blocked |
@@ -85,7 +87,7 @@ It sends nothing when:
 - the host or a parent domain is listed in `AHN_HOOK_SKIP_HOSTS` (compared with and without a leading `www.` on both sides);
 - an MCP tool failed without any URL in its input or error;
 - the same host was looked up in the last 10 minutes;
-- the response is a 4xx other than 401, 403, 407, 429 and 451, or the error text names no block and no outage;
+- the response is a 4xx other than 401, 402, 403, 407, 408, 429 and 451, or the error text names no block and no outage;
 - the tool call was interrupted (`is_interrupt`), or the tool was `WebSearch`;
 - `AHN_HOOK_DISABLE=1` is set.
 

@@ -263,6 +263,10 @@ def test_ipv6_and_address_urls_never_reach_the_service():
     ("Request failed with status code 407", "login_auth", None),
     ("Request failed with status code 429", "service_error", None),
     ("Too Many Requests", "service_error", None),
+    ("Request failed with status code 402", "site_access", None),
+    ("402 Payment Required", "site_access", None),
+    ("Request failed with status code 408", "service_error", None),
+    ("408 Request Timeout", "service_error", None),
     # Not a block and not an outage: no class, so no lookup (there is no site_access default).
     ("Request failed with status code 404", None, None),
     ("404 Not Found", None, None),
@@ -301,15 +305,15 @@ def webfetch(code, **response):
 
 @pytest.mark.parametrize("code,error_class", [
     (401, "login_auth"), (407, "login_auth"),
-    (403, "site_access"), (451, "site_access"),
-    (429, "service_error"),
+    (402, "site_access"), (403, "site_access"), (451, "site_access"),
+    (408, "service_error"), (429, "service_error"),
     (500, "service_error"), (502, "service_error"), (503, "service_error"), (504, "service_error"), (599, "service_error"),
 ])
 def test_webfetch_status_classes(code, error_class):
     assert hook.failure(webfetch(code)) == ("example.com", error_class, "response_observed")
 
 
-@pytest.mark.parametrize("code", [400, 402, 404, 405, 406, 408, 409, 410, 411, 413, 414, 415, 418, 422, 423, 428, 431])
+@pytest.mark.parametrize("code", [400, 404, 405, 406, 409, 410, 411, 413, 414, 415, 418, 422, 423, 428, 431])
 def test_webfetch_other_4xx_is_not_looked_up(monkeypatch, capsys, captured, code):
     # A wrong address or request is not a block: no class, no request, no text.
     assert hook.failure(webfetch(code)) is None
@@ -318,7 +322,7 @@ def test_webfetch_other_4xx_is_not_looked_up(monkeypatch, capsys, captured, code
     assert captured == []
 
 
-@pytest.mark.parametrize("code,expected", [(404, None), (410, None), (422, None), (400, None), (401, "login_auth"),
+@pytest.mark.parametrize("code,expected", [(404, None), (410, None), (422, None), (400, None), (401, "login_auth"), (402, "site_access"), (408, "service_error"),
                                            (403, "site_access"), (429, "service_error"), (451, "site_access"), (503, "service_error")])
 def test_webfetch_status_decides_the_request(monkeypatch, capsys, captured, code, expected):
     raw = payload("PostToolUse", url="https://example.com/a", response={"code": code, "codeText": "x"})
@@ -409,6 +413,8 @@ def test_thrown_errors_that_are_not_a_block_or_an_outage_are_not_looked_up(monke
     ("Request failed with status code 401", "login_auth"),
     ("Request failed with status code 403", "site_access"),
     ("Request failed with status code 429", "service_error"),
+    ("402 Payment Required", "site_access"),
+    ("Request failed with status code 408", "service_error"),
     ("451 Unavailable For Legal Reasons", "site_access"),
     ("Request failed with status code 503", "service_error"),
 ])

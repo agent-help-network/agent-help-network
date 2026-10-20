@@ -19,12 +19,15 @@ CLASSES = (
     ("human_verification", re.compile(r"captcha|verify (?:that )?you are (?:a )?human|are you a robot|challenge|cloudflare", re.I)),
     # 401 and 407: credentials required (RFC 9110 15.5.2, 15.5.8).
     ("login_auth", re.compile(r"log[ -]?in\b|sign[ -]?in\b|unauthori[sz]ed|\b40[17]\b|\bauthenticat(?:e|ion)\b", re.I)),
-    # 5xx (RFC 9110 15.6) and 429 (RFC 6585 4), for which the contract has no class of its own. "Unavailable For
-    # Legal Reasons" is the 451 reason phrase (RFC 7725): a block, not an outage.
-    ("service_error", re.compile(r"\b5\d\d\b|\b429\b|too many requests|rate[ -]?limit|time ?out|timed ?out"
+    # 5xx (RFC 9110 15.6), 408 (RFC 9110 15.5.9) and 429 (RFC 6585 4), for which the contract has no class of its
+    # own. "Unavailable For Legal Reasons" is the 451 reason phrase (RFC 7725): a block, not an outage.
+    ("service_error", re.compile(r"\b5\d\d\b|\b408\b|\b429\b|too many requests|rate[ -]?limit|time ?out|timed ?out"
                                  r"|unavailable(?! for legal reasons)|reset|bad gateway", re.I)),
-    # 403 (RFC 9110 15.5.4) and 451 (RFC 7725), plus the usual wording of a refusal.
-    ("site_access", re.compile(r"\b(?:403|451)\b|forbidden|\bdenied\b|blocked|disallow|legal reasons", re.I)),
+    # 403 (RFC 9110 15.5.4), 451 (RFC 7725) and 402 (RFC 9110 15.5.3): a crawl-for-payment answer such as Cloudflare
+    # Pay per Crawl is the site's declared access policy
+    # (https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/),
+    # plus the usual wording of a refusal.
+    ("site_access", re.compile(r"\b(?:402|403|451)\b|payment required|forbidden|\bdenied\b|blocked|disallow|legal reasons", re.I)),
 )
 BEFORE_RESPONSE = re.compile(r"connection refused|could not resolve|timed ?out|ENOTFOUND|ECONNREFUSED|getaddrinfo"
                              r"|is unable to fetch from"
@@ -86,7 +89,7 @@ def classify(exc_or_text) -> Tuple[Optional[str], Optional[str]]:
     ``(None, None)`` means the error is neither a block nor an outage: a 404, 410, 400 or
     422, or a message that names nothing. Do not look such an error up; a typo in an
     address is not a site that refuses agents. 401 and 407 give login_auth, 403 and 451
-    site_access, 429 and 5xx service_error (the contract has no rate-limit class).
+    site_access (402 too), 408, 429 and 5xx service_error (the contract has no rate-limit class).
     """
     if isinstance(exc_or_text, BaseException):
         chain = _chain(exc_or_text)

@@ -190,6 +190,8 @@ class _Response:
     ("400 Bad Request", (None, None)),
     ("407 Proxy Authentication Required", ("login_auth", None)),
     ("429 Too Many Requests", ("service_error", None)),
+    ("402 Payment Required", ("site_access", None)),
+    ("408 Request Timeout", ("service_error", None)),
     ("451 Unavailable For Legal Reasons", ("site_access", None)),
     (b"503 Service Unavailable", ("service_error", None)),
     # A path or query in a URL never decides the class.
@@ -217,6 +219,8 @@ class _Response:
     (_exc("HTTPStatusError", "Client error", response=_Response(400)), (None, None)),
     (_exc("HTTPStatusError", "Client error", response=_Response(401)), ("login_auth", "response_observed")),
     (_exc("HTTPStatusError", "Client error", response=_Response(451)), ("site_access", "response_observed")),
+    (_exc("HTTPStatusError", "Client error", response=_Response(402)), ("site_access", "response_observed")),
+    (_exc("HTTPStatusError", "Client error", response=_Response(408)), ("service_error", "response_observed")),
     (_exc("HTTPStatusError", "Server error", response=_Response(503)), ("service_error", "response_observed")),
     (ValueError("Verify that you are a human"), ("human_verification", None)),
 ])
