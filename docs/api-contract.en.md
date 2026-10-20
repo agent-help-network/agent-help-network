@@ -160,7 +160,7 @@ Both fixed mappings in `ahn/status_refresh.py` are edited by hand; nothing a scr
 
 ### Official paths layer
 
-`official_paths` comes from a curated table in code (`ahn/official_paths.py`) and has only `name`, `api_docs`, `developer_portal`, and `note`; any of the last three can be `null`, and the whole object is `null` for hosts not in the table. A subdomain matches its apex entry (`api.github.com` gets the `github.com` entry). An entry with only a `note` (for example, "No public API") is shown but does not count as an available official path for the recommendation or `official_path_available`; that needs `api_docs` or `developer_portal`. Only hosts whose public developer documentation was actually checked are listed. `null` does not mean no official path exists. Listing is not an endorsement or affiliation, and using an official API usually requires the user's own credentials and the provider's terms.
+`official_paths` comes from a curated table in code (`ahn/official_paths.py`) and has `name`, `api_docs`, `developer_portal`, and `note`, plus an optional `access` bundle for some hosts ([below](#access-bundle-official_pathsaccess-2026-10-20)); any of `api_docs`, `developer_portal`, and `note` can be `null`, and the whole object is `null` for hosts not in the table. A subdomain matches its apex entry (`api.github.com` gets the `github.com` entry). An entry with only a `note` (for example, "No public API") is shown but does not count as an available official path for the recommendation or `official_path_available`; that needs `api_docs` or `developer_portal`. Only hosts whose public developer documentation was actually checked are listed. `null` does not mean no official path exists. Listing is not an endorsement or affiliation, and using an official API usually requires the user's own credentials and the provider's terms.
 
 How the table is curated and verified (2026-10-18):
 
@@ -173,6 +173,49 @@ How the table is curated and verified (2026-10-18):
 - The script is not run in CI, so CI never depends on third-party sites. Run it by hand whenever the table changes. The 2026-10-18 full-run result is recorded at the end of this section.
 - `ahn/seed_hosts.txt` starts with the table's aggregate-eligible keys in table order and then lists further public hosts (`tests/test_profile_warm.py`).
 - Full run 2026-10-18 (a dated record: the table has grown since, and the entries added on 2026-10-19 were checked the same way with `--hosts` rather than in a new full run): 546 hosts in the table at that time (540 with URLs); of 722 distinct URLs, 707 passed, 13 were `blocked:*`, and 2 failed. Every URL that did not pass belongs to an existing entry and was kept, since nothing showed the page is gone. Bot challenge or 403: `binance.com` (api_docs), `coupang.com`, `ebay.com`, `nih.gov` (api_docs), `pexels.com`, `salesforce.com`, `stackexchange.com` and `stackoverflow.com` (stackapps.com), `stlouisfed.org` (portal), `unsplash.com`. Connection dropped: `tumblr.com` (curl with the same User-Agent gets 200). Every newly added entry was confirmed with a 200.
+
+#### Access bundle (`official_paths.access`, 2026-10-20)
+
+A link to the documentation is often not enough: an agent that hit a bot wall or a login wall also needs to know which credential the official path takes, where the user gets it, whether there is a free quota or a sandbox, where the spec and the rate limits are, whether the publisher runs an MCP server, and where the terms are. For some hosts `official_paths` carries that as `access`. It comes from a second curated table in code (`OFFICIAL_ACCESS` in `ahn/official_paths.py`); nothing is read at lookup time. Hosts without a bundle get no `access` key at all (never `null`), and inside a bundle every unknown field is left out, so answers stay small.
+
+```json
+"official_paths": {
+  "name": "Stripe", "api_docs": "https://docs.stripe.com/api", "developer_portal": "https://docs.stripe.com/", "note": null,
+  "access": {
+    "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
+    "key_signup_url": "https://docs.stripe.com/keys",
+    "rate_limits_url": "https://docs.stripe.com/rate-limits",
+    "sandbox_url": "https://docs.stripe.com/sandboxes",
+    "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+    "official_mcp": [{"endpoint": "https://mcp.stripe.com", "doc_url": "https://docs.stripe.com/mcp"}],
+    "terms": {"url": "https://stripe.com/legal/ssa",
+              "quote": "If User uses an AI Agent to access the Stripe Services, User is solely responsible for each action initiated by or through the AI Agent."},
+    "verified_at": "2026-10-20"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `auth` | List of `{method, source_url}`, one per method the publisher's page at `source_url` documents. `method` is `none` (some endpoints answer without credentials), `api_key` (a static key or app token from the publisher's console), `oauth1`, `oauth2` (a user authorizes the app), `device_code` (OAuth 2.0 device authorization, RFC 8628: the user approves on another device, no page automation), or `pat` (a personal access token that acts as the user). |
+| `key_signup_url` | The publisher's page that explains how to get a key or token. Console pages behind a sign-in are not listed. |
+| `free_tier` | `{quote, source_url}`: the publisher's own sentence stating how much can be used free of charge or on what condition (for example a default daily quota), copied verbatim (at most 200 characters). Pricing slogans, free-trial adverts, and price-list headers are never used. |
+| `rate_limits_url` | The publisher's page on rate limits or quotas. |
+| `sandbox_url` | The publisher's page on a test or sandbox environment. Only the link: test values are never copied. |
+| `openapi_url` | A machine-readable OpenAPI or Swagger document at a publisher-owned URL. |
+| `official_mcp` | List of `{endpoint, doc_url}`: an MCP endpoint exactly as the publisher's page at `doc_url` gives it. This service never connects to it. |
+| `terms` | `{url, quote}`: the publisher's terms or policy page for the API, and one sentence or clause copied verbatim from it (at most 200 characters). |
+| `verified_at` | UTC date on which every URL and quote in the bundle was last read. |
+
+- **Terms are linked and quoted, never interpreted.** `terms` has no verdict, stance, or summary such as "automation allowed"; the quote is one excerpt, not legal advice and not the whole document. Read the linked page.
+- **Publisher-owned, read, never guessed.** Every URL is on the key's registrable domain (public-suffix aware, as for the table), on a domain declared for that key in `PUBLISHER_DOMAINS`, or, on `github.com` and `raw.githubusercontent.com` where one domain serves many owners, inside the publisher's own organisation declared in `PUBLISHER_GITHUB_ORGS` (both in `scripts/verify_official_paths.py`). Each page was fetched and read on `verified_at`. A page that refused the read (401, 403, 429, or a challenge) leaves its field out; the refusal is not worked around.
+- **Stale bundles are hidden.** A bundle whose `verified_at` is more than 90 days old is left out of answers until it is verified again; the rest of `official_paths` stays.
+- **No change to the advice.** `access` does not change `recommendation` or `next_checks`.
+- Hosts of the same publisher and API share one bundle (`chatgpt.com` with `openai.com`, `notion.com` with `notion.so`, `twitter.com` with `x.com`, `wikimedia.org` with `wikipedia.org`). Count bundles with `len(OFFICIAL_ACCESS)`.
+- Verification: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` reads every page URL in the bundles with the etiquette above (every hop must also resolve only to public addresses), checks that each quote and each MCP endpoint appears verbatim in the page's visible text (whitespace and typographic quotes folded), and checks that `openapi_url` is an OpenAPI or Swagger document. MCP endpoints themselves are never requested. The pure rules (shape, method list, 200-character cap, publisher-owned domains, no future date) also run in CI in `tests/test_official_access.py`.
+- First run 2026-10-20 (a dated record): bundles for `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, and `cloudflare.com`; 54 distinct URLs, all 200 from a publisher-owned host; 28 quotes and MCP endpoints, all found. Same day, `free_tier` was narrowed to sentences that state a free amount or condition, which removed the quotes of `stripe.com`, `x.com`, and `wikipedia.org` (a pricing slogan, a pricing-model line, and a line about free content): 51 URLs and 23 quotes and endpoints remain. Left out because the page refused the read: OpenAI's terms and key console (`openai.com`, `platform.openai.com`: 403), Reddit's rate-limit wiki (403). Left out because the page has no readable text without scripts: Notion's developer terms.
+- `official_paths` and `access` are code, not stored facts, so the JSON Lines export (below) has no kind for them.
+- How to add bundles: `scripts/README.md`.
 
 ### Recommendation
 

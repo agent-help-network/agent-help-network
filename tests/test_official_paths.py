@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ahn.models import valid_host
-from ahn.official_paths import OFFICIAL_PATHS, official_paths
+from ahn.official_paths import OFFICIAL_ACCESS, OFFICIAL_PATHS, official_paths
 from ahn.service import PUBLIC_SUFFIXES_2
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +96,7 @@ def test_official_paths_resolves_subdomains_to_the_apex_entry():
     assert official_paths("WWW.Census.Gov.") == OFFICIAL_PATHS["census.gov"]
     assert official_paths("developer.uscis.gov") == OFFICIAL_PATHS["uscis.gov"]
     hit = official_paths("docs.github.com")
+    assert hit.pop("access") == OFFICIAL_ACCESS["github.com"]  # the curated access bundle rides along (tests/test_official_access.py)
     assert hit == OFFICIAL_PATHS["github.com"] and hit is not OFFICIAL_PATHS["github.com"]
     # Uncurated hosts under a public suffix stay unanswered rather than inheriting a sibling's entry.
     assert official_paths("unlisted-council.gov.uk") is None

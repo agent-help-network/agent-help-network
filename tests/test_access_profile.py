@@ -272,7 +272,7 @@ def test_fetch_public_file_maps_http_statuses(monkeypatch):
 def test_official_paths_hit_subdomain_and_miss():
     hit = official_paths("github.com")
     assert hit["name"] == "GitHub" and hit["api_docs"].startswith("https://docs.github.com/")
-    assert set(hit) == {"name", "api_docs", "developer_portal", "note"}
+    assert set(hit) == {"name", "api_docs", "developer_portal", "note", "access"}  # github.com has an access bundle
     assert official_paths("API.GitHub.com.") == hit and hit is not OFFICIAL_PATHS["github.com"]
     assert official_paths("example.invalid") is None
     assert official_paths("") is None

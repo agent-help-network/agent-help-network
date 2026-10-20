@@ -216,6 +216,49 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - `ahn/seed_hosts.txt` 는 공개 집계에 적합한 표의 키를 표 순서대로 맨 앞에 두고 그 뒤에 다른 공개 호스트를 둔다(`tests/test_profile_warm.py`).
 - 2026-10-18 전체 검증(날짜가 붙은 기록이다. 표는 그 뒤 늘었고 2026-10-19 에 더한 항목은 새 전체 검증 대신 같은 방식의 `--hosts` 검사를 했다): 당시 표 546개 호스트(URL 이 있는 540개), 고유 URL 722개 중 707개 통과, 13개 `blocked:*`, 2개 실패. 통과하지 못한 URL 은 모두 기존 항목이며 페이지가 사라졌다는 근거가 없어 유지했다. 봇 확인·403: `binance.com`(api_docs), `coupang.com`, `ebay.com`, `nih.gov`(api_docs), `pexels.com`, `salesforce.com`, `stackexchange.com`·`stackoverflow.com`(stackapps.com), `stlouisfed.org`(포털), `unsplash.com`. 연결 끊김: `tumblr.com`(같은 User-Agent 의 curl 은 200). 새로 넣은 항목은 모두 200 으로 확인했다.
 
+### 이용 정보 묶음 `official_paths.access` (2026-10-20)
+
+문서 링크만으로는 부족할 때가 많다. 봇 차단벽이나 로그인 벽에 막힌 에이전트는 공식 경로가 어떤 자격 증명을 쓰는지, 사용자가 그것을 어디서 받는지, 무료 한도나 샌드박스가 있는지, 스펙과 속도 제한 문서가 어디 있는지, 업체가 MCP 서버를 운영하는지, 약관이 어디 있는지도 알아야 한다. 일부 호스트의 `official_paths` 에는 위의 네 필드 외에 이것을 담은 선택 객체 `access` 가 붙는다. 출처는 코드 안의 두 번째 정리 표(`ahn/official_paths.py` 의 `OFFICIAL_ACCESS`)이며 조회 때 새로 읽는 것은 없다. 묶음이 없는 호스트에는 `access` 키 자체가 없고(`null` 이 아님), 묶음 안에서도 모르는 필드는 빼서 응답을 작게 유지한다.
+
+```json
+"official_paths": {
+  "name": "Stripe", "api_docs": "https://docs.stripe.com/api", "developer_portal": "https://docs.stripe.com/", "note": null,
+  "access": {
+    "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
+    "key_signup_url": "https://docs.stripe.com/keys",
+    "rate_limits_url": "https://docs.stripe.com/rate-limits",
+    "sandbox_url": "https://docs.stripe.com/sandboxes",
+    "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+    "official_mcp": [{"endpoint": "https://mcp.stripe.com", "doc_url": "https://docs.stripe.com/mcp"}],
+    "terms": {"url": "https://stripe.com/legal/ssa",
+              "quote": "If User uses an AI Agent to access the Stripe Services, User is solely responsible for each action initiated by or through the AI Agent."},
+    "verified_at": "2026-10-20"
+  }
+}
+```
+
+| 필드 | 뜻 |
+| --- | --- |
+| `auth` | `{method, source_url}` 목록. `source_url` 의 업체 문서가 적은 방식만 하나씩 넣는다. `method` 는 `none`(일부 끝점은 자격 증명 없이 답함), `api_key`(업체 콘솔에서 받는 고정 키나 앱 토큰), `oauth1`, `oauth2`(사용자가 앱을 승인), `device_code`(OAuth 2.0 기기 승인, RFC 8628: 사용자가 다른 기기에서 승인하므로 페이지 자동화가 필요 없음), `pat`(사용자로 행동하는 개인 액세스 토큰) 중 하나다. |
+| `key_signup_url` | 키·토큰을 받는 방법을 설명하는 업체 문서. 로그인 뒤의 콘솔 페이지는 넣지 않는다. |
+| `free_tier` | `{quote, source_url}`: 무료로 쓸 수 있는 양이나 조건(예: 하루 기본 할당량)을 말하는 업체 자신의 문장을 그대로 옮긴 인용(200자 이하). 요금 홍보 문구, "무료 체험" 광고, 가격표 머리말은 넣지 않는다. |
+| `rate_limits_url` | 속도 제한·할당량에 관한 업체 문서. |
+| `sandbox_url` | 시험·샌드박스 환경에 관한 업체 문서. 링크만 주며 시험용 값은 옮기지 않는다. |
+| `openapi_url` | 업체 소유 URL 에 있는 기계 판독용 OpenAPI·Swagger 문서. |
+| `official_mcp` | `{endpoint, doc_url}` 목록: `doc_url` 의 업체 문서에 적힌 그대로의 MCP 끝점. 이 서비스는 그 끝점에 접속하지 않는다. |
+| `terms` | `{url, quote}`: API 에 관한 업체의 약관·정책 문서와 그 문서에서 그대로 옮긴 문장이나 구절 하나(200자 이하). |
+| `verified_at` | 묶음의 모든 URL 과 인용을 마지막으로 읽은 날짜(UTC). |
+
+- **약관은 링크하고 인용할 뿐 해석하지 않는다.** `terms` 에는 판정·입장·"자동화 허용" 같은 요약이 없다. 인용은 발췌 하나일 뿐 법률 조언도 문서 전체도 아니다. 링크된 문서를 읽어야 한다.
+- **업체 소유, 직접 읽음, 추측 없음.** 모든 URL 은 키의 등록 가능 도메인(표와 같이 공용 접미사 기준), 그 키에 `PUBLISHER_DOMAINS` 로 선언된 도메인, 또는 한 도메인을 여러 주인이 쓰는 `github.com`·`raw.githubusercontent.com` 이라면 `PUBLISHER_GITHUB_ORGS` 에 선언된 업체 자신의 조직 안에 있다(둘 다 `scripts/verify_official_paths.py`). 모든 페이지는 `verified_at` 에 실제로 가져와 읽었다. 읽기를 거절한 페이지(401·403·429·챌린지)는 그 필드를 비우며 거절을 우회하지 않는다.
+- **오래된 묶음은 숨긴다.** `verified_at` 이 90일을 넘은 묶음은 다시 확인할 때까지 응답에서 빠지고, `official_paths` 의 나머지는 그대로 남는다.
+- **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다.
+- 같은 업체·같은 API 의 호스트는 묶음 하나를 같이 쓴다(`chatgpt.com`↔`openai.com`, `notion.com`↔`notion.so`, `twitter.com`↔`x.com`, `wikimedia.org`↔`wikipedia.org`). 묶음 수는 `len(OFFICIAL_ACCESS)` 로 센다.
+- 검증: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` 이 위와 같은 예절로 묶음 안의 모든 문서 URL 을 읽고(모든 경유지가 공개 주소로만 풀려야 함), 각 인용과 MCP 끝점이 페이지의 보이는 텍스트에 그대로 있는지(공백·타이포그래피 따옴표는 맞춰서) 확인하며, `openapi_url` 이 OpenAPI·Swagger 문서인지 본다. MCP 끝점 자체에는 요청하지 않는다. 네트워크 없는 규칙(모양, 방식 목록, 200자 상한, 업체 소유 도메인, 미래 날짜 금지)은 CI 의 `tests/test_official_access.py` 에서도 돈다.
+- 첫 검증 2026-10-20(날짜가 붙은 기록): `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, `cloudflare.com` 묶음. 고유 URL 54개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 28개 모두 확인. 같은 날 `free_tier` 를 무료로 쓸 수 있는 양이나 조건을 말하는 문장으로 좁혀 `stripe.com`·`x.com`·`wikipedia.org` 의 인용(요금 홍보 문구, 요금 방식 문장, 자유 콘텐츠에 관한 문장)을 뺐다. 남은 것은 URL 51개, 인용·끝점 23개다. 읽기 거절로 비운 것: OpenAI 약관과 키 콘솔(`openai.com`, `platform.openai.com`: 403), Reddit 속도 제한 위키(403). 스크립트 없이는 본문이 없어 비운 것: Notion 개발자 약관.
+- `official_paths` 와 `access` 는 저장된 사실이 아니라 코드이므로 JSON Lines 내보내기(아래)에는 해당 종류가 없다.
+- 묶음 추가 절차: `scripts/README.md`.
+
 ## 뒤에서 읽기 (stale-while-revalidate, 2026-10-19)
 
 조회는 제3자 호스트를 기다리지 않는다. `GET /v1/incidents/check` 와 MCP `check_incident` 는 연결 하나로 데이터베이스에서만 답한다. 기록(호스트 등록·호스트별 조회 수)을 먼저 커밋하고, 답에 필요한 읽기를 하고, 마지막에 큐에 넣는다. 대상 호스트·상태 업체를 읽는 일은 모두 조회 뒤에서 한다.
