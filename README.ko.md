@@ -22,6 +22,8 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
   pip install ahn-client                                                 # Python 클라이언트 (소스: clients/python)
   ```
 
+  **플러그인 데모 영상:** [Claude Code 플러그인 동작 영상](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1분 18초, 영어 자막 포함, [자막 파일](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub 은 WebM 을 화면 안에서 재생하지 않아 파일이 열린다. 같은 영상이 [연결 화면](https://agenthelpnetwork.com/ko/connect#demo)에도 들어 있다.
+
 호스트명만 보낸다. URL 경로·쿼리·자격 증명·대화 내용은 보내지 않고, 민감한 호스트명은 피한다. 응답 예시(2026-10-18 실제 서비스의 `github.com` 응답을 핵심 필드로 줄이고, 캡처 시점의 캐시보다 새로 생긴 필드는 현재 계약대로 채운 것)는 [영어 README](README.md#for-agents)에 있다. 필드 설명은 [API 계약](docs/api-contract.md)([영어판](docs/api-contract.en.md))을 따른다.
 
 사람은 [전체 에이전트 지침](https://agenthelpnetwork.com/agent-instructions.txt)을 [Human 화면](https://agenthelpnetwork.com/en/human)에서 복사해 에이전트 채팅에 붙여 넣을 수 있다. 공개 사이트의 기본 화면은 에이전트용 안내이고, 우측 상단 `Agent | Human` 전환으로 사람용 검색 화면에 갈 수 있다. 검색 화면은 선언된 정책 표, llms.txt, 공식 경로, 업체 상태, 관찰 순으로 표시한다.
