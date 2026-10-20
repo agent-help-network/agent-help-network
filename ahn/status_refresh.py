@@ -694,6 +694,27 @@ SOURCES: dict[str, Source] = {
     "trezor.io": Source("Trezor Status", "https://status.trezor.io/", "https://status.trezor.io/index.json", "betterstack"),
     "cm.com": Source("CM.com Status", "https://status.cm.com/", "https://status.cm.com/api/v2/status.json"),
     "doofinder.com": Source("Doofinder Status", "https://status.doofinder.com/", "https://status.doofinder.com/summary.json", "instatus"),
+    # Added 2026-10-20 from the agent-demand collection: Atlassian Statuspage-format feeds with ownership evidence A, B or C.
+    "cocoapods.org": Source("CocoaPods Status", "https://status.cocoapods.org/", "https://status.cocoapods.org/api/v2/status.json"),
+    "libretexts.org": Source("LibreTexts Systems Status", "https://status.libretexts.org/", "https://status.libretexts.org/api/v2/status.json"),
+    "cloudresearch.com": Source("CloudResearch Status", "https://status.cloudresearch.com/", "https://status.cloudresearch.com/api/v2/status.json"),
+    "crumbl.com": Source("Crumbl Status", "https://status.crumbl.com/", "https://status.crumbl.com/api/v2/status.json"),
+    "ipvanish.com": Source("IPVanish Status", "https://status.ipvanish.com/", "https://status.ipvanish.com/api/v2/status.json"),
+    "myliaison.com": Source("MyLiaison Status", "https://status.myliaison.com/", "https://status.myliaison.com/api/v2/status.json"),
+    "openstax.org": Source("OpenStax Status", "https://status.openstax.org/", "https://status.openstax.org/api/v2/status.json"),
+    "outschool.com": Source("Outschool Status", "https://status.outschool.com/", "https://status.outschool.com/api/v2/status.json"),
+    "ssa.gov": Source("SSA Web Services Status", "https://status.ssa.gov/", "https://status.ssa.gov/api/v2/status.json"),
+    "taskrabbit.com": Source("TaskRabbit Status", "https://status.taskrabbit.com/", "https://status.taskrabbit.com/api/v2/status.json"),
+    "uhaul.com": Source("U-Haul System Status", "https://status.uhaul.com/", "https://status.uhaul.com/api/v2/status.json"),
+    "untappd.com": Source("Untappd Status", "https://status.untappd.com/", "https://status.untappd.com/api/v2/status.json"),
+    "vocal.media": Source("Vocal Status", "https://status.vocal.media/", "https://status.vocal.media/api/v2/status.json"),
+    "wealthsimple.com": Source("Wealthsimple Status", "https://status.wealthsimple.com/", "https://status.wealthsimple.com/api/v2/status.json"),
+    "workable.com": Source("Workable Status", "https://workable.statuspage.io/", "https://workable.statuspage.io/api/v2/status.json"),
+    "appcenter.ms": Source("App Center Status", "https://status.appcenter.ms/", "https://status.appcenter.ms/api/v2/status.json"),
+    "gradle.org": Source("Gradle Status", "https://status.gradle.com/", "https://status.gradle.com/api/v2/status.json"),
+    "dublincore.org": Source("Dublincore Status", "https://status.dublincore.org/", "https://status.dublincore.org/index.json", "betterstack"),
+    "nirvanahq.com": Source("Nirvanahq Status", "https://status.nirvanahq.com/", "https://status.nirvanahq.com/index.json", "betterstack"),
+    "stacker.com": Source("Stacker Status", "https://status.stacker.com/", "https://status.stacker.com/summary.json", "instatus"),
 }
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
@@ -1030,6 +1051,17 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "st-andrews.ac.uk": ("University of St Andrews Service Status", "https://status.st-andrews.ac.uk/"),
     "umt.edu": ("University of Montana IT Service Status", "https://status.umt.edu/umstatus/"),
     "uvm.edu": ("University of Vermont IT Service Status", "https://itstatus.uvm.edu/"),
+    # Added 2026-10-20 from the agent-demand collection: publisher-owned status pages (ownership evidence A or B) with no compatible feed.
+    "basspro.com": ("Basspro Status", "https://status.basspro.com/"),
+    "georgia.gov": ("Georgia Status", "https://status.georgia.gov/"),
+    "olaplex.com": ("Olaplex Status", "https://status.olaplex.com/"),
+    "stocktwits.com": ("Stocktwits Status", "https://status.stocktwits.com/"),
+    "styleseat.com": ("Styleseat Status", "https://status.styleseat.com/"),
+    "trakt.tv": ("Trakt Status", "https://status.trakt.tv/"),
+    "cloud.microsoft": ("Microsoft Service Health Status", "https://status.cloud.microsoft/"),
+    "pki.goog": ("Google Trust Services Status", "https://status.pki.goog/"),
+    "linktr.ee": ("Linktree Status", "https://status.linktr.ee/"),
+    "selectel.ru": ("Selectel Status", "https://selectel.live/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts

@@ -81,11 +81,13 @@ INSTATUS_HOSTS = {"bsky.app", "exa.ai", "fastmail.com", "joinmastodon.org", "kag
 BETTERSTACK_HOSTS = {"brave.com", "firecrawl.dev", "huggingface.co", "openalex.org", "together.ai"}
 # Hosts moved from a link to a feed by the 2026-10-20 re-verification (the page's public feed parsed with the existing parser).
 REVERIFIED_INSTATUS_HOSTS = {
+    "stacker.com",  # agent-demand collection, 2026-10-20: feed parsed on the first check
     "1rpc.io", "appfolio.com", "aternos.org", "cloudez.io", "code.org", "decodo.com", "discogs.com", "doofinder.com",
     "fetlife.com", "flashbots.net", "freeconvert.com", "gamma.app", "growthbook.io", "mediavine.com", "narvar.com",
     "optable.co", "padlet.com", "polymarket.com", "wistia.com",
 }
 REVERIFIED_BETTERSTACK_HOSTS = {
+    "dublincore.org", "nirvanahq.com",  # agent-demand collection, 2026-10-20: feed parsed on the first check
     "apollo.io", "atom.com", "bitdrift.io", "drpc.org", "eclipse.org", "elegantthemes.com", "feedly.com",
     "framer.com", "freeipapi.com", "higgsfield.ai", "linkvertise.com", "modrinth.com", "nordvpn.com", "plausible.io",
     "raspberrypi.org", "signupgenius.com", "sportskeeda.com", "studocu.com", "time.com", "trezor.io", "userway.org",
