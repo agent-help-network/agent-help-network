@@ -11,7 +11,6 @@ from fastapi import FastAPI, Header, Query, Request, Response, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
@@ -22,6 +21,7 @@ from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_d
 from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
+from .static_assets import OffloadingStaticFiles
 from .traffic import client_type, daily_client_digest, request_source
 from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
@@ -148,7 +148,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     report_limiter = RequestLimiter(per_client=3, total=20) if settings.public_mode and settings.reporting_enabled else None
     health_lock = Lock()
     health_cache = {"checked_at": 0.0, "ok": False}
-    app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+    app.mount("/static", OffloadingStaticFiles(directory=str(ROOT / "static")), name="static")
 
     if settings.public_mode:
         @app.get("/.well-known/mcp-registry-auth", include_in_schema=False)
