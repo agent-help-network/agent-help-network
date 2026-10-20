@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:01.562 --> 00:00:12.139
+Agent Help Network (AHN) plugin for Claude Code: a hook runs after a failed WebFetch. The next scenes feed it example tool results.
+
+2
+00:00:12.139 --> 00:00:20.643
+WebFetch gets 403 Forbidden → the AHN plugin looks up only the hostname and adds one line of guidance.
+
+3
+00:00:20.643 --> 00:00:29.715
+It reports the host's declared agent policy and its official path. Declared policy is not an access guarantee.
+
+4
+00:00:29.715 --> 00:00:37.652
+A host AHN has never seen answers 'pending' at once; its robots.txt is read in the background.
+
+5
+00:00:37.652 --> 00:00:47.305
+A few seconds later, one more lookup (not polling) returns 'fresh': the host's robots.txt and llms.txt have been read.
+
+6
+00:00:47.305 --> 00:00:53.099
+A 404 is a wrong address, not a block: no lookup, no extra text.
+
+7
+00:00:53.099 --> 00:01:00.961
+HTTP 429 with Retry-After: 30 → the hook adds the wait the site asks for to its short answer.
+
+8
+00:01:00.961 --> 00:01:07.967
+The hook only reports. It never retries, waits or bypasses a limit for the agent.
+
+9
+00:01:07.967 --> 00:01:17.505
+The hook sends only a hostname and coarse error codes, and only reads. Install: agenthelpnetwork.com/en/connect
