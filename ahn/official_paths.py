@@ -953,6 +953,8 @@ OFFICIAL_PATHS: dict[str, dict] = {
 # on a publisher-owned domain (the key's, one declared in PUBLISHER_DOMAINS, or the publisher's own GitHub
 # organisation declared in PUBLISHER_GITHUB_ORGS; see scripts/verify_official_paths.py) and was read on verified_at.
 # Quotes are copied verbatim from the page at source_url / terms.url and are at most ACCESS_QUOTE_MAX characters.
+# free_tier quotes only a sentence that states how much can be used free or on what condition (a default quota); pricing
+# slogans, free-trial adverts and price-list headers do not count.
 # Terms are a link and a quote only: this service does not interpret them or say whether automation is allowed.
 # A page that refused the read (401/403/challenge) leaves its field out. Procedure: scripts/README.md.
 ACCESS_AUTH_METHODS = ("none", "api_key", "oauth1", "oauth2", "device_code", "pat")
@@ -988,7 +990,6 @@ OFFICIAL_ACCESS: dict[str, dict] = {
     "stripe.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
         "key_signup_url": "https://docs.stripe.com/keys",
-        "free_tier": {"quote": "No setup fees, monthly fees, or hidden fees.", "source_url": "https://stripe.com/pricing"},
         "rate_limits_url": "https://docs.stripe.com/rate-limits",
         "sandbox_url": "https://docs.stripe.com/sandboxes",
         "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
@@ -1053,8 +1054,6 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "auth": [{"method": "oauth2", "source_url": _X_AUTH}, {"method": "oauth1", "source_url": _X_AUTH},
                  {"method": "api_key", "source_url": _X_AUTH}],
         "key_signup_url": "https://docs.x.com/x-api/getting-started/getting-access",
-        "free_tier": {"quote": "No subscriptions—pay only for what you use.",
-                      "source_url": "https://docs.x.com/x-api/getting-started/pricing"},
         "rate_limits_url": "https://docs.x.com/x-api/fundamentals/rate-limits",
         "openapi_url": "https://api.x.com/2/openapi.json",
         "official_mcp": [{"endpoint": "https://api.x.com/mcp", "doc_url": "https://docs.x.com/tools/mcp"},
@@ -1066,8 +1065,6 @@ OFFICIAL_ACCESS: dict[str, dict] = {
     },
     "wikipedia.org": {
         "auth": [{"method": "oauth2", "source_url": "https://www.mediawiki.org/wiki/OAuth/For_Developers"}],
-        "free_tier": {"quote": "Wikimedia APIs give you open access to use this free knowledge in your projects and apps.",
-                      "source_url": "https://www.mediawiki.org/wiki/Wikimedia_APIs"},
         "rate_limits_url": "https://www.mediawiki.org/wiki/API:Etiquette",
         "terms": {"url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy",
                   "quote": "Scripts should use an informative User-Agent string with contact information, or they may be "

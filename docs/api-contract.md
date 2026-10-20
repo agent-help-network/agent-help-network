@@ -226,7 +226,6 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
   "access": {
     "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
     "key_signup_url": "https://docs.stripe.com/keys",
-    "free_tier": {"quote": "No setup fees, monthly fees, or hidden fees.", "source_url": "https://stripe.com/pricing"},
     "rate_limits_url": "https://docs.stripe.com/rate-limits",
     "sandbox_url": "https://docs.stripe.com/sandboxes",
     "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
@@ -242,7 +241,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 | --- | --- |
 | `auth` | `{method, source_url}` 목록. `source_url` 의 업체 문서가 적은 방식만 하나씩 넣는다. `method` 는 `none`(일부 끝점은 자격 증명 없이 답함), `api_key`(업체 콘솔에서 받는 고정 키나 앱 토큰), `oauth1`, `oauth2`(사용자가 앱을 승인), `device_code`(OAuth 2.0 기기 승인, RFC 8628: 사용자가 다른 기기에서 승인하므로 페이지 자동화가 필요 없음), `pat`(사용자로 행동하는 개인 액세스 토큰) 중 하나다. |
 | `key_signup_url` | 키·토큰을 받는 방법을 설명하는 업체 문서. 로그인 뒤의 콘솔 페이지는 넣지 않는다. |
-| `free_tier` | `{quote, source_url}`: 무료 사용, 기본 할당량, 요금 방식에 관한 업체 자신의 문장을 그대로 옮긴 인용(200자 이하). |
+| `free_tier` | `{quote, source_url}`: 무료로 쓸 수 있는 양이나 조건(예: 하루 기본 할당량)을 말하는 업체 자신의 문장을 그대로 옮긴 인용(200자 이하). 요금 홍보 문구, "무료 체험" 광고, 가격표 머리말은 넣지 않는다. |
 | `rate_limits_url` | 속도 제한·할당량에 관한 업체 문서. |
 | `sandbox_url` | 시험·샌드박스 환경에 관한 업체 문서. 링크만 주며 시험용 값은 옮기지 않는다. |
 | `openapi_url` | 업체 소유 URL 에 있는 기계 판독용 OpenAPI·Swagger 문서. |
@@ -256,7 +255,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다.
 - 같은 업체·같은 API 의 호스트는 묶음 하나를 같이 쓴다(`chatgpt.com`↔`openai.com`, `notion.com`↔`notion.so`, `twitter.com`↔`x.com`, `wikimedia.org`↔`wikipedia.org`). 묶음 수는 `len(OFFICIAL_ACCESS)` 로 센다.
 - 검증: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` 이 위와 같은 예절로 묶음 안의 모든 문서 URL 을 읽고(모든 경유지가 공개 주소로만 풀려야 함), 각 인용과 MCP 끝점이 페이지의 보이는 텍스트에 그대로 있는지(공백·타이포그래피 따옴표는 맞춰서) 확인하며, `openapi_url` 이 OpenAPI·Swagger 문서인지 본다. MCP 끝점 자체에는 요청하지 않는다. 네트워크 없는 규칙(모양, 방식 목록, 200자 상한, 업체 소유 도메인, 미래 날짜 금지)은 CI 의 `tests/test_official_access.py` 에서도 돈다.
-- 첫 검증 2026-10-20(날짜가 붙은 기록): `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, `cloudflare.com` 묶음. 고유 URL 54개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 28개 모두 확인. 읽기 거절로 비운 것: OpenAI 약관과 키 콘솔(`openai.com`, `platform.openai.com`: 403), Reddit 속도 제한 위키(403). 스크립트 없이는 본문이 없어 비운 것: Notion 개발자 약관.
+- 첫 검증 2026-10-20(날짜가 붙은 기록): `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, `cloudflare.com` 묶음. 고유 URL 54개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 28개 모두 확인. 같은 날 `free_tier` 를 무료로 쓸 수 있는 양이나 조건을 말하는 문장으로 좁혀 `stripe.com`·`x.com`·`wikipedia.org` 의 인용(요금 홍보 문구, 요금 방식 문장, 자유 콘텐츠에 관한 문장)을 뺐다. 남은 것은 URL 51개, 인용·끝점 23개다. 읽기 거절로 비운 것: OpenAI 약관과 키 콘솔(`openai.com`, `platform.openai.com`: 403), Reddit 속도 제한 위키(403). 스크립트 없이는 본문이 없어 비운 것: Notion 개발자 약관.
 - `official_paths` 와 `access` 는 저장된 사실이 아니라 코드이므로 JSON Lines 내보내기(아래)에는 해당 종류가 없다.
 - 묶음 추가 절차: `scripts/README.md`.
 

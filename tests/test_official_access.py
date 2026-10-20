@@ -35,7 +35,7 @@ VERIFIED = date(2026, 10, 20)
 GOOD = {
     "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
     "key_signup_url": "https://docs.stripe.com/keys",
-    "free_tier": {"quote": "No setup fees.", "source_url": "https://stripe.com/pricing"},
+    "free_tier": {"quote": "Each account can make 1,000 requests per day at no charge.", "source_url": "https://stripe.com/pricing"},
     "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
     "official_mcp": [{"endpoint": "https://mcp.stripe.com", "doc_url": "https://docs.stripe.com/mcp"}],
     "terms": {"url": "https://stripe.com/legal/ssa", "quote": "A short verbatim sentence."},

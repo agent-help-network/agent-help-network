@@ -184,7 +184,6 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
   "access": {
     "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
     "key_signup_url": "https://docs.stripe.com/keys",
-    "free_tier": {"quote": "No setup fees, monthly fees, or hidden fees.", "source_url": "https://stripe.com/pricing"},
     "rate_limits_url": "https://docs.stripe.com/rate-limits",
     "sandbox_url": "https://docs.stripe.com/sandboxes",
     "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
@@ -200,7 +199,7 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 | --- | --- |
 | `auth` | List of `{method, source_url}`, one per method the publisher's page at `source_url` documents. `method` is `none` (some endpoints answer without credentials), `api_key` (a static key or app token from the publisher's console), `oauth1`, `oauth2` (a user authorizes the app), `device_code` (OAuth 2.0 device authorization, RFC 8628: the user approves on another device, no page automation), or `pat` (a personal access token that acts as the user). |
 | `key_signup_url` | The publisher's page that explains how to get a key or token. Console pages behind a sign-in are not listed. |
-| `free_tier` | `{quote, source_url}`: the publisher's own sentence about free use, a default quota, or its pricing model, copied verbatim (at most 200 characters). |
+| `free_tier` | `{quote, source_url}`: the publisher's own sentence stating how much can be used free of charge or on what condition (for example a default daily quota), copied verbatim (at most 200 characters). Pricing slogans, free-trial adverts, and price-list headers are never used. |
 | `rate_limits_url` | The publisher's page on rate limits or quotas. |
 | `sandbox_url` | The publisher's page on a test or sandbox environment. Only the link: test values are never copied. |
 | `openapi_url` | A machine-readable OpenAPI or Swagger document at a publisher-owned URL. |
@@ -214,7 +213,7 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 - **No change to the advice.** `access` does not change `recommendation` or `next_checks`.
 - Hosts of the same publisher and API share one bundle (`chatgpt.com` with `openai.com`, `notion.com` with `notion.so`, `twitter.com` with `x.com`, `wikimedia.org` with `wikipedia.org`). Count bundles with `len(OFFICIAL_ACCESS)`.
 - Verification: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` reads every page URL in the bundles with the etiquette above (every hop must also resolve only to public addresses), checks that each quote and each MCP endpoint appears verbatim in the page's visible text (whitespace and typographic quotes folded), and checks that `openapi_url` is an OpenAPI or Swagger document. MCP endpoints themselves are never requested. The pure rules (shape, method list, 200-character cap, publisher-owned domains, no future date) also run in CI in `tests/test_official_access.py`.
-- First run 2026-10-20 (a dated record): bundles for `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, and `cloudflare.com`; 54 distinct URLs, all 200 from a publisher-owned host; 28 quotes and MCP endpoints, all found. Left out because the page refused the read: OpenAI's terms and key console (`openai.com`, `platform.openai.com`: 403), Reddit's rate-limit wiki (403). Left out because the page has no readable text without scripts: Notion's developer terms.
+- First run 2026-10-20 (a dated record): bundles for `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, and `cloudflare.com`; 54 distinct URLs, all 200 from a publisher-owned host; 28 quotes and MCP endpoints, all found. Same day, `free_tier` was narrowed to sentences that state a free amount or condition, which removed the quotes of `stripe.com`, `x.com`, and `wikipedia.org` (a pricing slogan, a pricing-model line, and a line about free content): 51 URLs and 23 quotes and endpoints remain. Left out because the page refused the read: OpenAI's terms and key console (`openai.com`, `platform.openai.com`: 403), Reddit's rate-limit wiki (403). Left out because the page has no readable text without scripts: Notion's developer terms.
 - `official_paths` and `access` are code, not stored facts, so the JSON Lines export (below) has no kind for them.
 - How to add bundles: `scripts/README.md`.
 
