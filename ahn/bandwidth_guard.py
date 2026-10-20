@@ -1,7 +1,8 @@
-"""Hourly Render service-bandwidth guard; no LLM or local computer required."""
+"""Render service-bandwidth guard, run every 15 minutes by cron; no LLM or local computer required."""
 
 from __future__ import annotations
 
+import faulthandler
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -17,6 +18,10 @@ RENDER_METRIC_RETENTION = timedelta(days=7)
 # longer reconstruct the billing month: the computed usage is a lower bound.
 COVERAGE_GAP = timedelta(days=6)
 LOCK_KEY = 81260531004
+# Render lets a cron run last up to 12 hours and holds the next scheduled run until the
+# active one ends, so a hung database or API call would silence the guard. Abort instead:
+# the non-zero exit also triggers Render's failed-run notification.
+WATCHDOG_SECONDS = 300
 # Render reports byte-based units, so folding 'Mb' (megabit) into megabytes is
 # acceptable. Unknown labels have no default scale: the guard fails closed.
 _UNIT_TO_GB = {
@@ -208,6 +213,7 @@ def run_guard(database_url: str, api_key: str, resource_id: str, *, now: datetim
 
 
 def main() -> None:
+    faulthandler.dump_traceback_later(WATCHDOG_SECONDS, exit=True)
     database_url = os.environ.get("AHN_DATABASE_URL", "")
     api_key = os.environ.get("RENDER_API_KEY", "")
     resource_id = os.environ.get("AHN_GUARD_WEB_SERVICE_ID", "")
