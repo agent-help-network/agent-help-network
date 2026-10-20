@@ -141,6 +141,16 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "shein.com": {"sheincorp.com"},  # SHEIN corporate open platform domain
     "fedoraproject.org": {"fedora-infra.github.io"},  # Fedora Infrastructure Pages site that bodhi.fedoraproject.org/docs redirects to
     "wayfair.com": {"wayfair.io"},  # Wayfair developer site that developer.wayfair.com redirects to
+    "api.aws": {"amazon.com", "aws.com"},  # .aws is Amazon's brand TLD; documentation lives on docs.aws.amazon.com
+    "bahn.de": {"deutschebahn.com"},  # Deutsche Bahn API Marketplace
+    "censusreporter.org": {"github.com"},  # Census Reporter's own repository
+    "dartlang.org": {"dart.dev"},  # legacy domain of dart.dev
+    "datadoghq.eu": {"datadoghq.com"},
+    "eventbrite.co.uk": {"eventbrite.com"}, "eventbrite.com.au": {"eventbrite.com"},
+    "aliexpress.us": {"aliexpress.com"}, "cheaptickets.com": {"expediagroup.com"}, "fb.com": {"facebook.com"},
+    "google.ca": {"google.com"}, "google.co.in": {"google.com"},
+    "freepik.com": {"magnific.com"},  # Freepik-owned Magnific; docs.freepik.com redirects to docs.magnific.com
+    "greenhouse.com": {"greenhouse.io"}, "admin.ch": {"opendata.swiss"},  # Swiss federal open data portal
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)
