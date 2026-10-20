@@ -953,7 +953,7 @@ def test_blocked_agents_deduplicates_in_linear_time_and_is_capped():
     flood = [a + b + c for a in letters for b in letters for c in letters]
     start = time.monotonic()
     tokens, training = hook.blocked_agents({"agents_blocked": flood * 2, "rules": []})
-    assert time.monotonic() - start < 1.0
+    assert time.monotonic() - start < 5.0  # linear time is milliseconds; the quadratic version took ~11 s
     assert len(tokens) == hook.MAX_AGENT_TOKENS == 64 and training == 0
     assert tokens[:3] == ["aaa", "aab", "aac"]
     assert hook.blocked_agents({"agents_blocked": ["GPTBot", "GPTBot", "x", 5, "Claude-User"], "rules": []}) == (

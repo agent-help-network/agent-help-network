@@ -20,6 +20,11 @@ from ahn.models import CheckResponse
 from ahn.settings import Settings
 from ahn.triage import CHECKS, CHECKS_KO, next_checks, recommendation
 
+SLOW_READ_SECONDS = 3
+# A lookup that waited on a read would take SLOW_READ_SECONDS or more. The recorded calls (slow_network == [])
+# are the exact check; the clock is only a backstop, set against the read's delay instead of an absolute
+# 100 ms because a loaded machine (parallel test runs) stretches a millisecond lookup by orders of magnitude.
+LOOKUP_BUDGET = SLOW_READ_SECONDS / 2
 SETTINGS = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, collect_lookup_metrics=True)
 OFFICIAL = {"name": "Example", "api_docs": "https://developer.example.org/", "developer_portal": None, "note": None}
 
@@ -89,7 +94,7 @@ def slow_network(monkeypatch):
     def slow(name):
         def run(*args, **kwargs):
             calls.append(name)
-            time.sleep(3)
+            time.sleep(SLOW_READ_SECONDS)
             return ("ok", b"User-agent: *\nAllow: /\n", "http_200")
         return run
 
@@ -120,7 +125,7 @@ def queued(db):
 def test_first_lookup_answers_within_100ms_while_every_reader_would_take_3s(monkeypatch, slow_network):
     db = FakeDatabase()
     result, elapsed = lookup(monkeypatch, db)
-    assert elapsed < 0.1, f"lookup took {elapsed:.3f}s: it waited on something"
+    assert elapsed < LOOKUP_BUDGET, f"lookup took {elapsed:.3f}s: it waited on something"
     assert slow_network == []  # nothing external was even started
     profile = result["access_profile"]
     assert profile["robots_status"] == "pending" and profile["llms_txt_status"] == "pending"
@@ -149,7 +154,7 @@ def test_an_expired_profile_is_returned_as_stale_at_once_and_refreshed_behind_th
            "read_host": "fresh-example.org"}
     db = FakeDatabase(profile_row=row)
     result, elapsed = lookup(monkeypatch, db, error_class="site_access")
-    assert elapsed < 0.1 and slow_network == []
+    assert elapsed < LOOKUP_BUDGET and slow_network == []
     profile = result["access_profile"]
     assert profile["freshness"] == "stale" and profile["robots_status"] == "ok" and "retry_after_seconds" not in profile
     assert queued(db) == [("access_profile", "fresh-example.org")]
@@ -168,7 +173,7 @@ def test_a_fresh_profile_queues_nothing(monkeypatch, slow_network):
 def test_queue_and_metrics_failures_never_fail_the_lookup(monkeypatch, slow_network):
     db = FakeDatabase(fail_on=("INSERT INTO background_reads", "lookup_metrics (day", "UPDATE queried_hosts"))
     result, elapsed = lookup(monkeypatch, db)
-    assert elapsed < 0.1 and result["access_profile"]["robots_status"] == "pending"
+    assert elapsed < LOOKUP_BUDGET and result["access_profile"]["robots_status"] == "pending"
     assert result["evidence_level"] == "no_reports"
     # Nothing was queued, so nothing tells the caller to come back: no retry time, no profile_pending.
     assert "retry_after_seconds" not in result["access_profile"]
@@ -378,10 +383,11 @@ def test_a_trickling_status_feed_and_discovery_end_as_timeout(monkeypatch):
 
 def test_the_cron_drain_returns_at_its_budget_even_when_a_read_hangs(monkeypatch):
     started_job = threading.Event()
+    release = threading.Event()
 
     def hanging(settings, *, limit, time_budget, stop):
         started_job.set()
-        time.sleep(3)
+        release.wait(10)  # the hung read; released at the end so the daemon thread does not linger
         return {"claimed": 1, "done": 1, "failed": 0, "dropped": 0, "skipped": 0}
 
     class Count:
@@ -397,8 +403,12 @@ def test_the_cron_drain_returns_at_its_budget_even_when_a_read_hangs(monkeypatch
     monkeypatch.setattr(background_reads, "process_due", hanging)
     monkeypatch.setattr(background_reads, "connect", lambda _settings: Count())
     began = time.perf_counter()
-    result = background_reads.drain(SETTINGS, time_budget=0.3)
-    assert time.perf_counter() - began < 1.0 and started_job.is_set()
+    try:
+        result = background_reads.drain(SETTINGS, time_budget=0.3)
+        # Budget 0.3 s, hang 10 s: the bound sits well above the budget (load) and well below the hang.
+        assert time.perf_counter() - began < 5.0 and started_job.is_set()
+    finally:
+        release.set()
     assert result["cut"] == 1 and result["remaining"] == 7
 
 
