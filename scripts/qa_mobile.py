@@ -13,6 +13,21 @@ CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 ROUTES = ("/en/", "/ko/", "/en/human", "/ko/human", "/en/search", "/ko/search", "/en/agents", "/ko/agents", "/en/connect", "/ko/connect", "/en/policy", "/ko/policy")
 
 
+def submit_search(page, lang: str, failures: list, width: int) -> None:
+    """Submit the home search form in the page's current language.
+
+    The form and its submit button are found by structure, not copy: the button label differs per
+    language ("View profile" / "프로필 보기") and changes whenever the site text does.
+    """
+    page.goto(f"{BASE}/{lang}/", wait_until="networkidle")
+    search = page.locator(".ledger-search")
+    search.locator("input[name=site_host]").fill("fresh.agenthelpnetwork.test")
+    with page.expect_navigation():
+        search.locator("button[type=submit]").click()
+    if not page.url.startswith(f"{BASE}/{lang}/search"):
+        failures.append((width, f"search submission ({lang})", page.url))
+
+
 def main() -> None:
     if not CHROME.is_file():
         raise SystemExit("Chrome executable unavailable; set up a browser for this manual QA helper")
@@ -50,21 +65,20 @@ def main() -> None:
             page.keyboard.press("Enter")
             if page.evaluate("location.hash") != "#main":
                 failures.append((width, "skip link target"))
+            submit_search(page, "en", failures, width)
+            page.goto(BASE + "/en/", wait_until="networkidle")
             language = page.get_by_role("link", name="한국어로 보기")
             language.click()
             if page.url.rstrip("/") != BASE + "/ko":
                 failures.append((width, "language switch", page.url))
-            page.get_by_label("공개 호스트명 조회").fill("fresh.agenthelpnetwork.test")
-            page.get_by_role("button", name="근거 보기").click()
-            if not page.url.startswith(BASE + "/ko/search"):
-                failures.append((width, "search submission", page.url))
+            submit_search(page, "ko", failures, width)
             page.close()
         browser.close()
     if failures:
         for failure in failures:
             print("FAIL", failure)
         raise SystemExit(1)
-    print("PASS: 12 routes at 390/768/1280 px; no horizontal overflow; skip link, language switch, search flow")
+    print("PASS: 12 routes at 390/768/1280 px; no horizontal overflow; skip link, language switch, search flow in en and ko")
 
 
 if __name__ == "__main__":
