@@ -16,7 +16,7 @@ from ._result import Result
 __all__ = ["check", "clear_cache", "lookup_url"]
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
-USER_AGENT = "ahn-client/0.1 (+https://agenthelpnetwork.com)"
+USER_AGENT = "ahn-client/0.2 (+https://agenthelpnetwork.com)"
 CACHE_TTL_SECONDS = 600
 FAILURE_TTL_SECONDS = 60
 CACHE_MAX_ENTRIES = 200

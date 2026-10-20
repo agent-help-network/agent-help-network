@@ -1,10 +1,12 @@
 """Export v1: stored facts as JSON Lines envelopes, one per line, for the operator.
 
-``python -m ahn.cli export --kind access_profile|status|observation [--since ISO] [--out FILE]``
+``python -m ahn.cli export --kind access_profile|status|observation [--since ISO | --all] [--out FILE]``
 
 This is an operator tool, not a public endpoint. Reports follow the same rules as the public
-answer: only published, non-synthetic, unwithdrawn observations, ``observed_at`` cut to the hour,
-and no reporter identity. When ``AHN_EXPORT_SIGNING_KEY`` names an Ed25519 private key (PEM), each
+answer: only published, non-synthetic, unwithdrawn observations from the last 7 days (``--all`` for
+every stored one), ``observed_at`` cut to the hour, only the fields the public answer shows, and no
+reporter identity. A read whose latest attempt failed is left out: the stored row then mixes the
+last definitive answer with the failure's label, and a record must describe one read. When ``AHN_EXPORT_SIGNING_KEY`` names an Ed25519 private key (PEM), each
 envelope is signed over its RFC 8785 (JCS) canonical form without the ``signature`` member;
 otherwise ``signature`` is null. Nothing here contacts the network.
 """
@@ -165,7 +167,7 @@ def status_envelope(row: dict) -> dict:
 
 
 def observation_envelope(row: dict) -> dict:
-    """The public fields of one published report, times cut to the hour, no reporter identity.
+    """The public answer's fields of one published report, times cut to the hour, no reporter identity.
 
     Several reports for one host can share an hour, so the record id ends with a short digest of
     the operator's own observation id (the id itself is never exported).
@@ -180,7 +182,7 @@ def observation_envelope(row: dict) -> dict:
         payload={
             "site_host": row["site_host"], "observed_at": iso(observed), "task_step": row["task_step"],
             "error_class": row["error_class"], "attempt_actor": row["attempt_actor"], "attempt_env": row["attempt_env"],
-            "outcome": row["outcome"], "received_channel": row.get("received_channel"),
+            "outcome": row["outcome"],
         },
     )
 
@@ -235,13 +237,18 @@ def verify(record: dict, public_key) -> bool:
 
 # --- Database rows ------------------------------------------------------------------------------
 
+PUBLIC_REPORT_HORIZON = timedelta(days=7)  # the public answer's data horizon
+
+
 def _rows(conn, kind: str, since: datetime | None):
     since = since or datetime(1970, 1, 1, tzinfo=timezone.utc)
     if kind == "access_profile":
         return conn.execute(
             """SELECT site_host,fetched_at,robots_status,robots,robots_detail,llms_txt_status,llms_detail,read_host,
                       origin_operator,vantage,reader_version,robots_sha256,llms_sha256
-               FROM host_access_profile WHERE fetched_at IS NOT NULL AND fetched_at >= %s ORDER BY fetched_at,site_host""",
+               FROM host_access_profile
+               WHERE fetched_at IS NOT NULL AND fetched_at >= %s AND (last_error_at IS NULL OR last_error_at <= fetched_at)
+               ORDER BY fetched_at,site_host""",
             (since,),
         )
     if kind == "status":
@@ -249,13 +256,15 @@ def _rows(conn, kind: str, since: datetime | None):
             """SELECT s.site_host,s.source_name,s.status_page_url,s.api_url,s.curated_by,s.evidence,s.evidence_url,
                       c.indicator,c.source_updated_at,c.fetched_at,c.origin_operator,c.vantage,c.reader_version,c.body_sha256
                FROM status_cache c JOIN status_sources s ON s.site_host=c.site_host
-               WHERE s.enabled=true AND c.fetched_at IS NOT NULL AND c.fetched_at >= %s ORDER BY c.fetched_at,c.site_host""",
+               WHERE s.enabled=true AND c.fetched_at IS NOT NULL AND c.fetched_at >= %s
+                 AND (c.last_error_at IS NULL OR c.last_error_at <= c.fetched_at)
+               ORDER BY c.fetched_at,c.site_host""",
             (since,),
         )
     # The public answer's rules: published, real, not withdrawn, on a published incident.
     return conn.execute(
         """SELECT o.id,o.observed_at,o.received_at,o.attempt_actor,o.attempt_env,o.outcome,o.origin_operator,
-                  o.origin_observation_id,o.received_channel,i.site_host,i.task_step,i.error_class
+                  o.origin_observation_id,i.site_host,i.task_step,i.error_class
            FROM observations o JOIN incidents i ON i.id=o.incident_id
            WHERE o.review_state='published' AND o.synthetic=false AND o.withdrawn_at IS NULL
              AND i.visibility='published' AND o.observed_at >= %s
@@ -267,12 +276,18 @@ def _rows(conn, kind: str, since: datetime | None):
 BUILDERS = {"access_profile": access_profile_envelope, "status": status_envelope, "observation": observation_envelope}
 
 
-def export(settings, kind: str, out, *, since: datetime | None = None, signing_key=None, kid: str | None = None) -> int:
-    """Write one JSON line per record of ``kind`` to the text stream ``out``; returns the count."""
+def export(settings, kind: str, out, *, since: datetime | None = None, all_reports: bool = False, signing_key=None,
+           kid: str | None = None) -> int:
+    """Write one JSON line per record of ``kind`` to the text stream ``out``; returns the count.
+
+    Reports default to the public answer's 7-day horizon; ``all_reports`` (CLI ``--all``) lifts it.
+    """
     from .db import connect
 
     if kind not in KINDS:
         raise ValueError("unknown export kind")
+    if kind == "observation" and since is None and not all_reports:
+        since = datetime.now(timezone.utc) - PUBLIC_REPORT_HORIZON
     count = 0
     with connect(settings) as conn:
         for row in _rows(conn, kind, since):

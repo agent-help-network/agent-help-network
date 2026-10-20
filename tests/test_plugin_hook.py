@@ -374,7 +374,7 @@ def test_request_carries_only_hostname_and_codes(monkeypatch, capsys, captured):
     assert (parts.scheme, parts.netloc, parts.path) == ("https", "agenthelpnetwork.com", "/v1/incidents/check")
     assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"]}
     assert request.get_method() == "GET" and request.data is None
-    assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.1"
+    assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.2"
     for secret in ("user", "pw", "8443", "account", "claims", "12345", "token", "secret"):
         assert secret not in request.full_url
         assert secret not in out
@@ -780,7 +780,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == "0.1.0"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.0"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}

@@ -102,7 +102,7 @@ def test_observation_envelope_keeps_only_public_fields_cut_to_the_hour():
     assert record["record_id"].startswith("ahn:agenthelpnetwork.com:observation:example.org:2026-10-19T04:00:00Z:")
     assert str(own) not in json.dumps(record)  # the operator's own id is never exported, only a digest of it
     assert set(record["payload"]) == {"site_host", "observed_at", "task_step", "error_class", "attempt_actor",
-                                      "attempt_env", "outcome", "received_channel"}
+                                      "attempt_env", "outcome"}  # the public answer's fields only
     assert record["source_url"] is None and record["content_sha256"] is None and record["expires_at"] == "2026-10-26T04:00:00Z"
 
 

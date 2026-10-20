@@ -2,7 +2,7 @@
 
 A small Python client for [Agent Help Network](https://agenthelpnetwork.com/en/agents): when your browser automation (Playwright, Browser Use, Stagehand-style scripts, plain HTTP) is blocked, ask what the host **declares** agents may do (its own `robots.txt` and `llms.txt`), where its **official developer path** is, what the provider's **status feed** says, and get one recommended action.
 
-**Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, OpenAI, Meta, Muse, dots, Anthropic, or any site it describes.** `ahn-client` is read-only (version 0.1 has no reporting function), has no dependencies beyond the Python standard library, and runs on Python 3.9+.
+**Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, OpenAI, Meta, Muse, dots, Anthropic, or any site it describes.** `ahn-client` is read-only (it has no reporting function), has no dependencies beyond the Python standard library, and runs on Python 3.9+.
 
 ## Install
 
@@ -46,7 +46,7 @@ At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>]
-User-Agent: ahn-client/0.1 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.2 (+https://agenthelpnetwork.com)
 ```
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
@@ -62,7 +62,7 @@ User-Agent: ahn-client/0.1 (+https://agenthelpnetwork.com)
 | `AHN_CLIENT_DISABLE=1` | `check` never sends anything |
 | `AHN_CLIENT_SKIP_HOSTS=corp.example.com,other.example.org` | Never look up these hosts or their subdomains |
 
-Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk. Redirects from the service are not followed.
+Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk. From version 0.2.0, an answer whose declared policy is still being read (`access_profile.freshness` is `pending`, next check `profile_pending`) is kept only for its `retry_after_seconds` (`Result.retry_after_seconds`), so the one repeat lookup the service asks for reaches it, and the summary line says when to look once more. Redirects from the service are not followed.
 
 ## Development
 

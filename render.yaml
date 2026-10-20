@@ -36,6 +36,14 @@ services:
       # Days to keep reports (30-3650); blank keeps them without an automatic deletion date.
       - key: AHN_REPORT_RETENTION_DAYS
         sync: false
+      # 0 turns off the in-process background reader; the review cron still processes the queue.
+      - key: AHN_BACKGROUND_READS
+        value: "1"
+      # Provenance stamped on stored reads and reports (ahn/provenance.py); these are the defaults.
+      - key: AHN_OPERATOR_ID
+        value: agenthelpnetwork.com
+      - key: AHN_VANTAGE
+        value: '{"kind":"datacenter","region":"US","asn":null,"declared":true}'
 
   - type: cron
     name: agent-help-network-review
@@ -49,6 +57,11 @@ services:
         fromDatabase:
           name: agent-help-network-db
           property: connectionString
+      # Provenance stamped on stored reads and reports (ahn/provenance.py); these are the defaults.
+      - key: AHN_OPERATOR_ID
+        value: agenthelpnetwork.com
+      - key: AHN_VANTAGE
+        value: '{"kind":"datacenter","region":"US","asn":null,"declared":true}'
 
   - type: cron
     name: agent-help-network-bandwidth-guard

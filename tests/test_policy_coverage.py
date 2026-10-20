@@ -436,8 +436,62 @@ def test_stored_provenance_is_described_in_the_policy():
                              "받은 파일·피드의 SHA-256 해시(원문은 저장하지 않음)"),
               "provenance": Phrase("the reader version, and the operator and declared network location that made the read",
                                    "읽기 프로그램 버전, 읽은 운영자와 선언한 네트워크 위치"),
-              "channel": Phrase("which interface a report arrived through", "제보가 들어온 경로")}
+              "channel": Phrase("which interface it arrived through", "제보마다 들어온 경로"),
+              "export": Phrase("operator-only export is not a public endpoint, and exported reports contain only the fields the public answer shows",
+                               "운영자용 내보내기는 공개 엔드포인트가 아니고 내보낸 제보에는 공개 응답에 나오는 필드만 담깁니다")}
     assert_phrases("provenance", {lang: policy_text(lang) for lang in LANGS}, wanted)
+
+
+# --- 5. Columns added to existing tables --------------------------------------------------------
+
+# Columns that ALTER TABLE ... ADD COLUMN adds from migration 020 on. Earlier columns predate this
+# check and are covered by their table's wording above. A new column must name what it stores here.
+FIRST_CHECKED_MIGRATION = 20
+_READ_BY = Phrase("the reader version, and the operator and declared network location that made the read",
+                  "읽기 프로그램 버전, 읽은 운영자와 선언한 네트워크 위치")
+_HASH = Phrase("SHA-256 hash of the file or feed as received (never the file itself)", "받은 파일·피드의 SHA-256 해시(원문은 저장하지 않음)")
+_EVIDENCE = Phrase("the evidence that it belongs to the host (its DNS delegation), the page address and the operator that recorded it",
+                   "그 호스트의 것이라는 근거(DNS 위임), 페이지 주소, 기록한 운영자")
+_RECEIVED_BY = Phrase("the operator that received it together with its own report ID", "그 제보를 받은 운영자 및 그 운영자의 제보 ID")
+COLUMNS = {
+    "host_access_profile.origin_operator": _READ_BY,
+    "host_access_profile.vantage": _READ_BY,
+    "host_access_profile.reader_version": _READ_BY,
+    "host_access_profile.robots_sha256": _HASH,
+    "host_access_profile.llms_sha256": _HASH,
+    "status_cache.origin_operator": _READ_BY,
+    "status_cache.vantage": _READ_BY,
+    "status_cache.reader_version": _READ_BY,
+    "status_cache.body_sha256": _HASH,
+    "status_sources.curated_by": _EVIDENCE,
+    "status_sources.evidence": _EVIDENCE,
+    "status_sources.evidence_url": _EVIDENCE,
+    "observations.origin_operator": _RECEIVED_BY,
+    "observations.origin_observation_id": _RECEIVED_BY,
+    "observations.received_channel": Phrase("which interface it arrived through", "제보마다 들어온 경로"),
+}
+
+
+def migration_added_columns() -> set[str]:
+    found: set[str] = set()
+    for path in sorted((ROOT / "migrations").glob("*.sql")):
+        if int(path.name[:3]) < FIRST_CHECKED_MIGRATION:
+            continue
+        text = re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
+        for table, body in re.findall(r"ALTER TABLE\s+(?:IF EXISTS\s+)?([a-z_]+)(.*?);", text, re.S):
+            found |= {f"{table}.{column}" for column in re.findall(r"ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_0-9]+)", body)}
+    return found
+
+
+def test_every_added_column_is_described_in_the_policy():
+    added = migration_added_columns()
+    assert added, "no ADD COLUMN found: the parser no longer reads the migrations"
+    unmapped = added - set(COLUMNS)
+    assert not unmapped, (f"Migrations add columns {sorted(unmapped)}. Say what they store in the privacy policy "
+                          "(English and Korean), then map them in COLUMNS.")
+    assert not set(COLUMNS) - added, f"COLUMNS lists columns no migration adds: {sorted(set(COLUMNS) - added)}"
+    assert_phrases("added columns", {lang: policy_text(lang) for lang in LANGS},
+                   {name: phrase for name, phrase in COLUMNS.items() if isinstance(phrase, Phrase)})
 
 
 def test_report_retention_periods_match_the_policy():

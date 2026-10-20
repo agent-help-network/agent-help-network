@@ -240,7 +240,7 @@ def test_request_carries_only_host_and_codes(transport):
     for secret in ("secret", "user", "private", "token", "abc", "frag", "8443"):
         assert secret not in request.full_url
     assert request.get_method() == "GET" and request.data is None
-    assert request.get_header("User-agent") == "ahn-client/0.1 (+https://agenthelpnetwork.com)"
+    assert request.get_header("User-agent") == "ahn-client/0.2 (+https://agenthelpnetwork.com)"
     assert {name.lower() for name in request.headers} == {"user-agent", "accept"}
     assert timeout == 4.0
 

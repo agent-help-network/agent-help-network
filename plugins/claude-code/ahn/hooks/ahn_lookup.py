@@ -35,7 +35,7 @@ except ImportError:  # A Python built without ssl cannot look anything up; the h
     ssl = None
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
-USER_AGENT = "ahn-claude-code-plugin/0.1"
+USER_AGENT = "ahn-claude-code-plugin/0.2"
 OWN_HOST = "agenthelpnetwork.com"
 SOCKET_TIMEOUT_SECONDS = 4  # each socket operation (connect, read)
 TOTAL_TIMEOUT_SECONDS = 4.0  # the whole lookup, DNS included

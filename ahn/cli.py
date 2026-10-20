@@ -39,7 +39,10 @@ def main():
     disable.add_argument("reporter_id", type=UUID)
     export = sub.add_parser("export", help="write stored facts as JSON Lines envelopes (schema_version 1)")
     export.add_argument("--kind", required=True, choices=("access_profile", "status", "observation"))
-    export.add_argument("--since", type=_iso_time, default=None, help="ISO 8601 time with a time zone")
+    window = export.add_mutually_exclusive_group()
+    window.add_argument("--since", type=_iso_time, default=None, help="ISO 8601 time with a time zone")
+    window.add_argument("--all", action="store_true", dest="all_reports",
+                        help="reports only: every stored published report, not just the public 7-day horizon")
     export.add_argument("--out", default="-", help="output file; '-' (default) writes to standard output")
     args = parser.parse_args()
     settings = Settings.from_env()
@@ -100,10 +103,12 @@ def main():
         key_path = os.environ.get("AHN_EXPORT_SIGNING_KEY", "").strip()
         signing_key = load_signing_key(key_path) if key_path else None
         if args.out == "-":
-            count = export(settings, args.kind, sys.stdout, since=args.since, signing_key=signing_key, kid=key_id())
+            count = export(settings, args.kind, sys.stdout, since=args.since, all_reports=args.all_reports,
+                           signing_key=signing_key, kid=key_id())
         else:
             with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
-                count = export(settings, args.kind, handle, since=args.since, signing_key=signing_key, kid=key_id())
+                count = export(settings, args.kind, handle, since=args.since, all_reports=args.all_reports,
+                               signing_key=signing_key, kid=key_id())
         print(f"exported={count} kind={args.kind} signed={'yes' if signing_key is not None else 'no'}", file=sys.stderr)
     elif args.command == "disable-reporter":
         with connect(settings) as conn:
