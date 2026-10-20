@@ -12,6 +12,9 @@ check (bot wall or 403); those were kept because a refusal is not evidence that 
 
 from __future__ import annotations
 
+import copy
+from datetime import date, datetime, timezone
+
 
 def _entry(name: str, api_docs: str | None = None, developer_portal: str | None = None, note: str | None = None) -> dict:
     return {"name": name, "api_docs": api_docs, "developer_portal": developer_portal, "note": note}
@@ -945,12 +948,169 @@ OFFICIAL_PATHS: dict[str, dict] = {
 }
 
 
-def official_paths(site_host: str) -> dict | None:
-    """Exact apex match first, then the apex of any subdomain; returns a copy or None."""
+# How to use an official path: optional `access` bundles for some table keys, answered as official_paths.access.
+# Every field is optional except verified_at, and a field is left out (never null) when it is unknown. Every URL is
+# on a publisher-owned domain (the key's, one declared in PUBLISHER_DOMAINS, or the publisher's own GitHub
+# organisation declared in PUBLISHER_GITHUB_ORGS; see scripts/verify_official_paths.py) and was read on verified_at.
+# Quotes are copied verbatim from the page at source_url / terms.url and are at most ACCESS_QUOTE_MAX characters.
+# free_tier quotes only a sentence that states how much can be used free or on what condition (a default quota); pricing
+# slogans, free-trial adverts and price-list headers do not count.
+# Terms are a link and a quote only: this service does not interpret them or say whether automation is allowed.
+# A page that refused the read (401/403/challenge) leaves its field out. Procedure: scripts/README.md.
+ACCESS_AUTH_METHODS = ("none", "api_key", "oauth1", "oauth2", "device_code", "pat")
+ACCESS_QUOTE_MAX = 200
+# An access bundle older than this is left out of answers until it is verified again.
+ACCESS_MAX_AGE_DAYS = 90
+
+_GH_DOCS = "https://docs.github.com/en/"
+_OPENAI = "https://developers.openai.com/"
+_YT = "https://developers.google.com/youtube/"
+_NOTION_AUTH = "https://developers.notion.com/guides/get-started/authorization"
+_X_AUTH = "https://docs.x.com/fundamentals/authentication/overview"
+
+OFFICIAL_ACCESS: dict[str, dict] = {
+    "github.com": {
+        "auth": [
+            {"method": "pat", "source_url": _GH_DOCS + "rest/authentication/authenticating-to-the-rest-api"},
+            {"method": "oauth2", "source_url": _GH_DOCS + "apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps"},
+            {"method": "device_code", "source_url": _GH_DOCS + "apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps"},
+            {"method": "none", "source_url": _GH_DOCS + "rest/using-the-rest-api/rate-limits-for-the-rest-api"},
+        ],
+        "key_signup_url": _GH_DOCS + "authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+        "rate_limits_url": _GH_DOCS + "rest/using-the-rest-api/rate-limits-for-the-rest-api",
+        "openapi_url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+        "official_mcp": [{"endpoint": "https://api.githubcopilot.com/mcp/",
+                          "doc_url": _GH_DOCS + "copilot/how-tos/copilot-in-your-ide/customize-copilot/"
+                                                "extend-copilot-with-tools-and-context/set-up-the-github-mcp-server"}],
+        "terms": {"url": _GH_DOCS + "site-policy/github-terms/github-terms-of-service",
+                  "quote": "Abuse or excessively frequent requests to GitHub via the API may result in the temporary or "
+                           "permanent suspension of your Account's access to the API."},
+        "verified_at": "2026-10-20",
+    },
+    "stripe.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
+        "key_signup_url": "https://docs.stripe.com/keys",
+        "rate_limits_url": "https://docs.stripe.com/rate-limits",
+        "sandbox_url": "https://docs.stripe.com/sandboxes",
+        "openapi_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+        "official_mcp": [{"endpoint": "https://mcp.stripe.com", "doc_url": "https://docs.stripe.com/mcp"}],
+        "terms": {"url": "https://stripe.com/legal/ssa",
+                  "quote": "If User uses an AI Agent to access the Stripe Services, User is solely responsible for each "
+                           "action initiated by or through the AI Agent."},
+        "verified_at": "2026-10-20",
+    },
+    "openai.com": {
+        "auth": [{"method": "api_key", "source_url": _OPENAI + "api/reference/overview"}],
+        "key_signup_url": _OPENAI + "api/docs/quickstart",
+        "rate_limits_url": _OPENAI + "api/docs/guides/rate-limits",
+        "openapi_url": "https://raw.githubusercontent.com/openai/openai-openapi/main/openapi.yaml",
+        "official_mcp": [{"endpoint": "https://developers.openai.com/mcp", "doc_url": _OPENAI + "learn/docs-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "youtube.com": {
+        "auth": [
+            {"method": "api_key", "source_url": _YT + "data/getting-started"},
+            {"method": "oauth2", "source_url": _YT + "data/guides/authentication"},
+            {"method": "device_code", "source_url": _YT + "data/guides/auth/devices"},
+        ],
+        "key_signup_url": _YT + "registering_an_application",
+        "free_tier": {"quote": "Projects that enable the YouTube Data API have a default quota allocation of 100 search.list "
+                               "calls, 100 videos.insert calls, and 10,000 units per day combined for all other endpoints.",
+                      "source_url": _YT + "data/getting-started"},
+        "rate_limits_url": _YT + "data/determine_quota_cost",
+        "terms": {"url": _YT + "terms/api-services-terms-of-service",
+                  "quote": "You and your API Client(s) will not, and will not attempt to, exceed or circumvent use or "
+                           "quota restrictions."},
+        "verified_at": "2026-10-20",
+    },
+    "slack.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://docs.slack.dev/authentication/installing-with-oauth/"}],
+        "key_signup_url": "https://docs.slack.dev/quickstart/",
+        "rate_limits_url": "https://docs.slack.dev/apis/web-api/rate-limits/",
+        "sandbox_url": "https://docs.slack.dev/tools/developer-sandboxes/",
+        "official_mcp": [{"endpoint": "https://mcp.slack.com/mcp", "doc_url": "https://docs.slack.dev/ai/slack-mcp-server/"}],
+        "terms": {"url": "https://slack.com/terms-of-service/api",
+                  "quote": "You may not Commercially Distribute an Application that integrates with the Slack APIs unless "
+                           "you are authorized to do so under a separate agreement with Slack or our parent company, Salesforce."},
+        "verified_at": "2026-10-20",
+    },
+    "notion.so": {
+        "auth": [{"method": "api_key", "source_url": _NOTION_AUTH}, {"method": "pat", "source_url": _NOTION_AUTH},
+                 {"method": "oauth2", "source_url": _NOTION_AUTH}],
+        "key_signup_url": "https://developers.notion.com/guides/get-started/quick-start",
+        "rate_limits_url": "https://developers.notion.com/reference/request-limits",
+        "official_mcp": [{"endpoint": "https://mcp.notion.com/mcp",
+                          "doc_url": "https://developers.notion.com/guides/mcp/get-started-with-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "reddit.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://www.reddit.com/dev/api/"}],
+        "terms": {"url": "https://redditinc.com/policies/data-api-terms",
+                  "quote": "Reddit reserves the right to charge fees for future use or access to the Data APIs, rates to be "
+                           "determined at Reddit's sole discretion."},
+        "verified_at": "2026-10-20",
+    },
+    "x.com": {
+        "auth": [{"method": "oauth2", "source_url": _X_AUTH}, {"method": "oauth1", "source_url": _X_AUTH},
+                 {"method": "api_key", "source_url": _X_AUTH}],
+        "key_signup_url": "https://docs.x.com/x-api/getting-started/getting-access",
+        "rate_limits_url": "https://docs.x.com/x-api/fundamentals/rate-limits",
+        "openapi_url": "https://api.x.com/2/openapi.json",
+        "official_mcp": [{"endpoint": "https://api.x.com/mcp", "doc_url": "https://docs.x.com/tools/mcp"},
+                         {"endpoint": "https://docs.x.com/mcp", "doc_url": "https://docs.x.com/tools/mcp"}],
+        "terms": {"url": "https://docs.x.com/developer-terms/policy",
+                  "quote": "Services that perform write actions, including posting Posts, following accounts, or sending "
+                           "Direct Messages, must follow the Automation Rules."},
+        "verified_at": "2026-10-20",
+    },
+    "wikipedia.org": {
+        "auth": [{"method": "oauth2", "source_url": "https://www.mediawiki.org/wiki/OAuth/For_Developers"}],
+        "rate_limits_url": "https://www.mediawiki.org/wiki/API:Etiquette",
+        "terms": {"url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy",
+                  "quote": "Scripts should use an informative User-Agent string with contact information, or they may be "
+                           "blocked without notice."},
+        "verified_at": "2026-10-20",
+    },
+    "cloudflare.com": {
+        "auth": [{"method": "api_key", "source_url": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"}],
+        "key_signup_url": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/",
+        "rate_limits_url": "https://developers.cloudflare.com/fundamentals/api/reference/limits/",
+        "openapi_url": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
+        "official_mcp": [{"endpoint": "https://mcp.cloudflare.com/mcp",
+                          "doc_url": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/"}],
+        "terms": {"url": "https://www.cloudflare.com/terms/",
+                  "quote": "If you permit third parties to access your Cloudflare account (e.g., by providing your API token "
+                           "or using OAuth), you do so at your sole risk"},
+        "verified_at": "2026-10-20",
+    },
+}
+# Separate hosts of the same publisher and API share one bundle.
+for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so", "twitter.com": "x.com",
+                         "wikimedia.org": "wikipedia.org"}.items():
+    OFFICIAL_ACCESS[_alias] = OFFICIAL_ACCESS[_primary]
+
+
+def access_is_current(access: dict, today: date | None = None) -> bool:
+    """True while verified_at is at most ACCESS_MAX_AGE_DAYS old (and not in the future)."""
+    today = today or datetime.now(timezone.utc).date()
+    age = (today - date.fromisoformat(access["verified_at"])).days
+    return 0 <= age <= ACCESS_MAX_AGE_DAYS
+
+
+def official_paths(site_host: str, today: date | None = None) -> dict | None:
+    """Exact apex match first, then the apex of any subdomain; returns a copy or None.
+
+    The copy carries `access` only when the key has a bundle that is still current; otherwise the key is absent.
+    """
     host = site_host.strip().rstrip(".").lower()
     labels = host.split(".")
     for index in range(len(labels) - 1):
-        entry = OFFICIAL_PATHS.get(".".join(labels[index:]))
+        key = ".".join(labels[index:])
+        entry = OFFICIAL_PATHS.get(key)
         if entry is not None:
-            return dict(entry)
+            result = dict(entry)
+            access = OFFICIAL_ACCESS.get(key)
+            if access is not None and access_is_current(access, today):
+                result["access"] = copy.deepcopy(access)
+            return result
     return None

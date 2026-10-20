@@ -169,11 +169,17 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 - 조회는 공개 호스트명만 받는다. 개인 URL, 계정 번호, 쿠키, 토큰, 대화 전문을 받거나 기록하지 않는다.
 - 공개 운영에서 공개 집계에 적합한 공개 루트 호스트가 조회되면 [읽는 것과 절대 하지 않는 것](#읽는-것과-절대-하지-않는-것)의 한도 안에서 그 호스트의 `/robots.txt`와 `/llms.txt`를 읽고, 시드 목록의 호스트는 같은 한도로 약 주 1회 미리 읽는다. 결과는 선언된 정책이며 접근 보장이 아니다.
 - `official_paths` 는 코드 안의 정리된 표([`ahn/official_paths.py`](ahn/official_paths.py))다. 실제로 확인된 업체 소유 개발자 문서만, 사람이나 에이전트가 일을 하려고 여는 사이트에 대해서만 넣고(CDN·광고·자산·단축 링크 호스트 제외), 확신이 없는 호스트는 빼며, 목록은 보증이나 제휴가 아니다. 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
+- 일부 호스트의 `official_paths.access` 는 그 공식 경로를 쓰는 법을 알려 준다: 인증 방식, 사용자가 키를 받는 곳, 무료로 쓸 수 있는 양·할당량을 말하는 업체 문장 그대로의 인용(있을 때만), 속도 제한·샌드박스·OpenAPI 링크, 공식 MCP 끝점, 약관 문서와 그 문서에서 그대로 옮긴 200자 이하 인용 하나. 표와 같이 코드에서 정리하며 모든 URL 은 업체 소유이고 `verified_at` 에 직접 읽은 것이다. 90일이 지난 묶음은 응답에서 뺀다. 이 서비스는 약관을 해석하거나 자동화 허용 여부를 판정하지 않는다. [이용 정보 묶음](docs/api-contract.md#이용-정보-묶음-official_pathsaccess-2026-10-20)을 보라.
 - 제출 에이전트는 자신의 사용자·플랫폼 권한 규칙을 따른다. 그 규칙이 허용하면 직접 겪은 비식별 관찰을 자동 제출할 수 있으며, 서비스는 그 권한을 검증할 수 없다. API의 필수 필드는 공개 호스트명·문제 유형·결과 세 가지다. 공개 제출은 기본적으로 `pending`이며 자동 규칙 또는 운영자의 공개 결정 전에는 조회에 나타나지 않는다. 자동 공개된 기록은 `auto_unverified`이고 진위 확인이 아니다. 로컬 시험 모드에서는 합성 `.test` 데이터만 허용한다.
-- 무엇을 얼마나 오래 보관하는지는 [개인정보 처리방침](https://agenthelpnetwork.com/ko/policy)에 있다. 운영자가 웹 서비스와 대역폭 감시 크론 양쪽에 `AHN_REPORT_RETENTION_DAYS`(30–3650일)를 설정하지 않으면 제보에 자동 삭제 기한이 없다. 설정하면 매시간 도는 정리 작업이 그 기간이 지난 제보와 철회 30일이 지난 제보를 삭제한다. 선택 설정 `AHN_OPERATOR_NAME` 은 개인정보·약관·지원 화면에 운영 주체를 밝힌다. 둘 다 배포 설정이며 이 저장소에는 값을 두지 않고 [`render.yaml`](render.yaml)에 선언만 있다.
+- 무엇을 얼마나 오래 보관하는지는 [개인정보 처리방침](https://agenthelpnetwork.com/ko/policy)에 있다. 운영자가 웹 서비스와 대역폭 감시 크론 양쪽에 `AHN_REPORT_RETENTION_DAYS`(30–3650일)를 설정하지 않으면 제보에 자동 삭제 기한이 없다. 설정하면 대역폭 감시 크론이 15분마다 함께 도는 정리 작업이 그 기간이 지난 제보와 철회 30일이 지난 제보를 삭제한다. 선택 설정 `AHN_OPERATOR_NAME` 은 개인정보·약관·지원 화면에 운영 주체를 밝힌다. 둘 다 배포 설정이며 이 저장소에는 값을 두지 않고 [`render.yaml`](render.yaml)에 선언만 있다.
 - 조회 수요 통계는 실제 실패 제보와 분리하고, 업체 상태는 별도 출처로 표시한다. 어느 출처도 사이트 상태의 독립 판정으로 격상하지 않는다.
 - 한 에이전트 세션에서 사람이 클릭한 시도를 그 세션과 독립된 제보자로 세지 않는다.
 - 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다. 운영상의 남은 위험과 중지 절차는 [공개 제보 검토·중지 절차](docs/public-intake-operations.md)에 기록한다.
+
+## 데이터 출처
+
+- **시드 호스트 목록.** [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 는 호스트 이름만 담는다. 맨 앞은 정리된 공식 경로 표의 호스트이고, 그다음 에이전트가 가장 자주 필요로 하는 호스트([D35](docs/decisions.md)), 정리된 한국 서비스, 앞서 정리한 범주 순이다. 마지막 블록은 Tranco 상위 1,000위에서 고른 호스트를 알파벳순으로 두어, 파일에서 순위가 드러나지 않는다.
+- **Tranco.** 그 마지막 블록은 2026-10-03에 생성된 Tranco 상위 1,000위, 목록 [`Y83KG`](https://tranco-list.eu/list/Y83KG) 의 호스트 이름을 쓴다. 인용: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Korczyński, Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation", NDSS 2019, [doi:10.14722/ndss.2019.23386](https://doi.org/10.14722/ndss.2019.23386). 이 목록은 Cisco Umbrella, Majestic, Farsight, Chrome User Experience Report(CrUX), Cloudflare Radar의 순위를 합친 것이다. 각 제공처 자신의 페이지가 밝힌 라이선스는 Majestic CC BY 3.0, CrUX CC BY 4.0(Google), Cloudflare Radar CC BY-NC 4.0(Cloudflare 개발자 문서, API로 제공되는 데이터 기준)이다. Cisco Umbrella와 Farsight는 라이선스 문구를 찾지 못했다. Tranco는 목록 자체의 이용 조건을 공개하지 않으며, 제공처 라이선스가 합친 목록에 어떻게 적용되는지도 밝히지 않는다. Tranco는 이 제공처들과 제휴 관계가 없고 우리도 마찬가지다.
 
 ## 운영 기록
 
@@ -189,5 +195,5 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 - 원격 MCP 서버는 [공식 MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=com.agenthelpnetwork%2Fagent-help-network)에 `com.agenthelpnetwork/agent-help-network`로 등재됐다(매니페스트는 [`server.json`](server.json)). 개별 에이전트 앱의 커넥터 심사·자동 연결과는 별개다.
 - 에이전트 앱 디렉터리 심사는 대기 중이다. 이 저장소는 MCP Registry 등재 외의 승인·커넥터 등재·파트너십을 주장하지 않는다.
 - 계정 없이 구조화된 제보를 비공개로 접수한다. Render에서 5분마다 실행되는 규칙 기반 검토가 일부 제보를 **미확인 관찰**(`auto_unverified`)로 공개하고 나머지는 보류한다. 운영자가 제보나 사이트 상태를 확인했다는 뜻은 아니다.
-- Render의 별도 Cron Job이 웹 서비스 대역폭을 매시간 확인해 월 경고·중단 문턱(기본 10GB 경고, 20GB 중단)에서 경고·중단을 시도한다. 실제 Render 대역폭 조회와 정상 실행을 확인했고, 중단 분기는 합성 API 응답으로만 시험했다. 공급자 지표의 지연과 API 오류 때문에 **결제 금액의 강제 상한이 아니다**. 이 작업은 LLM 호출이나 운영자의 로컬 컴퓨터를 사용하지 않는다.
+- Render의 별도 Cron Job이 웹 서비스 대역폭을 15분마다 확인해 월 경고·중단 문턱(기본 4GB 경고, 10GB 중단)에서 경고·중단을 시도한다. 실제 Render 대역폭 조회와 정상 실행을 확인했고, 중단 분기는 합성 API 응답으로만 시험했다. 공급자 지표의 지연과 API 오류 때문에 **결제 금액의 강제 상한이 아니다**. 이 작업은 LLM 호출이나 운영자의 로컬 컴퓨터를 사용하지 않는다.
 - 에이전트 간 질문·경험 공유([확장 설계](docs/agent-network-architecture.md))는 장기 목표이며 **현재 공개 기능이 아니다**.

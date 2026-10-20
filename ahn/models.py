@@ -249,6 +249,48 @@ class OfficialPaths(StrictModel):
     api_docs: str | None = None
     developer_portal: str | None = None
     note: str | None = None
+    # Curated "how to use it" bundle for some hosts; left out of the JSON when there is none (never null).
+    access: OfficialAccess | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+# Every optional field of the access bundle is left out of the JSON when unknown, to keep answers small.
+_ABSENT = {"default": None, "exclude_if": lambda value: value is None}
+HTTPS_URL = r"^https://[^\s]+$"
+
+
+class AccessAuth(StrictModel):
+    method: Literal["none", "api_key", "oauth1", "oauth2", "device_code", "pat"]
+    source_url: str = Field(pattern=HTTPS_URL)
+
+
+class AccessQuote(StrictModel):
+    quote: str = Field(min_length=1, max_length=200)
+    source_url: str = Field(pattern=HTTPS_URL)
+
+
+class AccessTerms(StrictModel):
+    url: str = Field(pattern=HTTPS_URL)
+    quote: str = Field(min_length=1, max_length=200)
+
+
+class AccessMcp(StrictModel):
+    endpoint: str = Field(pattern=HTTPS_URL)
+    doc_url: str = Field(pattern=HTTPS_URL)
+
+
+class OfficialAccess(StrictModel):
+    auth: list[AccessAuth] | None = Field(**_ABSENT, min_length=1)
+    key_signup_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
+    free_tier: AccessQuote | None = Field(**_ABSENT)
+    rate_limits_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
+    sandbox_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
+    openapi_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
+    official_mcp: list[AccessMcp] | None = Field(**_ABSENT, min_length=1)
+    terms: AccessTerms | None = Field(**_ABSENT)
+    verified_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+OfficialPaths.model_rebuild()
 
 
 class Recommendation(StrictModel):

@@ -49,7 +49,7 @@
     <div class="card"><span>7일 공개 관찰</span><strong>{{ counts.published }}</strong><small>가상 기록 제외</small></div>
     <div class="card"><span>7일 가상 관찰</span><strong>{{ counts.synthetic }}</strong><small>제품 효과의 증거 아님</small></div>
     <div class="card"><span>응답 시간 p95 버킷</span><strong>{% if p95_bucket is not none %}≤{{ p95_bucket }}ms{% else %}—{% endif %}</strong><small>원시 값이 아닌 버킷 근사</small></div>
-    <div class="card"><span>이번 달 웹 전송량</span><strong>{% if bandwidth %}{{ '%.3f'|format(bandwidth.usage_gb) }} GB{% else %}—{% endif %}</strong><small>Render 측정치 · {{ (bandwidth and bandwidth.get('warning_gb')) or 10 }} GB 경고 / {{ (bandwidth and bandwidth.get('stop_gb')) or 20 }} GB 중단</small></div>
+    <div class="card"><span>이번 달 웹 전송량</span><strong>{% if bandwidth %}{{ '%.3f'|format(bandwidth.usage_gb) }} GB{% else %}—{% endif %}</strong><small>Render 측정치 · {{ (bandwidth and bandwidth.get('warning_gb')) or 4 }} GB 경고 / {{ (bandwidth and bandwidth.get('stop_gb')) or 10 }} GB 중단</small></div>
     <div class="card"><span>7일 일별 클라이언트 키</span><strong>{{ client_days }}</strong><small>하루마다 바뀌는 IP 파생값 · 사람 수 아님</small></div>
     <div class="card"><span>Render CPU 최근값</span><strong>{% if render_metrics.cpu %}{{ '%.2f'|format(render_metrics.cpu.value) }}{% else %}—{% endif %}</strong><small>{% if render_metrics.cpu %}{{ render_metrics.cpu.unit }} · {{ render_metrics.cpu.sample_at }}{% else %}최근 4시간 자료 없음{% endif %}</small></div>
     <div class="card"><span>Render 메모리 최근값</span><strong>{% if render_metrics.memory %}{{ '%.2f'|format(render_metrics.memory.value) }}{% else %}—{% endif %}</strong><small>{% if render_metrics.memory %}{{ render_metrics.memory.unit }} · {{ render_metrics.memory.sample_at }}{% else %}최근 4시간 자료 없음{% endif %}</small></div>

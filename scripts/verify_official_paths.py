@@ -7,23 +7,34 @@ against the publisher: it must share the registrable domain of the table key, of
 domain declared in PUBLISHER_DOMAINS below. Nothing else is fetched (no robots.txt, no crawling).
 
 A URL passes only with final status 200, an https final URL, a publisher-owned final host, no redirect to
-a sign-in page or bot challenge and no "not found" page title. Transport errors, 429 and 5xx get one retry.
+a sign-in page or bot challenge and no "not found" page title. Every hop must resolve only to public (global)
+addresses. Transport errors, 429 and 5xx get one retry.
 Results are "ok", "blocked:*" (401/403/429/WAF 202 or a challenge page: the publisher refused this automated
-check, which is not evidence that the page is gone) or another failure code. Exit code 1 when any URL is
-not ok.
+check, which is not evidence that the page is gone) or another failure code.
 
-    python scripts/verify_official_paths.py                 # whole table
+Access bundles (OFFICIAL_ACCESS) are checked the same way, URL by URL, with three additions: the pure rules
+in access_problems() (shape, auth methods, quotes of at most 200 characters, publisher-owned domains, and for
+github.com / raw.githubusercontent.com the publisher's declared organisation), each quote and each MCP
+endpoint must appear verbatim in the visible text of its page (whitespace and typographic quotes folded), and
+openapi_url must start like an OpenAPI or Swagger document. MCP endpoints themselves are never requested.
+Exit code 1 when any URL is not ok, a quote or endpoint is not found, or a rule fails.
+
+    python scripts/verify_official_paths.py                 # whole table and every access bundle
     python scripts/verify_official_paths.py --hosts a.com,b.org --json work/official-paths.json
+    python scripts/verify_official_paths.py --access-only --hosts stripe.com   # one access bundle
 """
 
 from __future__ import annotations
 
 import argparse
+import html
+import ipaddress
 import json
 import re
+import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -32,7 +43,9 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ahn.official_paths import OFFICIAL_PATHS  # noqa: E402
+from ahn.models import valid_host  # noqa: E402
+from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, OFFICIAL_ACCESS,  # noqa: E402
+                                OFFICIAL_PATHS, access_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
@@ -47,7 +60,7 @@ PRIVATE_SUFFIXES = frozenset({"github.io", "gitbook.io", "readthedocs.io", "netl
 PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "bitbucket.org": {"atlassian.com"}, "chatgpt.com": {"openai.com"}, "youtube.com": {"google.com"},
     "twitter.com": {"x.com"}, "stackoverflow.com": {"stackapps.com", "stackexchange.com"},
-    "stackexchange.com": {"stackapps.com"}, "wikipedia.org": {"mediawiki.org"}, "wikimedia.org": {"mediawiki.org"},
+    "stackexchange.com": {"stackapps.com"}, "wikipedia.org": {"mediawiki.org", "wikimedia.org"}, "wikimedia.org": {"mediawiki.org"},
     "amazon.com": {"developer-docs.amazon"},  # Amazon's .amazon brand TLD
     "amazonaws.com": {"amazon.com", "aws.com"}, "shopify.com": {"shopify.dev"}, "slack.com": {"slack.dev"},
     "whatsapp.com": {"facebook.com"}, "notion.so": {"notion.com"}, "atlassian.net": {"atlassian.com"},
@@ -172,6 +185,18 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "police.go.kr": {"data.go.kr"},  # dataset 15000799, published by Korean National Police Agency
     "korail.com": {"data.go.kr"}, "letskorail.com": {"data.go.kr"},  # dataset 15153852, published by Korea Railroad Corporation (Korail)
     "minwon.go.kr": {"data.go.kr"},  # former Minwon24 address of Government24, run by the Ministry of the Interior and Safety, which also runs the portal
+    # Domains used only by access bundles (OFFICIAL_ACCESS)
+    "github.com": {"githubcopilot.com"},  # GitHub's hosted MCP server, documented on docs.github.com
+    "reddit.com": {"redditinc.com"},  # Reddit, Inc.'s policy site, which publishes the Data API Terms
+}
+# Code hosts where one domain serves many owners. An access-bundle URL on one of them must also sit in the
+# publisher's own organisation (first path segment), declared here per table key with how ownership was checked.
+GITHUB_CONTENT_HOSTS = frozenset({"github.com", "raw.githubusercontent.com"})
+PUBLISHER_GITHUB_ORGS: dict[str, set[str]] = {
+    "github.com": {"github"},  # docs.github.com links github/rest-api-description as the REST API's OpenAPI description
+    "stripe.com": {"stripe"},  # docs.stripe.com/sdks links the official SDKs in this organisation
+    "openai.com": {"openai"}, "chatgpt.com": {"openai"},  # developers.openai.com quickstart links the SDKs in this organisation
+    "cloudflare.com": {"cloudflare"},  # developers.cloudflare.com links cloudflare-docs and its MCP servers in this organisation
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)
@@ -181,6 +206,15 @@ SITE_DOWN = re.compile(r"site ?down|temporarily unavailable", re.IGNORECASE)
 SIGN_IN = re.compile(r"/(log-?in|sign-?in|sign_in|sso|oauth2?/authorize|authorize)(/|$)", re.IGNORECASE)
 NOTE_URL = re.compile(r"https://[^\s)>,;\"']+")
 
+ACCESS_FIELDS = ("auth", "key_signup_url", "free_tier", "rate_limits_url", "sandbox_url", "openapi_url", "official_mcp",
+                 "terms", "verified_at")
+ACCESS_URL_FIELDS = ("key_signup_url", "rate_limits_url", "sandbox_url", "openapi_url")
+BODY_CAP = 20_000_000  # whole OpenAPI documents (several MB) and long terms pages
+OPENAPI_MARK = re.compile(rb"[\"']?(?:openapi|swagger)[\"']?\s*:\s*[\"']?[23]\.")
+_TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " ", "–": "-",
+                             "—": "-", "​": "", "‍": "", "﻿": ""})
+_INVISIBLE = re.compile(r"(?is)<(script|style|noscript|svg|template)\b[^>]*>.*?</\1\s*>")
+
 
 def registrable(host: str) -> str:
     labels = host.lower().rstrip(".").split(".")
@@ -189,17 +223,182 @@ def registrable(host: str) -> str:
     return ".".join(labels[-2:])
 
 
-def table_urls(hosts: set[str] | None = None) -> dict[str, list[tuple[str, str]]]:
-    """URL -> [(host, field)] for every URL in the table (optionally limited to some hosts)."""
+# --- Access bundles: pure checks (also run by tests/test_official_access.py) ---------------------------------------
+
+def publisher_owned(host: str, url: str) -> bool:
+    """The URL is on the key's registrable domain or a declared publisher domain; on a shared code host
+    (github.com, raw.githubusercontent.com) it must instead sit in the publisher's declared organisation."""
+    parts = urlsplit(url)
+    name = (parts.hostname or "").lower()
+    if name in GITHUB_CONTENT_HOSTS:
+        org = parts.path.strip("/").split("/", 1)[0].lower()
+        return bool(org) and org in PUBLISHER_GITHUB_ORGS.get(host, set())
+    return registrable(name) in {registrable(host)} | PUBLISHER_DOMAINS.get(host, set())
+
+
+def _url_problem(host: str, url) -> str | None:
+    if not isinstance(url, str):
+        return "not a string"
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not url.startswith("https://") or any(ch.isspace() for ch in url):
+        return f"not a plain https URL: {url!r}"
+    try:
+        if parts.port is not None or parts.username or parts.password or valid_host(parts.hostname or "") != parts.netloc:
+            return f"not a public hostname: {url}"
+    except ValueError:
+        return f"not a public hostname: {url}"
+    if not publisher_owned(host, url):
+        return f"not on a publisher-owned domain or declared GitHub organisation: {url}"
+    return None
+
+
+def _quote_problem(quote) -> str | None:
+    if not isinstance(quote, str) or not quote or quote != quote.strip() or "\n" in quote:
+        return "quote must be a non-empty single-line string without outer spaces"
+    if len(quote) > ACCESS_QUOTE_MAX:
+        return f"quote is {len(quote)} characters, over {ACCESS_QUOTE_MAX}"
+    return None
+
+
+def _object_problems(value, keys: set[str]) -> list[str]:
+    if not isinstance(value, dict) or set(value) != keys:
+        return [f"must be an object with exactly {sorted(keys)}"]
+    return []
+
+
+def access_problems(host: str, access, today: date | None = None) -> list[str]:
+    """Every rule an access bundle must meet, without the network. An empty list means it passes."""
+    if not isinstance(access, dict):
+        return [f"{host}: access must be an object"]
+    problems: list[str] = []
+
+    def add(field: str, problem: str | None) -> None:
+        if problem:
+            problems.append(f"{host}: access.{field}: {problem}")
+
+    for key in set(access) - set(ACCESS_FIELDS):
+        add(key, "unknown field")
+    if not set(access) & (set(ACCESS_FIELDS) - {"verified_at"}):
+        add("*", "a bundle needs at least one field besides verified_at")
+    for field, value in access.items():
+        if value is None or value == [] or value == {}:
+            add(field, "leave an unknown field out instead of null or empty")
+    verified = access.get("verified_at")
+    try:
+        verified_on = date.fromisoformat(verified) if isinstance(verified, str) and len(verified) == 10 else None
+    except ValueError:
+        verified_on = None
+    if verified_on is None:
+        add("verified_at", "must be an ISO date YYYY-MM-DD")
+    elif verified_on > (today or datetime.now(timezone.utc).date()):
+        add("verified_at", "is in the future")
+    auth = access.get("auth")
+    if auth is not None:
+        if not isinstance(auth, list):
+            add("auth", "must be a list")
+        else:
+            methods = []
+            for item in auth:
+                shape = _object_problems(item, {"method", "source_url"})
+                if shape:
+                    add("auth", shape[0])
+                    continue
+                if item["method"] not in ACCESS_AUTH_METHODS:
+                    add("auth", f"unknown method {item['method']!r}; allowed: {', '.join(ACCESS_AUTH_METHODS)}")
+                methods.append(item["method"])
+                add("auth", _url_problem(host, item["source_url"]))
+            if len(methods) != len(set(methods)):
+                add("auth", "a method is listed twice")
+    for field in ACCESS_URL_FIELDS:
+        if access.get(field) is not None:
+            add(field, _url_problem(host, access[field]))
+    if access.get("free_tier") is not None:
+        shape = _object_problems(access["free_tier"], {"quote", "source_url"})
+        add("free_tier", shape[0] if shape else _quote_problem(access["free_tier"]["quote"]))
+        if not shape:
+            add("free_tier", _url_problem(host, access["free_tier"]["source_url"]))
+    if access.get("terms") is not None:
+        shape = _object_problems(access["terms"], {"url", "quote"})
+        add("terms", shape[0] if shape else _quote_problem(access["terms"]["quote"]))
+        if not shape:
+            add("terms", _url_problem(host, access["terms"]["url"]))
+    mcp = access.get("official_mcp")
+    if mcp is not None:
+        if not isinstance(mcp, list):
+            add("official_mcp", "must be a list")
+        else:
+            endpoints = []
+            for item in mcp:
+                shape = _object_problems(item, {"endpoint", "doc_url"})
+                if shape:
+                    add("official_mcp", shape[0])
+                    continue
+                endpoints.append(item["endpoint"])
+                add("official_mcp", _url_problem(host, item["endpoint"]))
+                add("official_mcp", _url_problem(host, item["doc_url"]))
+            if len(endpoints) != len(set(endpoints)):
+                add("official_mcp", "an endpoint is listed twice")
+    return problems
+
+
+def access_urls(access: dict) -> list[tuple[str, str]]:
+    """(field, url) for every page of an access bundle that is fetched. MCP endpoints are not fetched: they are
+    checked as text on their documentation page instead."""
+    found = [(f"access.auth.{item['method']}", item["source_url"]) for item in access.get("auth") or []]
+    found += [(f"access.{field}", access[field]) for field in ACCESS_URL_FIELDS if access.get(field)]
+    if access.get("free_tier"):
+        found.append(("access.free_tier", access["free_tier"]["source_url"]))
+    found += [("access.official_mcp", item["doc_url"]) for item in access.get("official_mcp") or []]
+    if access.get("terms"):
+        found.append(("access.terms", access["terms"]["url"]))
+    return found
+
+
+def access_needles(access: dict) -> list[tuple[str, str, str]]:
+    """(field, page URL, text) that must appear verbatim on that page: the two quotes and each MCP endpoint."""
+    needles = []
+    if access.get("free_tier"):
+        needles.append(("access.free_tier", access["free_tier"]["source_url"], access["free_tier"]["quote"]))
+    if access.get("terms"):
+        needles.append(("access.terms", access["terms"]["url"], access["terms"]["quote"]))
+    needles += [("access.official_mcp", item["doc_url"], item["endpoint"]) for item in access.get("official_mcp") or []]
+    return needles
+
+
+def page_text(body: bytes) -> str:
+    """Visible text of an HTML page (scripts and styles dropped, tags removed, entities decoded)."""
+    text = _INVISIBLE.sub(" ", body.decode("utf-8", "replace"))
+    return html.unescape(re.sub(r"(?s)<[^>]+>", " ", text))
+
+
+def _squash(text: str) -> str:
+    # Typographic quotes and dashes are folded and all whitespace is dropped, so markup between inline
+    # elements (<strong>Build</strong>, ...) cannot hide a quote. Letters and punctuation must match exactly.
+    return "".join(text.translate(_TYPOGRAPHY).split())
+
+
+def text_contains(page: str, needle: str) -> bool:
+    return bool(needle.strip()) and _squash(needle) in _squash(page)
+
+
+# --- Live checks ----------------------------------------------------------------------------------------------------
+
+def table_urls(hosts: set[str] | None = None, *, paths: bool = True, access: bool = True) -> dict[str, list[tuple[str, str]]]:
+    """URL -> [(host, field)] for every URL in the table and its access bundles (optionally limited to some hosts)."""
     urls: dict[str, list[tuple[str, str]]] = {}
     for host, entry in OFFICIAL_PATHS.items():
         if hosts and host not in hosts:
             continue
-        for field in ("api_docs", "developer_portal"):
-            if entry[field]:
-                urls.setdefault(entry[field], []).append((host, field))
-        for match in NOTE_URL.findall(entry["note"] or ""):
-            urls.setdefault(match.rstrip("."), []).append((host, "note"))
+        if paths:
+            for field in ("api_docs", "developer_portal"):
+                if entry[field]:
+                    urls.setdefault(entry[field], []).append((host, field))
+            for match in NOTE_URL.findall(entry["note"] or ""):
+                urls.setdefault(match.rstrip("."), []).append((host, "note"))
+        if access and host in OFFICIAL_ACCESS:
+            for field, url in access_urls(OFFICIAL_ACCESS[host]):
+                if (host, field) not in urls.get(url, []):
+                    urls.setdefault(url, []).append((host, field))
     return urls
 
 
@@ -211,8 +410,20 @@ class Fetcher:
         )
         self.last = 0.0
         self.requests = 0
+        self._public: dict[str, bool] = {}
 
-    def _get(self, url: str) -> tuple[int, str | None, str]:
+    def public_host(self, host: str) -> bool:
+        """Every address the name resolves to is a public (global) IP; looked up once per host."""
+        if host not in self._public:
+            try:
+                addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+                self._public[host] = bool(addresses) and len(addresses) <= 16 and all(
+                    ipaddress.ip_address(ip.split("%", 1)[0]).is_global for ip in addresses)
+            except (OSError, ValueError):
+                self._public[host] = False
+        return self._public[host]
+
+    def _get(self, url: str, want_body: bool) -> tuple[int, str | None, str, bytes]:
         wait = MIN_INTERVAL - (time.monotonic() - self.last)
         if wait > 0:
             time.sleep(wait)
@@ -221,23 +432,32 @@ class Fetcher:
         with self.client.stream("GET", url) as response:
             location = response.headers.get("location")
             title = ""
+            body = bytearray()
             if response.status_code == 200:
-                body = b""
                 for chunk in response.iter_bytes():
-                    body += chunk
-                    if len(body) >= TITLE_CAP or b"</title>" in body.lower():
+                    body.extend(chunk)
+                    if len(body) >= BODY_CAP or (not want_body and (len(body) >= TITLE_CAP or b"</title>" in body.lower())):
                         break
                 found = TITLE.search(body[:TITLE_CAP])
                 if found:
                     title = " ".join(found.group(1).decode("utf-8", "replace").split())[:120]
-            return response.status_code, location, title
+            return response.status_code, location, title, bytes(body)
 
-    def check(self, url: str, allowed: set[str]) -> dict:
-        current, hops, status, title, error = url, 0, None, "", None
+    def check(self, url: str, allowed: set[str], *, orgs: set[str] | None = None, want_body: bool = False) -> tuple[dict, bytes]:
+        """One URL, redirects followed by hand. `orgs` (access-bundle URLs) also requires a final URL on a shared
+        code host to sit in one of those organisations. With want_body the page body (up to BODY_CAP) is kept."""
+        current, hops, status, title, error, body = url, 0, None, "", None, b""
         retried = False
         while True:
+            hostname = urlsplit(current).hostname or ""
+            if urlsplit(current).scheme != "https":
+                error = "not_https"
+                break
+            if not self.public_host(hostname):
+                error = "not_public_address"
+                break
             try:
-                status, location, title = self._get(current)
+                status, location, title, body = self._get(current, want_body)
             except httpx.HTTPError as exc:
                 if not retried:
                     retried = True
@@ -252,74 +472,113 @@ class Fetcher:
                 continue
             break
         final = urlsplit(current)
+        final_host = (final.hostname or "").lower()
+        if orgs is not None and final_host in GITHUB_CONTENT_HOSTS:
+            owned = final.path.strip("/").split("/", 1)[0].lower() in orgs
+        else:
+            owned = registrable(final_host) in allowed
         result = "ok"
-        if error:
+        if error in {"not_https", "not_public_address"}:
+            result = error
+        elif error:
             result = f"error:{error}"
         elif status in {202, 401, 403, 429}:
             result = f"blocked:{status}"
         elif status != 200:
             result = f"status:{status}"
-        elif final.scheme != "https":
-            result = "not_https"
-        elif registrable(final.hostname or "") not in allowed:
+        elif not owned:
             result = f"foreign_host:{final.hostname}"
-        elif "challenge" in final.path.lower() or (final.hostname or "").startswith("unblock.") or BOT_WALL.search(title):
+        elif "challenge" in final.path.lower() or final_host.startswith("unblock.") or BOT_WALL.search(title):
             result = "blocked:challenge"
         elif current != url and SIGN_IN.search(final.path):
             result = "sign_in_page"
         elif NOT_FOUND.search(title) or SITE_DOWN.search(title):
             result = "not_found_title"
-        return {"url": url, "final_url": current, "status": status, "hops": hops, "title": title, "result": result}
+        row = {"url": url, "final_url": current, "status": status, "hops": hops, "title": title, "result": result}
+        return row, (body if result == "ok" else b"")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--hosts", help="comma-separated table keys to check (default: all)")
+    parser.add_argument("--access-only", action="store_true", help="check only access bundles (URLs, quotes, MCP endpoints)")
     parser.add_argument("--json", type=Path, help="write per-URL and per-host results to this file")
     args = parser.parse_args()
     hosts = {h.strip() for h in args.hosts.split(",") if h.strip()} if args.hosts else None
-    urls = table_urls(hosts)
+    access_hosts = [host for host in OFFICIAL_ACCESS if not hosts or host in hosts]
+    problems = [line for host in access_hosts for line in access_problems(host, OFFICIAL_ACCESS[host])]
+    problems += [f"{host}: access bundle for a host that is not in OFFICIAL_PATHS" for host in access_hosts if host not in OFFICIAL_PATHS]
+    urls = table_urls(hosts, paths=not args.access_only)
+    needles: dict[str, list[tuple[str, str, str]]] = {}
+    for host in access_hosts:
+        for field, url, text in access_needles(OFFICIAL_ACCESS[host]):
+            needles.setdefault(url, []).append((host, field, text))
     fetcher = Fetcher()
     results: dict[str, dict] = {}
+    needle_rows: list[dict] = []
     undeclared: list[str] = []
     for index, (url, users) in enumerate(urls.items(), 1):
         allowed = {registrable(urlsplit(url).hostname or "")}
-        for host, _ in users:
+        orgs: set[str] | None = None
+        for host, field in users:
             declared = {registrable(host)} | PUBLISHER_DOMAINS.get(host, set())
-            if registrable(urlsplit(url).hostname or "") not in declared:
+            if field.startswith("access."):
+                orgs = (orgs or set()) | PUBLISHER_GITHUB_ORGS.get(host, set())
+            elif registrable(urlsplit(url).hostname or "") not in declared:
                 undeclared.append(f"{host}: {url}")
             allowed |= declared
-        results[url] = fetcher.check(url, allowed)
+        is_openapi = any(field == "access.openapi_url" for _, field in users)
+        results[url], body = fetcher.check(url, allowed, orgs=orgs, want_body=url in needles or is_openapi)
         row = results[url]
+        if is_openapi and row["result"] == "ok" and not OPENAPI_MARK.search(body):
+            row["result"] = "not_openapi"
         moved = f" -> {row['final_url']}" if row["final_url"] != url else ""
         print(f"[{index}/{len(urls)}] {row['result']:<14} {row['status']!s:<4} {url}{moved}", flush=True)
+        text = page_text(body) if url in needles and row["result"] == "ok" else ""
+        for host, field, needle in needles.get(url, []):
+            found = "found" if text_contains(text, needle) else "not_found" if row["result"] == "ok" else f"unverified:{row['result']}"
+            needle_rows.append({"host": host, "field": field, "page": url, "text": needle, "result": found})
     per_host: dict[str, dict] = {}
     for url, users in urls.items():
         for host, field in users:
-            item = per_host.setdefault(host, {"ok": True, "urls": []})
+            item = per_host.setdefault(host, {"ok": True, "urls": [], "needles": []})
             item["urls"].append({"field": field, **results[url]})
             item["ok"] &= results[url]["result"] == "ok"
+    for row in needle_rows:
+        item = per_host.setdefault(row["host"], {"ok": True, "urls": [], "needles": []})
+        item["needles"].append(row)
+        item["ok"] &= row["result"] == "found"
     failed = [url for url, row in results.items() if row["result"] != "ok"]
     blocked = [url for url in failed if results[url]["result"].startswith("blocked:")]
+    missing = [row for row in needle_rows if row["result"] != "found"]
     print()
-    print(f"{'host':<28} {'field':<16} {'result':<22} url")
+    print(f"{'host':<28} {'field':<22} {'result':<22} url")
     for host, item in sorted(per_host.items()):
         for row in item["urls"]:
             if row["result"] != "ok" or row["final_url"] != row["url"]:
-                print(f"{host:<28} {row['field']:<16} {row['result']:<22} {row['url']} -> {row['final_url']}")
+                print(f"{host:<28} {row['field']:<22} {row['result']:<22} {row['url']} -> {row['final_url']}")
+    for row in missing:
+        print(f"{row['host']:<28} {row['field']:<22} text {row['result']:<17} {row['text'][:60]!r} on {row['page']}")
     for line in undeclared:
         print(f"undeclared publisher domain: {line}")
+    for line in problems:
+        print(f"access rule: {line}")
+    for host in access_hosts:
+        if not access_is_current(OFFICIAL_ACCESS[host]):
+            print(f"stale: {host} access verified_at {OFFICIAL_ACCESS[host]['verified_at']} is over {ACCESS_MAX_AGE_DAYS} days old "
+                  "and is left out of answers until re-verified")
     hosts_ok = sum(item["ok"] for item in per_host.values())
     print(f"\nhosts: {len(per_host)} checked, {hosts_ok} all-ok, {len(per_host) - hosts_ok} with a failure; "
           f"urls: {len(results)} distinct, {len(results) - len(failed)} ok, {len(blocked)} blocked, {len(failed) - len(blocked)} failed; "
+          f"quotes and MCP endpoints: {len(needle_rows)} checked, {len(needle_rows) - len(missing)} found; "
           f"requests: {fetcher.requests}")
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "user_agent": USER_AGENT, "hosts": per_host, "undeclared": undeclared,
+            "user_agent": USER_AGENT, "hosts": per_host, "undeclared": undeclared, "access_problems": problems,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
-    return 1 if failed or undeclared else 0
+    return 1 if failed or undeclared or problems or missing else 0
 
 
 if __name__ == "__main__":
