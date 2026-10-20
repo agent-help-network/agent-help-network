@@ -151,6 +151,27 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "google.ca": {"google.com"}, "google.co.in": {"google.com"},
     "freepik.com": {"magnific.com"},  # Freepik-owned Magnific; docs.freepik.com redirects to docs.magnific.com
     "greenhouse.com": {"greenhouse.io"}, "admin.ch": {"opendata.swiss"},  # Swiss federal open data portal
+    "senate.gov": {"lda.gov"},  # lda.senate.gov redirects to lda.gov, the Lobbying Disclosure Act site of the Senate Secretary and House Clerk
+    "metmuseum.org": {"metmuseum.github.io"},  # The Met's own GitHub Pages site for its Collection API
+    "ourworldindata.org": {"owid.io"},  # Our World in Data's documentation domain for its ETL and API
+    "nsf.gov": {"research.gov"},  # NSF operates Research.gov, which hosts the NSF Awards API reference
+    "springeropen.com": {"springernature.com"},  # SpringerOpen is part of Springer Nature
+    "superuser.com": {"stackapps.com", "stackexchange.com"},  # Stack Exchange network site
+    "sncf-connect.com": {"sncf.com"},  # SNCF Connect is the SNCF group's booking service; open data lives on data.sncf.com
+    "stubhub.ca": {"stubhub.com"}, "shopee.ph": {"shopee.com"},  # regional hosts of platforms listed above
+    "sktelecom.com": {"sk.com"},  # SK Open API portal (openapi.sk.com) run by SK Telecom
+    # Korean public bodies: the dataset page on the Public Data Portal (data.go.kr) is the body's own listing,
+    # published by the named organisation (checked against the portal's dataset metadata).
+    "airkorea.or.kr": {"data.go.kr"},  # dataset 15073861, published by Korea Environment Corporation (operator of AirKorea)
+    "airport.kr": {"data.go.kr"},  # dataset 15140153, published by Incheon International Airport Corporation
+    "bokjiro.go.kr": {"data.go.kr"},  # dataset 15090532, published by Korea Social Security Information Service (operator of Bokjiro)
+    "hira.or.kr": {"data.go.kr"},  # dataset 15001698, published by Health Insurance Review and Assessment Service
+    "hometax.go.kr": {"data.go.kr"}, "nts.go.kr": {"data.go.kr"},  # dataset 15081808, published by the National Tax Service (operator of Hometax)
+    "mfds.go.kr": {"data.go.kr"},  # dataset 15095677, published by Ministry of Food and Drug Safety
+    "nps.or.kr": {"data.go.kr"},  # dataset 3046071, published by National Pension Service
+    "police.go.kr": {"data.go.kr"},  # dataset 15000799, published by Korean National Police Agency
+    "korail.com": {"data.go.kr"}, "letskorail.com": {"data.go.kr"},  # dataset 15153852, published by Korea Railroad Corporation (Korail)
+    "minwon.go.kr": {"data.go.kr"},  # former Minwon24 address of Government24, run by the Ministry of the Interior and Safety, which also runs the portal
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)
