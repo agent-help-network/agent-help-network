@@ -91,9 +91,9 @@ def test_parse_bandwidth_keeps_only_the_configured_window_and_service():
 
 def test_threshold_env_defaults_when_unset_or_blank(monkeypatch):
     monkeypatch.delenv("AHN_GUARD_WARNING_GB", raising=False)
-    assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("10")) == Decimal("10")
+    assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("4")) == Decimal("4")
     monkeypatch.setenv("AHN_GUARD_WARNING_GB", "  \t ")
-    assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("10")) == Decimal("10")
+    assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("4")) == Decimal("4")
     monkeypatch.setenv("AHN_GUARD_WARNING_GB", " 12.5 ")
     assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("10")) == Decimal("12.5")
 
@@ -102,7 +102,7 @@ def test_threshold_env_defaults_when_unset_or_blank(monkeypatch):
 def test_threshold_env_rejects_invalid_or_non_finite_values(monkeypatch, raw):
     monkeypatch.setenv("AHN_GUARD_STOP_GB", raw)
     with pytest.raises(RuntimeError, match="AHN_GUARD_STOP_GB"):
-        _threshold_env("AHN_GUARD_STOP_GB", Decimal("20"))
+        _threshold_env("AHN_GUARD_STOP_GB", Decimal("10"))
 
 
 @pytest.mark.parametrize("warning,stop", [

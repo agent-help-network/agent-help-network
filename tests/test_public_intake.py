@@ -761,7 +761,7 @@ def test_bandwidth_guard_warns_then_suspends_once(public_client, monkeypatch):
 
     # Fixed early-month clock: an empty DB is refused after day 6 of the month.
     now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
-    values = [{"timestamp": (now - timedelta(hours=2)).isoformat(), "value": 11}]
+    values = [{"timestamp": (now - timedelta(hours=2)).isoformat(), "value": 5}]
     resource = "srv-db0hnkfavr4c73fp6et0"
     def handler(request):
         assert request.url.path == "/v1/metrics/bandwidth"
@@ -776,7 +776,7 @@ def test_bandwidth_guard_warns_then_suspends_once(public_client, monkeypatch):
     first = run_guard(TEST_URL, "fake-test-key", resource, now=now, client=client)
     assert first["action"] == "warning" and first["coverage_gap"] is False and first["coverage_gap_new"] is False
     assert run_guard(TEST_URL, "fake-test-key", resource, now=now, client=client)["action"] == "none"
-    values.append({"timestamp": (now - timedelta(hours=1)).isoformat(), "value": 10})
+    values.append({"timestamp": (now - timedelta(hours=1)).isoformat(), "value": 5})
     stopped.append(resource)  # an operator suspended the service by hand before the first crossing
     assert run_guard(TEST_URL, "fake-test-key", resource, now=now, client=client)["action"] == "suspended_externally"
     assert calls == []
@@ -789,8 +789,8 @@ def test_bandwidth_guard_warns_then_suspends_once(public_client, monkeypatch):
     assert calls == [resource]
     with connect(settings) as conn:
         state = conn.execute("SELECT usage_gb,state,suspended_at,coverage_gap_since,warning_gb,stop_gb FROM bandwidth_guard_state WHERE name='web'").fetchone()
-    assert state["usage_gb"] == 21 and state["state"] == "suspended" and state["suspended_at"] == now
-    assert state["coverage_gap_since"] is None and state["warning_gb"] == 10 and state["stop_gb"] == 20
+    assert state["usage_gb"] == 10 and state["state"] == "suspended" and state["suspended_at"] == now
+    assert state["coverage_gap_since"] is None and state["warning_gb"] == 4 and state["stop_gb"] == 10
 
 
 def test_bandwidth_guard_every_15_minutes_notifies_and_suspends_once(public_client, monkeypatch):
@@ -800,7 +800,7 @@ def test_bandwidth_guard_every_15_minutes_notifies_and_suspends_once(public_clie
 
     start = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
     resource = "srv-db0hnkfavr4c73fp6et0"
-    values = [{"timestamp": start.isoformat(), "value": 11}]
+    values = [{"timestamp": start.isoformat(), "value": 5}]
     client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
         lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": resource}], "values": values, "unit": "GB"}])
     ))
@@ -813,14 +813,14 @@ def test_bandwidth_guard_every_15_minutes_notifies_and_suspends_once(public_clie
 
     assert run(0)["action"] == "warning"
     assert [run(minutes)["action"] for minutes in (15, 30, 45)] == ["none", "none", "none"]
-    values.append({"timestamp": (start + timedelta(hours=1)).isoformat(), "value": 10})
+    values.append({"timestamp": (start + timedelta(hours=1)).isoformat(), "value": 5})
     assert [run(minutes)["action"] for minutes in (60, 75, 90)] == ["suspended", "already_suspended", "already_suspended"]
     assert calls == [resource]
     with connect(settings) as conn:
         samples = conn.execute("SELECT count(*) AS n FROM bandwidth_guard_samples WHERE resource_id=%s", (resource,)).fetchone()["n"]
         state = conn.execute("SELECT usage_gb,state,warning_sent_at,suspended_at,checked_at FROM bandwidth_guard_state WHERE name='web'").fetchone()
     assert samples == 2
-    assert state["usage_gb"] == 21 and state["state"] == "suspended"
+    assert state["usage_gb"] == 10 and state["state"] == "suspended"
     assert state["warning_sent_at"] == start and state["suspended_at"] == start + timedelta(minutes=60)
     assert state["checked_at"] == start + timedelta(minutes=90)
 
@@ -862,17 +862,17 @@ def test_bandwidth_guard_detects_previous_month_state_gap(public_client, monkeyp
                VALUES ('web','2026-09-01T00:00:00Z','2026-09-30T23:00:00Z',1,'normal')"""
         )
     # First run of a billing month after day 6: evaluated as a lower bound, flagged once, not raised.
-    client = _guard_window_client(resource, now, Decimal("3"))
+    client = _guard_window_client(resource, now, Decimal("2"))
     result = run_guard(TEST_URL, "fake-test-key", resource, now=now, client=client)
-    assert result == {"state": "normal", "usage_gb": 3, "action": "none", "coverage_gap": True, "coverage_gap_new": True}
+    assert result == {"state": "normal", "usage_gb": 2, "action": "none", "coverage_gap": True, "coverage_gap_new": True}
     assert calls == []
     with connect(settings) as conn:
         state = conn.execute("SELECT period_start,checked_at,usage_gb,state,coverage_gap_since FROM bandwidth_guard_state WHERE name='web'").fetchone()
-    assert state["period_start"] == month_start and state["checked_at"] == now and state["usage_gb"] == 3
+    assert state["period_start"] == month_start and state["checked_at"] == now and state["usage_gb"] == 2
     assert state["state"] == "normal" and state["coverage_gap_since"] == now
     # The next hourly run keeps the sticky flag without a second notification.
     later = now + timedelta(hours=1)
-    again = run_guard(TEST_URL, "fake-test-key", resource, now=later, client=_guard_window_client(resource, later, Decimal("3")))
+    again = run_guard(TEST_URL, "fake-test-key", resource, now=later, client=_guard_window_client(resource, later, Decimal("2")))
     assert again["coverage_gap"] is True and again["coverage_gap_new"] is False and again["action"] == "none"
     with connect(settings) as conn:
         state = conn.execute("SELECT checked_at,coverage_gap_since FROM bandwidth_guard_state WHERE name='web'").fetchone()
@@ -908,8 +908,8 @@ def test_bandwidth_guard_detects_previous_month_state_gap(public_client, monkeyp
                VALUES ('web',%s,%s,1,'normal')""",
             (month_start, now - timedelta(days=7)),
         )
-    result = run_guard(TEST_URL, "fake-test-key", resource, now=now, client=_guard_window_client(resource, now, Decimal("12")))
-    assert result == {"state": "warning", "usage_gb": 12, "action": "warning", "coverage_gap": True, "coverage_gap_new": True}
+    result = run_guard(TEST_URL, "fake-test-key", resource, now=now, client=_guard_window_client(resource, now, Decimal("6")))
+    assert result == {"state": "warning", "usage_gb": 6, "action": "warning", "coverage_gap": True, "coverage_gap_new": True}
     assert calls == []
     with connect(settings) as conn:
         state = conn.execute("SELECT checked_at,state,suspended_at,coverage_gap_since FROM bandwidth_guard_state WHERE name='web'").fetchone()

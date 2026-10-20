@@ -34,7 +34,7 @@ Muse 커넥터 약관은 사용자 데이터의 필요한 기간 내 보관·철
 
 Render에는 계정 전체의 지출 상한이 없다. 포함량을 넘는 외부 전송량은 사용한 만큼 청구된다([Render 외부 전송량](https://render.com/docs/outbound-bandwidth)). 아래 장치는 초과분을 줄이는 수단이지 청구액의 강제 상한이 아니다.
 
-**대역폭 감시 크론.** `ahn.bandwidth_guard`(`render.yaml`의 `agent-help-network-bandwidth-guard`)가 15분마다 웹 서비스의 월 누적 외부 전송량을 읽어 경고 문턱에서 실패 종료(Render 실패 알림 메일)하고, 중단 문턱에서 웹 서비스를 suspend한다. 문턱 기본값은 [README](../README.md)에 있고 `AHN_GUARD_WARNING_GB`·`AHN_GUARD_STOP_GB`로 조정한다.
+**대역폭 감시 크론.** `ahn.bandwidth_guard`(`render.yaml`의 `agent-help-network-bandwidth-guard`)가 15분마다 웹 서비스의 월 누적 외부 전송량을 읽어 경고 문턱에서 실패 종료(Render 실패 알림 메일)하고, 중단 문턱에서 웹 서비스를 suspend한다. 문턱 기본값은 월 4GB 경고(Render Hobby 포함량 직전)·10GB 중단이고 [README](../README.md)에도 있다. `AHN_GUARD_WARNING_GB`·`AHN_GUARD_STOP_GB`로 조정하며, 이 환경변수가 설정돼 있으면 기본값을 덮어쓴다. 경고 문턱은 중단 문턱보다 작아야 한다(아니면 실행이 거부된다).
 
 - **지표 지연이 주기보다 크다.** Render는 외부 전송량을 시간당 한 점으로 보여 주고, 각 점은 그 시간이 끝난 뒤 약 60분 지나 나타난다([서비스 지표](https://render.com/docs/service-metrics)). 그래서 감시 주기를 줄여도 줄어드는 것은 "점이 나타난 뒤 기다리는 시간"뿐이다. 문턱을 넘는 트래픽이 시작된 시점부터 중단까지는 지표 지연(최대 약 2시간)에 주기가 더해진다. 같은 시간 점을 15분마다 다시 읽어도 저장 행은 늘지 않는다(시간 점마다 한 행을 갱신한다).
 - **중복 알림이 없다.** 경고·중단·조회 공백 알림은 달마다 한 번씩만 실패 종료로 알리고, 상태는 종료 전에 DB에 기록한다. 이미 중단된 달에는 실제 Render 상태를 확인만 하고, 운영자가 재개했는데 사용량이 중단 문턱 이상이면 다음 실행(최대 15분 뒤)에 다시 중단하며 그때마다 알림이 간다. 재개 전에 원인을 확인하고 문턱 환경변수나 방침을 먼저 정한다.
