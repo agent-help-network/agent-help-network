@@ -189,9 +189,64 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
   - `ai_input_no_agents` 는 사이트 전체 **실효** 선호가 `ai-input=no` 또는 `ai-use=n` 인 사용자 지시 에이전트 토큰(`kind: user_agent`) 목록이다. `robots.rules` 와 같은 그룹 규칙으로 계산한다: 어떤 그룹이 지명한 토큰(그 그룹에 `Content-*` 줄이 있든 없든)은 자신을 지명한 그룹의 선언만 따르고, 어느 그룹도 지명하지 않은 토큰만 `*` 그룹을 따른다. 자르기 전에 모든 그룹으로 계산한다. 목록이 비어 있지 않으면 `ai_input_declared_no` 가 `true` 이고 `next_checks` 에 정보성 코드 `content_use_ai_input_declared_no` 가 붙는다. `recommendation` 은 `content_use` 없이 계산한다.
   - `source_url`·`fetched_at`·`freshness` 는 robots 읽기의 값이다. 전송 실패가 나면 `robots` 와 똑같이 마지막 선언을 `freshness: stale` 로 유지한다.
 - `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 `name` 을 제외한 세 필드는 `null` 일 수 있고, 표에 없는 호스트면 객체 전체가 `null` 이다. 서브도메인은 루트 호스트의 항목과 맞춘다(`api.github.com` 은 `github.com` 항목). `note` 만 있는 항목(예: 공개 API 없음)은 표시하지만 판정과 `official_path_available` 에서는 사용 가능한 공식 경로로 세지 않으며, 그러려면 `api_docs` 나 `developer_portal` 이 있어야 한다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
-- `next_checks.code` 는 다음 순서로 나온다: ① 실패 단계(`failure_stage` 값이 있고 `unknown` 이 아니면 `before_target_response`·`response_observed`·`access_denial_observed`, 아니면 `error_class` 가 `human_verification`·`login_auth` 가 아닐 때 `locate_failure_stage`) → ② 인계(`human_handoff`, `account_handoff`) → ③ 선언 프로필(프로필을 읽지 않은 서브도메인·테넌트 호스트는 `profile_not_read`, `www.<루트>` 이름은 루트 호스트의 프로필을 받는다; `retry_after_seconds` 가 있는 `pending` 프로필이면 `profile_pending`; 그 밖에 프로필이 있으면 `robots_fetch_refused`, `robots_unknown`, `robots_blocks_agents`, `robots_wildcard_disallow`, `robots_allows_agents` 중 하나, 이어서 `robots.grouping_differs_by_parser` 가 비어 있지 않으면 `robots_grouping_differs_by_parser`, 이어서 `llms_txt_present`, 이어서 `content_use_ai_input_declared_no`) → ④ 공식 경로(`official_path_available`) → ⑤ 업체(`provider_scope`, `provider_clear`, `provider_unknown`) → ⑥ 제보(`reports_unknown`, `reports_stale`, `reports_unverified`). 모두 23개 코드이며 영어 계약의 표에 뜻이 있다. `robots_grouping_differs_by_parser` 는 정보용이다: "해석기마다 이 robots.txt 의 답이 갈린다. Google 방식은 이 답이 나눈 그룹을 합쳐 대개 더 엄격하게 읽는다. 권장 행동은 그룹을 나누는 해석을 따른다"는 뜻이다. `profile_pending` 은 "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있으니 `access_profile.retry_after_seconds` 초 뒤 같은 조회를 한 번 더 하면 선언 정책이 들어 있다, 반복 폴링은 하지 말라"는 뜻이다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
+- `next_checks.code` 는 다음 순서로 나온다: ① 실패 단계(`failure_stage` 값이 있고 `unknown` 이 아니면 `before_target_response`·`response_observed`·`access_denial_observed`, 아니면 `error_class` 가 `human_verification`·`login_auth` 가 아닐 때 `locate_failure_stage`) → ② 인계(`human_handoff`, `account_handoff`) → ③ 선언 프로필(프로필을 읽지 않은 서브도메인·테넌트 호스트는 `profile_not_read`, `www.<루트>` 이름은 루트 호스트의 프로필을 받는다; `retry_after_seconds` 가 있는 `pending` 프로필이면 `profile_pending`; 그 밖에 프로필이 있으면 `robots_fetch_refused`, `robots_unknown`, `robots_blocks_agents`, `robots_wildcard_disallow`, `robots_allows_agents` 중 하나, 이어서 `robots.grouping_differs_by_parser` 가 비어 있지 않으면 `robots_grouping_differs_by_parser`, 이어서 `llms_txt_present`, 이어서 `content_use_ai_input_declared_no`) → ④ 공식 경로(`official_path_available`) → ④-2 등록부 사실(`host_facts` 가 있을 때만 `government_registry_listed`, `government_list_version_missing`, `government_suffix_restricted` 중 하나, 정보성이며 `recommendation` 을 바꾸지 않음) → ⑤ 업체(`provider_scope`, `provider_clear`, `provider_unknown`) → ⑥ 제보(`reports_unknown`, `reports_stale`, `reports_unverified`). 모두 26개 코드이며 영어 계약의 표에 뜻이 있다. `robots_grouping_differs_by_parser` 는 정보용이다: "해석기마다 이 robots.txt 의 답이 갈린다. Google 방식은 이 답이 나눈 그룹을 합쳐 대개 더 엄격하게 읽는다. 권장 행동은 그룹을 나누는 해석을 따른다"는 뜻이다. `profile_pending` 은 "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있으니 `access_profile.retry_after_seconds` 초 뒤 같은 조회를 한 번 더 하면 선언 정책이 들어 있다, 반복 폴링은 하지 말라"는 뜻이다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
 - 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 기본 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 전송 실패는 이미 답이 있던 호스트라도 1시간 뒤 다시 시도한다. 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
 - MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 뒤에서 하는 robots/llms·상태 피드 읽기 — 확정 답은 24시간 재사용, 전송 실패는 1시간 뒤 재시도)는 호출자가 보는 결과를 바꾸지 않는다.
+
+## 호스트 사실 (`host_facts`, 정부 도메인 등록부)
+
+`host_facts` 는 **도메인에 관한 레지스트리 사실**을 담는다. 어느 공개 정부 도메인 목록에 그 도메인이 있는지와 목록이 적은 기관명, 그리고 접미사가 정부 기관 전용이라는 레지스트리 규칙이다. 누가 그 이름을 등록했는지에 대한 사실일 뿐, 사이트·페이지·링크가 진짜이거나 안전하다는 말이 아니다. `recommendation` 을 바꾸지 않으며, 필드가 없다는 것은 사이트에 대해 아무것도 말하지 않는다. 정부 목록이나 정부 전용 접미사 규칙이 그 호스트에 해당할 때만 붙고 **그 밖에는 응답에서 키 자체가 빠진다**(`null` 아님). 일반 호스트의 응답은 길어지지 않는다.
+
+```json
+{
+  "host_facts": {
+    "government_registry": {
+      "status": "listed",
+      "registry": "us_dotgov",
+      "registry_name": "U.S. .gov domain list (CISA)",
+      "domain_type": "Federal - Executive",
+      "organization": "Department of the Treasury",
+      "suborganization": "Internal Revenue Service",
+      "state": "DC",
+      "list_version": "2026-10-20",
+      "source_url": "https://github.com/cisagov/dotgov-data/blob/main/current-full.csv",
+      "license": "CC0-1.0",
+      "fetched_at": "2026-10-20T18:05:00Z"
+    },
+    "suffix_rule": {
+      "suffix": "gov",
+      "rule": "registration_limited_to_government",
+      "text": "Only verified U.S. government organizations can register a .gov domain.",
+      "source_url": "https://get.gov/domains/eligibility/"
+    },
+    "note": "Registry facts about a domain: which public government list names it, and whether its suffix is reserved for government bodies. They are not a judgement about the site, any page or any link."
+  }
+}
+```
+
+`.go.kr` 호스트에는 접미사 규칙만 있고 목록 항목은 없다. 이 서비스는 개별 `.go.kr` 도메인 목록을 읽지 않기 때문이다.
+
+```json
+{
+  "host_facts": {
+    "suffix_rule": {
+      "suffix": "go.kr",
+      "rule": "registration_limited_to_government",
+      "text": "Under the KRNIC domain name management rules, .go.kr is for administrative agencies and legislative or judicial agencies.",
+      "source_url": "https://krnic.kisa.or.kr/jsp/eng/policy/domainNewRules.jsp"
+    },
+    "note": "Registry facts about a domain: ..."
+  }
+}
+```
+
+- **`government_registry`** 는 `.gov`(미국 목록)와 `.gov.uk`(영국 목록) 아래 이름에 대해, 그 목록이 적재된 뒤에 붙는다. `status` 는 `listed`, 또는 목록의 접미사 아래 이름인데 적재된 판본에 없으면 `not_in_list_version` 이다. 뒤의 것은 `list_version` 에 표시된 판본에 관한 말이지 사이트에 대한 판정이 아니다. 목록은 게시자의 일정을 따르므로 새로 등록된 이름은 빠져 있을 수 있다. `registry` 는 `us_dotgov` 또는 `uk_govuk`. `organization`·`suborganization`·`domain_type`·`state` 는 목록이 적은 값이며 목록에 있고 목록이 그 값을 줄 때만 나온다. 영국 파일에는 도메인 이름만 있어 영국 항목에는 기관명이 없다. `list_version` 은 영국 목록의 "기준일", 미국 목록은 이 서비스가 지금 파일 내용을 처음 받은 UTC 날짜다(게시자는 변동이 있는 날 매일 파일을 갱신한다). `fetched_at` 은 목록을 마지막으로 성공적으로 확인한 시각이다. `source_url` 은 게시자 페이지, `license` 는 `CC0-1.0`(미국) 또는 `OGL-UK-3.0`(영국), 영국 목록에는 라이선스가 요구하는 `attribution` 문구가 붙는다: "Contains public sector information licensed under the Open Government Licence v3.0."
+- **`suffix_rule`** 은 `.gov`, `.gov.uk`, `.go.kr` 에 붙는다. 그 접미사 아래 등록은 정부 기관만 할 수 있다는 레지스트리 자체 규칙과 그 근거다. `.or.kr`, `.co.kr` 등 다른 접미사에는 규칙이 없다.
+- **어느 호스트에.** 다른 호스트 단위 층과 같은 호스트에 답한다. 적격 공개 루트 호스트와, `www.<루트>` 는 루트로 답한다(`www.irs.gov` 는 `irs.gov` 로). 그 밖의 서브도메인·테넌트 호스트(`tenant.irs.gov`)와 접미사 영역 자체(`go.kr`)에는 `host_facts` 가 없다. 목록은 등록된 도메인을 적을 뿐 그 아래에서 무엇이 돌아가는지는 말하지 않는다.
+- **데이터 출처.** 검토 크론이 조회와 무관하게 공개 파일을 통째로 내려받는다. 미국 레지스트리의 `current-full.csv`(CISA, `cisagov/dotgov-data`, CC0-1.0)는 조건부 요청으로 24시간마다, 영국 "List of .gov.uk domain names"(GOV.UK, Open Government Licence v3.0)는 GOV.UK 콘텐츠 API 로 찾아 30일마다 확인한다. 접속하는 곳은 그 게시자뿐이며 목록에 적힌 사이트에는 접속하지 않는다. 파일의 연락처 열은 버린다. 미국 파일의 보안 연락 이메일과 도시는 읽고도 저장하지 않는다.
+- **이상한 내려받기는 아무것도 바꾸지 않는다.** 요청 실패, 리디렉션, 크기 상한(미국 8 MB, 영국 2 MB) 초과, 열 변경, 쓸 수 없는 행이 너무 많음, 행이 너무 적음, 저장된 판본의 절반 미만인 행 수는 저장된 데이터를 그대로 두고 짧은 라벨과 함께 경고를 기록하며 6시간 뒤 다시 시도한다. 그동안 `fetched_at` 이 저장된 사본의 나이를 보여 준다.
+- **조회는 데이터베이스만 읽는다.** `AHN_HOST_FACTS=0` 은 내려받기와 필드를 모두 끈다.
+- 영국 목록 출처 표기: Contains public sector information licensed under the Open Government Licence v3.0.
 
 ## 판정 (`recommendation`)
 

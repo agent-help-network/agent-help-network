@@ -29,6 +29,9 @@ CHECKS = {
     "llms_txt_present": "This host publishes llms.txt. Read it first: it is the host's own guidance to language-model agents and may point to preferred machine-readable resources.",
     "content_use_ai_input_declared_no": "This host's robots.txt declares ai-input=no (or AIPREF ai-use=n) for user-directed agents like you (access_profile.content_use). It is a content-use preference, not an access rule; follow your operator's policy and tell the user if it matters.",
     "official_path_available": "An official developer path is listed for this host (official_paths). Prefer the documented API or developer portal over page automation; it is the sanctioned route and usually the more reliable one.",
+    "government_registry_listed": "This domain appears in a public government domain list (host_facts.government_registry gives the list, its version and the organisation it names). The list says who registered the domain; it does not vouch for every page or link on it.",
+    "government_suffix_restricted": "Registration under this suffix is limited to government bodies by the registry's own rules (host_facts.suffix_rule). That says who may register a domain; it does not vouch for any page or link on it.",
+    "government_list_version_missing": "This domain is not in the version of the government domain list shown in host_facts.government_registry. Lists follow the publisher's schedule, so a newly registered domain can be missing; this is a fact about the list version, not a finding about the site. Before entering credentials or payment details, compare the address with one the organisation publishes elsewhere.",
 }
 
 CHECKS_KO = {
@@ -55,6 +58,9 @@ CHECKS_KO = {
     "llms_txt_present": "이 호스트는 llms.txt를 게시합니다. 먼저 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내이며 선호하는 기계 판독 자원을 가리킬 수 있습니다.",
     "content_use_ai_input_declared_no": "이 호스트의 robots.txt 가 사용자 지시 에이전트에 ai-input=no(또는 AIPREF ai-use=n)를 선언했습니다(access_profile.content_use). 접근 규칙이 아니라 콘텐츠 이용 선호입니다. 운영사 정책을 따르고, 중요하면 사용자에게 알리세요.",
     "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 페이지 자동화보다 문서화된 API나 개발자 포털을 우선하세요. 허용된 경로이며 대개 더 안정적입니다.",
+    "government_registry_listed": "이 도메인은 공개 정부 도메인 목록에 있습니다(host_facts.government_registry 에 목록·판본·적힌 기관명이 있습니다). 목록은 도메인을 누가 등록했는지를 말할 뿐, 그 안의 모든 페이지·링크를 보증하지 않습니다.",
+    "government_suffix_restricted": "이 접미사 아래 등록은 레지스트리 자체 규칙상 정부 기관으로 제한됩니다(host_facts.suffix_rule). 이는 누가 도메인을 등록할 수 있는지를 말할 뿐, 어떤 페이지·링크도 보증하지 않습니다.",
+    "government_list_version_missing": "이 도메인은 host_facts.government_registry 에 표시된 판본의 정부 도메인 목록에 없습니다. 목록은 게시자의 일정을 따르므로 새로 등록된 도메인은 빠져 있을 수 있습니다. 이는 목록 판본에 관한 사실이지 사이트에 대한 판정이 아닙니다. 자격 증명이나 결제 정보를 넣기 전에 그 기관이 다른 곳에 공개한 주소와 비교하세요.",
 }
 
 # Same code (provider_scope), different text: the provider announced scheduled work, which is not an incident to diagnose.
@@ -128,9 +134,22 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     return {"action": "unknown", "confidence": "low", "reasons": ["profile_not_read"] if profile_not_read else []}
 
 
+def host_fact_codes(host_facts: dict | None) -> list[str]:
+    """Informational codes for the registry facts. They never change ``recommendation``."""
+    if not host_facts:
+        return []
+    registry = host_facts.get("government_registry")
+    if registry and registry.get("status") == "listed":
+        return ["government_registry_listed"]
+    if registry and registry.get("status") == "not_in_list_version":
+        return ["government_list_version_missing"]
+    return ["government_suffix_restricted"] if host_facts.get("suffix_rule") else []
+
+
 def next_checks(error_class: str | None, provider_status: dict | None, evidence_level: str,
                 failure_stage: str | None = None, access_profile: dict | None = None,
-                official: dict | None = None, *, profile_not_read: bool = False) -> list[dict[str, str]]:
+                official: dict | None = None, *, profile_not_read: bool = False,
+                host_facts: dict | None = None) -> list[dict[str, str]]:
     codes: list[str] = []
     if failure_stage and failure_stage != "unknown":
         codes.append(failure_stage)
@@ -165,6 +184,7 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
             codes.append("content_use_ai_input_declared_no")
     if official and (official.get("api_docs") or official.get("developer_portal")):
         codes.append("official_path_available")
+    codes.extend(host_fact_codes(host_facts))
     if provider_status and provider_status.get("freshness") == "fresh":
         indicator = provider_status.get("indicator")
         if indicator in ACTIVE_INDICATORS:

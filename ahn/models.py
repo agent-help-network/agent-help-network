@@ -354,6 +354,39 @@ class OfficialAccess(StrictModel):
 OfficialPaths.model_rebuild()
 
 
+def _omit_none(value) -> bool:
+    return value is None
+
+
+class GovernmentRegistry(StrictModel):
+    """Which public government domain list names this domain, as of which version. A fact about the domain, not a judgement."""
+    status: Literal["listed", "not_in_list_version"]
+    registry: Literal["us_dotgov", "uk_govuk"]
+    registry_name: str
+    domain_type: str | None = Field(default=None, exclude_if=_omit_none)
+    organization: str | None = Field(default=None, exclude_if=_omit_none)
+    suborganization: str | None = Field(default=None, exclude_if=_omit_none)
+    state: str | None = Field(default=None, exclude_if=_omit_none)
+    list_version: str
+    source_url: str
+    license: str
+    attribution: str | None = Field(default=None, exclude_if=_omit_none)
+    fetched_at: datetime
+
+
+class SuffixRule(StrictModel):
+    suffix: str
+    rule: Literal["registration_limited_to_government"]
+    text: str
+    source_url: str
+
+
+class HostFacts(StrictModel):
+    government_registry: GovernmentRegistry | None = Field(default=None, exclude_if=_omit_none)
+    suffix_rule: SuffixRule | None = Field(default=None, exclude_if=_omit_none)
+    note: str
+
+
 class Recommendation(StrictModel):
     action: Literal["proceed", "use_official_path", "hand_off_to_human", "wait_provider_incident", "stop_declared_block", "unknown"]
     confidence: Literal["low", "medium", "high"]
@@ -361,7 +394,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
     text: str
 
 
@@ -386,6 +419,8 @@ class CheckResponse(StrictModel):
     lookup_activity: LookupActivity | None = None
     access_profile: AccessProfile | None = None
     official_paths: OfficialPaths | None = None
+    # Present only when a government domain list or a government-only suffix rule applies to the host.
+    host_facts: HostFacts | None = Field(default=None, exclude_if=_omit_none)
     recommendation: Recommendation | None = None
     failure_stage: FailureStage | None = None
     next_checks: list[NextCheck] = Field(default_factory=list)

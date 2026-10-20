@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
-from ahn import background_reads, platform_metrics
+from ahn import background_reads, gov_registry, platform_metrics
 from ahn.main import create_app
 from ahn.models import AttemptFields, CheckObservation, CheckResponse, ObservationIn, OutcomeIn, Receipt
 from ahn.settings import Settings
@@ -225,6 +226,7 @@ CHECK_RESPONSE_FIELDS = {
     "provider_status": Phrase("published status", "업체가 발표한 상태"),
     "observations": Phrase("published observations without any reporter identity", "제보자 신원이 없는 공개 관찰"),
     "lookup_activity": Phrase("coarse lookup-activity band", "대략적인 조회 활동 구간"),
+    "host_facts": Phrase("registry facts about the domain", "도메인에 관한 레지스트리 사실"),
     "site_host": Exempt("echo of the hostname the caller sent"),
     "generated_at": Exempt("time of the answer"),
     "synthetic": Exempt("flag copied from the stored observations"),
@@ -290,6 +292,16 @@ class Transient:
 
 
 @dataclass(frozen=True)
+class Replaced:
+    """A downloaded copy of a public list: rows are replaced whenever the publisher posts a new version.
+
+    The policy must say what is kept and that the copy is replaced (not kept forever).
+    """
+    wording: Phrase              # names the copy; the replacement statement follows within the same paragraph
+    replaced: Phrase             # says the copy is replaced by a new version
+
+
+@dataclass(frozen=True)
 class ReportRows:
     """Report rows: deleted after AHN_REPORT_RETENTION_DAYS, withdrawn ones after the grace period."""
 
@@ -330,6 +342,13 @@ TABLES = {
     # Work items: a lookup's request for a background robots.txt/llms.txt or status read, deleted once handled.
     "background_reads": Transient(Phrase("background-read request (the public hostname, the kind of read and when it was asked for)",
                                          "뒤에서 읽기 요청(공개 호스트명, 읽기 종류, 요청 시각)")),
+    # Public government domain lists: one current copy each, replaced when the publisher posts a new version.
+    "gov_domain_registry": Replaced(
+        Phrase("the current copy of each public government domain list we download", "내려받는 공개 정부 도메인 목록마다 현재 사본"),
+        Phrase("is replaced when its publisher posts a new version", "게시자가 새 판을 내면 교체")),
+    "gov_registry_versions": Replaced(
+        Phrase("the current copy of each public government domain list we download", "내려받는 공개 정부 도메인 목록마다 현재 사본"),
+        Phrase("is replaced when its publisher posts a new version", "게시자가 새 판을 내면 교체")),
     "observations": ReportRows(),
     "report_submissions": ReportRows(),  # idempotency key and request hash of a report; goes with its observation
     # Not request-derived: nothing for the policy to describe.
@@ -389,6 +408,8 @@ def test_deleted_tables_match_the_policy_mapping():
         "Update the mapping and the policy together.")
     # Tables mapped as 'no automatic deletion' must not be deleted anywhere, or the policy would be wrong.
     expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient))}
+    # A replaced list copy is rewritten in place by ahn/gov_registry.py; only the domain rows are deleted from.
+    expected_deleted |= {"gov_domain_registry"}
     assert deleted_tables_in_code() == expected_deleted, (
         f"Code deletes from {sorted(deleted_tables_in_code())}, the mapping expects {sorted(expected_deleted)}.")
 
@@ -427,6 +448,50 @@ def test_transient_tables_say_when_they_are_deleted():
             assert when in sentence_with(text, wording), f"{table}: its {lang} sentence does not say {when!r}"
     # "five" in that sentence is the code's limit.
     assert background_reads.MAX_ATTEMPTS == 5
+
+
+def test_replaced_list_copies_say_so():
+    for table, entry in TABLES.items():
+        if not isinstance(entry, Replaced):
+            continue
+        for lang in LANGS:
+            text = section(lang, "06")
+            wording = getattr(entry.wording, lang)
+            assert wording in text, f"{table}: the {lang} retention section lacks {wording!r}"
+            paragraph = text[text.index(wording): text.index(wording) + 1200]
+            assert getattr(entry.replaced, lang) in paragraph, f"{table}: the {lang} policy does not say the copy is replaced"
+    # Only the domain rows are deleted by code, and the code replaces them with the publisher's new version.
+    assert "DELETE FROM gov_domain_registry" in inspect.getsource(gov_registry)
+
+
+def test_government_list_limits_in_code_match_the_policy():
+    """The technical details state the schedules, size caps and protections that gov_registry enforces."""
+    registries = gov_registry.REGISTRIES
+    assert registries[gov_registry.US].check_every == timedelta(hours=24)
+    assert registries[gov_registry.UK].check_every == timedelta(days=30)
+    assert registries[gov_registry.US].max_bytes == 8_000_000 and registries[gov_registry.UK].max_bytes == 2_000_000
+    assert gov_registry.MIN_KEEP_RATIO == 0.5 and gov_registry.FAILURE_RETRY == timedelta(hours=6)
+    wanted = {
+        "us_schedule": Phrase("checked once every 24 hours", "24시간에 한 번 확인"),
+        "uk_schedule": Phrase("checked once every 30 days", "30일에 한 번 확인"),
+        "caps": Phrase("larger than 8 MB (U.S.) or 2 MB (UK) is refused", "미국 8 MB·영국 2 MB 를 넘는 파일은 거부"),
+        "keep": Phrase("fewer than 50% of the stored rows", "저장된 행의 50% 미만"),
+        "retry": Phrase("the next attempt follows 6 hours later", "다음 시도는 6시간 뒤"),
+        "no_redirect": Phrase("no redirect followed", "리디렉션은 따라가지 않으며"),
+        "ogl": Phrase(gov_registry.UK_ATTRIBUTION, gov_registry.UK_ATTRIBUTION),
+        "local": Phrase("The local build does not perform these downloads", "로컬 개발판은 이 내려받기를 하지 않습니다"),
+    }
+    assert_phrases("government list downloads", {lang: policy_text(lang) for lang in LANGS}, wanted)
+    # Every host the code may contact is named by the policy (the lists' publishers, nothing else).
+    assert gov_registry.ALLOWED_HOSTS == {"raw.githubusercontent.com", "www.gov.uk", "assets.publishing.service.gov.uk"}
+    for lang in LANGS:
+        assert "raw.githubusercontent.com" in section(lang, "05") and "GOV.UK" in section(lang, "05")
+
+
+def test_government_registry_policy_makes_no_verdict_claim():
+    """The registry facts are described as facts about a domain, never as a judgement of a site, page or link."""
+    for lang, denial in (("en", "not a judgement about any site, page or link"), ("ko", "사이트·페이지·링크에 대한 판단이 아닙니다")):
+        assert denial in section(lang, "03")
 
 
 def test_stored_provenance_is_described_in_the_policy():

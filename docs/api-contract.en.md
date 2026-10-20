@@ -21,7 +21,7 @@ Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `fa
 
 Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs except `window_hours` (it always uses the default 24 hours) and returns the same structure.
 
-**`www.` and its apex.** When `site_host` is an eligible public apex host with one leading `www.` label (`www.nytimes.com`, `www.bbc.co.uk`), the host-level layers answer for the apex exactly as a lookup of the apex does: `provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, and the `recommendation` and `next_checks` derived from them. The apex is what gets registered, counted, and read; nothing is stored under the `www.` name. The observation layer is not merged: `observations`, `evidence_level`, the counts, incidents, and incident pages stay keyed by the exact `site_host`, and the response's `site_host` is the host that was asked about. Reports are firsthand events on one host, a `www.` front end can sit behind a different edge than its apex, and re-keying stored incidents would change published incident pages, so only the declared and official layers, which describe the site, are shared. Automatic review of public reports likewise treats a `www.<apex>` report as eligible like its apex and counts the two names as one host in its 15-minute burst and 24-hour publication windows; the report is still stored and published under its exact host (see [public intake operations](public-intake-operations.md)). Exactly one leading `www.` label is removed, and only when the host is not itself an eligible apex and what remains is one: `www.co.uk` (an apex under `co.uk`), `www.user123.example.org`, `www2.example.com`, `www.www.example.com`, and every other subdomain are unchanged. `valid_host` rules are unchanged; a `www.` name is accepted and answered as before.
+**`www.` and its apex.** When `site_host` is an eligible public apex host with one leading `www.` label (`www.nytimes.com`, `www.bbc.co.uk`), the host-level layers answer for the apex exactly as a lookup of the apex does: `provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, `host_facts`, and the `recommendation` and `next_checks` derived from them. The apex is what gets registered, counted, and read; nothing is stored under the `www.` name. The observation layer is not merged: `observations`, `evidence_level`, the counts, incidents, and incident pages stay keyed by the exact `site_host`, and the response's `site_host` is the host that was asked about. Reports are firsthand events on one host, a `www.` front end can sit behind a different edge than its apex, and re-keying stored incidents would change published incident pages, so only the declared and official layers, which describe the site, are shared. Automatic review of public reports likewise treats a `www.<apex>` report as eligible like its apex and counts the two names as one host in its 15-minute burst and 24-hour publication windows; the report is still stored and published under its exact host (see [public intake operations](public-intake-operations.md)). Exactly one leading `www.` label is removed, and only when the host is not itself an eligible apex and what remains is one: `www.co.uk` (an apex under `co.uk`), `www.user123.example.org`, `www2.example.com`, `www.www.example.com`, and every other subdomain are unchanged. `valid_host` rules are unchanged; a `www.` name is accepted and answered as before.
 
 A public response for `github.com` (`error_class=site_access`), captured from the live service on 2026-10-18 and trimmed: `robots.rules` had one entry per known agent token (22 tokens at capture time; the table has grown since, see [Access profile layer](#access-profile-layer)) and is cut to three here, path-sample lists are cut to at most three entries, and `next_checks[].text` is shortened. `robots_detail`, `llms_detail`, the path samples, `read_host`, and `provider_status.error_detail` are shown as a fresh read under this contract returns them (the profile cached at capture time predated them). `llms_detail: too_large` with `llms_txt_status: present` means the host's `llms.txt` exists but is larger than the 4 KB cap.
 
@@ -257,6 +257,61 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 - `official_paths` and `access` are code, not stored facts, so the JSON Lines export (below) has no kind for them.
 - How to add bundles: `scripts/README.md`.
 
+### Host facts layer
+
+`host_facts` carries **registry facts about the domain**: which public government domain list names it and the organisation that list gives, and the registry rule that a suffix is reserved for government bodies. It is a fact about who registered a name. It does not say that a site, page or link is genuine or safe, it does not change `recommendation`, and a missing field does not say anything about the site. It is **left out of the response entirely** (no `null`) unless a government list or a government-only suffix rule applies to the host, so ordinary hosts get no extra bytes.
+
+```json
+{
+  "host_facts": {
+    "government_registry": {
+      "status": "listed",
+      "registry": "us_dotgov",
+      "registry_name": "U.S. .gov domain list (CISA)",
+      "domain_type": "Federal - Executive",
+      "organization": "Department of the Treasury",
+      "suborganization": "Internal Revenue Service",
+      "state": "DC",
+      "list_version": "2026-10-20",
+      "source_url": "https://github.com/cisagov/dotgov-data/blob/main/current-full.csv",
+      "license": "CC0-1.0",
+      "fetched_at": "2026-10-20T18:05:00Z"
+    },
+    "suffix_rule": {
+      "suffix": "gov",
+      "rule": "registration_limited_to_government",
+      "text": "Only verified U.S. government organizations can register a .gov domain.",
+      "source_url": "https://get.gov/domains/eligibility/"
+    },
+    "note": "Registry facts about a domain: which public government list names it, and whether its suffix is reserved for government bodies. They are not a judgement about the site, any page or any link."
+  }
+}
+```
+
+A `.go.kr` host has the suffix rule and no list entry, because this service reads no list of individual `.go.kr` domains:
+
+```json
+{
+  "host_facts": {
+    "suffix_rule": {
+      "suffix": "go.kr",
+      "rule": "registration_limited_to_government",
+      "text": "Under the KRNIC domain name management rules, .go.kr is for administrative agencies and legislative or judicial agencies.",
+      "source_url": "https://krnic.kisa.or.kr/jsp/eng/policy/domainNewRules.jsp"
+    },
+    "note": "Registry facts about a domain: ..."
+  }
+}
+```
+
+- **`government_registry`** is present for names under `.gov` (U.S. list) and `.gov.uk` (UK list) once that list has been loaded. `status` is `listed`, or `not_in_list_version` when the name is under the list's suffix but not in the loaded version. The second is a statement about the list version shown in `list_version`, not a finding about the site: lists follow the publisher's schedule, so a newly registered name can be missing. `registry` is `us_dotgov` or `uk_govuk`. `organization`, `suborganization`, `domain_type` and `state` are the list's own values, only when the name is listed and the list gives them. The UK file has the domain name only, so UK entries carry no organisation. `list_version` is the UK list's "as of" date, or for the U.S. list the UTC date on which this service first received the current file contents (the publisher updates the file daily when something changes). `fetched_at` is the last time the list was checked successfully. `source_url` is the publisher's page, `license` is `CC0-1.0` (U.S.) or `OGL-UK-3.0` (UK), and `attribution` carries the licence's required statement for the UK list: "Contains public sector information licensed under the Open Government Licence v3.0."
+- **`suffix_rule`** is present for `.gov`, `.gov.uk` and `.go.kr`: the registry's own rule that only government bodies may register under the suffix, with the rule's source. `.or.kr`, `.co.kr` and other suffixes have no rule here.
+- **Which hosts.** The answer is for the same host as the other host-level layers: an eligible public apex host, and `www.<apex>` as its apex (`www.irs.gov` is answered as `irs.gov`). Other subdomains and tenant hosts (`tenant.irs.gov`), and the suffix zones themselves (`go.kr`), get no `host_facts`: a list names registered domains, not what runs under them.
+- **Where the data comes from.** Public whole-file downloads by the review cron, never during a lookup: the U.S. registry's `current-full.csv` (CISA, `cisagov/dotgov-data`, CC0-1.0) is checked every 24 hours with a conditional request, and the UK "List of .gov.uk domain names" (GOV.UK, Open Government Licence v3.0) is found through the GOV.UK content API and checked every 30 days. Only those publishers are contacted, never a site on a list. The files' contact columns are dropped: the U.S. security contact email and city are read and not stored.
+- **A bad download changes nothing.** A failed request, a redirect, a file over the size cap (8 MB U.S., 2 MB UK), changed columns, too many unusable rows, too few rows, or fewer than half the rows of the stored version keeps the stored data, logs a warning with a short label, and is retried after 6 hours. `fetched_at` then shows how old the stored copy is.
+- **Lookups read the database only.** `AHN_HOST_FACTS=0` turns both the downloads and the field off.
+- Attribution for the UK list: Contains public sector information licensed under the Open Government Licence v3.0.
+
 ### Recommendation
 
 `recommendation` gives one action derived only from the declared and official layers (observations do not change it). `action` is evaluated in this order; the first match wins:
@@ -275,6 +330,9 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 | `use_official_path` | Wildcard-only disallow (below) and an official path is listed. | medium | `robots_wildcard_disallow`, `official_path_available` |
 | `unknown` | Wildcard-only disallow and no official path. | low | `robots_wildcard_disallow` |
 | `use_official_path` | Official path listed and `error_class` absent, `site_access`, or `service_error`. | medium | `official_path_available` |
+| `government_registry_listed` | The domain appears in a public government domain list (`host_facts.government_registry`). The list says who registered the domain; it does not vouch for every page or link on it. |
+| `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (`host_facts.suffix_rule`). That says who may register a domain, not that any page or link is vouched for. |
+| `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site. Compare the address with one the organisation publishes elsewhere before entering credentials or payment details. |
 | `proceed` | `robots_status` is `ok` with neither a declared block nor a wildcard-only disallow. | low | `robots_allows_agents` |
 | `unknown` | Anything else. | low | `robots_unknown` when an access profile exists (for example, unreadable `robots.txt`); `profile_not_read` when the hostname is a subdomain or tenant host in public mode (a `www.<apex>` name gets the apex's profile instead); otherwise empty |
 
@@ -287,7 +345,7 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 1. `failure_stage` value if given and not `unknown` (`before_target_response`, `response_observed`, `access_denial_observed`); otherwise `locate_failure_stage`, unless `error_class` is `human_verification` or `login_auth`.
 2. `human_handoff` (`error_class=human_verification`) or `account_handoff` (`error_class=login_auth`).
 3. Declared profile. When no profile was read because the hostname is a subdomain or tenant host (not a `www.<apex>` name, which gets the apex's profile), `profile_not_read` says so and points at the apex host. When the profile is `pending` with `retry_after_seconds`, `profile_pending`. Otherwise, when an access profile exists: `robots_fetch_refused` (`robots_status` is `refused`), `robots_unknown` (any other non-`ok` status), `robots_blocks_agents` (declared block), `robots_wildcard_disallow` (wildcard-only disallow), or `robots_allows_agents`; then `robots_grouping_differs_by_parser` when `robots.grouping_differs_by_parser` is not empty; then `llms_txt_present` when `llms_txt_status` is `present`, then `content_use_ai_input_declared_no` when a user-directed agent token's effective preference is `ai-input=no` or `ai-use=n` (see [Content-use preferences](#content-use-preferences-content_use)).
-4. `official_path_available` when an official path with `api_docs` or `developer_portal` is listed.
+4. `official_path_available` when an official path with `api_docs` or `developer_portal` is listed. Registry facts follow it, only when `host_facts` is present: `government_registry_listed`, `government_list_version_missing` or `government_suffix_restricted` (informational; they never change `recommendation`).
 5. `provider_scope` (fresh active issue), `provider_clear` (fresh `indicator: none`), or `provider_unknown` (no fresh feed, or another indicator).
 6. `reports_unknown` (`no_reports`), `reports_stale` (`stale_reports`), or `reports_unverified` (any other evidence level).
 
