@@ -715,6 +715,24 @@ SOURCES: dict[str, Source] = {
     "dublincore.org": Source("Dublincore Status", "https://status.dublincore.org/", "https://status.dublincore.org/index.json", "betterstack"),
     "nirvanahq.com": Source("Nirvanahq Status", "https://status.nirvanahq.com/", "https://status.nirvanahq.com/index.json", "betterstack"),
     "stacker.com": Source("Stacker Status", "https://status.stacker.com/", "https://status.stacker.com/summary.json", "instatus"),
+    # Tranco ranks 9,001-10,000 (list of 2026-10-03), first pass with scripts/discover_status_sources.py (2026-10-19); each shown by a same-domain page, the publisher's own status redirect or a publisher documentation link.
+    "act.org": Source("ACT System Status", "https://status.act.org/", "https://status.act.org/api/v2/status.json"),
+    "adapty.io": Source("Adapty Status", "https://status.adapty.io/", "https://status.adapty.io/api/v2/status.json"),
+    "asaas.com": Source("Asaas Status", "https://status.asaas.com/", "https://status.asaas.com/api/v2/status.json"),
+    "chime.com": Source("Chime Status", "https://status.chime.com/", "https://status.chime.com/api/v2/status.json"),
+    "codeium.com": Source("Windsurf Status (Codeium)", "https://status.windsurf.com/", "https://status.windsurf.com/api/v2/status.json"),
+    "dexcom.com": Source("Dexcom Incident Notification Status", "https://status.dexcom.com/", "https://status.dexcom.com/api/v2/status.json"),
+    "f-secure.com": Source("F-Secure services Status", "https://status.f-secure.com/", "https://status.f-secure.com/api/v2/status.json"),
+    "mindbodyonline.com": Source("Mindbody Status", "https://status.mindbodyonline.com/", "https://status.mindbodyonline.com/api/v2/status.json"),
+    "scite.ai": Source("Scite Status", "https://status.scite.ai/", "https://status.scite.ai/api/v2/status.json"),
+    "sendinblue.com": Source("Brevo Status (Sendinblue)", "https://status.brevo.com/", "https://status.brevo.com/api/v2/status.json"),
+    "siftscience.com": Source("Sift Status", "https://status.sift.com/", "https://status.sift.com/api/v2/status.json"),
+    "spiceworks.com": Source("Spiceworks Status", "https://status.spiceworks.com/", "https://status.spiceworks.com/api/v2/status.json"),
+    "synthesia.io": Source("Synthesia Status", "https://status.synthesia.io/", "https://status.synthesia.io/api/v2/status.json"),
+    "trackjs.com": Source("TrackJS Status", "https://status.trackjs.com/", "https://status.trackjs.com/api/v2/status.json"),
+    "waipu.tv": Source("waipu.tv Status", "https://status.waipu.tv/", "https://status.waipu.tv/api/v2/status.json"),
+    "xsolla.com": Source("Xsolla Status", "https://status.xsolla.com/", "https://status.xsolla.com/api/v2/status.json"),
+    "yubico.com": Source("Yubico Status", "https://status.yubico.com/", "https://status.yubico.com/api/v2/status.json"),
 }
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
@@ -1062,6 +1080,21 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "pki.goog": ("Google Trust Services Status", "https://status.pki.goog/"),
     "linktr.ee": ("Linktree Status", "https://status.linktr.ee/"),
     "selectel.ru": ("Selectel Status", "https://selectel.live/"),
+    # Tranco ranks 9,001-10,000 (list of 2026-10-03), first pass with scripts/discover_status_sources.py (2026-10-19); each shown by a same-domain page, the publisher's own status redirect or a publisher documentation link.
+    "action1.com": ("Action1 Status", "https://status.action1.com/"),
+    "aeolservice.es": ("Aeolservice Status", "https://status.aeolservice.es/"),
+    "beatport.com": ("Beatport Status", "https://status.beatport.com/"),
+    "cimpress.io": ("Cimpress Status", "https://status.cimpress.io/"),
+    "clubready.com": ("Clubready Status", "https://status.clubready.com/"),
+    "gcore.com": ("Gcore Status", "https://status.gcore.com/"),
+    "hf.co": ("Hugging Face Status", "https://status.huggingface.co/"),
+    "kingoftime.jp": ("Kingoftime Status", "https://status.kingoftime.jp/"),
+    "klickpin.com": ("Klickpin Status", "https://status.klickpin.com/"),
+    "photoshelter.com": ("Photoshelter Status", "https://status.photoshelter.com/"),
+    "q10.com": ("Q10 Status", "https://q10.instatus.com/"),
+    "rcsb.org": ("Rcsb Status", "https://status.rcsb.org/"),
+    "uni-muenster.de": ("University of Münster Status", "https://status.uni-muenster.de/"),
+    "verisoul.ai": ("Verisoul Status", "https://status.verisoul.ai/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts
