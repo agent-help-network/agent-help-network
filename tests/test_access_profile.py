@@ -290,6 +290,7 @@ def test_official_paths_table_shape():
 
 def test_read_public_file_rejects_bad_input_and_contains_resolver_failures(monkeypatch):
     import socket
+    import threading
     import time
 
     from ahn import access_profile
@@ -310,13 +311,20 @@ def test_read_public_file_rejects_bad_input_and_contains_resolver_failures(monke
     monkeypatch.setattr(access_profile.socket, "getaddrinfo", failing)
     assert access_profile.read_public_file("example.com", "/robots.txt", cap_bytes=10) == ("error", None)
 
+    release = threading.Event()
+
     def slow(*_, **__):
-        time.sleep(0.5)
+        release.wait(10)  # stands in for a stalled resolver; released below so no thread outlives the test
         return []
 
     original = access_profile._resolve
     monkeypatch.setattr(access_profile.socket, "getaddrinfo", slow)
     monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: original(host, 0.05))
     started = time.monotonic()
-    assert access_profile.read_public_file("example.com", "/robots.txt", cap_bytes=10) == ("error", None)
-    assert time.monotonic() - started < 0.4
+    try:
+        assert access_profile.read_public_file("example.com", "/robots.txt", cap_bytes=10) == ("error", None)
+        # The resolver would block for 10 s; the 0.05 s timeout ends the read. The bound is far above the timeout
+        # (a loaded machine delays thread start-up) and far below the stall, so only a read that waited fails it.
+        assert time.monotonic() - started < 5
+    finally:
+        release.set()
