@@ -17,7 +17,8 @@ from starlette.concurrency import run_in_threadpool
 
 from .db import connect
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
-from .owner_auth import OWNER_HEADERS, valid_owner_authorization, valid_owner_ip
+from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
+from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
 from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
@@ -220,7 +221,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     async def limit_body_and_measure(request: Request, call_next):
         start = perf_counter()
         exempt = request.url.path == "/health" or internal_mcp_hop(request) or (
-            request.url.path == "/owner" and valid_owner_ip(request.headers.get("cf-connecting-ip", ""), settings.owner_allowed_ips))
+            request.url.path in OWNER_PATHS and valid_owner_ip(request.headers.get("cf-connecting-ip", ""), settings.owner_allowed_ips))
         if request_limiter and not exempt and not await request_limiter.allow(request):
             return JSONResponse({"error": "rate_limited"}, status_code=429, headers={"Retry-After": "60", "Cache-Control": "no-store"})
         public_report = settings.public_mode and settings.reporting_enabled and request.method == "POST" and request.url.path == "/v1/observations"
@@ -249,7 +250,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 if not rejected_body:
                     request._body = bytes(body)
         response = JSONResponse({"error": "body_too_large_or_unframed"}, status_code=413) if rejected_body else await call_next(request)
-        if settings.collect_request_metrics and request.url.path not in {"/health", "/owner"}:
+        if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS}:
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
             allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support"}
@@ -319,8 +320,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 health_cache["checked_at"] = monotonic()
             return {"status": "ok"} if health_cache["ok"] else JSONResponse({"status": "unavailable"}, status_code=503)
 
-    @app.get("/owner", include_in_schema=False)
-    def owner_dashboard(request: Request):
+    def owner_denied(request: Request) -> Response | None:
+        """The one gate for every owner-only route: None when allowed, else the response to send."""
         if settings.owner_allowed_ips:
             if not valid_owner_ip(request.headers.get("cf-connecting-ip", ""), settings.owner_allowed_ips):
                 return JSONResponse({"error": "not_found"}, status_code=404, headers=OWNER_HEADERS)
@@ -332,6 +333,13 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                     status_code=401,
                     headers={**OWNER_HEADERS, "WWW-Authenticate": 'Basic realm="Owner monitor", charset="UTF-8"'},
                 )
+        return None
+
+    @app.get("/owner", include_in_schema=False)
+    def owner_dashboard(request: Request):
+        denied = owner_denied(request)
+        if denied is not None:
+            return denied
         try:
             from .monitor import _snapshot
 
@@ -339,6 +347,24 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         except Exception:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
         return templates.TemplateResponse(request, "monitor.html", snapshot, headers=OWNER_HEADERS)
+
+    @app.get("/owner/hosts", include_in_schema=False)
+    def owner_hosts(request: Request):
+        # Same gate as /owner. Query validation runs after it, so a caller who is not allowed
+        # cannot tell this route from any other unknown path by sending a bad `days`.
+        denied = owner_denied(request)
+        if denied is not None:
+            return denied
+        days = parse_days(request.query_params.get("days"))
+        if days is None:
+            return JSONResponse({"error": "invalid_days", "min": 1, "max": OWNER_HOSTS_MAX_DAYS, "default": OWNER_HOSTS_DEFAULT_DAYS},
+                                status_code=422, headers=OWNER_HEADERS)
+        try:
+            hosts = recent_hosts(settings, days)
+        except Exception:
+            return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
+        body = "".join(host + "\n" for host in hosts)
+        return Response(body, media_type="text/plain; charset=utf-8", headers=OWNER_HEADERS)
 
     @app.get("/v1/incidents/check", response_model=CheckResponse)
     def check_incident(site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,

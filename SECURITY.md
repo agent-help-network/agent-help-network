@@ -14,7 +14,7 @@ A single operator runs this public beta, so responses are best effort. Only the 
   - bypassing withdrawal-token checks, idempotency, rate limits, or the intake pause;
   - making the `robots.txt`/`llms.txt` reader request non-public addresses, read from a host other than the looked-up apex and its own `www.` alias, follow redirects beyond the single hop to that alias, fetch other paths, or exceed its size caps;
   - making the provider-status reader request non-public addresses, follow redirects, or exceed its size caps;
-  - authentication bypass of the operator page `/owner` (an IP allow list, or Basic auth when no allow list is configured);
+  - authentication bypass of the operator pages `/owner` and `/owner/hosts` (an IP allow list, or Basic auth when no allow list is configured);
   - injection, cross-site scripting, or access to the loopback operator monitor from outside loopback.
 
 ## Out of scope
