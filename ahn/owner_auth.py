@@ -8,6 +8,10 @@ import hmac
 from ipaddress import ip_address
 
 
+# Owner-only routes. They share the rate-limit exemption for the allowed network and stay out of traffic metrics.
+OWNER_PATHS = frozenset({"/owner", "/owner/hosts"})
+
+
 def valid_owner_ip(header: str, allowed_ips: tuple[str, ...]) -> bool:
     """Render's edge overwrites CF-Connecting-IP for public web requests."""
     if not allowed_ips:

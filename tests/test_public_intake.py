@@ -930,6 +930,118 @@ def test_owner_dashboard_home_ip_has_no_password_prompt(public_client):
             assert "www-authenticate" not in denied.headers
 
 
+def seed_queried_hosts(settings, rows):
+    """rows: (host, age as a Postgres interval string)."""
+    with connect(settings) as conn:
+        for host, age in rows:
+            conn.execute("INSERT INTO queried_hosts (site_host,first_seen_at,last_seen_at) VALUES (%s, now() - %s::interval, now() - %s::interval)", (host, age, age))
+
+
+def owner_hosts_client(settings, **kwargs):
+    owner_settings = Settings(settings.database_url, settings.key_pepper, public_mode=True, reporting_enabled=True, **kwargs)
+    return TestClient(create_app(owner_settings))
+
+
+def test_owner_hosts_follows_the_owner_gate_by_allowed_ip(public_client):
+    settings, _ = public_client
+    seed_queried_hosts(settings, [("example.com", "1 hour")])
+    token = base64.b64encode(("owner:" + "x" * 40).encode()).decode()
+    with owner_hosts_client(settings, owner_password="x" * 40, owner_allowed_ips=("198.51.100.7",)) as client:
+        allowed = client.get("/owner/hosts", headers={"CF-Connecting-IP": "198.51.100.7"})
+        assert allowed.status_code == 200
+        assert allowed.text == "example.com\n"
+        assert allowed.headers["content-type"] == "text/plain; charset=utf-8"
+        assert allowed.headers["cache-control"] == "private, no-store"
+        assert allowed.headers["x-robots-tag"] == "noindex, nofollow"
+        for headers in ({}, {"CF-Connecting-IP": "203.0.113.8"}, {"CF-Connecting-IP": "198.51.100.7, 203.0.113.8"},
+                        {"Authorization": "Basic " + token}):
+            denied = client.get("/owner/hosts", headers=headers)
+            same = client.get("/owner", headers=headers)
+            assert (denied.status_code, denied.json()) == (404, {"error": "not_found"})
+            assert (denied.status_code, denied.content, dict(denied.headers)) == (same.status_code, same.content, dict(same.headers))
+            # A bad `days` must not tell a caller who is not allowed that the route exists.
+            assert client.get("/owner/hosts?days=abc", headers=headers).json() == {"error": "not_found"}
+
+
+def test_owner_hosts_follows_the_owner_gate_by_password(public_client):
+    settings, _ = public_client
+    seed_queried_hosts(settings, [("example.com", "1 hour")])
+    token = base64.b64encode(("owner:" + "x" * 40).encode()).decode()
+    wrong = base64.b64encode(b"owner:wrong").decode()
+    with owner_hosts_client(settings, owner_password="x" * 40) as client:
+        for headers in ({}, {"Authorization": "Basic " + wrong}, {"CF-Connecting-IP": "198.51.100.7"}):
+            denied = client.get("/owner/hosts", headers=headers)
+            same = client.get("/owner", headers=headers)
+            assert denied.status_code == 401
+            assert (denied.status_code, denied.content, dict(denied.headers)) == (same.status_code, same.content, dict(same.headers))
+            assert client.get("/owner/hosts?days=0", headers=headers).status_code == 401
+        allowed = client.get("/owner/hosts", headers={"Authorization": "Basic " + token})
+        assert allowed.status_code == 200 and allowed.text == "example.com\n"
+    with owner_hosts_client(settings) as client:  # neither password nor allow list configured
+        assert client.get("/owner/hosts").status_code == 404
+        assert client.get("/owner/hosts").json() == client.get("/owner").json() == {"error": "not_found"}
+
+
+def test_owner_hosts_window_boundaries_and_order(public_client):
+    settings, _ = public_client
+    seed_queried_hosts(settings, [
+        ("old-eight.example", "8 days 1 hour"), ("seven.example", "7 days 23 hours"),
+        ("newest.example", "1 minute"), ("fresh-day.example", "23 hours"), ("two-days.example", "2 days"),
+        ("twenty-nine.example", "29 days"), ("thirty-one.example", "31 days"),
+    ])
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        default = client.get("/owner/hosts", headers=headers).text.split()
+        assert default == ["newest.example", "fresh-day.example", "two-days.example", "seven.example"]  # newest first, 8 days default
+        assert client.get("/owner/hosts?days=8", headers=headers).text.split() == default
+        assert client.get("/owner/hosts?days=1", headers=headers).text.split() == ["newest.example", "fresh-day.example"]
+        assert client.get("/owner/hosts?days=30", headers=headers).text.split() == default[:3] + [
+            "seven.example", "old-eight.example", "twenty-nine.example"]
+        assert "thirty-one.example" not in client.get("/owner/hosts?days=30", headers=headers).text
+
+
+def test_owner_hosts_rejects_bad_days_and_accepts_range_edges(public_client):
+    settings, _ = public_client
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        for good in ("1", "30", "08"):
+            assert client.get(f"/owner/hosts?days={good}", headers=headers).status_code == 200
+        for bad in ("0", "31", "-1", "abc", "1.5", "", "1e1", "%EF%BC%91", "9" * 40):
+            response = client.get(f"/owner/hosts?days={bad}", headers=headers)
+            assert response.status_code == 422, bad
+            assert response.json()["error"] == "invalid_days"
+            assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_owner_hosts_empty_result_and_row_cap(public_client):
+    settings, _ = public_client
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        empty = client.get("/owner/hosts", headers=headers)
+        assert (empty.status_code, empty.text) == (200, "")
+        assert empty.headers["content-type"] == "text/plain; charset=utf-8"
+        with connect(settings) as conn:
+            conn.execute("INSERT INTO queried_hosts (site_host,last_seen_at) SELECT 'h' || g || '.example', now() - g * interval '1 second' FROM generate_series(1,5003) g")
+        lines = client.get("/owner/hosts", headers=headers).text.splitlines()
+        assert len(lines) == 5000
+        assert lines[0] == "h1.example" and lines[-1] == "h5000.example"  # the oldest rows are the ones cut
+
+
+def test_owner_hosts_is_not_counted_in_request_metrics(public_client):
+    settings, _ = public_client
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",), collect_request_metrics=True) as client:
+        assert client.get("/owner/hosts", headers={"CF-Connecting-IP": "198.51.100.7"}).status_code == 200
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM request_metrics").fetchone()["n"] == 0
+        assert conn.execute("SELECT count(*) AS n FROM traffic_attribution_daily").fetchone()["n"] == 0
+
+
+def test_owner_hosts_days_parser():
+    from ahn.owner_hosts import parse_days
+
+    assert [parse_days(v) for v in (None, "1", "30", "0", "31", "x", "")] == [8, 1, 30, None, None, None, None]
+
+
 def test_owner_allowed_ip_setting_rejects_ranges(monkeypatch):
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://localhost/ahn_test")
     monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 40)
