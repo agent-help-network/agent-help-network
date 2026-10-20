@@ -3,6 +3,61 @@
 Curation aids and local tools. None of them runs in CI, none is imported by the service, and the status scripts never edit
 a mapping: a curator reads the output and changes `ahn/status_refresh.py` by hand, in a pull request.
 
+## Access bundles for official paths (`OFFICIAL_ACCESS`)
+
+`official_paths.access` tells an agent how to use an official path: auth methods, where to get a key, free tier, rate
+limits, sandbox, OpenAPI document, official MCP endpoints, and terms. The field contract is in
+[the API contract](../docs/api-contract.en.md#access-bundle-official_pathsaccess-2026-10-20); the data is the
+`OFFICIAL_ACCESS` table in `ahn/official_paths.py`. Budget about 20-30 minutes per host. Use the existing bundles
+(`github.com`, `stripe.com`, ...) as examples.
+
+**Which hosts.** Only keys that already have `api_docs` or `developer_portal` in `OFFICIAL_PATHS`, in agent-demand order
+(hosts agents look up or fail on first, see D35 in `docs/decisions.md`). Skip a host whose API is partner-only with no public
+sign-up; its official path is enough.
+
+**How to read.** Read every page yourself, with the same etiquette as the scripts: at most one request per second, the
+curation User-Agent, https only, public addresses only, publisher pages only. Never use a third-party copy (API catalogues,
+spec mirrors, blog posts, MCP registries, Postman collections), an archive, a cached copy, or another User-Agent. A page that
+answers 401, 403, 429, a challenge, or a sign-in wall leaves its field out; a page whose text only appears after scripts
+run cannot back a quote. Never guess a URL from a pattern.
+
+**Which domains.** A URL must be on the key's registrable domain, on a domain declared for the key in `PUBLISHER_DOMAINS`
+(`scripts/verify_official_paths.py`, with a comment saying why it is the publisher's), or, for `github.com` and
+`raw.githubusercontent.com`, inside an organisation declared for the key in `PUBLISHER_GITHUB_ORGS` with a comment naming the
+publisher page that links to that organisation.
+
+**Field by field.** Leave out every field you cannot fill (never `null`, `""` or `[]`).
+
+| Field | Fill it when | Notes |
+| --- | --- | --- |
+| `auth` | the page at `source_url` names the method | One entry per method; one page can back several. Static key, secret, app token, integration token, app-only bearer: `api_key`. User approves an app: `oauth2` (`oauth1` for OAuth 1.0a). Device flow or "TV and limited-input devices": `device_code`. Personal access token: `pat`. `none` only when a page says some endpoints need no credentials. A new method needs a contract change. |
+| `key_signup_url` | a documentation page explains how to get a key or token | Not a console URL behind a sign-in. |
+| `free_tier` | the publisher states free use, a default quota, or its pricing model in a sentence | `quote` copied verbatim, at most 200 characters, plus `source_url`. Leave it out when the only evidence is a table cell or an image. |
+| `rate_limits_url`, `sandbox_url` | a documentation page covers it | Link only; never copy test card numbers or test credentials. |
+| `openapi_url` | the publisher publishes an OpenAPI or Swagger document | The JSON or YAML file itself, not a Swagger UI page. The script checks the body. |
+| `official_mcp` | a publisher page gives an MCP endpoint | `endpoint` copied exactly from `doc_url`. Never connect to it. |
+| `terms` | the publisher has terms or a policy for API or developer use | `url` plus one verbatim sentence, or a clause that keeps its meaning on its own, at most 200 characters. Prefer one about API use, automation, rate limits, or credentials. No `...` edits, no paraphrase, no stance or summary (owner decision: terms are linked and quoted, never judged). |
+| `verified_at` | always | The UTC date you read the pages. |
+
+**Aliases.** When another key in `OFFICIAL_PATHS` is the same publisher and API (`twitter.com` for `x.com`), add it to the alias
+loop under `OFFICIAL_ACCESS` instead of copying the bundle.
+
+**Check, then open a pull request.**
+
+```
+python -m pytest tests/test_official_access.py tests/test_official_paths.py
+python scripts/verify_official_paths.py --access-only --hosts a.com,b.org --json work/access-verify.json
+```
+
+The pure tests cover shape, the method list, the 200-character cap, publisher-owned domains, and dates. The live run must
+end with every URL `ok` and every quote and MCP endpoint `found`. When a quote is `not_found`, markup on the page may split
+it: choose another sentence. When a URL is `blocked:*`, remove that field. In the pull request, list the hosts, each field you
+left out and why (refused, not documented, scripts-only page), and the run's summary line.
+
+**Re-verify every 90 days.** A bundle older than 90 days is left out of answers. Run
+`python scripts/verify_official_paths.py --access-only`, fix what changed, and update `verified_at` of the bundles you
+re-read; the script prints `stale:` lines for bundles already hidden.
+
 ## Weekly status-source jobs
 
 Rank-based expansion of the status mapping stopped at Tranco rank 10,000. Two weekly jobs replace it: re-verify what is
