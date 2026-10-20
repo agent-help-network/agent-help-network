@@ -53,6 +53,28 @@ def test_shipped_seed_list_is_clean_and_starts_with_official_path_hosts():
     assert official and hosts[: len(official)] == official
 
 
+TRANCO_BLOCK_MARKER = "# Hosts chosen from the Tranco top 1,000"
+
+
+def test_shipped_seed_list_tranco_block_is_alphabetical_and_the_header_cites_the_list():
+    # The last block comes from the Tranco list; its order must not reveal rank, and the header must say where it came from.
+    lines = profile_warm.SEED_PATH.read_text(encoding="utf-8-sig").splitlines()
+    marker = [index for index, line in enumerate(lines) if line.startswith(TRANCO_BLOCK_MARKER)]
+    assert len(marker) == 1
+    hosts_of = lambda chunk: [line.strip() for line in chunk if line.strip() and not line.startswith("#")]
+    earlier, block = hosts_of(lines[: marker[0]]), hosts_of(lines[marker[0] + 1:])
+    assert block and block == sorted(block) and len(block) == len(set(block))
+    assert not set(block) & set(earlier)
+    loaded = profile_warm.load_seed_hosts()
+    eligible_block = [host for host in block if aggregate_eligible_host(host)]
+    assert eligible_block and loaded[-len(eligible_block):] == eligible_block  # the warm-up reads this block last, in this order
+    header = "\n".join(line for line in lines[: marker[0]] if line.startswith("#"))
+    for required in ("Y83KG", "https://tranco-list.eu/list/Y83KG", "Le Pochat", "NDSS 2019", "10.14722/ndss.2019.23386",
+                     "Cloudflare Radar CC BY-NC 4.0", "CrUX CC BY 4.0", "Majestic CC BY 3.0"):
+        assert required in header
+    assert "under its terms" not in header
+
+
 @pytest.fixture
 def warm_settings(monkeypatch):
     if not TEST_URL:
