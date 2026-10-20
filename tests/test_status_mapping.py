@@ -93,15 +93,19 @@ REVERIFIED_BETTERSTACK_HOSTS = {
     "raspberrypi.org", "signupgenius.com", "sportskeeda.com", "studocu.com", "time.com", "trezor.io", "userway.org",
     "wordfence.com",
 }
+# Tranco ranks 9,001-10,000 (2026-10-20): the page's public feed parsed with the existing parser on the first check.
+RANK_BATCH_6_INSTATUS_HOSTS = {"q10.com"}
+RANK_BATCH_6_BETTERSTACK_HOSTS = {"hf.co"}
 STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com"}
 
 
 def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
-    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS | REVERIFIED_INSTATUS_HOSTS
-    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS | REVERIFIED_BETTERSTACK_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "instatus"} == INSTATUS_HOSTS | REVERIFIED_INSTATUS_HOSTS | RANK_BATCH_6_INSTATUS_HOSTS
+    assert {host for host, source in SOURCES.items() if source.kind == "betterstack"} == BETTERSTACK_HOSTS | REVERIFIED_BETTERSTACK_HOSTS | RANK_BATCH_6_BETTERSTACK_HOSTS
     for host in STATUSPAGE_COMPATIBLE_HOSTS:
         assert SOURCES[host].kind == "statuspage", host
-    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS | REVERIFIED_INSTATUS_HOSTS | REVERIFIED_BETTERSTACK_HOSTS) & set(OFFICIAL_STATUS_PAGES)
+    assert not (INSTATUS_HOSTS | BETTERSTACK_HOSTS | STATUSPAGE_COMPATIBLE_HOSTS | REVERIFIED_INSTATUS_HOSTS | REVERIFIED_BETTERSTACK_HOSTS
+            | RANK_BATCH_6_INSTATUS_HOSTS | RANK_BATCH_6_BETTERSTACK_HOSTS) & set(OFFICIAL_STATUS_PAGES)
 
 
 def test_datadog_stays_a_link_because_its_feed_covers_one_region_only():
