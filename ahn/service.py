@@ -3,18 +3,22 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from .access_profile import get_profile
+from . import background_reads
+from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .models import ObservationIn, OutcomeIn
 from .official_paths import official_paths
+from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import OFFICIAL_STATUS_PAGES, SOURCES, discover_source, refresh_one, register_source
+from .status_refresh import OFFICIAL_STATUS_PAGES, SOURCES, register_source
 from .triage import next_checks, recommendation
 
 
+LOG = logging.getLogger(__name__)
 PUBLIC_REPORTER_ID = UUID("b2d045dc-9791-4a27-9db4-3e469c63f57f")
 PUBLIC_TASK_STEPS = {"site_open", "login", "human_verification", "service_use", "other"}
 PUBLIC_DAILY_CAP = 100
@@ -87,7 +91,11 @@ def _withdrawal_token(settings: Settings, observation_id: UUID, idempotency_key:
     return hmac.new(settings.key_pepper.encode(), message, hashlib.sha256).hexdigest()
 
 
-def submit(settings: Settings, key: str, data: ObservationIn | OutcomeIn, parent_id: UUID | None = None):
+RECEIVED_CHANNELS = frozenset({"rest", "mcp", "web"})
+
+
+def submit(settings: Settings, key: str, data: ObservationIn | OutcomeIn, parent_id: UUID | None = None, *,
+           channel: str = "rest"):
     if settings.test_mode and (not data.synthetic or (isinstance(data, ObservationIn) and not data.site_host.endswith(".test"))):
         raise ServiceError("synthetic_test_only", 403)
     public_intake = settings.public_mode and settings.reporting_enabled and not settings.test_mode and not key and parent_id is None and isinstance(data, ObservationIn)
@@ -153,13 +161,16 @@ def submit(settings: Settings, key: str, data: ObservationIn | OutcomeIn, parent
                 "INSERT INTO incidents (site_host, task_step, error_class) VALUES (%s,%s,%s) ON CONFLICT (site_host,task_step,error_class) DO UPDATE SET site_host=EXCLUDED.site_host RETURNING id",
                 (data.site_host, data.task_step, data.error_class.value),
             ).fetchone()["id"]
+        # Provenance: this operator received the report under its own id, through this interface.
+        observation_id = uuid4()
         row = conn.execute(
             """INSERT INTO observations
-            (incident_id,reporter_id,observed_at,agent_family,attempt_actor,attempt_env,outcome,challenge_vendor,challenge_kind,synthetic,supersedes_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,review_state""",
-            (incident_id, reporter_id, data.observed_at, data.agent_family.value, data.attempt_actor.value,
+            (id,incident_id,reporter_id,observed_at,agent_family,attempt_actor,attempt_env,outcome,challenge_vendor,challenge_kind,synthetic,supersedes_id,
+             origin_operator,origin_observation_id,received_channel)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,review_state""",
+            (observation_id, incident_id, reporter_id, data.observed_at, data.agent_family.value, data.attempt_actor.value,
              data.attempt_env.value, data.outcome.value, data.challenge_vendor.value, data.challenge_kind.value,
-             data.synthetic, parent_id),
+             data.synthetic, parent_id, operator_id(), observation_id, channel if channel in RECEIVED_CHANNELS else "rest"),
         ).fetchone()
         conn.execute(
             "INSERT INTO report_submissions (reporter_id,idempotency_key,request_hash,observation_id) VALUES (%s,%s,%s,%s)",
@@ -214,9 +225,79 @@ def withdraw(settings: Settings, key: str, observation_id: UUID):
     return {"withdrawn": True}
 
 
+def _record_lookup(conn, settings: Settings, host: str, error_class: str | None, *, public: bool) -> tuple[bool, bool, bool]:
+    """Register the host, count the lookup and gate discovery inside a savepoint; never raises.
+
+    Returns (registered, mapped_source, discovery_queued). Only local database writes happen here:
+    no third-party host is contacted on the lookup path, and a failed write is rolled back to the
+    savepoint without failing the lookup.
+    """
+    registered = mapped_source = queued = False
+    eligible = aggregate_eligible_host(host)
+    try:
+        with conn.transaction():
+            if public and (eligible or host in SOURCES):
+                # Record demand only for public apex hosts. A bounded registry prevents
+                # arbitrary tenant names in hostnames from becoming permanent public data.
+                existing = conn.execute(
+                    "UPDATE queried_hosts SET last_seen_at=now() WHERE site_host=%s RETURNING site_host",
+                    (host,),
+                ).fetchone()
+                if existing or host in SOURCES or conn.execute("SELECT count(*) AS n FROM queried_hosts").fetchone()["n"] < QUERIED_HOST_CAP:
+                    if not existing:
+                        conn.execute(
+                            "INSERT INTO queried_hosts (site_host) VALUES (%s) ON CONFLICT (site_host) DO UPDATE SET last_seen_at=now()",
+                            (host,),
+                        )
+                    registered = True
+                    mapped_source = register_source(conn, host)
+                    if not mapped_source and host not in SOURCES:
+                        # At most one discovery attempt per host per day; the read itself is queued.
+                        discover = conn.execute(
+                            """UPDATE queried_hosts SET last_discovery_at=now()
+                               WHERE site_host=%s AND (last_discovery_at IS NULL OR last_discovery_at < now() - interval '1 day')
+                               AND NOT EXISTS (SELECT 1 FROM status_sources WHERE site_host=%s AND enabled=true)
+                               RETURNING site_host""",
+                            (host, host),
+                        ).fetchone()
+                        if discover:
+                            background_reads.enqueue(conn, [("status_discovery", host)])
+                            queued = True
+            if settings.collect_lookup_metrics and eligible and (not public or registered):
+                conn.execute(
+                    "INSERT INTO lookup_metrics (day,site_host,error_class,checks) VALUES (CURRENT_DATE,%s,%s,1) ON CONFLICT (day,site_host,error_class) DO UPDATE SET checks=lookup_metrics.checks+1",
+                    (host, error_class or "unspecified"),
+                )
+    except Exception:
+        # Registration and metrics are bookkeeping: a failure must not turn a lookup into an error.
+        LOG.warning("lookup_record_unavailable")
+        return False, False, False
+    return registered, mapped_source, queued
+
+
+def _queue_reads(conn, jobs: list[tuple[str, str]]) -> bool:
+    """Queue background reads inside a savepoint; never raises. True when the worker should look."""
+    if not jobs:
+        return False
+    try:
+        with conn.transaction():
+            background_reads.enqueue(conn, jobs)
+    except Exception:
+        LOG.warning("background_reads_enqueue_unavailable")
+        return False
+    return True
+
+
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None):
+    """Answer a lookup from the database alone.
+
+    Nothing on this path contacts the target host or a status provider: reads that are missing or
+    out of date are queued (ahn/background_reads.py) and the cached value is returned as it is,
+    marked ``pending`` or ``stale``.
+    """
     test_query = settings.test_mode and site_host.endswith(".test")
+    public = settings.public_mode and not test_query
     where = ["i.site_host=%s", "o.withdrawn_at IS NULL"]
     params: list = [site_host]
     if test_query:
@@ -232,73 +313,30 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     where.append("o.observed_at >= %s")
     params.append(datetime.now(timezone.utc) - timedelta(days=7))
     sql = f"SELECT o.observed_at,o.attempt_actor,o.attempt_env,o.outcome,o.reporter_id,i.error_class,i.task_step FROM observations o JOIN incidents i ON i.id=o.incident_id WHERE {' AND '.join(where)} ORDER BY o.observed_at DESC LIMIT 500"
-    with connect(settings) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    # Reports above are keyed by the exact host; every host-level layer below
+    # Reports are keyed by the exact host; every host-level layer below
     # (registry, provider status, lookup counts, declared policy, official paths)
     # answers for the site, so www.<apex> reads and counts as <apex>.
     host = policy_host(site_host)
-    # Record demand only for public apex hosts. A bounded registry prevents
-    # arbitrary tenant names in hostnames from becoming permanent public data.
-    mapped_source = False
-    registered_host = False
-    discover_now = False
-    if settings.public_mode and not test_query and (aggregate_eligible_host(host) or host in SOURCES):
-        with connect(settings) as conn:
-            existing = conn.execute(
-                "UPDATE queried_hosts SET last_seen_at=now() WHERE site_host=%s RETURNING site_host",
-                (host,),
-            ).fetchone()
-            if existing or host in SOURCES or conn.execute("SELECT count(*) AS n FROM queried_hosts").fetchone()["n"] < QUERIED_HOST_CAP:
-                if not existing:
-                    conn.execute(
-                        "INSERT INTO queried_hosts (site_host) VALUES (%s) ON CONFLICT (site_host) DO UPDATE SET last_seen_at=now()",
-                        (host,),
-                    )
-                registered_host = True
-                mapped_source = register_source(conn, host)
-                if not mapped_source and host not in SOURCES:
-                    discover_now = bool(conn.execute(
-                        """UPDATE queried_hosts SET last_discovery_at=now()
-                           WHERE site_host=%s AND (last_discovery_at IS NULL OR last_discovery_at < now() - interval '1 day')
-                           AND NOT EXISTS (SELECT 1 FROM status_sources WHERE site_host=%s AND enabled=true)
-                           RETURNING site_host""",
-                        (host, host),
-                    ).fetchone())
-    if discover_now:
-        discovered = discover_source(host)
-        if discovered:
-            source, indicator, updated_at = discovered
-            with connect(settings) as conn:
-                mapped_source = register_source(conn, host, source)
-                if mapped_source:
-                    conn.execute(
-                        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail)
-                           VALUES (%s,%s,%s,now(),NULL,NULL) ON CONFLICT (site_host) DO UPDATE SET
-                           indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
-                           fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL""",
-                        (host, indicator, updated_at),
-                    )
-    if settings.collect_lookup_metrics and aggregate_eligible_host(host) and (not settings.public_mode or registered_host):
-        try:
-            with connect(settings) as conn:
-                conn.execute(
-                    "INSERT INTO lookup_metrics (day,site_host,error_class,checks) VALUES (CURRENT_DATE,%s,%s,1) ON CONFLICT (day,site_host,error_class) DO UPDATE SET checks=lookup_metrics.checks+1",
-                    (host, error_class or "unspecified"),
-                )
-        except Exception:
-            # A metrics outage must not turn a successful incident lookup into a failure.
-            pass
-    if mapped_source and not discover_now:
-        # On the first lookup, fetch the publisher directly before returning.
-        # Later lookups refresh too; the background job keeps the list warm.
-        refresh_one(settings, host)
+    eligible = aggregate_eligible_host(host)
+    mapped_source = woke = False
     now = datetime.now(timezone.utc)
     provider_status = None
     provider_discovery_attempted_at = None
     lookup_activity = None
-    if settings.public_mode and not test_query:
-        with connect(settings) as conn:
+    # Layer 1: the host's own declared policy; layer 2: curated official paths.
+    # Both are independent of reports, so a lookup answers before any observation exists.
+    access_profile = None
+    profile_not_read = False
+    profile_due = False
+    jobs: list[tuple[str, str]] = []
+    official = official_paths(host) if public else None
+    # One connection and one short transaction: bookkeeping writes, the reads the answer needs, and
+    # the queue inserts. Database round trips only.
+    with connect(settings) as conn:
+        if (public and (eligible or host in SOURCES)) or (not settings.public_mode and settings.collect_lookup_metrics and eligible):
+            _registered, mapped_source, woke = _record_lookup(conn, settings, host, error_class, public=public)
+        rows = conn.execute(sql, params).fetchall()
+        if public:
             discovery = conn.execute(
                 "SELECT last_discovery_at FROM queried_hosts WHERE site_host=%s",
                 (host,),
@@ -322,13 +360,19 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     "fetched_at": fetched_at, "freshness": freshness,
                     "error_detail": source["last_error_detail"] if failed_later else None,
                 }
-            if aggregate_eligible_host(host):
+                if mapped_source:
+                    # Stale-while-revalidate: answer with the cached statement and refresh it behind the
+                    # lookup, with the same spacing the inline refresh used to apply.
+                    latest = max((t for t in (fetched_at, source["last_error_at"]) if t is not None), default=None)
+                    if latest is None or latest < now - timedelta(seconds=background_reads.FEED_REFRESH_SECONDS):
+                        jobs.append(("status_feed", host))
+            if eligible:
                 volume = conn.execute(
                     """SELECT COALESCE(sum(checks) FILTER (WHERE day >= CURRENT_DATE - 6),0) AS recent,
                               COALESCE(sum(checks) FILTER (WHERE day BETWEEN CURRENT_DATE - 13 AND CURRENT_DATE - 7),0) AS previous
                        FROM lookup_metrics WHERE site_host=%s AND day >= CURRENT_DATE - 13""",
                     (host,),
-                ).fetchone()
+                ).fetchone() or {"recent": 0, "previous": 0}
                 recent, previous = volume["recent"], volume["previous"]
                 if recent >= 1:
                     lookup_activity = {
@@ -337,21 +381,28 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                         "trend": "increased" if previous >= 10 and recent >= 20 and recent >= previous * 2 else None,
                         "unit": "requests_not_agents",
                     }
-    # Layer 1: the host's own declared policy; layer 2: curated official paths.
-    # Both are independent of reports, so a lookup answers before any observation exists.
-    access_profile = None
-    profile_not_read = False
-    official = official_paths(host) if settings.public_mode and not test_query else None
-    if settings.public_mode and not test_query:
-        if aggregate_eligible_host(host):
-            try:
-                access_profile = get_profile(settings, host)
-            except Exception:
-                # The declared-policy layer must never turn a lookup into an error.
-                access_profile = None
-        else:
-            # Subdomain or tenant host: say so instead of leaving the layer silently empty.
-            profile_not_read = True
+                try:
+                    with conn.transaction():
+                        access_profile, profile_due = cached_profile(conn, host, now=now)
+                except Exception:
+                    # The declared-policy layer must never turn a lookup into an error.
+                    LOG.warning("access_profile_cache_unavailable")
+                    access_profile, profile_due = None, False
+                else:
+                    if profile_due:
+                        jobs.append(("access_profile", host))
+            else:
+                # Subdomain or tenant host: say so instead of leaving the layer silently empty.
+                profile_not_read = True
+        woke = _queue_reads(conn, jobs) or woke
+    if woke:
+        background_reads.wake()
+    if access_profile is None and profile_due:
+        # First lookup of this host: nothing is cached yet and a read is queued.
+        access_profile = pending_profile(host, background_reads.retry_after_seconds())
+    elif access_profile is not None and profile_due and access_profile["freshness"] == "pending":
+        # Only failed attempts so far, and the retry is due: a read is queued again.
+        access_profile = {**access_profile, "retry_after_seconds": background_reads.retry_after_seconds()}
     if access_profile is not None:
         access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
     recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]

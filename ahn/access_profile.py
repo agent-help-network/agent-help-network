@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 
 from .db import connect
+from .provenance import operator_id, sha256_hex, vantage
 
 # Only user_agent and search_crawler tokens can make a declared block (triage.AGENT_KINDS_FOR_BLOCK); a training_crawler
 # token is reported but never blocks. Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
@@ -348,13 +349,16 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
         if alt_status in ("ok", "absent", "too_large"):
             robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
     robots = parse_robots(robots_body) if robots_status == "ok" and robots_body is not None else None
-    llms_status, _, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
+    llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
     # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.
     llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {
         "robots_status": robots_status, "robots": robots, "robots_detail": robots_detail,
         "llms_txt_status": llms_txt_status, "llms_detail": llms_detail, "read_host": read_host,
         "source_urls": {"robots_txt": f"https://{read_host}/robots.txt", "llms_txt": f"https://{read_host}/llms.txt"},
+        # Provenance only: hashes of the bytes received; the files themselves are never stored.
+        "robots_sha256": sha256_hex(robots_body) if robots_status == "ok" else None,
+        "llms_sha256": sha256_hex(llms_body) if llms_status == "ok" else None,
     }
 
 
@@ -387,6 +391,32 @@ def _cache_window(row, max_age: timedelta) -> timedelta:
     return min(max_age, ERROR_RETRY) if failed_last else max_age
 
 
+def pending_profile(site_host: str, retry_after_seconds: int) -> dict:
+    """The answer for an eligible host with no cached read yet: a read is queued, nothing is known."""
+    return {
+        "robots_status": "pending", "robots": None, "robots_detail": None,
+        "llms_txt_status": "pending", "llms_detail": None, "read_host": site_host,
+        "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
+        "fetched_at": None, "freshness": "pending", "retry_after_seconds": retry_after_seconds,
+    }
+
+
+def cached_profile(conn, site_host: str, *, now: datetime | None = None, max_age_hours: int = 24) -> tuple[dict | None, bool]:
+    """(the cached profile or None, whether a read is due) from one SELECT; never touches the network.
+
+    "Due" uses the same window get_profile applies before it reads (max_age, or ERROR_RETRY after a
+    transport failure), so the lookup path queues exactly the reads get_profile would have made.
+    """
+    now = now or datetime.now(timezone.utc)
+    max_age = timedelta(hours=max_age_hours)
+    row = conn.execute(f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
+    if not row:
+        return None, True
+    latest = max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
+    due = latest is None or latest < now - _cache_window(row, max_age)
+    return _as_profile(site_host, row, now, max_age), due
+
+
 def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file) -> dict | None:
     """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure)."""
     now = now or datetime.now(timezone.utc)
@@ -414,14 +444,19 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 ).fetchone()
             else:
                 # ok/absent/redirected/too_large/not_public/refused are answers in their own right.
+                # Provenance travels with the definitive answer it describes; a later transport failure keeps both.
                 row = conn.execute(
-                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                    f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
+                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
-                        robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host
+                        robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host,
+                        origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
+                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
-                     profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"]),
+                     profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"],
+                     operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256")),
                 ).fetchone()
         return _as_profile(site_host, row, now, max_age)

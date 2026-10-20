@@ -14,6 +14,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ahn import background_reads
+from ahn.access_profile import cached_profile
 from ahn.db import connect, migrate
 from ahn.auto_review import review_batch
 from ahn.bandwidth_guard import parse_bandwidth, run_guard
@@ -38,12 +40,35 @@ def public_client():
             raise RuntimeError("Refusing to reset a database other than ahn_test")
     migrate(settings)
     with connect(settings) as conn:
-        conn.execute("TRUNCATE audit_events, report_submissions, observations, incidents, reporters, lookup_metrics, request_metrics, traffic_attribution_daily, traffic_client_daily, mcp_check_metrics, render_metric_samples, public_intake_daily, public_intake_host_daily, bandwidth_guard_samples, bandwidth_guard_state, status_cache, status_sources, queried_hosts, host_access_profile RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE audit_events, report_submissions, observations, incidents, reporters, lookup_metrics, request_metrics, traffic_attribution_daily, traffic_client_daily, mcp_check_metrics, render_metric_samples, public_intake_daily, public_intake_host_daily, bandwidth_guard_samples, bandwidth_guard_state, status_cache, status_sources, queried_hosts, host_access_profile, background_reads RESTART IDENTITY CASCADE")
         conn.execute("INSERT INTO reporters (id,key_hash,label) VALUES (%s,repeat('0',64),'public-unverified')", (PUBLIC_REPORTER_ID,))
         conn.execute("UPDATE service_flags SET enabled=true WHERE name='public_intake'")
         conn.execute("UPDATE service_flags SET enabled=true WHERE name='public_publication'")
     with TestClient(create_app(settings)) as client:
         yield settings, client
+
+
+@pytest.fixture(autouse=True)
+def unpaced_background_reads(monkeypatch):
+    # The worker spaces external reads 0.5 s apart; the stub readers below need no spacing.
+    monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+
+
+def run_queue(settings, limit=50):
+    """What the web worker and the review cron do after a lookup: process the queued reads."""
+    return background_reads.process_due(settings, limit=limit)
+
+
+def queued(settings):
+    with connect(settings) as conn:
+        return sorted((row["kind"], row["site_host"]) for row in conn.execute("SELECT kind,site_host FROM background_reads"))
+
+
+def read_profiles_with(monkeypatch, reader):
+    """Opt in to the declared-policy layer, with a stub reader for the background read."""
+    monkeypatch.setattr("ahn.service.cached_profile", cached_profile)
+    monkeypatch.setattr(background_reads, "read_profile_file", reader)
 
 
 def sample(**changes):
@@ -174,17 +199,24 @@ def test_actual_body_size_is_limited(public_client):
 
 def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, monkeypatch):
     settings, client = public_client
-    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={
         "page": {"updated_at": "2026-10-03T18:00:00Z"},
         "status": {"indicator": "none", "description": "All Systems Operational"},
     }))
     with httpx.Client(transport=transport) as remote:
-        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote))
+        monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
         for attempt in range(5):
             response = client.get("/v1/incidents/check", params={"site_host": "github.com"})
             assert response.status_code == 200
             assert response.json()["lookup_activity"]["volume_band"] == ("1-4" if attempt < 4 else "5-9")
+            if attempt == 0:
+                # The first lookup answers at once: the feed is connected but not read yet, and the read is queued.
+                first = response.json()
+                assert first["provider_status"]["freshness"] == "pending" and first["provider_status"]["indicator"] is None
+                assert first["provider_source_state"] == "feed_connected"
+                assert queued(settings) == [("status_feed", "github.com")]
+                assert run_queue(settings) == {"claimed": 1, "done": 1, "failed": 0, "dropped": 0}
+                assert queued(settings) == []
         after = response.json()
         assert after["provider_status"]["indicator"] == "none"
         assert after["provider_status"]["freshness"] == "fresh"
@@ -206,6 +238,9 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
         assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0}
     for attempt in range(5):
         unmapped = client.get("/v1/incidents/check", params={"site_host": "example.org"}).json()
+        if attempt == 0:
+            # Discovery of status.example.org is queued once a day, not run inside the lookup.
+            assert queued(settings) == [("status_discovery", "example.org")]
         assert unmapped["provider_status"] is None
         assert unmapped["provider_source_state"] == "not_verified_by_current_methods"
         assert unmapped["provider_discovery_attempted_at"] is not None
@@ -240,16 +275,24 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
 
 
 def test_access_profile_layer_answers_without_reports(public_client, monkeypatch):
-    from ahn.access_profile import get_profile
-
     settings, client = public_client
-    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
     robots = b"User-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nAllow: /\nSitemap: https://newsite.org/sitemap.xml\n"
     reads = []
     def reader(host, path, *, cap_bytes, **_kw):
         reads.append((host, path))
         return ("ok", robots) if path == "/robots.txt" else ("absent", None)
-    monkeypatch.setattr("ahn.service.get_profile", lambda s, host, **kw: get_profile(s, host, reader=reader))
+    read_profiles_with(monkeypatch, reader)
+    # The first lookup of a new host answers at once: nothing read yet, a read queued, no request made.
+    pending = client.get("/v1/incidents/check", params={"site_host": "newsite.org"}).json()
+    assert reads == []
+    assert pending["access_profile"]["robots_status"] == "pending" and pending["access_profile"]["freshness"] == "pending"
+    assert pending["access_profile"]["retry_after_seconds"] == background_reads.RETRY_AFTER_CRON_SECONDS
+    assert pending["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["profile_pending"]}
+    assert "profile_pending" in [item["code"] for item in pending["next_checks"]]
+    assert CheckResponse(**pending).access_profile.retry_after_seconds == background_reads.RETRY_AFTER_CRON_SECONDS
+    assert ("access_profile", "newsite.org") in queued(settings)
+    assert "Reading robots.txt and llms.txt now" in client.get("/en/search", params={"site_host": "newsite.org"}).text
+    run_queue(settings)
     first = client.get("/v1/incidents/check", params={"site_host": "newsite.org"}).json()
     profile = first["access_profile"]
     assert profile["robots_status"] == "ok" and profile["freshness"] == "fresh" and profile["llms_txt_status"] == "absent"
@@ -273,14 +316,14 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
 
 
 def test_api_names_the_host_that_answered_after_the_www_fallback(public_client, monkeypatch):
-    from ahn.access_profile import get_profile
-
     settings, client = public_client
     def reader(site_host, path, *, cap_bytes, **_kw):
         if site_host == "fallback.org":
             return ("refused", None, "http_503")
         return ("ok", b"User-agent: *\nDisallow:\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
-    monkeypatch.setattr("ahn.service.get_profile", lambda s, host, **kw: get_profile(s, host, reader=reader))
+    read_profiles_with(monkeypatch, reader)
+    assert client.get("/v1/incidents/check", params={"site_host": "fallback.org"}).json()["access_profile"]["freshness"] == "pending"
+    run_queue(settings)
     first = client.get("/v1/incidents/check", params={"site_host": "fallback.org"}).json()
     profile = first["access_profile"]
     assert profile["robots_status"] == "ok" and profile["read_host"] == "www.fallback.org"
@@ -295,10 +338,7 @@ def test_api_names_the_host_that_answered_after_the_www_fallback(public_client, 
 
 
 def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(public_client, monkeypatch):
-    from ahn.access_profile import get_profile
-
     settings, client = public_client
-    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
     official = {"name": "Alias Example", "api_docs": "https://developer.aliasexample.org/", "developer_portal": None, "note": None}
     # Exact-key stand-in for the curated table, so the lookup has to ask with the apex itself.
     monkeypatch.setattr("ahn.service.official_paths", lambda host: dict(official) if host == "aliasexample.org" else None)
@@ -306,8 +346,12 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     def reader(host, path, *, cap_bytes, **_kw):
         reads.append((host, path))
         return ("ok", b"User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
-    monkeypatch.setattr("ahn.service.get_profile", lambda s, host, **kw: get_profile(s, host, reader=reader))
+    read_profiles_with(monkeypatch, reader)
     params = {"error_class": "site_access"}
+    # Both names queue one read of the apex; nothing is queued under www.
+    client.get("/v1/incidents/check", params={"site_host": "www.aliasexample.org", **params})
+    assert queued(settings) == [("access_profile", "aliasexample.org"), ("status_discovery", "aliasexample.org")]
+    run_queue(settings)
     www = client.get("/v1/incidents/check", params={"site_host": "www.aliasexample.org", **params}).json()
     apex = client.get("/v1/incidents/check", params={"site_host": "aliasexample.org", **params}).json()
     # The answer still names the host that was asked about.
@@ -326,7 +370,7 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
         assert [r["site_host"] for r in conn.execute("SELECT site_host FROM host_access_profile").fetchall()] == ["aliasexample.org"]
         assert [r["site_host"] for r in conn.execute("SELECT site_host FROM queried_hosts").fetchall()] == ["aliasexample.org"]
         metrics = conn.execute("SELECT site_host, sum(checks) AS n FROM lookup_metrics GROUP BY site_host").fetchall()
-    assert metrics == [{"site_host": "aliasexample.org", "n": 2}]
+    assert metrics == [{"site_host": "aliasexample.org", "n": 3}]
     # Any other subdomain, and www. in front of one, still reads nothing and says so.
     for host in ("user123.aliasexample.org", "www.user123.aliasexample.org"):
         other = client.get("/v1/incidents/check", params={"site_host": host}).json()
@@ -386,7 +430,6 @@ def test_mcp_tool_execution_is_counted_separately_from_http_requests(public_clie
     from ahn.tool_metrics import mcp_metric_token
 
     settings, client = public_client
-    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
     assert client.get("/v1/incidents/check", params={"site_host": "example.org"}).status_code == 200
     assert client.get("/v1/incidents/check", params={"site_host": "example.org"}, headers={"X-AHN-MCP-Call": "0" * 64}).status_code == 200
     with connect(settings) as conn:
@@ -404,7 +447,6 @@ def test_mcp_tool_execution_is_counted_separately_from_http_requests(public_clie
 
 def test_failure_stage_guides_lookup_but_does_not_create_observation(public_client, monkeypatch):
     settings, client = public_client
-    monkeypatch.setattr("ahn.service.discover_source", lambda _host: None)
     result = client.get("/v1/incidents/check", params={"site_host": "example.org", "failure_stage": "before_target_response"})
     assert result.status_code == 200
     data = result.json()
@@ -421,14 +463,21 @@ def test_failure_stage_guides_lookup_but_does_not_create_observation(public_clie
 def test_first_lookup_discovers_first_party_statuspage(public_client, monkeypatch):
     settings, client = public_client
     calls = []
-    def fake_discover(host):
+    def fake_discover(host, digest=None):
         calls.append(host)
+        digest["body_sha256"] = "c" * 64
         return (
             Source("Twilio Status", "https://status.twilio.com/", "https://status.twilio.com/api/v2/status.json", "discovered_statuspage"),
             "minor", datetime.now(timezone.utc),
         )
-    monkeypatch.setattr("ahn.service.discover_source", fake_discover)
-    monkeypatch.setattr("ahn.service.refresh_one", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(background_reads, "discover", fake_discover)
+    queued_first = client.get("/v1/incidents/check", params={"site_host": "discovered-example.org"})
+    # The lookup does not wait for DNS or the status page: it answers as before discovery and queues it.
+    assert queued_first.status_code == 200 and calls == []
+    assert queued_first.json()["provider_status"] is None
+    assert queued_first.json()["provider_source_state"] == "not_verified_by_current_methods"
+    assert queued_first.json()["provider_discovery_attempted_at"] is not None
+    assert run_queue(settings)["done"] == 1
     first = client.get("/v1/incidents/check", params={"site_host": "discovered-example.org"})
     assert first.status_code == 200
     assert first.json()["provider_status"]["indicator"] == "minor"
@@ -441,6 +490,20 @@ def test_first_lookup_discovers_first_party_statuspage(public_client, monkeypatc
     with connect(settings) as conn:
         assert conn.execute("SELECT count(*) AS n FROM queried_hosts WHERE site_host='discovered-example.org'").fetchone()["n"] == 1
         assert conn.execute("SELECT count(*) AS n FROM status_sources WHERE site_host='discovered-example.org'").fetchone()["n"] == 1
+        source = conn.execute("SELECT curated_by,evidence,evidence_url FROM status_sources WHERE site_host='discovered-example.org'").fetchone()
+        cache = conn.execute("SELECT origin_operator,vantage,reader_version,body_sha256 FROM status_cache WHERE site_host='discovered-example.org'").fetchone()
+    assert source == {"curated_by": "agenthelpnetwork.com", "evidence": "discovered_cname", "evidence_url": "https://status.twilio.com/"}
+    assert cache["origin_operator"] == "agenthelpnetwork.com" and cache["vantage"]["kind"] == "datacenter"
+    assert cache["reader_version"].startswith("AgentHelpNetwork/") and cache["body_sha256"] == "c" * 64
+
+
+def age_status_cache(settings, host, seconds=60):
+    with connect(settings) as conn:
+        conn.execute(
+            """UPDATE status_cache SET fetched_at=fetched_at - make_interval(secs => %s),
+                   last_error_at=last_error_at - make_interval(secs => %s) WHERE site_host=%s""",
+            (seconds, seconds, host),
+        )
 
 
 def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypatch):
@@ -448,10 +511,19 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={
         "page": {"updated_at": "2026-10-03T18:00:00Z"}, "status": {"indicator": "none"},
     }))) as remote:
-        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote))
+        monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
         client.get("/v1/incidents/check", params={"site_host": "github.com"})
+        run_queue(settings)
+    # A lookup within 15 seconds of the last read queues nothing; an older one answers from the cache and queues a refresh.
+    client.get("/v1/incidents/check", params={"site_host": "github.com"})
+    assert queued(settings) == []
+    age_status_cache(settings, "github.com")
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(502))) as remote:
-        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote, min_interval=0))
+        monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
+        before = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
+        assert before["freshness"] == "fresh" and before["indicator"] == "none"  # stale-while-revalidate: the cached value
+        assert queued(settings) == [("status_feed", "github.com")]
+        run_queue(settings)
         status = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
         assert status["indicator"] == "none"
         assert status["freshness"] == "stale"
@@ -462,10 +534,13 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
     with connect(settings) as conn:
         assert conn.execute("SELECT last_error_detail FROM status_cache WHERE site_host='github.com'").fetchone()["last_error_detail"] == "http_502"
     # A later successful read clears the reason again.
+    age_status_cache(settings, "github.com")
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={
         "page": {"updated_at": "2026-10-03T18:00:00Z"}, "status": {"indicator": "none"},
     }))) as remote:
-        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote, min_interval=0))
+        monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
+        client.get("/v1/incidents/check", params={"site_host": "github.com"})
+        run_queue(settings)
         status = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
         assert status["freshness"] == "fresh" and status["error_detail"] is None
     with connect(settings) as conn:
@@ -479,7 +554,9 @@ def test_gmail_official_feed_is_product_specific(public_client, monkeypatch):
         {"affected_products": [{"id": "prPt2Yra2CbGsbEm9cpC"}], "status_impact": "SERVICE_DISRUPTION", "begin": "2026-10-03T18:00:00Z"},
     ]
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=feed))) as remote:
-        monkeypatch.setattr("ahn.service.refresh_one", lambda s, host: refresh_one(s, host, client=remote))
+        monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
+        client.get("/v1/incidents/check", params={"site_host": "gmail.com"})
+        run_queue(settings)
         status = client.get("/v1/incidents/check", params={"site_host": "gmail.com"}).json()["provider_status"]
     assert status["indicator"] == "major"
     assert status["source_name"].startswith("Google Workspace")
