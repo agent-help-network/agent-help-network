@@ -381,3 +381,68 @@ def test_report_export_defaults_to_the_public_seven_days(db):
         )
     assert export.export(db, "observation", io.StringIO()) == 0
     assert export.export(db, "observation", io.StringIO(), all_reports=True) == 1
+
+
+def test_content_use_is_stored_with_the_read_kept_through_a_failure_and_exported(db, monkeypatch):
+    # Migration 021: one jsonb column; the declarations come from the robots.txt bytes the read already has.
+    assert rows(db, """SELECT data_type FROM information_schema.columns
+                       WHERE table_name='host_access_profile' AND column_name='content_use'""") == [{"data_type": "jsonb"}]
+    robots = b"User-agent: *\nContent-Signal: search=yes, ai-input=no, ai-train=no\nAllow: /\n"
+    calls = []
+
+    def reader(site_host, path, *, cap_bytes, **_):
+        calls.append(path)
+        return ("ok", robots, "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+
+    monkeypatch.setattr(background_reads, "read_profile_file", reader)
+    first = service.check(db, "signal-example.org")["access_profile"]["content_use"]
+    assert (first["status"], first["reason"]) == ("not_read", "pending")
+    background_reads.process_due(db)
+    assert calls == ["/robots.txt", "/llms.txt"]  # no request beyond the two files
+    answer = service.check(db, "signal-example.org")
+    content_use = answer["access_profile"]["content_use"]
+    assert content_use["status"] == "declared" and content_use["freshness"] == "fresh"
+    assert content_use["signals"] == {"search": "yes", "ai_input": "no", "ai_train": "no", "use": None}
+    assert "content_use_ai_input_declared_no" in [item["code"] for item in answer["next_checks"]]
+    assert answer["recommendation"]["action"] == "proceed"  # the declaration never changes the recommendation
+    stored, = rows(db, "SELECT content_use, robots_sha256 FROM host_access_profile WHERE site_host='signal-example.org'")
+    assert stored["content_use"]["robots_sha256"] == stored["robots_sha256"] == hashlib.sha256(robots).hexdigest()
+    assert stored["content_use"]["vocab"] == content_use["vocab"]
+    out = io.StringIO()
+    assert export.export(db, "access_profile", out) == 1
+    assert json.loads(out.getvalue())["payload"]["content_use"]["signals"]["ai_input"] == "no"
+    # A release without this column rewrites robots and its hash but leaves content_use behind (a rollback):
+    # the stale declaration must not be shown as current.
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET robots_sha256=repeat('a',64) WHERE site_host='signal-example.org'")
+    rolled = service.check(db, "signal-example.org")["access_profile"]["content_use"]
+    assert (rolled["status"], rolled["reason"]) == ("not_read", "read_before_content_use")
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET robots_sha256=%s WHERE site_host='signal-example.org'", (stored["robots_sha256"],))
+    # A later transport failure keeps the last declaration, marked stale, as it does for the robots rules.
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET fetched_at=now() - interval '2 days' WHERE site_host='signal-example.org'")
+    monkeypatch.setattr(background_reads, "read_profile_file", lambda h, p, *, cap_bytes, **_: ("error", None, "dns_timeout"))
+    service.check(db, "signal-example.org")
+    background_reads.process_due(db)
+    stale = service.check(db, "signal-example.org")["access_profile"]
+    assert stale["robots_detail"] == "dns_timeout" and stale["content_use"]["status"] == "declared"
+    assert stale["content_use"]["freshness"] == "stale" and stale["content_use"]["signals"]["ai_input"] == "no"
+    # A definitive answer without a file replaces it: a refusal is 'not read', never 'none declared'.
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET fetched_at=now() - interval '2 days', last_error_at=NULL WHERE site_host='signal-example.org'")
+    monkeypatch.setattr(background_reads, "read_profile_file", lambda h, p, *, cap_bytes, **_: ("refused", None, "http_403"))
+    service.check(db, "signal-example.org")
+    background_reads.process_due(db)
+    refused = service.check(db, "signal-example.org")["access_profile"]["content_use"]
+    assert (refused["status"], refused["reason"], refused.get("signals")) == ("not_read", "robots_refused", None)
+    assert rows(db, "SELECT content_use FROM host_access_profile WHERE site_host='signal-example.org'") == [{"content_use": None}]
+
+
+def test_a_row_cached_before_migration_021_reads_as_not_read(db):
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status)
+                        VALUES ('old-example.org', now(), 'ok', '{"rules": [], "wildcard_root_allowed": true}'::jsonb, 'absent')""")
+        profile, due = cached_profile(conn, "old-example.org")
+    assert not due
+    assert (profile["content_use"]["status"], profile["content_use"]["reason"]) == ("not_read", "read_before_content_use")

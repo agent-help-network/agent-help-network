@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
@@ -228,6 +228,65 @@ class RobotsSummary(StrictModel):
     grouping_differs_by_parser: list[str] = Field(default_factory=list)
 
 
+UseValue = Literal["yes", "no", "unset"]
+
+
+class ContentSignals(StrictModel):
+    """Cloudflare Content Signals, normalized; `use` is Cloudflare's experimental fourth signal."""
+    search: UseValue
+    ai_input: UseValue
+    ai_train: UseValue
+    use: Literal["immediate", "reference", "full"] | None = None
+
+
+class ContentUsage(StrictModel):
+    """IETF AIPREF preferences (draft-ietf-aipref-vocab-08 categories), y/n normalized to yes/no."""
+    train_ai: UseValue
+    ai_use: UseValue
+    search: UseValue
+
+
+class ContentUseGroup(StrictModel):
+    agents: list[str]  # only tokens from the service's agent-token table
+    other_agents: int = Field(default=0, ge=0)  # names outside that table (or over the cap), counted, never kept
+    signals: ContentSignals | None = None
+    usage: ContentUsage | None = None
+    path_specific_samples: list[str] = Field(default_factory=list)
+
+
+class ContentUseDeclared(StrictModel):
+    status: Literal["declared"]
+    reason: None = None
+    formats: list[Literal["cloudflare_content_signal", "ietf_aipref"]]
+    signals: ContentSignals | None = None
+    usage: ContentUsage | None = None
+    scope: Literal["all_paths", "path_specific"] | None = None
+    path_specific_samples: list[str] = Field(default_factory=list)
+    named_groups: list[ContentUseGroup] = Field(default_factory=list)
+    named_groups_total: int = Field(default=0, ge=0)
+    vendor_default_hint: bool = False
+    ai_input_declared_no: bool = False
+    ai_input_no_agents: list[str] = Field(default_factory=list)
+    ignored_keys: list[str] = Field(default_factory=list)
+    vocab: str
+    source_url: str
+    fetched_at: datetime | None = None
+    freshness: Literal["fresh", "stale", "pending"]
+    note: str
+
+
+class ContentUseCompact(StrictModel):
+    """Nothing declared, or the file could not be read: the short shape, without the note and vocabulary strings."""
+    status: Literal["none_declared", "not_read"]
+    reason: str | None = None
+    source_url: str
+    fetched_at: datetime | None = None
+    freshness: Literal["fresh", "stale", "pending"]
+
+
+ContentUse = Annotated[ContentUseDeclared | ContentUseCompact, Field(discriminator="status")]
+
+
 class AccessProfile(StrictModel):
     robots_status: Literal["ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public", "pending"]
     robots: RobotsSummary | None = None
@@ -242,6 +301,8 @@ class AccessProfile(StrictModel):
     # seconds. Left out of the JSON otherwise (never serialized as null).
     retry_after_seconds: int | None = Field(default=None, ge=1, le=3600, exclude_if=lambda value: value is None)
     note: str
+    # Content-use preferences declared in the same robots.txt; information only, never part of the recommendation.
+    content_use: ContentUse | None = None
 
 
 class OfficialPaths(StrictModel):
@@ -300,7 +361,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "official_path_available"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available"]
     text: str
 
 

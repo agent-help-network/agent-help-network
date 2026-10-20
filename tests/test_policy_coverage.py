@@ -459,6 +459,9 @@ COLUMNS = {
     "host_access_profile.reader_version": _READ_BY,
     "host_access_profile.robots_sha256": _HASH,
     "host_access_profile.llms_sha256": _HASH,
+    "host_access_profile.content_use": Phrase(
+        "content-use preferences it declares (Content-Signal and Content-Usage lines) as normalized yes, no or unset values",
+        "콘텐츠 이용 선호(Content-Signal·Content-Usage 줄)를 yes·no·unset 으로 정규화한 값"),
     "status_cache.origin_operator": _READ_BY,
     "status_cache.vantage": _READ_BY,
     "status_cache.reader_version": _READ_BY,
@@ -511,3 +514,31 @@ def test_report_retention_periods_match_the_policy():
     none = {"en": "no automatic deletion date during the beta", "ko": "베타 기간 동안 자동 삭제 기한이 없"}
     for lang in LANGS:
         assert none[lang] in section(lang, "06", True, 0), f"the {lang} policy omits the no-deletion statement for reports"
+
+
+def test_content_use_storage_limits_match_the_policy():
+    # The numbers come from the code, so the policy and the stored shape cannot drift apart.
+    from ahn import access_profile as ap
+    limits = {
+        "en": [f"at most {ap.MAX_USE_PATH_SAMPLES} sample paths in total", f"agent names of at most {ap.MAX_USE_NAMED_GROUPS} user-agent groups",
+               "only names on our list of known agent tokens", f"at most {ap.MAX_USE_GROUP_AGENTS} per group",
+               "any other name is only counted", f"at most {ap.MAX_USE_IGNORED} names of keys we could not read",
+               "the parser version and the robots.txt hash"],
+        "ko": [f"경로 표본 전체 최대 {ap.MAX_USE_PATH_SAMPLES}개", f"user-agent 그룹 최대 {ap.MAX_USE_NAMED_GROUPS}개의 에이전트 이름",
+               "알려진 에이전트 토큰 목록에 있는 이름만", f"그룹당 최대 {ap.MAX_USE_GROUP_AGENTS}개", "그 밖의 이름은 개수만",
+               f"읽지 못한 키 이름 최대 {ap.MAX_USE_IGNORED}개", "해석기 버전과 robots.txt 해시"],
+    }
+    for lang in LANGS:
+        for where in (section(lang, "06"), policy_text(lang)):
+            missing = [phrase for phrase in limits[lang] if phrase not in where]
+            assert not missing, f"the {lang} policy lacks {missing}"
+    # And the parser keeps to those numbers on a file built to exceed every one of them.
+    groups = "".join(f"User-agent: bot{i}\nUser-agent: ChatGPT-User\nUser-agent: GPTBot\nContent-Signal: ai-train={'no' if i % 2 else 'yes'}, k{i}=1, search={'yes' if i % 3 else 'no'}\n"
+                     f"Content-Usage: /p{i}a/ train-ai=n\nContent-Usage: /p{i}b/ train-ai=n\n\n" for i in range(40))
+    parsed = ap.parse_content_use("User-agent: *\n" + "".join(f"Content-Usage: /s{i}/ train-ai=n\n" for i in range(2)) + "\n" + groups)
+    paths = len(parsed["path_specific_samples"]) + sum(len(group["path_specific_samples"]) for group in parsed["named_groups"])
+    assert paths <= ap.MAX_USE_PATH_SAMPLES and len(parsed["named_groups"]) <= ap.MAX_USE_NAMED_GROUPS
+    assert len(parsed["ignored_keys"]) <= ap.MAX_USE_IGNORED
+    known = {token for token, _kind in ap.AGENT_USER_AGENTS}
+    for group in parsed["named_groups"]:
+        assert len(group["agents"]) <= ap.MAX_USE_GROUP_AGENTS and set(group["agents"]) <= known and group["other_agents"] >= 1

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .access_profile import ai_input_declared_no
+
 
 CHECKS = {
     "locate_failure_stage": "First ask whether your tool received a response from the target or an intermediary. If no response was observed, inspect the client and connection path before attributing a site failure.",
@@ -25,6 +27,7 @@ CHECKS = {
     "profile_not_read": "Declared policy is read only for public apex hosts, and this hostname is a subdomain or tenant host, so no robots.txt was read for it. Look up the apex host for the site-wide declaration; the subdomain may still have its own rules.",
     "profile_pending": "This host's robots.txt and llms.txt are being read now. Repeat the same lookup once after access_profile.retry_after_seconds seconds; the answer will usually carry the declared policy by then. Do not poll repeatedly.",
     "llms_txt_present": "This host publishes llms.txt. Read it first: it is the host's own guidance to language-model agents and may point to preferred machine-readable resources.",
+    "content_use_ai_input_declared_no": "This host's robots.txt declares ai-input=no (or AIPREF ai-use=n) for user-directed agents like you (access_profile.content_use). It is a content-use preference, not an access rule; follow your operator's policy and tell the user if it matters.",
     "official_path_available": "An official developer path is listed for this host (official_paths). Prefer the documented API or developer portal over page automation; it is the sanctioned route and usually the more reliable one.",
 }
 
@@ -50,6 +53,7 @@ CHECKS_KO = {
     "profile_not_read": "선언 정책은 공개 apex 호스트에 대해서만 읽으며, 이 호스트명은 서브도메인·테넌트 호스트라 robots.txt를 읽지 않았습니다. 사이트 전체 선언은 apex 호스트로 조회하세요. 서브도메인에 별도 규칙이 있을 수 있습니다.",
     "profile_pending": "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있습니다. access_profile.retry_after_seconds 초 뒤 같은 조회를 한 번 더 하면 대개 선언 정책이 들어 있습니다. 반복 폴링은 하지 마세요.",
     "llms_txt_present": "이 호스트는 llms.txt를 게시합니다. 먼저 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내이며 선호하는 기계 판독 자원을 가리킬 수 있습니다.",
+    "content_use_ai_input_declared_no": "이 호스트의 robots.txt 가 사용자 지시 에이전트에 ai-input=no(또는 AIPREF ai-use=n)를 선언했습니다(access_profile.content_use). 접근 규칙이 아니라 콘텐츠 이용 선호입니다. 운영사 정책을 따르고, 중요하면 사용자에게 알리세요.",
     "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 페이지 자동화보다 문서화된 API나 개발자 포털을 우선하세요. 허용된 경로이며 대개 더 안정적입니다.",
 }
 
@@ -156,6 +160,9 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
             codes.append("robots_grouping_differs_by_parser")
         if access_profile.get("llms_txt_status") == "present":
             codes.append("llms_txt_present")
+        if ai_input_declared_no(access_profile.get("content_use")):
+            # Information only: the recommendation above never reads content_use.
+            codes.append("content_use_ai_input_declared_no")
     if official and (official.get("api_docs") or official.get("developer_portal")):
         codes.append("official_path_available")
     if provider_status and provider_status.get("freshness") == "fresh":
