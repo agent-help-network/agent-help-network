@@ -78,43 +78,69 @@ _HOST_LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def _groups(text: str) -> tuple[list[dict], list[str]]:
-    """Tolerant RFC 9309 group split: user-agent lines open a group, rule lines close its agent list."""
+def robots_text(text: str | bytes) -> str:
+    """The file as text: capped at ROBOTS_CAP, decoded leniently, without a BOM, every line ending a newline."""
+    if isinstance(text, bytes):
+        text = text[:ROBOTS_CAP].decode("utf-8", errors="replace")
+    return text[:ROBOTS_CAP].lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+
+
+# How lines form groups, from the two primary sources (read 2026-10-20):
+# - RFC 9309 section 2.1/2.2 grammar: a group is one or more user-agent lines followed by allow/disallow rules, empty
+#   lines allowed anywhere. Section 2.2.4: parsing other records "MUST NOT interfere" with those, e.g. a Sitemap line
+#   must not end a group. Section 2.2.2: rules outside any group are ignored. https://www.rfc-editor.org/rfc/rfc9309.html
+# - Google's reference parser, robots.cc: only HandleAllow/HandleDisallow set seen_separator_; HandleUserAgent starts a
+#   new group only when seen_separator_ is set; Sitemap and unknown keys are no-ops (HandleSitemap,
+#   HandleUnknownAction). robots_test.cc ID_LineSyntax_Groups_OtherRules pins this with a Sitemap line and an unknown
+#   line between two user-agent lines. https://github.com/google/robotstxt
+# So a user-agent line opens a new group only at the start or after an allow/disallow line. Every other line, known
+# (Sitemap, Crawl-delay) or unknown (Content-Signal, Host, typos), leaves the grouping as it is.
+def split_groups(text: str | bytes) -> tuple[list[dict], list[str]]:
+    """The file's groups and sitemaps; the one group split every reader of robots.txt uses. Never raises.
+
+    Returns ``(groups, sitemaps)``. ``groups`` is a list in file order; each group is a dict:
+      ``agents``: list[str], the product tokens its user-agent lines name, lowercased (first word of the value, cut at
+                  ``/``). A line with no such word (empty value, ``/bot``) adds no name but still belongs to the group.
+      ``rules``: list[tuple[str, str]], ``("allow" | "disallow", value)`` in file order.
+      ``crawl_delay``: float | None, the last Crawl-delay in the group that parses as 0-3600 seconds.
+      ``other``: list[tuple[str, str]], ``(key, value)`` of every other line inside the group in file order, the key
+                 lowercased with spaces removed (Crawl-delay included, Sitemap not), for non-REP records such as
+                 Content-Signal. Lines before the first user-agent line belong to no group and are dropped.
+    ``sitemaps`` is a list of up to MAX_SITEMAPS distinct http(s) Sitemap URLs from anywhere in the file.
+    """
     groups: list[dict] = []
     current: dict | None = None
-    expecting_agents = False
+    in_agent_lines = False  # from a user-agent line until the next allow/disallow line
     sitemaps: list[str] = []
-    for line in text.splitlines()[:MAX_LINES]:
-        line = line.split("#", 1)[0].strip()
-        if not line or ":" not in line:
+    for line in robots_text(text).splitlines()[:MAX_LINES]:
+        key, separator, value = line.split("#", 1)[0].partition(":")
+        if not separator:
             continue
-        key, _, value = line.partition(":")
         key, value = key.strip().lower().replace(" ", ""), value.strip()
         if key in ("user-agent", "useragent"):
-            agent = value.split("/", 1)[0].split()[0].lower() if value.split() else ""
-            if current is None or not expecting_agents:
-                current = {"agents": [], "rules": [], "crawl_delay": None}
+            if current is None or not in_agent_lines:
+                current = {"agents": [], "rules": [], "crawl_delay": None, "other": []}
                 groups.append(current)
-            if agent:
-                current["agents"].append(agent)
-            expecting_agents = True
-            continue
-        if key == "sitemap":
+            words = value.split("/", 1)[0].split()
+            if words:
+                current["agents"].append(words[0].lower())
+            in_agent_lines = True
+        elif key in ("allow", "disallow"):
+            in_agent_lines = False
+            if current is not None:
+                current["rules"].append((key, value))
+        elif key == "sitemap":
             if value.startswith(("https://", "http://")) and len(value) <= 300 and len(sitemaps) < MAX_SITEMAPS and value not in sitemaps:
                 sitemaps.append(value)
-            continue
-        expecting_agents = False
-        if current is None:
-            continue
-        if key in ("allow", "disallow"):
-            current["rules"].append((key, value))
-        elif key == "crawl-delay":
-            try:
-                delay = float(value)
+        elif current is not None:
+            current["other"].append((key, value))
+            if key == "crawl-delay":
+                try:
+                    delay = float(value)
+                except ValueError:
+                    continue
                 if 0 <= delay <= 3600:
                     current["crawl_delay"] = delay
-            except ValueError:
-                pass
     return groups, sitemaps
 
 
@@ -156,10 +182,7 @@ def _applies(agent: str, token: str) -> bool:
 
 def parse_robots(text: str | bytes) -> dict:
     """Pure. Declared root ('/') policy per known agent token; tolerant of junk, BOM, CRLF, comments."""
-    if isinstance(text, bytes):
-        text = text[:ROBOTS_CAP].decode("utf-8", errors="replace")
-    text = text[:ROBOTS_CAP].lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    groups, sitemaps = _groups(text)
+    groups, sitemaps = split_groups(text)
     wildcard = [group for group in groups if "*" in group["agents"]]
     wildcard_rules = [rule for group in wildcard for rule in group["rules"]]
     wildcard_root_allowed = _root_allowed(wildcard_rules)
