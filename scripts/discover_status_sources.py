@@ -419,10 +419,11 @@ class Net:
                         break
             return response.status_code, response.headers.get("location"), body, dict(response.headers)
 
-    def fetch(self, url: str, *, cap: int = TITLE_CAP) -> dict:
-        """GET with hand-followed redirects. Keys: status, final_url, chain (hosts visited), body, headers, error."""
+    def fetch(self, url: str, *, cap: int = TITLE_CAP, follow: bool = True) -> dict:
+        """GET with hand-followed redirects (``follow=False`` returns the first answer, a 3xx included, as the service's own feed read does).
+        Keys: status, final_url, chain (hosts visited), body, headers, error, exc (the transport exception, if any)."""
         current, chain, retried = url, [urlsplit(url).hostname or ""], False
-        result = {"status": None, "final_url": url, "chain": chain, "body": b"", "headers": {}, "error": ""}
+        result = {"status": None, "final_url": url, "chain": chain, "body": b"", "headers": {}, "error": "", "exc": None}
         for _ in range(MAX_HOPS + 2):
             parts = urlsplit(current)
             host = parts.hostname or ""
@@ -435,13 +436,13 @@ class Net:
                 if not retried:
                     retried = True
                     continue
-                result["error"] = type(exc).__name__
+                result["error"], result["exc"] = type(exc).__name__, exc
                 return result
             if status in {429, 500, 502, 503, 504} and not retried:
                 retried = True
                 continue
             result.update(status=status, final_url=current, body=body, headers=headers)
-            if status in {301, 302, 303, 307, 308} and location and len(chain) <= MAX_HOPS:
+            if follow and status in {301, 302, 303, 307, 308} and location and len(chain) <= MAX_HOPS:
                 current = urljoin(current, location)
                 chain.append(urlsplit(current).hostname or "")
                 continue
