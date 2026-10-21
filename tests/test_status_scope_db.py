@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -134,10 +134,48 @@ def test_an_announced_incident_keeps_waiting_and_shows_its_scope(lookup, monkeyp
     assert status["affected"] == ["WARP", "Paris, France - (CDG)", "Nashville, United States - (BNA)"]
     assert status["incident_updated_at"].startswith("2026-09-01T08:29:56")  # UTC
     assert datetime.fromisoformat(status["source_updated_at"].replace("Z", "+00:00")) == datetime(2026, 8, 27, tzinfo=timezone.utc)
-    assert answer["recommendation"]["action"] == "wait_provider_incident"
+    # A data-center maintenance is in progress, so the 2026-09-01 incident is not "stale" (D45). The scope is partial
+    # (minor incident under a major page) but not regional (WARP is a product), so the wait keeps medium confidence.
+    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
     codes = [item["code"] for item in answer["next_checks"]]
     assert codes[codes.index("provider_scope") + 1] == "provider_scope_partial"
     assert scope_row(settings, "cloudflare.com")["affected_regional"] is False
+
+
+def test_a_regional_only_scope_waits_with_low_confidence(lookup, monkeypatch):
+    settings, client = lookup
+    feeds = Feeds(**{"status.twilio.com": "twilio"})  # every incident and the maintenance sit in CARRIER NETWORK
+    with use(monkeypatch, feeds):
+        check(client, "twilio.com")
+        background_reads.process_due(settings, limit=10)
+        answer = check(client, "twilio.com")
+    assert scope_row(settings, "twilio.com")["affected_regional"] is True
+    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "low",
+                                        "reasons": ["provider_scope", "provider_scope_partial"]}
+
+
+@pytest.mark.parametrize("age_days,stale", [(30, True), (0, False)])
+def test_an_incident_nobody_updated_for_a_week_is_not_a_reason_to_wait(lookup, monkeypatch, age_days, stale):
+    settings, client = lookup
+    feeds = Feeds(**{"www.githubstatus.com": "single_incident"})
+    updated = (datetime.now(timezone.utc) - timedelta(days=age_days, minutes=5)).isoformat().replace("+00:00", "Z")
+    for incident in feeds.pages["www.githubstatus.com"]["unresolved"]["incidents"]:
+        incident["updated_at"] = updated
+    with use(monkeypatch, feeds):
+        check(client, "github.com")
+        background_reads.process_due(settings, limit=10)
+        answer = check(client, "github.com")
+    status = answer["provider_status"]
+    assert status["basis"] == "incident" and status["active_maintenances"] == 0 and status["indicator"] == "major"
+    codes = [item["code"] for item in answer["next_checks"]]
+    if stale:
+        assert answer["recommendation"]["action"] != "wait_provider_incident"
+        assert "provider_incident_stale" in codes and "provider_scope" not in codes
+        korean = client.get("/ko/search", params={"site_host": "github.com"}).text
+        assert "7일 넘게 업데이트되지 않았고" in korean
+    else:
+        assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
+        assert "provider_scope" in codes and "provider_incident_stale" not in codes
 
 
 def test_a_quiet_read_clears_the_old_scope_and_costs_one_request(lookup, monkeypatch):

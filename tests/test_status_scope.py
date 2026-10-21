@@ -252,8 +252,10 @@ def test_one_incident_type_is_unchanged_and_not_partial():
     assert scope["affected"] == ["API"] and scope["affected_regional"] is False and scope["max_incident_impact"] == "major"
     status = provider_status(indicator, scope)
     assert status["basis"] == "incident" and not partial(indicator, scope)
-    assert recommendation(None, status, None, None) == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
-    assert codes(next_checks(None, status, "no_reports")) == ["locate_failure_stage", "provider_scope", "reports_unknown"]
+    now = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)  # the fixture's incident was updated 20 minutes before (D45)
+    assert recommendation(None, status, None, None, now=now) == {
+        "action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
+    assert codes(next_checks(None, status, "no_reports", now=now)) == ["locate_failure_stage", "provider_scope", "reports_unknown"]
 
 
 def test_a_maintenance_only_page_still_waits_with_the_maintenance_text():
@@ -464,7 +466,7 @@ def test_regional_groups_table_holds_only_well_formed_ids_and_public_names():
 
 
 def test_new_checks_have_english_and_korean_text():
-    for code in ("provider_components_only", "provider_scope_partial"):
+    for code in ("provider_components_only", "provider_incident_stale", "provider_scope_partial"):
         assert code in CHECKS and code in CHECKS_KO
     assert "provider_status.affected" in CHECKS["provider_scope_partial"]
 

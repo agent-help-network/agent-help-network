@@ -18,7 +18,7 @@ The hook is read-only: it sends a hostname and enum codes and reports nothing. T
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.4 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.5 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -101,7 +101,7 @@ The hook never reports observations. It makes no POST requests and never calls `
 
 ### Next codes the line can carry
 
-The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3. An older hook drops a code it does not know from the line.
+The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3; `provider_incident_stale` was added after 0.2.4 and is accepted from version 0.2.5. An older hook drops a code it does not know from the line.
 
 | Code | Meaning |
 | :- | :- |
@@ -111,7 +111,8 @@ The `Next:` part of the line shows up to two `next_checks` codes, as the service
 | `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (for example `.gov`, `.gov.uk`, `.go.kr`). That says who may register a domain, not that any page or link is vouched for |
 | `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site |
 | `provider_components_only` | The provider's page-level status shows an issue, but it has announced no incident or maintenance (`provider_status.basis` is `components_only`); only some components are marked. Check on the provider's status page whether a component you use is one of them. With a `minor` or `maintenance` page the recommendation is then not `wait_provider_incident`; with `major` or `critical` it still is |
-| `provider_scope_partial` | Information only. The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether `provider_status.affected` names a service you use |
+| `provider_incident_stale` | The provider's active incidents have had no update for more than 7 days and no maintenance is in progress. An incident left open without updates is then not a reason for `wait_provider_incident`: if `provider_status.affected` names a service you use, wait for the provider; otherwise continue. A `major` or `critical` page above the worst incident's impact still waits |
+| `provider_scope_partial` | The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether `provider_status.affected` names a service you use. When every affected component is regional, a `wait_provider_incident` answer has `low` confidence |
 
 ### On the service side
 
