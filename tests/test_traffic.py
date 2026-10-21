@@ -62,10 +62,17 @@ def test_render_sample_sums_distinct_series_at_latest_time():
 def test_our_clients_get_their_own_kind_from_their_real_user_agents():
     # The strings are read from the shipped code, so a User-Agent change there fails here instead of silently going `unknown`.
     assert _hook.USER_AGENT.startswith("ahn-claude-code-plugin/")
-    assert _client.USER_AGENT.startswith("ahn-client/")
+    assert _client.user_agent().startswith("ahn-client/")
     path = "/v1/incidents/check?site_host=example.org"
     assert client_type(_request(path, {"User-Agent": _hook.USER_AGENT})) == "plugin_hint"
-    assert client_type(_request(path, {"User-Agent": _client.USER_AGENT})) == "ahn_client_hint"
+    assert client_type(_request(path, {"User-Agent": _client.user_agent()})) == "ahn_client_hint"
+    # The framework adapters (ahn-client 0.3.0) name themselves inside the parentheses and still start with the same prefix,
+    # so they count as ahn-client, not as the Claude Code plugin, whichever framework they sit in.
+    for adapter in ("langchain", "crewai", "openai-agents", "claude-agent-sdk", "browser-use"):
+        agent = _client.user_agent(adapter)
+        assert agent.startswith("ahn-client/") and f"(+{adapter}; +https://agenthelpnetwork.com)" in agent
+        assert client_type(_request(path, {"User-Agent": agent})) == "ahn_client_hint"
+    assert client_type(_request(path, {"User-Agent": "ahn-client/0.3.0 (+langchain; +https://agenthelpnetwork.com)"})) == "ahn_client_hint"
     assert client_type(_request(path, {"User-Agent": "ahn-claude-code-plugin/0.2"})) == "plugin_hint"
     assert client_type(_request(path, {"User-Agent": "ahn-client/0.2 (+https://agenthelpnetwork.com)"})) == "ahn_client_hint"
     assert client_type(_request(path, {"User-Agent": "AHN-Client/0.9"})) == "ahn_client_hint"  # case-insensitive, any version
