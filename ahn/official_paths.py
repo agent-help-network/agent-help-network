@@ -1077,6 +1077,8 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://developers.cloudflare.com/fundamentals/api/reference/limits/",
         "openapi_url": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
         "official_mcp": [{"endpoint": "https://mcp.cloudflare.com/mcp",
+                          "doc_url": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/"},
+                         {"endpoint": "https://docs.mcp.cloudflare.com/mcp",
                           "doc_url": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/"}],
         "terms": {"url": "https://www.cloudflare.com/terms/",
                   "quote": "If you permit third parties to access your Cloudflare account (e.g., by providing your API token "
@@ -1187,6 +1189,8 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://developers.figma.com/docs/rest-api/personal-access-tokens/",
         "rate_limits_url": "https://developers.figma.com/docs/rest-api/rate-limits/",
         "openapi_url": "https://raw.githubusercontent.com/figma/rest-api-spec/main/openapi/openapi.yaml",
+        "official_mcp": [{"endpoint": "https://mcp.figma.com/mcp",
+                          "doc_url": "https://developers.figma.com/docs/figma-mcp-server/remote-server-installation/"}],
         "terms": {"url": "https://www.figma.com/legal/developer-terms/",
                   "quote": "Figma may change the fees it charges for access to or use of the Developer Resources (including by "
                            "introducing or modifying rate limits) on thirty days' written notice"},
@@ -1206,6 +1210,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "auth": [{"method": "api_key", "source_url": "https://vercel.com/docs/rest-api"}],
         "key_signup_url": "https://vercel.com/docs/rest-api/getting-started",
         "rate_limits_url": "https://vercel.com/docs/rest-api",
+        "official_mcp": [{"endpoint": "https://mcp.vercel.com", "doc_url": "https://vercel.com/docs/agent-resources/vercel-mcp"}],
         "verified_at": "2026-10-20",
     },
     "netlify.com": {
@@ -1332,6 +1337,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://supabase.com/docs/guides/platform/personal-access-tokens",
         "rate_limits_url": "https://supabase.com/docs/reference/api/introduction",
         "openapi_url": "https://api.supabase.com/api/v1-json",
+        "official_mcp": [{"endpoint": "https://mcp.supabase.com/mcp", "doc_url": "https://supabase.com/docs/guides/ai-tools/mcp"}],
         "terms": {"url": "https://supabase.com/terms",
                   "quote": "Customer shall not use the Services for any purposes beyond the scope of the access granted in this Agreement."},
         "verified_at": "2026-10-20",
@@ -1343,6 +1349,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://linear.app/developers/graphql",
         "rate_limits_url": "https://linear.app/developers/rate-limiting",
+        "official_mcp": [{"endpoint": "https://mcp.linear.app/mcp", "doc_url": "https://linear.app/docs/mcp"}],
         "verified_at": "2026-10-20",
     },
     "shopify.com": {
@@ -1361,6 +1368,8 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "auth": [{"method": "oauth2", "source_url": "https://developer.paypal.com/api/rest/authentication"}],
         "key_signup_url": "https://developer.paypal.com/api/rest/authentication",
         "sandbox_url": "https://developer.paypal.com/sandbox-testing/overview",
+        "official_mcp": [{"endpoint": "https://mcp.paypal.com/http", "doc_url": "https://developer.paypal.com/ai-tools/mcp-server"},
+                         {"endpoint": "https://mcp.paypal.com/sse", "doc_url": "https://developer.paypal.com/ai-tools/mcp-server"}],
         "terms": {"url": "https://www.paypal.com/us/legalhub/paypal/xdeveloper-full",
                   "quote": "PayPal may also impose limits on certain features and services or restrict your access to parts of "
                            "or all of the Developer’s Tools without notice or liability."},
@@ -1455,6 +1464,93 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "auth": [{"method": "api_key", "source_url": "https://api-docs.render.com/reference/authentication"}],
         "key_signup_url": "https://api-docs.render.com/reference/authentication",
         "rate_limits_url": "https://api-docs.render.com/reference/rate-limiting",
+        "verified_at": "2026-10-20",
+    },
+    # Hosts below carry only `official_mcp`: the endpoint was listed under a domain-verified name in the official MCP
+    # registry (candidate finding only) and is printed on the publisher's own documentation page at `doc_url`.
+    "atlassian.com": {
+        "official_mcp": [{"endpoint": "https://mcp.atlassian.com/v2/mcp",
+                          "doc_url": "https://support.atlassian.com/atlassian-ai-gateway/docs/get-started-with-the-atlassian-remote-mcp-server/"}],
+        "verified_at": "2026-10-20",
+    },
+    "zapier.com": {
+        "official_mcp": [{"endpoint": "https://mcp.zapier.com/api/v1/connect",
+                          "doc_url": "https://docs.zapier.com/mcp/get-started/connect/other"}],
+        "verified_at": "2026-10-20",
+    },
+    "airtable.com": {
+        "official_mcp": [{"endpoint": "https://mcp.airtable.com/mcp", "doc_url": "https://airtable.com/developers/agents/mcp/getting-started"}],
+        "verified_at": "2026-10-20",
+    },
+    "alchemy.com": {
+        "official_mcp": [{"endpoint": "https://mcp.alchemy.com/mcp", "doc_url": "https://www.alchemy.com/docs/alchemy-mcp-server"}],
+        "verified_at": "2026-10-20",
+    },
+    "amplitude.com": {
+        "official_mcp": [{"endpoint": "https://mcp.amplitude.com/mcp", "doc_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp"},
+                         {"endpoint": "https://mcp.eu.amplitude.com/mcp", "doc_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "bitly.com": {
+        "official_mcp": [{"endpoint": "https://api-ssl.bitly.com/v4/mcp", "doc_url": "https://dev.bitly.com/bitly-mcp/"}],
+        "verified_at": "2026-10-20",
+    },
+    "circleci.com": {
+        "official_mcp": [{"endpoint": "https://mcp.circleci.com/v1/mcp",
+                          "doc_url": "https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/"}],
+        "verified_at": "2026-10-20",
+    },
+    "coinmarketcap.com": {
+        "official_mcp": [{"endpoint": "https://mcp.coinmarketcap.com/mcp", "doc_url": "https://coinmarketcap.com/api/mcp/"}],
+        "verified_at": "2026-10-20",
+    },
+    "exa.ai": {
+        "official_mcp": [{"endpoint": "https://mcp.exa.ai/mcp", "doc_url": "https://exa.ai/docs/get-started/exa-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "gocardless.com": {
+        "official_mcp": [{"endpoint": "https://mcp.gocardless.com", "doc_url": "https://docs.gocardless.com/docs/developer-resources/mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "jotform.com": {
+        "official_mcp": [{"endpoint": "https://mcp.jotform.com", "doc_url": "https://www.jotform.com/developers/mcp/"}],
+        "verified_at": "2026-10-20",
+    },
+    "microsoft.com": {
+        "official_mcp": [{"endpoint": "https://learn.microsoft.com/api/mcp",
+                          "doc_url": "https://learn.microsoft.com/en-us/training/support/mcp-developer-reference"}],
+        "verified_at": "2026-10-20",
+    },
+    "monday.com": {
+        "official_mcp": [{"endpoint": "https://mcp.monday.com/mcp",
+                          "doc_url": "https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp"}],
+        "verified_at": "2026-10-20",
+    },
+    "newrelic.com": {
+        "official_mcp": [{"endpoint": "https://mcp.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"},
+                         {"endpoint": "https://mcp.eu.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"},
+                         {"endpoint": "https://mcp.jp.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"}],
+        "verified_at": "2026-10-20",
+    },
+    "paddle.com": {
+        "official_mcp": [{"endpoint": "https://mcp.paddle.com/mcp", "doc_url": "https://developer.paddle.com/sdks/ai/paddle-mcp/"},
+                         {"endpoint": "https://sandbox-mcp.paddle.com/mcp", "doc_url": "https://developer.paddle.com/sdks/ai/paddle-mcp/"}],
+        "verified_at": "2026-10-20",
+    },
+    "postman.com": {
+        "official_mcp": [{"endpoint": "https://mcp.postman.com/minimal", "doc_url": "https://www.postman.com/product/mcp-server/"}],
+        "verified_at": "2026-10-20",
+    },
+    "railway.com": {
+        "official_mcp": [{"endpoint": "https://mcp.railway.com", "doc_url": "https://docs.railway.com/ai/mcp-server"}],
+        "verified_at": "2026-10-20",
+    },
+    "twelvedata.com": {
+        "official_mcp": [{"endpoint": "https://mcp.twelvedata.com/mcp", "doc_url": "https://twelvedata.com/docs/llms/ai/mcp-server.md"}],
+        "verified_at": "2026-10-20",
+    },
+    "typeform.com": {
+        "official_mcp": [{"endpoint": "https://api.typeform.com/mcp", "doc_url": "https://www.typeform.com/developers/mcp/"}],
         "verified_at": "2026-10-20",
     },
 }
