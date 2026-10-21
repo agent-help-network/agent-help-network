@@ -114,7 +114,7 @@ PAYLOAD_KEYS = {
 ROBOTS_KEYS = frozenset({"rules", "wildcard_root_allowed", "sitemap", "sitemaps", "wildcard_crawl_delay",
                          "wildcard_disallow_paths", "agents_blocked", "agents_allowed", "grouping_differs_by_parser"})
 RULE_KEYS = frozenset({"agent", "kind", "explicit_group", "root_allowed", "disallow_count", "crawl_delay", "disallow_paths"})
-# The stored content_use of PR #38 (head 0f74955): parse_content_use() plus the hash of the robots.txt it came from.
+# The stored content_use (migration 021): access_profile.parse_content_use() plus the hash of the robots.txt it came from.
 CONTENT_USE_KEYS = frozenset({"vocab", "formats", "signals", "usage", "path_specific_samples", "named_groups",
                               "named_groups_total", "vendor_default_hint", "ai_input_declared_no", "ai_input_no_agents",
                               "ignored_keys", "robots_sha256"})

@@ -116,7 +116,7 @@ def test_access_profile_records_are_the_cli_export_records_cut_to_the_day():
     assert all(r["observed_at"].endswith("T00:00:00Z") for r in records if r["kind"] == "access_profile")
 
 
-CONTENT_USE = {  # the stored shape of PR #38 (head 0f74955)
+CONTENT_USE = {  # the stored shape (migration 021, access_profile.parse_content_use)
     "vocab": "ahn-content-use/1", "formats": ["cloudflare_content_signal"],
     "signals": {"search": "yes", "ai_input": "no", "ai_train": "no", "use": None}, "usage": None,
     "path_specific_samples": ["/docs/"],
@@ -130,6 +130,14 @@ CONTENT_USE = {  # the stored shape of PR #38 (head 0f74955)
 def test_content_use_passes_its_own_allowlist():
     record = export.access_profile_envelope(profile_row("github.com"))
     record["payload"]["content_use"] = copy.deepcopy(CONTENT_USE)
+    bundle.check_record(record, seed_hosts=SEEDS, operator=OPERATOR)
+    # What the reader really stores (migration 021): a new key in parse_content_use fails here until it is allowlisted.
+    from ahn.access_profile import parse_content_use
+
+    robots = ("User-agent: *\nContent-Signal: search=yes, ai-train=no\nContent-Usage: /docs/ train-ai=n\n\n"
+              "User-agent: GPTBot\nUser-agent: other-bot\nContent-Signal: ai-input=no\nContent-Usage: train-ai=n\n")
+    record["payload"]["content_use"] = {**parse_content_use(robots), "robots_sha256": "c" * 64}
+    assert record["payload"]["content_use"]["named_groups"]
     bundle.check_record(record, seed_hosts=SEEDS, operator=OPERATOR)
 
 
