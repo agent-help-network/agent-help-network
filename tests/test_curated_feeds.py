@@ -69,3 +69,38 @@ def test_batch_limits_fit_the_cron_and_the_per_host_rate():
     assert background_reads.MIN_READ_INTERVAL >= 0.5 and status_refresh.SCOPE_GAP_SECONDS >= 1.0
     with pytest.raises(ValueError):
         status_refresh.refresh_batch(None, limit=status_refresh.FEED_BATCH_MAX + 1)
+
+
+# --- freshness of the last statement (D46) -------------------------------------------------------------
+
+@pytest.mark.parametrize("label", ["timeout", "http_502", "too_large", "http_403", "http_429", "http_401"])
+def test_a_failure_after_a_recent_success_keeps_the_statement_fresh(label):
+    # A status page that times out once during the outage it reports keeps its last statement: freshness is the
+    # age of that statement, and the failure shows as error_detail (failed_later). A refusal is the same: it says
+    # nothing about the provider's state, and its own backoff starts at an hour, inside FEED_STALE_HOURS.
+    now = T + timedelta(minutes=70)
+    assert background_reads.feed_freshness(T, T + timedelta(minutes=65), now) == ("fresh", True)
+    assert background_reads.feed_backoff(1, label) <= timedelta(hours=background_reads.FEED_STALE_HOURS)
+
+
+def test_freshness_is_the_age_of_the_last_success():
+    stale_after = timedelta(hours=background_reads.FEED_STALE_HOURS)
+    fresh = background_reads.feed_freshness
+    assert fresh(T, None, T + stale_after) == ("fresh", False)  # exactly two hours is still fresh
+    assert fresh(T, None, T + stale_after + timedelta(seconds=1)) == ("stale", False)
+    assert fresh(T, T + timedelta(minutes=90), T + stale_after + timedelta(seconds=1)) == ("stale", True)
+    assert fresh(T, T - timedelta(minutes=5), T + timedelta(minutes=1)) == ("fresh", False)  # failure before success
+    assert fresh(None, None, T) == ("pending", False)
+    assert fresh(None, T, T + timedelta(minutes=1)) == ("stale", True)  # only failures: no statement to keep
+
+
+def test_the_freshness_rule_is_written_in_the_contract_and_the_decisions():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ko = (root / "docs" / "api-contract.md").read_text(encoding="utf-8")
+    en = (root / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
+    decisions = (root / "docs" / "decisions.md").read_text(encoding="utf-8")
+    assert "the age of the last successful read" in en and "marks the previous value `stale`" not in en
+    assert "마지막 성공 읽기의 나이" in ko and "이전 값을 `stale`로 표시" not in ko
+    assert "read together or not at all" in en and "함께 읽거나 함께 건너뛴다" in ko
+    assert "| D46 (" in decisions and "마지막 성공 읽기의 나이" in decisions

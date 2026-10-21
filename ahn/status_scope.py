@@ -174,17 +174,22 @@ def summarize(incidents: dict | None, maintenances: dict | None, page_id: str) -
 def read_scope(fetch, page_id: str, *, label=lambda _exc: "error", allowed=lambda: True) -> dict:
     """Read both lists with fetch(path) -> bytes (which raises on any failure) and summarize them.
 
-    label(exc) names a failure (status_refresh.failure_label); allowed() is asked before each list (the cron's
-    time budget). The result also carries ``scope_outcome``: ``ok`` (both read), ``failed`` (a list failed;
-    ``scope_error`` names the first failure) or ``skipped`` (a list was not asked for). After a refusal
-    (401, 403, 429) the other list is not asked for either."""
+    label(exc) names a failure (status_refresh.failure_label); allowed() is asked once, before the first list (the
+    cron's time budget): the two lists are read together or not at all (D46), since one list without the other
+    leaves basis unknown (an incident count without the maintenance count) and keeps a stale-incident wait (D45)
+    that the budget, not the provider, decided. The result also carries ``scope_outcome``: ``ok`` (both read),
+    ``failed`` (a list failed; ``scope_error`` names the first failure) or ``skipped`` (the budget refused the
+    lists; not a failure). After a refusal (401, 403, 429) the other list is not asked for either."""
+    if not allowed():
+        out = summarize(None, None, page_id)
+        out["scope_outcome"] = "skipped"
+        out["scope_error"] = None
+        return out
     parts: list[dict | None] = []
     error = None
-    skipped = False
     for path, parse in ((INCIDENTS_PATH, parse_incidents), (MAINTENANCES_PATH, parse_maintenances)):
-        if error in SCOPE_REFUSALS or not allowed():
+        if error in SCOPE_REFUSALS:
             parts.append(None)
-            skipped = skipped or error is None
             continue
         try:
             parts.append(parse(json.loads(fetch(path)), page_id))
@@ -192,7 +197,7 @@ def read_scope(fetch, page_id: str, *, label=lambda _exc: "error", allowed=lambd
             parts.append(None)
             error = error or label(exc)
     out = summarize(parts[0], parts[1], page_id)
-    out["scope_outcome"] = "failed" if error else "skipped" if skipped else "ok"
+    out["scope_outcome"] = "failed" if error else "ok"
     out["scope_error"] = error
     return out
 

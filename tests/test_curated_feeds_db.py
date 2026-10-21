@@ -423,3 +423,89 @@ def test_the_lookup_path_follows_the_same_backoff(db, small):
         age(db, 15)
         client.get("/v1/incidents/check", params={"site_host": "render.com"})
     assert [r["kind"] for r in q(db, "SELECT kind FROM background_reads")] == ["status_feed"]
+
+
+# --- D46: the last statement outlives one failed read; the two lists are read together ---------------------
+
+def datto_type_row(db, *, fetched_minutes: int, error: str | None):
+    """A critical page with four incidents updated yesterday, read fetched_minutes ago, then one failed read."""
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures,
+                                                  active_incidents,max_incident_impact,incident_updated_at,active_maintenances)
+                        VALUES ('render.com','critical',now() - make_interval(mins => %s),
+                                CASE WHEN %s::text IS NULL THEN NULL ELSE now() - interval '1 minute' END,%s,
+                                CASE WHEN %s::text IS NULL THEN NULL ELSE 1 END,4,'critical',now() - interval '1 day',0)""",
+                     (fetched_minutes, error, error, error))
+
+
+@pytest.mark.parametrize("error", ["timeout", "http_502", "http_429", "http_403"])
+def test_one_failed_read_after_a_recent_statement_still_waits(db, small, error):
+    # The live case: a status page that answers in 13 s against a 10 s body limit, read successfully 70 minutes
+    # earlier. The statement is 70 minutes old, so it is fresh and still a reason to wait; the failure is shown.
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=70, error=error)
+    answer = service.check(db, "render.com")
+    assert answer["provider_status"]["freshness"] == "fresh"
+    assert answer["provider_status"]["error_detail"] == error
+    assert answer["recommendation"]["action"] == "wait_provider_incident"
+
+
+def test_a_statement_older_than_two_hours_is_stale_with_or_without_a_failure(db, small):
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=121, error="timeout")
+    answer = service.check(db, "render.com")
+    assert answer["provider_status"]["freshness"] == "stale" and answer["provider_status"]["error_detail"] == "timeout"
+    assert answer["recommendation"]["action"] != "wait_provider_incident"
+
+
+def test_a_recent_statement_without_a_failure_has_no_error_detail(db, small):
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=70, error=None)
+    status = service.check(db, "render.com")["provider_status"]
+    assert status["freshness"] == "fresh" and status.get("error_detail") is None
+
+
+def test_only_failures_are_still_stale(db, small):
+    sync_curated_sources(db)
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+                        VALUES ('render.com','unknown',NULL,now(),'timeout',1)""")
+    answer = service.check(db, "render.com")
+    assert answer["provider_status"]["freshness"] == "stale" and answer["provider_status"]["error_detail"] == "timeout"
+    assert answer["recommendation"]["action"] != "wait_provider_incident"
+
+
+def test_the_owner_board_follows_the_same_freshness(db, small):
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=70, error="timeout")
+    with connect(db) as conn:
+        assert "render.com" in signal_history._provider_now(conn, datetime.now(timezone.utc))
+
+
+def test_the_budget_ending_after_the_first_list_still_reads_the_second(db, small, monkeypatch):
+    sync_curated_sources(db)
+    with connect(db) as conn:  # only Cloudflare is due
+        conn.execute("UPDATE status_sources SET enabled=false WHERE site_host<>'cloudflare.com'")
+    clock = [0.0]
+    monkeypatch.setattr(status_refresh, "_clock", lambda: clock[0])
+    inner = active_answer()
+
+    def answer(request):
+        if request.url.path == "/api/v2/incidents/unresolved.json":
+            clock[0] += 70.0  # the incident list takes the run past its 60 s budget
+        return inner(request)
+    feeds = Feeds(answer)
+    assert batch(db, feeds, time_budget=60.0)["updated"] == 1
+    assert cloudflare_paths(feeds) == ["/api/v2/status.json", "/api/v2/incidents/unresolved.json",
+                                       "/api/v2/scheduled-maintenances/active.json"]
+    row = q(db, "SELECT active_incidents,active_maintenances,scope_failures FROM status_cache WHERE site_host='cloudflare.com'")[0]
+    assert row["active_incidents"] is not None and row["active_maintenances"] == 2 and row["scope_failures"] is None
+
+
+def test_the_search_page_shows_a_failure_under_a_fresh_statement(db, small):
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=70, error="timeout")
+    with TestClient(create_app(db)) as client:
+        page = client.get("/en/search", params={"site_host": "render.com"}).text
+    assert "Critical provider-reported issue" in page and "Latest feed read failed:" in page and "timeout" in page
+    assert "Live source unavailable" not in page

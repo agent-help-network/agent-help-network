@@ -556,7 +556,7 @@ def _provider_now(conn, now: datetime) -> dict[str, dict]:
     curated = board_hosts()
     rows = conn.execute(
         """SELECT site_host,indicator,fetched_at,source_updated_at FROM status_cache
-           WHERE indicator=ANY(%s) AND fetched_at >= %s AND (last_error_at IS NULL OR fetched_at >= last_error_at)""",
+           WHERE indicator=ANY(%s) AND fetched_at >= %s""",
         (sorted(PROVIDER_PROBLEMS), now - FEED_FRESH),
     ).fetchall()
     return {row["site_host"]: dict(row) for row in rows if row["site_host"] in curated}
@@ -567,15 +567,14 @@ def _infra_feeds(conn, feeds: set[str], now: datetime) -> list[dict]:
     from .status_refresh import SOURCES
 
     cache = {row["site_host"]: row for row in conn.execute(
-        "SELECT site_host,indicator,fetched_at,last_error_at FROM status_cache WHERE site_host=ANY(%s)",
+        "SELECT site_host,indicator,fetched_at FROM status_cache WHERE site_host=ANY(%s)",
         (sorted(INFRA_HOSTS),)).fetchall()}
     result = []
     for host in sorted(INFRA_HOSTS):
         row = cache.get(host)
         fetched = row["fetched_at"] if row else None
         result.append({"host": host, "feed": host in SOURCES, "registered": host in feeds,
-                       "fresh": bool(fetched and fetched >= now - FEED_FRESH
-                                     and (row["last_error_at"] is None or fetched >= row["last_error_at"])),
+                       "fresh": bool(fetched and fetched >= now - FEED_FRESH),
                        "fetched_at": _iso(fetched), "indicator": row["indicator"] if row and fetched else None})
     return result
 
