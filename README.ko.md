@@ -41,7 +41,7 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 
 | `action` | 조건 | `confidence` |
 | --- | --- | --- |
-| `wait_provider_incident` | 신선한 업체 피드가 `minor`, `major`, `critical`, `maintenance` 활성 상태를 발표했고, 그 근거가 발표된 사건이나 점검이다(`provider_status.basis` 가 `components_only` 가 아님). 발표가 없어도 페이지가 `major`·`critical` 이면 대기한다. 7일 넘게 업데이트되지 않은 사건만 있고 진행 중인 점검이 없으면, 그보다 높은 `major`·`critical` 페이지 표시가 없는 한 대기 이유로 보지 않는다(`provider_incident_stale`). 범위가 일부일 수 있으면(`provider_scope_partial`) 대기의 confidence 는 `low` 다. | medium(범위 일부면 low) |
+| `wait_provider_incident` | 신선한 업체 피드가 `minor`, `major`, `critical`, `maintenance` 활성 상태를 발표했고, 그 근거가 발표된 사건이나 점검이다(`provider_status.basis` 가 `components_only` 가 아님). 발표가 없어도 페이지가 `major`·`critical` 이면 대기한다. 7일 넘게 업데이트되지 않은 사건만 있고 진행 중인 점검이 없으면, 그보다 높은 `major`·`critical` 페이지 표시가 없는 한 대기 이유로 보지 않는다(`provider_incident_stale`). 영향 컴포넌트가 모두 지역·거점이면(`provider_scope_partial`) 대기의 confidence 는 `low` 다. | medium(지역·거점 전용이면 low) |
 | `hand_off_to_human` | `error_class` 가 `human_verification`(high) 또는 `login_auth`(medium). | high / medium |
 | `use_official_path` | 차단 선언(아래)이 있고 공식 경로가 있다. | high |
 | `stop_declared_block` | 차단 선언이 있고 공식 경로가 없다. 페이지 자동 재시도를 멈춘다. | medium |

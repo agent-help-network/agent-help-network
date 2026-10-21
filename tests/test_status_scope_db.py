@@ -134,13 +134,24 @@ def test_an_announced_incident_keeps_waiting_and_shows_its_scope(lookup, monkeyp
     assert status["affected"] == ["WARP", "Paris, France - (CDG)", "Nashville, United States - (BNA)"]
     assert status["incident_updated_at"].startswith("2026-09-01T08:29:56")  # UTC
     assert datetime.fromisoformat(status["source_updated_at"].replace("Z", "+00:00")) == datetime(2026, 8, 27, tzinfo=timezone.utc)
-    # A data-center maintenance is in progress, so the 2026-09-01 incident is not "stale" (D45); the scope may be
-    # partial (minor incident under a major page), so the wait has low confidence.
-    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "low",
-                                        "reasons": ["provider_scope", "provider_scope_partial"]}
+    # A data-center maintenance is in progress, so the 2026-09-01 incident is not "stale" (D45). The scope is partial
+    # (minor incident under a major page) but not regional (WARP is a product), so the wait keeps medium confidence.
+    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
     codes = [item["code"] for item in answer["next_checks"]]
     assert codes[codes.index("provider_scope") + 1] == "provider_scope_partial"
     assert scope_row(settings, "cloudflare.com")["affected_regional"] is False
+
+
+def test_a_regional_only_scope_waits_with_low_confidence(lookup, monkeypatch):
+    settings, client = lookup
+    feeds = Feeds(**{"status.twilio.com": "twilio"})  # every incident and the maintenance sit in CARRIER NETWORK
+    with use(monkeypatch, feeds):
+        check(client, "twilio.com")
+        background_reads.process_due(settings, limit=10)
+        answer = check(client, "twilio.com")
+    assert scope_row(settings, "twilio.com")["affected_regional"] is True
+    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "low",
+                                        "reasons": ["provider_scope", "provider_scope_partial"]}
 
 
 @pytest.mark.parametrize("age_days,stale", [(30, True), (0, False)])

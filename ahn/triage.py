@@ -135,28 +135,31 @@ def profile_pending(access_profile: dict | None) -> bool:
                 and access_profile.get("retry_after_seconds") is not None)
 
 
-def _wait(reason: str, provider_partial: bool) -> dict:
-    # D45: an announced issue that may reach only part of the provider still waits, with low confidence.
-    if provider_partial:
+def _wait(reason: str, provider_regional: bool) -> dict:
+    # D45: an announced issue whose affected components are all regions or points of presence still waits, with low
+    # confidence. "Worst incident below the page" is not enough: a major page over a fresh minor incident is how an
+    # outage often starts, and must not read as less certain than the same page with no incident at all.
+    if provider_regional:
         return {"action": "wait_provider_incident", "confidence": "low", "reasons": [reason, "provider_scope_partial"]}
     return {"action": "wait_provider_incident", "confidence": "medium", "reasons": [reason]}
 
 
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
-                   official: dict | None, *, profile_not_read: bool = False, provider_partial: bool = False,
+                   official: dict | None, *, profile_not_read: bool = False, provider_regional: bool = False,
                    now: datetime | None = None) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
-    provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45)."""
+    provider_regional: the stored scope's affected_regional (every affected component is in a region or
+    point-of-presence group, status_scope.REGIONAL_GROUPS); now: the lookup time (D45)."""
     reasons: list[str] = []
     if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in ACTIVE_INDICATORS:
         if incident_stale(provider_status, now):
             # Only incidents nobody has updated for over a week (D45): not a reason to wait by themselves. A major or
             # critical page above them still waits, for the same reason as a components_only page (D43).
             if page_above_incidents(provider_status):
-                return _wait("provider_incident_stale", provider_partial)
+                return _wait("provider_incident_stale", provider_regional)
         elif provider_status.get("basis") != "components_only":
-            return _wait("provider_scope", provider_partial)
+            return _wait("provider_scope", provider_regional)
         # Nothing announced (basis components_only, D43). Only a minor or maintenance page stops being a reason to
         # wait: a major or critical page may be a monitoring integration flipping components before anyone posts an
         # incident, or a list read from a cache that lags the indicator, so the wait stays and the check explains it.

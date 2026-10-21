@@ -346,6 +346,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     now = datetime.now(timezone.utc)
     provider_status = None
     provider_partial = False
+    provider_regional = False
     provider_discovery_attempted_at = None
     lookup_activity = None
     # Layer 1: the host's own declared policy; layer 2: curated official paths.
@@ -396,6 +397,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 provider_status.update(_provider_scope(source))
                 provider_partial = status_scope.scope_partial(
                     source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
+                provider_regional = source["affected_regional"] is True
                 if mapped_source:
                     # Stale-while-revalidate: answer with the cached statement; once it would read as
                     # stale by age (or was never read), refresh it behind the lookup, not again within
@@ -499,7 +501,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         "access_profile": access_profile,
         "official_paths": official,
         "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
-                                         provider_partial=provider_partial, now=now),
+                                         provider_regional=provider_regional, now=now),
         "failure_stage": failure_stage,
         "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                    profile_not_read=profile_not_read, host_facts=host_facts,

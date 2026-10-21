@@ -120,9 +120,10 @@ def test_a_major_or_critical_page_above_stale_incidents_still_waits(indicator, i
     s = status(indicator, impact=impact)
     assert incident_stale(s, NOW) and page_above_incidents(s) is waits
     partial = status_scope.scope_partial(indicator, 1, impact, False)
-    rec = recommendation(None, s, None, None, provider_partial=partial, now=NOW)
+    rec = recommendation(None, s, None, None, now=NOW)
     if waits:
-        assert rec["action"] == "wait_provider_incident" and rec["reasons"][0] == "provider_incident_stale"
+        # Not regional: medium, even though "worst incident below the page" makes the scope partial.
+        assert rec == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_incident_stale"]}
     else:
         assert rec["action"] != "wait_provider_incident"
     checks = codes(next_checks(None, s, "no_reports", provider_partial=partial, now=NOW))
@@ -146,16 +147,35 @@ def test_components_only_is_unchanged():
         expected = {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
         assert recommendation(None, s, None, None, now=NOW + timedelta(days=400)) == expected
         # The partial flag is never set for components_only (no incident to compare), and the row ignores it anyway.
-        assert recommendation(None, s, None, None, provider_partial=True, now=NOW) == expected
+        assert recommendation(None, s, None, None, provider_regional=True, now=NOW) == expected
         assert codes(next_checks(None, s, "no_reports", now=NOW))[1] == "provider_components_only"
 
 
-def test_a_fresh_incident_waits_as_before_and_a_partial_one_waits_with_low_confidence():
+MEDIUM = {"action": "wait_provider_incident", "confidence": "medium"}
+
+
+def test_confidence_is_never_lower_with_an_incident_than_without_one():
+    # Review of PR #67: a major page with nothing announced waits with medium confidence (A); a fresh minor incident
+    # under the same page must not lower that (B), and neither may a stale one under it (C). The scope is "partial"
+    # (worst incident below the page) in B and C, which next_checks reports, but only a regional scope lowers it.
+    a = status("major", impact="none", incidents=0, updated=None)
+    assert a["basis"] == "components_only"
+    assert recommendation(None, a, None, None, now=NOW) == {**MEDIUM, "reasons": ["provider_components_only"]}
+    for age, reason in ((timedelta(minutes=10), "provider_scope"), (timedelta(days=30), "provider_incident_stale")):
+        s = status("major", impact="minor", updated=NOW - age)
+        assert status_scope.scope_partial("major", 1, "minor", False)
+        assert recommendation(None, s, None, None, provider_regional=False, now=NOW) == {**MEDIUM, "reasons": [reason]}
+        checks = codes(next_checks(None, s, "no_reports", provider_partial=True, now=NOW))
+        assert checks[1:3] == [reason, "provider_scope_partial"]
+
+
+def test_only_a_regional_scope_lowers_a_wait_to_low():
     fresh = status("major", impact="major", updated=NOW - timedelta(hours=3))
-    assert recommendation(None, fresh, None, None, now=NOW) == {
-        "action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
-    assert recommendation(None, fresh, None, None, provider_partial=True, now=NOW) == {
+    assert recommendation(None, fresh, None, None, now=NOW) == {**MEDIUM, "reasons": ["provider_scope"]}
+    assert recommendation(None, fresh, None, None, provider_regional=True, now=NOW) == {
         "action": "wait_provider_incident", "confidence": "low", "reasons": ["provider_scope", "provider_scope_partial"]}
+    stale_above = status("critical", impact="minor")
+    assert recommendation(None, stale_above, None, None, provider_regional=True, now=NOW)["confidence"] == "low"
     # The reasons stay codes that next_checks also carries.
     checks = codes(next_checks(None, fresh, "no_reports", provider_partial=True, now=NOW))
     assert checks[1:3] == ["provider_scope", "provider_scope_partial"]
@@ -199,11 +219,10 @@ SAMPLE = {
 def test_the_live_sample(host):
     indicator, impact, incidents, maintenances, updated, waits = SAMPLE[host]
     s = status(indicator, impact=impact, incidents=incidents, maintenances=maintenances, updated=updated)
-    partial = status_scope.scope_partial(indicator, incidents, impact, None)
-    rec = recommendation(None, s, None, None, provider_partial=partial, now=NOW)
+    rec = recommendation(None, s, None, None, now=NOW)  # none of these is regional-only (Cloudflare names WARP)
     assert (rec["action"] == "wait_provider_incident") is waits
-    if host == "cloudflare.com":
-        assert rec["confidence"] == "low"  # a minor WARP incident under a major page: the scope may be partial
+    if waits:
+        assert rec["confidence"] == "medium"
 
 
 def test_contract_readme_and_plugin_carry_the_code_and_the_threshold():
@@ -217,4 +236,9 @@ def test_contract_readme_and_plugin_carry_the_code_and_the_threshold():
     assert "| `provider_incident_stale` |" in (plugin / "README.md").read_text(encoding="utf-8")
     version = json.loads((plugin / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
     assert f"version {version} |" in (plugin / "README.md").read_text(encoding="utf-8")
-    assert "| D45 (" in (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")
+    decisions = (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")
+    assert "| D45 (" in decisions and "후속 별도 결정" in decisions
+    # Only a regional-only scope lowers confidence, and the stale-incident trade-off is written down (review of #67).
+    assert en.count("medium (low when regional-only)") == 2 and ko.count("medium(지역·거점 전용이면 low)") == 2
+    assert "231-day-old `critical` incident: no wait" in en and "231일 된 `critical` 사건 → 대기 없음" in ko
+    assert "`provider_scope_partial` is information only" not in en and "never changes `recommendation`" not in en.split("5. `provider_scope`")[1][:2000]
