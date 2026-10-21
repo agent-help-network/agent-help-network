@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from . import background_reads, gov_registry
+from . import background_reads, gov_registry, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .models import ObservationIn, OutcomeIn
@@ -294,6 +294,24 @@ def _retry_after(conn, host: str) -> int | None:
         return None
 
 
+def _provider_scope(row: dict) -> dict:
+    """The stored scope of a Statuspage feed as provider_status fields (D43); a field that was not read is left out."""
+    out: dict = {}
+    if row.get("active_incidents") is not None:
+        out["active_incidents"] = row["active_incidents"]
+        out["max_incident_impact"] = row["max_incident_impact"]
+        if row.get("incident_updated_at") is not None:
+            out["incident_updated_at"] = row["incident_updated_at"].astimezone(timezone.utc)
+    if row.get("active_maintenances") is not None:
+        out["active_maintenances"] = row["active_maintenances"]
+    basis = status_scope.basis(row.get("indicator"), row.get("active_incidents"), row.get("active_maintenances"))
+    if basis:
+        out["basis"] = basis
+    if row.get("affected"):
+        out["affected"] = list(row["affected"])[: status_scope.MAX_AFFECTED]
+    return out
+
+
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None):
     """Answer a lookup from the database alone.
@@ -327,6 +345,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     registered = mapped_source = False
     now = datetime.now(timezone.utc)
     provider_status = None
+    provider_partial = False
     provider_discovery_attempted_at = None
     lookup_activity = None
     # Layer 1: the host's own declared policy; layer 2: curated official paths.
@@ -357,7 +376,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
             source = conn.execute(
                 """SELECT s.source_name,s.status_page_url,c.indicator,c.source_updated_at,
-                          c.fetched_at,c.last_error_at,c.last_error_detail
+                          c.fetched_at,c.last_error_at,c.last_error_detail,
+                          c.active_incidents,c.max_incident_impact,c.incident_updated_at,
+                          c.active_maintenances,c.affected,c.affected_regional
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
                    WHERE s.site_host=%s AND s.enabled=true""",
                 (host,),
@@ -372,12 +393,18 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     "fetched_at": fetched_at, "freshness": freshness,
                     "error_detail": source["last_error_detail"] if failed_later else None,
                 }
+                provider_status.update(_provider_scope(source))
+                provider_partial = status_scope.scope_partial(
+                    source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
                 if mapped_source:
                     # Stale-while-revalidate: answer with the cached statement; once it would read as
                     # stale by age (or was never read), refresh it behind the lookup, not again within
-                    # FEED_RETRY_MINUTES of the last attempt.
+                    # FEED_RETRY_MINUTES of the last attempt. An active indicator is due after
+                    # FEED_RETRY_MINUTES already (the cron uses the same rule), so a resolved problem
+                    # stops reading as active within about that long.
                     latest = max((t for t in (fetched_at, source["last_error_at"]) if t is not None), default=None)
-                    aged = fetched_at is None or fetched_at < now - timedelta(hours=background_reads.FEED_STALE_HOURS)
+                    idle = background_reads.feed_refresh_after(source["indicator"], timedelta(hours=background_reads.FEED_STALE_HOURS))
+                    aged = fetched_at is None or fetched_at < now - idle
                     if aged and (latest is None or latest < now - timedelta(minutes=background_reads.FEED_RETRY_MINUTES)):
                         jobs.append(("status_feed", host))
             if eligible:
@@ -475,7 +502,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read),
         "failure_stage": failure_stage,
         "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
-                                   profile_not_read=profile_not_read, host_facts=host_facts),
+                                   profile_not_read=profile_not_read, host_facts=host_facts,
+                                   provider_partial=provider_partial),
     }
     if host_facts is not None:
         result["host_facts"] = host_facts

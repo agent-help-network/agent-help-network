@@ -1,0 +1,24 @@
+{
+  "_note": "Synthetic, shaped like www.cloudflarestatus.com on 2026-10-21: page indicator major while only data-center groups are down; one WARP incident (minor) and data-center maintenances in progress.",
+  "status": {"page": {"id": "yh6f0r4529hb", "name": "Cloudflare Status", "url": "https://www.cloudflarestatus.com", "time_zone": "Etc/UTC", "updated_at": "2026-08-27T00:00:00.000Z"},
+             "status": {"indicator": "major", "description": "Partial System Outage"}},
+  "unresolved": {"page": {"id": "yh6f0r4529hb", "name": "Cloudflare Status", "url": "https://www.cloudflarestatus.com", "time_zone": "Etc/UTC", "updated_at": "2026-08-27T00:00:00.000Z"},
+                 "incidents": [
+                   {"id": "inc000000001", "name": "Incorrect geo location for some Cloudflare WARP users", "status": "identified",
+                    "impact": "minor", "created_at": "2026-08-27T18:46:19.000Z", "updated_at": "2026-09-01T08:29:56.000Z",
+                    "page_id": "yh6f0r4529hb", "incident_updates": [],
+                    "components": [{"id": "cmp000000001", "name": "WARP", "status": "degraded_performance", "group_id": "1km35smx8p41", "group": false, "page_id": "yh6f0r4529hb"}]}
+                 ]},
+  "maintenances": {"page": {"id": "yh6f0r4529hb", "name": "Cloudflare Status", "url": "https://www.cloudflarestatus.com", "time_zone": "Etc/UTC", "updated_at": "2026-08-27T00:00:00.000Z"},
+                   "scheduled_maintenances": [
+                     {"id": "mnt000000001", "name": "CDG (Paris) on 2026-10-20", "status": "in_progress", "impact": "maintenance",
+                      "updated_at": "2026-10-20T23:01:08.000Z", "scheduled_for": "2026-10-20T23:00:00.000Z", "scheduled_until": "2026-10-21T04:00:00.000Z",
+                      "components": [{"id": "cmp000000002", "name": "Paris, France - (CDG)", "status": "operational", "group_id": "zqxhg7y54vy8", "group": false}]},
+                     {"id": "mnt000000002", "name": "BNA (Nashville) on 2026-10-21", "status": "in_progress", "impact": "maintenance",
+                      "updated_at": "2026-10-21T02:00:08.000Z", "scheduled_for": "2026-10-21T02:00:00.000Z", "scheduled_until": "2026-10-21T08:00:00.000Z",
+                      "components": [{"id": "cmp000000003", "name": "Nashville, United States - (BNA)", "status": "operational", "group_id": "4l01sk5cdn5c", "group": false}]},
+                     {"id": "mnt000000003", "name": "GRU (Sao Paulo) on 2026-10-23", "status": "scheduled", "impact": "maintenance",
+                      "updated_at": "2026-10-19T10:00:00.000Z",
+                      "components": [{"id": "cmp000000004", "name": "São Paulo, Brazil - (GRU)", "status": "operational", "group_id": "91blz4ztt7dm", "group": false}]}
+                   ]}
+}

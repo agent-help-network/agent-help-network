@@ -1,7 +1,7 @@
 {
   "name": "ahn",
   "displayName": "Agent Help Network",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "When a web fetch or browser step fails, look up the hostname on Agent Help Network: the host's declared agent policy (robots.txt, llms.txt), the official developer path, provider status, and published observations, with one recommended action. The hook is read-only and sends the hostname only. The bundled MCP server also offers report_observation, a write tool: use it only with the user's explicit approval, never automatically.",
   "author": {
     "name": "Agent Help Network",

@@ -1,0 +1,5 @@
+{
+  "_note": "Synthetic, shaped like an incident.io page's Statuspage-compatible status.json (status.openai.com, www.gocardless-status.com on 2026-10-21): a ULID page id and no time_zone. Its incident lists answer 404 with an HTML page, so they are never asked for.",
+  "status": {"page": {"id": "01JMDK9XYNY6RXSED6SDWW50WY", "name": "OpenAI", "url": "https://status.openai.com/", "updated_at": "2026-10-16T20:01:40Z"},
+             "status": {"description": "Partial System Degradation", "indicator": "minor"}}
+}
