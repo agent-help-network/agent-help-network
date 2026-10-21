@@ -114,6 +114,7 @@ def _entry(item: dict) -> tuple[list[str], list[str | None]]:
 def parse_incidents(body, page_id: str) -> dict:
     """incidents/unresolved.json -> count, highest impact, latest update and affected names. Raises ValueError."""
     count, impacts, times, entries = 0, [], [], []
+    undated = False
     for item in _items(body, "incidents", page_id):
         if item.get("status") in _RESOLVED:
             continue
@@ -124,9 +125,13 @@ def parse_incidents(body, page_id: str) -> dict:
         impacts.append(impact)
         if item.get("updated_at") is not None:
             times.append(_aware(item["updated_at"]))
+        else:
+            undated = True
         entries.append(_entry(item))
+    # The latest update across every active incident (D45 reads it as "has any incident moved lately"). One incident
+    # without an update time makes that unknown, so the field is left out rather than taken from the others.
     return {"count": count, "max_impact": max(impacts, key=_RANK.__getitem__, default="none"),
-            "updated_at": max(times, default=None), "entries": entries}
+            "updated_at": None if undated else max(times, default=None), "entries": entries}
 
 
 def parse_maintenances(body, page_id: str) -> dict:
@@ -221,6 +226,11 @@ def basis(indicator: str | None, active_incidents: int | None, active_maintenanc
     if active_maintenances is None:
         return None
     return "maintenance" if active_maintenances > 0 else "components_only"
+
+
+def impact_rank(impact: str | None) -> int | None:
+    """Order of an incident impact or a page indicator (none < minor < major < critical); None for anything else."""
+    return _RANK.get(impact) if isinstance(impact, str) else None
 
 
 def scope_partial(indicator: str | None, active_incidents: int | None, max_incident_impact: str | None,

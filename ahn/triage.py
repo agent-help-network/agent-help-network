@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from . import status_scope
 from .access_profile import ai_input_declared_no
+
+# D45: an incident whose latest update is older than this no longer makes the answer "wait" on its own.
+STALE_INCIDENT_DAYS = 7
 
 
 CHECKS = {
@@ -15,6 +20,7 @@ CHECKS = {
     "access_denial_observed": "An access denial was observed. Follow the site's stated policy and do not bypass its controls; this does not establish an outage.",
     "provider_scope": "The provider reports an active issue. Compare its affected services and update time with your blocked step before deciding whether to wait or retry.",
     "provider_components_only": "The provider's page-level status shows an issue, but the provider has announced no incident or maintenance (provider_status.basis is components_only). Some components are marked down or under maintenance; check on the provider's status page whether a component you use is one of them. A minor or maintenance page is not treated as a reason to wait; a major or critical one still is, because an outage can show on components before an incident is posted.",
+    "provider_incident_stale": f"The provider's active incidents have had no update for more than {STALE_INCIDENT_DAYS} days (provider_status.incident_updated_at is the latest one) and no maintenance is in progress. An incident left open without updates is not treated as a reason to wait: if provider_status.affected names a service you use, wait for the provider; otherwise continue. A major or critical page above the worst incident's impact is still a reason to wait, because components can show a new outage before an incident is posted.",
     "provider_scope_partial": "The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether provider_status.affected names a service you use before waiting.",
     "provider_clear": "The provider reports no active issue. Continue diagnosing this specific attempt; the statement does not prove access from your environment.",
     "provider_unknown": "No live provider status is available here. Check an official status page if one is linked, and keep the current status unknown.",
@@ -46,6 +52,7 @@ CHECKS_KO = {
     "access_denial_observed": "접근 거부를 확인했습니다. 사이트가 밝힌 정책을 따르고 제한을 우회하지 마세요. 장애의 증거는 아닙니다.",
     "provider_scope": "업체가 활성 문제를 발표했습니다. 대기·재시도를 정하기 전에 영향받는 서비스와 발표 시각을 현재 작업과 비교하세요.",
     "provider_components_only": "업체 페이지 전체 표시는 문제를 가리키지만, 업체가 발표한 사건이나 점검은 없습니다(provider_status.basis 가 components_only). 일부 컴포넌트만 장애·점검으로 표시돼 있으니, 업체 상태 페이지에서 사용하는 컴포넌트가 거기 있는지 확인하세요. minor·maintenance 표시는 기다릴 이유로 보지 않지만, major·critical 표시는 사건이 게시되기 전에 컴포넌트에 먼저 장애가 보일 수 있어 계속 기다릴 이유로 봅니다.",
+    "provider_incident_stale": f"업체의 활성 사건이 {STALE_INCIDENT_DAYS}일 넘게 업데이트되지 않았고(가장 최근 업데이트는 provider_status.incident_updated_at) 진행 중인 점검도 없습니다. 업데이트 없이 열려 있는 사건은 기다릴 이유로 보지 않습니다. provider_status.affected 에 사용하는 서비스가 있으면 업체를 기다리고, 없으면 진행하세요. 다만 페이지 전체 표시가 가장 심한 사건보다 높은 major·critical 이면 새 장애가 사건 게시 전에 컴포넌트에 먼저 보일 수 있어 계속 기다릴 이유로 봅니다.",
     "provider_scope_partial": "발표된 문제의 범위가 업체 일부일 수 있습니다. 영향받는 컴포넌트가 모두 지역·거점(PoP) 그룹이거나, 가장 심한 사건이 페이지 전체 표시보다 가볍습니다. 기다리기 전에 provider_status.affected 에 사용하는 서비스가 있는지 확인하세요.",
     "provider_clear": "업체 발표상 활성 문제는 없습니다. 현재 환경에서 접속된다는 증거는 아니므로 이번 시도를 계속 진단하세요.",
     "provider_unknown": "여기에는 실시간 업체 상태가 없습니다. 공식 상태 페이지 링크가 있으면 확인하고 현재 상태는 미상으로 두세요.",
@@ -77,6 +84,35 @@ WAIT_DESPITE_COMPONENTS_ONLY = frozenset({"major", "critical"})
 AGENT_KINDS_FOR_BLOCK = {"user_agent", "search_crawler"}
 
 
+def incident_stale(provider_status: dict | None, now: datetime | None = None) -> bool:
+    """D45: the active status rests on incidents only (basis incident, no maintenance in progress) and the latest
+    update of every active incident is more than STALE_INCIDENT_DAYS old. An unknown maintenance count or a missing
+    or unreadable update time is not "stale": unknown is not anything."""
+    if not provider_status or provider_status.get("basis") != "incident":
+        return False
+    maintenances = provider_status.get("active_maintenances")
+    if isinstance(maintenances, bool) or maintenances != 0:
+        return False
+    updated = provider_status.get("incident_updated_at")
+    if isinstance(updated, str):
+        try:
+            updated = status_scope._aware(updated)
+        except ValueError:
+            return False
+    if not isinstance(updated, datetime) or updated.tzinfo is None:
+        return False
+    return (now or datetime.now(timezone.utc)) - updated > timedelta(days=STALE_INCIDENT_DAYS)
+
+
+def page_above_incidents(provider_status: dict) -> bool:
+    """A major or critical page indicator higher than the worst active incident (or that worst impact unknown):
+    something besides the incidents, such as components flipped by monitoring, holds the page up."""
+    if provider_status.get("indicator") not in WAIT_DESPITE_COMPONENTS_ONLY:
+        return False
+    worst = status_scope.impact_rank(provider_status.get("max_incident_impact"))
+    return worst is None or status_scope.impact_rank(provider_status["indicator"]) > worst
+
+
 def declared_block(access_profile: dict | None) -> list[str]:
     """Agent tokens whose own robots group disallows the site root (declared policy, not a measurement)."""
     if not access_profile or access_profile.get("robots_status") != "ok" or not access_profile.get("robots"):
@@ -99,17 +135,32 @@ def profile_pending(access_profile: dict | None) -> bool:
                 and access_profile.get("retry_after_seconds") is not None)
 
 
+def _wait(reason: str, provider_partial: bool) -> dict:
+    # D45: an announced issue that may reach only part of the provider still waits, with low confidence.
+    if provider_partial:
+        return {"action": "wait_provider_incident", "confidence": "low", "reasons": [reason, "provider_scope_partial"]}
+    return {"action": "wait_provider_incident", "confidence": "medium", "reasons": [reason]}
+
+
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
-                   official: dict | None, *, profile_not_read: bool = False) -> dict:
-    """One action for the calling agent, derived only from declared and official sources."""
+                   official: dict | None, *, profile_not_read: bool = False, provider_partial: bool = False,
+                   now: datetime | None = None) -> dict:
+    """One action for the calling agent, derived only from declared and official sources.
+
+    provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45)."""
     reasons: list[str] = []
     if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in ACTIVE_INDICATORS:
-        if provider_status.get("basis") != "components_only":
-            return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
+        if incident_stale(provider_status, now):
+            # Only incidents nobody has updated for over a week (D45): not a reason to wait by themselves. A major or
+            # critical page above them still waits, for the same reason as a components_only page (D43).
+            if page_above_incidents(provider_status):
+                return _wait("provider_incident_stale", provider_partial)
+        elif provider_status.get("basis") != "components_only":
+            return _wait("provider_scope", provider_partial)
         # Nothing announced (basis components_only, D43). Only a minor or maintenance page stops being a reason to
         # wait: a major or critical page may be a monitoring integration flipping components before anyone posts an
         # incident, or a list read from a cache that lags the indicator, so the wait stays and the check explains it.
-        if provider_status.get("indicator") in WAIT_DESPITE_COMPONENTS_ONLY:
+        elif provider_status.get("indicator") in WAIT_DESPITE_COMPONENTS_ONLY:
             return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
     if error_class == "human_verification":
         return {"action": "hand_off_to_human", "confidence": "high", "reasons": ["human_handoff"]}
@@ -161,8 +212,9 @@ def host_fact_codes(host_facts: dict | None) -> list[str]:
 def next_checks(error_class: str | None, provider_status: dict | None, evidence_level: str,
                 failure_stage: str | None = None, access_profile: dict | None = None,
                 official: dict | None = None, *, profile_not_read: bool = False,
-                host_facts: dict | None = None, provider_partial: bool = False) -> list[dict[str, str]]:
-    """provider_partial: status_scope.scope_partial for the provider's stored scope (information only)."""
+                host_facts: dict | None = None, provider_partial: bool = False,
+                now: datetime | None = None) -> list[dict[str, str]]:
+    """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45)."""
     codes: list[str] = []
     if failure_stage and failure_stage != "unknown":
         codes.append(failure_stage)
@@ -201,7 +253,10 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     if provider_status and provider_status.get("freshness") == "fresh":
         indicator = provider_status.get("indicator")
         if indicator in ACTIVE_INDICATORS:
-            codes.append("provider_components_only" if provider_status.get("basis") == "components_only" else "provider_scope")
+            if provider_status.get("basis") == "components_only":
+                codes.append("provider_components_only")
+            else:
+                codes.append("provider_incident_stale" if incident_stale(provider_status, now) else "provider_scope")
             if provider_partial:
                 codes.append("provider_scope_partial")
         elif indicator == "none":

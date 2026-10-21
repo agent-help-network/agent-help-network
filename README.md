@@ -114,7 +114,7 @@ Where it applies, a fourth, separate field adds **registry facts about the domai
 
 | `action` | When | `confidence` |
 | --- | --- | --- |
-| `wait_provider_incident` | A fresh provider feed reports an active `minor`, `major`, `critical`, or `maintenance` status, and it rests on an announced incident or maintenance (`provider_status.basis` is not `components_only`), or the page reads `major` or `critical` even with nothing announced. | medium |
+| `wait_provider_incident` | A fresh provider feed reports an active `minor`, `major`, `critical`, or `maintenance` status, and it rests on an announced incident or maintenance (`provider_status.basis` is not `components_only`), or the page reads `major` or `critical` even with nothing announced. Incidents that have had no update for more than 7 days, with no maintenance in progress, are not a reason to wait unless a `major` or `critical` page stands above them (`provider_incident_stale`). When the scope may be partial (`provider_scope_partial`) the wait has `low` confidence. | medium (low when partial) |
 | `hand_off_to_human` | `error_class` is `human_verification` (high) or `login_auth` (medium). | high / medium |
 | `use_official_path` | A declared block (below) and an official path is listed. | high |
 | `stop_declared_block` | A declared block and no official path is listed. Stop automated retries against pages. | medium |

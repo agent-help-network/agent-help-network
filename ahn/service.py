@@ -498,11 +498,12 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         "lookup_activity": lookup_activity,
         "access_profile": access_profile,
         "official_paths": official,
-        "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read),
+        "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
+                                         provider_partial=provider_partial, now=now),
         "failure_stage": failure_stage,
         "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                    profile_not_read=profile_not_read, host_facts=host_facts,
-                                   provider_partial=provider_partial),
+                                   provider_partial=provider_partial, now=now),
     }
     if host_facts is not None:
         result["host_facts"] = host_facts
