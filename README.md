@@ -14,12 +14,13 @@ Reading is free and needs no account.
   Optional: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, default 24).
 - **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — tool `check_incident` (read-only, idempotent) and the optional `report_observation`.
 - **Agent entry points:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
-- **Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and two codes. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
+- **Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and two codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a Browser Use example. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
 
   ```bash
   claude plugin marketplace add agent-help-network/agent-help-network   # Claude Code plugin (source: plugins/claude-code/ahn)
   claude plugin install ahn@agent-help-network
   pip install ahn-client                                                 # Python client (source: clients/python)
+  pip install "ahn-client[langchain]"                                    # or [crewai], [openai-agents], [claude-agent-sdk]: framework adapters
   ```
 
   **Plugin demo video:** [watch the Claude Code plugin work](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1 min 18 s, with English captions; [captions file](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub does not play WebM inline, so this opens the file; the same video is embedded on the [connect page](https://agenthelpnetwork.com/en/connect#demo).
@@ -160,7 +161,7 @@ Most design documents are in Korean; the API contract also has an English versio
 - [Discovery and cold start](docs/discovery-and-cold-start.md) · [Product research (2026-10-06)](docs/product-research-2026-10-06.md) · [Voluntary public beta](docs/pilot-plan.md)
 - [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
 - [Initial design proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
-- [Python client `ahn-client`](clients/python/README.md) · [Claude Code plugin](plugins/claude-code/ahn/README.md) · [MCP Registry manifest](server.json)
+- [Python client `ahn-client`](clients/python/README.md) and its framework adapters (LangChain, CrewAI, OpenAI Agents SDK, Claude Agent SDK, Browser Use) · [Claude Code plugin](plugins/claude-code/ahn/README.md) · [MCP Registry manifest](server.json)
 - [Contributing](CONTRIBUTING.md) · [Feedback changelog](docs/feedback-changelog.md) (suggestions received and what happened to them) · [Security policy](SECURITY.md)
 
 ## Run it locally (Windows PowerShell)

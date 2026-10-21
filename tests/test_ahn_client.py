@@ -261,7 +261,7 @@ def test_request_carries_only_host_and_codes(transport):
     for secret in ("secret", "user", "private", "token", "abc", "frag", "8443"):
         assert secret not in request.full_url
     assert request.get_method() == "GET" and request.data is None
-    assert request.get_header("User-agent") == "ahn-client/0.2 (+https://agenthelpnetwork.com)"
+    assert request.get_header("User-agent") == f"ahn-client/{ahn.__version__} (+https://agenthelpnetwork.com)"
     assert {name.lower() for name in request.headers} == {"user-agent", "accept"}
     assert timeout == 4.0
 
@@ -282,7 +282,11 @@ def test_invalid_codes_send_nothing(error_class, stage, transport):
 
 
 def test_user_agent_matches_the_package_version():
-    assert _client.USER_AGENT == "ahn-client/" + ".".join(ahn.__version__.split(".")[:2]) + " (+https://agenthelpnetwork.com)"
+    assert _client.user_agent() == f"ahn-client/{ahn.__version__} (+https://agenthelpnetwork.com)"
+    assert _client.user_agent("langchain") == f"ahn-client/{ahn.__version__} (+langchain; +https://agenthelpnetwork.com)"
+    # A label that is not a short lowercase word is dropped, never sent.
+    for label in ("Lang Chain", "x" * 40, "a;b", "", None, 5):
+        assert _client.user_agent(label) == _client.user_agent()
 
 
 def test_lookup_url_matches_the_plugin_for_the_same_inputs():
