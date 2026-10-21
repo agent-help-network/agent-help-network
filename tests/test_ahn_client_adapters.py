@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "clients" / "python" / "src"))
 
 import ahn_client as ahn  # noqa: E402
-from ahn_client import _adapter, _claude_code, _client  # noqa: E402
+from ahn_client import _adapter, _claude_code, _client, _hosts  # noqa: E402
 from ahn_client import claude_agent_sdk as ahn_claude  # noqa: E402
 from ahn_client import crewai as ahn_crewai  # noqa: E402
 from ahn_client import langchain as ahn_langchain  # noqa: E402
@@ -92,6 +92,19 @@ def transport(monkeypatch):
     return install
 
 
+class ToolInvocationError(Exception):
+    """langchain's name for a tool call whose arguments failed validation."""
+
+
+class AttributeError_(Exception):
+    """An exception with arbitrary attributes, such as the ones HTTP libraries set."""
+
+    def __init__(self, **attributes):
+        super().__init__("failed")
+        for name, value in attributes.items():
+            setattr(self, name, value)
+
+
 class HTTPStatusError(Exception):
     """Stands in for httpx.HTTPStatusError: the class name and the message are all the client reads."""
 
@@ -104,11 +117,12 @@ class HTTPStatusError(Exception):
 
 
 def forbidden(url="https://example.com/private/page?token=abc"):
-    return HTTPStatusError(f"Client error '403 Forbidden' for url '{url}'")
+    """What httpx raises: the message names the URL and the exception carries the request."""
+    return HTTPStatusError(f"Client error '403 Forbidden' for url '{url}'", request_url=url)
 
 
 def not_found(url="https://example.com/missing"):
-    return HTTPStatusError(f"Client error '404 Not Found' for url '{url}'")
+    return HTTPStatusError(f"Client error '404 Not Found' for url '{url}'", request_url=url)
 
 
 def sent(calls):
@@ -146,11 +160,21 @@ def test_host_from_args(args, expected):
     assert _adapter.host_from_args(args) == expected
 
 
-def test_host_from_error_reads_the_request_then_the_message():
+def test_host_from_error_reads_the_request_of_an_exception_and_the_text_of_a_message():
     assert _adapter.host_from_error(HTTPStatusError("boom", request_url="https://api.example.com/v1?key=1")) == "api.example.com"
     assert _adapter.host_from_error(forbidden("https://www.example.net/a?b=c")) == "example.net"
+    # requests puts the URL on the response, aiohttp on request_info, urllib on the error itself.
+    assert _adapter.host_from_error(AttributeError_(response=SimpleNamespace(url="https://r.example.com/x"))) == "r.example.com"
+    assert _adapter.host_from_error(AttributeError_(request_info=SimpleNamespace(url="https://a.example.com/x"))) == "a.example.com"
+    assert _adapter.host_from_error(AttributeError_(url="https://u.example.com/x")) == "u.example.com"
+    # Plain text (a tool's error message): the first URL that is not a help page.
     assert _adapter.host_from_error("GET https://example.org/page failed: 502") == "example.org"
     assert _adapter.host_from_error(b"GET https://example.org/page failed: 502") == "example.org"
+    assert _adapter.host_from_error("see https://errors.pydantic.dev/2.11/v/missing then https://example.org/x") == "example.org"
+    assert _adapter.host_from_error("see https://platform.openai.com/docs/errors") is None
+    # An exception's message is not read: it links to help pages and to other hosts, and says nothing of the request.
+    assert _adapter.host_from_error(RuntimeError("Timeout navigating to https://example.org/page")) is None
+    assert _adapter.host_from_error(HTTPStatusError("Client error '403 Forbidden' for url 'https://example.org/'")) is None
     assert _adapter.host_from_error(RuntimeError("no address here")) is None
     assert _adapter.host_from_error(None) is None
     try:
@@ -169,15 +193,29 @@ def test_host_from_error_reads_the_request_then_the_message():
     (HTTPStatusError("503 Service Unavailable"), {"url": "https://example.com/p"}, ("example.com", "service_error", None)),
     (RuntimeError("Please solve the CAPTCHA"), {"url": "https://example.com/p"}, ("example.com", "human_verification", None)),
     # A site named like a class: its own name never decides the class.
-    (HTTPStatusError("Client error '403 Forbidden' for url 'https://login.example.com/x'"), None, ("login.example.com", "site_access", None)),
-    (HTTPStatusError("Client error '403 Forbidden' for url 'https://developers.cloudflare.com/x'"), None,
-     ("developers.cloudflare.com", "site_access", None)),
+    (forbidden("https://login.example.com/x"), None, ("login.example.com", "site_access", None)),
+    (forbidden("https://developers.cloudflare.com/x"), None, ("developers.cloudflare.com", "site_access", None)),
     # Not a block and not an outage, or nothing to look up.
     (not_found(), {"url": "https://example.com/p"}, None),
     (HTTPStatusError("422 Unprocessable Entity"), {"url": "https://example.com/p"}, None),
     (forbidden(), {"query": "no url here"}, ("example.com", "site_access", None)),
     (RuntimeError("403 Forbidden"), {"query": "no url here"}, None),
     (RuntimeError("something odd"), {"url": "https://example.com/p"}, None),
+    # A tool that was given a URL but failed for another reason: nothing web-like in the error, so no lookup.
+    (PermissionError(13, "Permission denied"), {"url": "https://example.com/p"}, None),
+    (RuntimeError("Task blocked on mutex"), {"url": "https://example.com/p"}, None),
+    (RuntimeError("Please reset your password"), {"url": "https://example.com/p"}, None),
+    (KeyError("denied"), {"url": "https://example.com/p"}, None),
+    (ConnectionRefusedError("[Errno 111] Connection refused"), {"url": "https://example.com/p"}, ("example.com", "site_access", None)),
+    (TimeoutError("timed out"), {"url": "https://example.com/p"}, ("example.com", "service_error", None)),
+    (RuntimeError("blocked by the site"), {"url": "https://example.com/p"}, ("example.com", "site_access", None)),
+    (RuntimeError("Access denied (403)"), {"url": "https://example.com/p"}, ("example.com", "site_access", None)),
+    # Tool-argument validation is not a web failure, whatever URL the arguments hold.
+    (ToolInvocationError("Error invoking tool 'fetch' with kwargs {'url': 'https://example.com/p'} with error: url Field required"),
+     {"url": "https://example.com/p"}, None),
+    (RuntimeError("1 validation error for fetch url Input should be a valid URL, got 403 "
+                  "For further information visit https://errors.pydantic.dev/2.11/v/url_parsing"),
+     {"url": "https://example.com/p"}, None),
 ])
 def test_failure_target(error, args, expected):
     target = _adapter.failure_target(error, args)
@@ -272,6 +310,84 @@ def test_anote_for_runs_off_the_event_loop(transport):
     assert asyncio.run(_adapter.anote_for(not_found(), None, adapter="crewai")) is None
 
 
+def test_the_async_wait_ends_at_the_timeout_even_when_the_default_executor_is_busy(monkeypatch):
+    # run_in_executor(None, ...) would queue behind these jobs and overshoot the timeout several times over.
+    release = threading.Event()
+
+    def slow(request, timeout):
+        release.wait(5)
+        return FakeResponse(json.dumps(ANSWER).encode("utf-8"))
+
+    monkeypatch.setattr(_client, "_urlopen", slow)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        jobs = [loop.run_in_executor(None, time.sleep, 1.5) for _ in range(64)]
+        started = time.monotonic()
+        note = await _adapter.anote_for(forbidden(), None, adapter="langchain", timeout=0.2)
+        elapsed = time.monotonic() - started
+        release.set()
+        await asyncio.gather(*jobs)
+        return note, elapsed
+
+    note, elapsed = asyncio.run(run())
+    assert note is None and elapsed < 0.7
+
+
+def test_the_async_loop_keeps_running_while_a_lookup_waits(monkeypatch):
+    release = threading.Event()
+
+    def slow(request, timeout):
+        release.wait(5)
+        return FakeResponse(json.dumps(ANSWER).encode("utf-8"))
+
+    monkeypatch.setattr(_client, "_urlopen", slow)
+
+    async def run():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        await _adapter.anote_for(forbidden(), None, adapter="langchain", timeout=0.3)
+        task.cancel()
+        release.set()
+        return ticks
+
+    assert asyncio.run(run()) >= 10
+
+
+def test_keyboard_interrupt_is_not_swallowed(monkeypatch, transport):
+    transport()
+
+    class Interrupting:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise KeyboardInterrupt
+
+    class Failing(Interrupting):
+        def start(self):
+            raise RuntimeError("can not start new thread")
+
+    monkeypatch.setattr(_adapter.threading, "Thread", Interrupting)
+    with pytest.raises(KeyboardInterrupt):
+        _adapter.bounded_check("example.com", "site_access", None, "langchain")
+    assert not _adapter._inflight  # and the lookup is not left marked as running
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(_adapter.abounded_check("example.com", "site_access", None, "langchain"))
+    assert not _adapter._inflight
+    # An ordinary failure to start a thread is still just "no answer".
+    monkeypatch.setattr(_adapter.threading, "Thread", Failing)
+    assert _adapter.bounded_check("example.com", "site_access", None, "langchain") is None
+    assert not _adapter._inflight
+
+
 def test_the_user_agent_format_the_server_can_count():
     # docs: UA starts with "ahn-client/", then the version, then "(+<adapter>; +https://agenthelpnetwork.com)".
     import re
@@ -305,57 +421,78 @@ def lc(monkeypatch):
         request=SimpleNamespace(tool_call={"name": "fetch_page", "args": {"url": "https://example.com/private?x=1"}, "id": "call_1"}))
 
 
-def test_langchain_exception_becomes_an_error_message_with_the_line(lc, transport):
-    calls = transport()
-    original = forbidden()
-
-    def handler(request):
-        raise original
-
-    result = ahn_langchain.handle_tool_call(lc.request, handler)
-    assert result.status == "error" and result.tool_call_id == "call_1" and result.name == "fetch_page"
-    assert result.content.startswith("Error: " + repr(original) + "\n")  # the original error is there, unchanged
-    assert result.content.endswith("bypassing site controls is not advised.")
-    assert "AHN example.com: recommendation=use_official_path" in result.content
-    assert sent(calls)[0][3].endswith("(+langchain; +https://agenthelpnetwork.com)")
-
-
-@pytest.mark.parametrize("error", [not_found(), RuntimeError("tool crashed"), KeyError("x")])
-def test_langchain_other_exceptions_pass_through_untouched(lc, transport, error):
-    calls = transport()
-
+def raising(error):
     def handler(request):
         raise error
 
+    return handler
+
+
+def test_langchain_by_default_a_raised_exception_is_reraised_untouched_and_nothing_is_looked_up(lc, transport):
+    calls = transport()
+    try:
+        raise forbidden() from None  # a tool that raises "from None": __suppress_context__ is True
+    except HTTPStatusError as built:
+        original = built
+    with pytest.raises(HTTPStatusError) as caught:
+        ahn_langchain.handle_tool_call(lc.request, raising(original))
+    assert caught.value is original and caught.value.__suppress_context__ is True and caught.value.__cause__ is None
+    assert calls == []  # the same whether or not Agent Help Network is reachable, so it is not even asked
+
+
+def test_langchain_converted_exception_has_no_exception_text_and_the_same_shape_every_time(lc, transport):
+    calls = transport()
+    original = forbidden("https://example.com/private/page?token=abc")
+    result = ahn_langchain.handle_tool_call(lc.request, raising(original), convert_exceptions=True)
+    assert (result.status, result.tool_call_id, result.name) == ("error", "call_1", "fetch_page")
+    first, _, rest = result.content.partition("\n")
+    assert first == "Error: HTTPStatusError (site_access)"
+    assert rest.startswith("AHN example.com: recommendation=use_official_path")
+    for leaked in ("403", "Forbidden", "token", "abc", "private", "page", "Client error", repr(original)):
+        assert leaked not in first
+    assert sent(calls)[0][3].endswith("(+langchain; +https://agenthelpnetwork.com)")
+    # Agent Help Network unreachable, slow or excluded: the same conversion, only without the line.
+    for setup in ("down", "disabled"):
+        ahn.clear_cache()
+        if setup == "down":
+            transport(error=urllib.error.URLError("down"))
+        else:
+            transport()
+            os_env = pytest.MonkeyPatch()
+            os_env.setenv("AHN_CLIENT_DISABLE", "1")
+        try:
+            plain = ahn_langchain.handle_tool_call(lc.request, raising(original), convert_exceptions=True)
+        finally:
+            if setup == "disabled":
+                os_env.undo()
+        assert plain.content == "Error: HTTPStatusError (site_access)" and plain.status == "error"
+
+
+@pytest.mark.parametrize("error", [not_found(), RuntimeError("tool crashed"), KeyError("x"),
+                                   ToolInvocationError("Error invoking tool 'fetch' with kwargs {} with error: url Field required"),
+                                   PermissionError(13, "Permission denied")])
+def test_langchain_exceptions_that_are_not_web_failures_propagate_even_when_converting(lc, transport, error):
+    calls = transport()
     with pytest.raises(type(error)) as caught:
-        ahn_langchain.handle_tool_call(lc.request, handler)
+        ahn_langchain.handle_tool_call(lc.request, raising(error), convert_exceptions=True)
     assert caught.value is error
     assert calls == []
 
 
-def test_langchain_exception_is_reraised_when_the_lookup_fails(lc, transport):
-    transport(error=urllib.error.URLError("down"))
-    original = forbidden()
+def test_langchain_when_the_message_cannot_be_built_the_original_exception_is_reraised_as_it_was(lc, transport, monkeypatch):
+    transport()
+    try:
+        raise forbidden() from None
+    except HTTPStatusError as built:
+        original = built
 
-    def handler(request):
-        raise original
+    def broken():
+        raise ImportError("langchain.messages")
 
+    monkeypatch.setattr(ahn_langchain, "_tool_message_cls", broken)
     with pytest.raises(HTTPStatusError) as caught:
-        ahn_langchain.handle_tool_call(lc.request, handler)
-    assert caught.value is original
-
-
-def test_langchain_convert_exceptions_false_never_swallows(lc, transport):
-    calls = transport()
-    original = forbidden()
-
-    def handler(request):
-        raise original
-
-    with pytest.raises(HTTPStatusError) as caught:
-        ahn_langchain.handle_tool_call(lc.request, handler, convert_exceptions=False)
-    assert caught.value is original
-    assert calls == []
+        ahn_langchain.handle_tool_call(lc.request, raising(original), convert_exceptions=True)
+    assert caught.value is original and caught.value.__suppress_context__ is True and caught.value.__cause__ is None
 
 
 def test_langchain_graph_control_flow_is_never_a_tool_failure(lc, transport):
@@ -367,14 +504,25 @@ def test_langchain_graph_control_flow_is_never_a_tool_failure(lc, transport):
     class GraphInterrupt(GraphBubbleUp):
         pass
 
-    signal = GraphInterrupt("403 Forbidden for https://example.com/")
+    class NodeTimeoutError(Exception):
+        pass
 
-    def handler(request):
-        raise signal
-
-    with pytest.raises(GraphInterrupt):
-        ahn_langchain.handle_tool_call(lc.request, handler)
+    invalid_resume = ValueError("403 Forbidden for https://example.com/ resume value")
+    invalid_resume._langgraph_invalid_resume = True  # what langgraph.errors.is_invalid_resume reads
+    for signal in (GraphInterrupt("403 Forbidden for https://example.com/"), NodeTimeoutError("timed out 503"), invalid_resume):
+        with pytest.raises(type(signal)) as caught:
+            ahn_langchain.handle_tool_call(lc.request, raising(signal), convert_exceptions=True)
+        assert caught.value is signal
+        with pytest.raises(type(signal)):
+            asyncio.run(ahn_langchain.ahandle_tool_call(lc.request, async_raising(signal), convert_exceptions=True))
     assert calls == []
+
+
+def async_raising(error):
+    async def handler(request):
+        raise error
+
+    return handler
 
 
 def test_langchain_results_pass_through_unless_they_are_error_messages(lc, transport):
@@ -399,14 +547,21 @@ def test_langchain_error_message_from_the_tool_gets_the_line_appended(lc, transp
     appended = ahn_langchain.handle_tool_call(lc.request, lambda request: blocks)
     assert appended.content[0] == {"type": "text", "text": "Error: 429 Too Many Requests"}
     assert appended.content[1]["text"].startswith("AHN example.com:")
+    # What ToolRetryMiddleware returns after its last attempt carries the exception text, so it is read the same way.
+    retry = FakeToolMessage("Tool 'fetch_page' failed after 3 attempts with HTTPStatusError: Client error '403 Forbidden'. Please try again.",
+                            "call_1", status="error")
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: retry).content.endswith(
+        "bypassing site controls is not advised.")
+    # A validation error that ToolNode turned into a message is not a web failure.
+    validation = FakeToolMessage("Error invoking tool 'fetch_page' with kwargs {'url': 'https://example.com/private?x=1'} with error: "
+                                 "url Field required For further information visit https://errors.pydantic.dev/2.11/v/missing",
+                                 "call_1", status="error")
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: validation) is validation
 
 
 def test_langchain_async_twin(lc, transport):
     transport()
     original = forbidden()
-
-    async def failing(request):
-        raise original
 
     async def returning(request):
         return FakeToolMessage("Error: 503 Service Unavailable", "call_1", status="error")
@@ -415,15 +570,16 @@ def test_langchain_async_twin(lc, transport):
         return FakeToolMessage("ok", "call_1")
 
     async def run():
-        converted = await ahn_langchain.ahandle_tool_call(lc.request, failing)
+        converted = await ahn_langchain.ahandle_tool_call(lc.request, async_raising(original), convert_exceptions=True)
         annotated = await ahn_langchain.ahandle_tool_call(lc.request, returning)
         plain = await ahn_langchain.ahandle_tool_call(lc.request, fine)
-        with pytest.raises(HTTPStatusError):
-            await ahn_langchain.ahandle_tool_call(lc.request, failing, convert_exceptions=False)
+        with pytest.raises(HTTPStatusError) as caught:
+            await ahn_langchain.ahandle_tool_call(lc.request, async_raising(original))  # the default re-raises
+        assert caught.value is original
         return converted, annotated, plain
 
     converted, annotated, plain = asyncio.run(run())
-    assert converted.status == "error" and "AHN example.com:" in converted.content
+    assert converted.status == "error" and converted.content.startswith("Error: HTTPStatusError (site_access)\nAHN example.com:")
     assert annotated.content.startswith("Error: 503 Service Unavailable\nAHN example.com:")
     assert plain.content == "ok"
 
@@ -431,24 +587,29 @@ def test_langchain_async_twin(lc, transport):
 def test_langchain_request_without_a_tool_call_does_not_break(transport):
     transport()
     odd = SimpleNamespace(tool_call=None)
-
-    def handler(request):
-        raise forbidden()
-
-    # No id or name to build a message from is fine for the fake class; the point is that nothing raises but the tool's error.
-    with pytest.raises(Exception):
-        ahn_langchain.handle_tool_call(odd, handler, convert_exceptions=False)
+    with pytest.raises(HTTPStatusError):
+        ahn_langchain.handle_tool_call(odd, raising(forbidden()))
 
 
-def test_langchain_middleware_in_a_real_agent(transport):
+def test_langchain_middleware_options_default_to_not_converting():
+    import inspect
+    assert inspect.signature(ahn_langchain.ahn_tool_failure_middleware).parameters["convert_exceptions"].default is False
+    assert inspect.signature(ahn_langchain.handle_tool_call).parameters["convert_exceptions"].default is False
+    assert inspect.signature(ahn_langchain.ahandle_tool_call).parameters["convert_exceptions"].default is False
+
+
+def test_langchain_real_agent(transport):
     pytest.importorskip("langchain", minversion="1.0")
     from langchain.agents import create_agent
+    from langchain.agents.middleware import ToolRetryMiddleware
     from langchain.tools import tool
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
+    from langchain_core.tools import StructuredTool, ToolException
 
     calls = transport()
+    attempts = []
 
     class FakeModel(BaseChatModel):
         @property
@@ -468,19 +629,69 @@ def test_langchain_middleware_in_a_real_agent(transport):
     @tool
     def fetch_page(url: str) -> str:
         """Fetch a page."""
+        attempts.append(url)
         raise forbidden(url)
 
-    agent = create_agent(FakeModel(), tools=[fetch_page], middleware=[ahn_langchain.ahn_tool_failure_middleware()])
-    for run in (lambda: agent.invoke({"messages": [("user", "go")]}),
-                lambda: asyncio.run(agent.ainvoke({"messages": [("user", "go")]}))):
+    def invocations(agent):
+        return (lambda: agent.invoke({"messages": [("user", "go")]}),
+                lambda: asyncio.run(agent.ainvoke({"messages": [("user", "go")]})))
+
+    def fresh():
         ahn.clear_cache()
         calls.clear()
-        out = run()
-        tool_message = next(m for m in out["messages"] if m.type == "tool")
-        assert tool_message.status == "error"
-        assert "403 Forbidden" in tool_message.content and "AHN example.com: recommendation=use_official_path" in tool_message.content
+        attempts.clear()
+
+    # 1. Default: the exception propagates exactly as without the middleware, and Agent Help Network is not asked.
+    plain_agent = create_agent(FakeModel(), tools=[fetch_page], middleware=[ahn_langchain.ahn_tool_failure_middleware()])
+    for run in invocations(plain_agent):
+        fresh()
+        with pytest.raises(HTTPStatusError):
+            run()
+        assert calls == [] and len(attempts) == 1
+
+    # 2. A tool that reports its failure as an error message (ToolException with handle_tool_error): the line is appended,
+    #    the original text stays in front.
+    def fetch_reporting(url: str) -> str:
+        attempts.append(url)
+        raise ToolException(f"HTTP 403 Forbidden for {url}")
+
+    reporting = StructuredTool.from_function(fetch_reporting, name="fetch_page", description="Fetch a page.", handle_tool_error=True)
+    node_agent = create_agent(FakeModel(), tools=[reporting], middleware=[ahn_langchain.ahn_tool_failure_middleware()])
+    for run in invocations(node_agent):
+        fresh()
+        message = next(m for m in run()["messages"] if m.type == "tool")
+        assert message.status == "error"
+        assert message.content.startswith("HTTP 403 Forbidden for https://example.com/private/page?token=abc\nAHN example.com:")
         assert sent(calls) == [("example.com", "site_access", None, f"ahn-client/{ahn.__version__} (+langchain; +https://agenthelpnetwork.com)")]
         assert "token" not in calls[0][0].full_url
+
+    # 3. Listed before ToolRetryMiddleware, retries run first and the middleware sees the final failure once.
+    retry = ToolRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False)
+    ordered = create_agent(FakeModel(), tools=[fetch_page], middleware=[ahn_langchain.ahn_tool_failure_middleware(), retry])
+    for run in invocations(ordered):
+        fresh()
+        message = next(m for m in run()["messages"] if m.type == "tool")
+        assert len(attempts) == 3 and len(calls) == 1
+        assert message.status == "error" and "failed after 3 attempts" in message.content and "AHN example.com:" in message.content
+
+    # 4. convert_exceptions=True, retries exhausted with on_failure="error": one conversion, no exception text in the message.
+    raising_retry = ToolRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False, on_failure="error")
+    converting = create_agent(FakeModel(), tools=[fetch_page],
+                              middleware=[ahn_langchain.ahn_tool_failure_middleware(convert_exceptions=True), raising_retry])
+    for run in invocations(converting):
+        fresh()
+        message = next(m for m in run()["messages"] if m.type == "tool")
+        assert len(attempts) == 3
+        assert message.status == "error" and message.content.startswith("Error: HTTPStatusError (site_access)\nAHN example.com:")
+        assert "token" not in message.content and "Forbidden" not in message.content.split("\n")[0]
+
+    # 5. The wrong order, converting before the retries: the first exception is converted and the retries never run.
+    wrong = create_agent(FakeModel(), tools=[fetch_page],
+                         middleware=[ToolRetryMiddleware(max_retries=2, initial_delay=0.0, jitter=False, on_failure="error"),
+                                     ahn_langchain.ahn_tool_failure_middleware(convert_exceptions=True)])
+    fresh()
+    invocations(wrong)[0]()
+    assert len(attempts) == 1
 
 
 # --- OpenAI Agents SDK -----------------------------------------------------------------------------------
@@ -490,88 +701,184 @@ class Ctx:
         self.tool_arguments = arguments
 
 
-def test_openai_adds_the_line_after_the_sdk_message(transport):
+def formatter_args(error, arguments=None, kind="tool_exception", default="An error occurred while running the tool. Please try again."):
+    return SimpleNamespace(kind=kind, tool_type="function", tool_name="fetch_page", call_id="call_1", default_message=default,
+                           run_context=Ctx(arguments), error=error)
+
+
+def test_openai_formatter_adds_the_line_after_the_default_message(transport):
     calls = transport()
-    fn = ahn_openai.with_ahn_note(lambda context, error: "base message")
-    out = fn(Ctx(json.dumps({"url": "https://example.com/a?b=1"})), HTTPStatusError("429 Too Many Requests"))
+    arguments = json.dumps({"url": "https://example.com/a?b=1"})
+    out = asyncio.run(ahn_openai.ahn_tool_error_formatter(formatter_args(HTTPStatusError("429 Too Many Requests"), arguments)))
+    assert out.startswith("An error occurred while running the tool. Please try again.\nAHN example.com: recommendation=use_official_path")
+    assert sent(calls)[0][:3] == ("example.com", "service_error", None)
+    assert sent(calls)[0][3].endswith("(+openai-agents; +https://agenthelpnetwork.com)")
+    assert "b=1" not in calls[0][0].full_url
+
+
+def test_openai_formatter_chains_the_formatter_you_already_had(transport):
+    transport()
+    arguments = json.dumps({"url": "https://example.com/a"})
+    seen = []
+
+    def sync_base(args):
+        seen.append(args.kind)
+        return "your message"
+
+    async def async_base(args):
+        return "your async message"
+
+    for base, expected in ((sync_base, "your message"), (async_base, "your async message")):
+        ahn.clear_cache()
+        out = asyncio.run(ahn_openai.tool_error_formatter(base)(formatter_args(HTTPStatusError("503 Service Unavailable"), arguments)))
+        assert out.startswith(expected + "\nAHN example.com:")
+    assert seen == ["tool_exception"]
+    # A base that returns None means "the SDK default": the line goes on the default message.
+    ahn.clear_cache()
+    out = asyncio.run(ahn_openai.tool_error_formatter(lambda args: None)(formatter_args(HTTPStatusError("503 Service Unavailable"), arguments)))
+    assert out.startswith("An error occurred while running the tool. Please try again.\nAHN example.com:")
+
+
+def test_openai_formatter_returns_exactly_what_the_base_returns_when_there_is_nothing_to_add(transport):
+    calls = transport()
+    arguments = json.dumps({"url": "https://example.com/a"})
+    plain = ahn_openai.ahn_tool_error_formatter
+    assert asyncio.run(plain(formatter_args(not_found(), arguments))) is None  # no base, no line: the SDK default
+    assert asyncio.run(ahn_openai.tool_error_formatter(lambda a: "base")(formatter_args(not_found(), arguments))) == "base"
+    assert asyncio.run(plain(formatter_args(forbidden("http://localhost/x"), None))) is None
+    assert asyncio.run(plain(formatter_args(RuntimeError("x"), None))) is None
+    assert asyncio.run(plain(formatter_args(PermissionError(13, "Permission denied"), arguments))) is None
+    # Other kinds are not tool exceptions.
+    for kind in ("approval_rejected", "tool_not_found"):
+        args = formatter_args(None, arguments, kind=kind, default="Tool execution was not approved.")
+        assert asyncio.run(plain(args)) is None
+        assert asyncio.run(ahn_openai.tool_error_formatter(lambda a: "mine")(args)) == "mine"
+    assert asyncio.run(plain(SimpleNamespace())) is None
+    assert calls == []
+    # A failed lookup, and a base that raises: the SDK default, as it would do itself.
+    transport(error=urllib.error.URLError("down"))
+    assert asyncio.run(plain(formatter_args(forbidden("https://example.org/a"), None))) is None
+
+    def broken(args):
+        raise RuntimeError("formatter bug")
+
+    assert asyncio.run(ahn_openai.tool_error_formatter(broken)(formatter_args(not_found(), arguments))) is None
+
+
+def test_openai_formatter_is_async_and_does_not_block_the_loop(monkeypatch):
+    assert asyncio.iscoroutinefunction(ahn_openai.ahn_tool_error_formatter)
+    release = threading.Event()
+
+    def slow(request, timeout):
+        release.wait(5)
+        return FakeResponse(json.dumps(ANSWER).encode("utf-8"))
+
+    monkeypatch.setattr(_client, "_urlopen", slow)
+
+    async def run():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        out = await ahn_openai.tool_error_formatter(timeout=0.3)(formatter_args(forbidden(), None))
+        task.cancel()
+        release.set()
+        return out, ticks
+
+    out, ticks = asyncio.run(run())
+    assert out is None and ticks >= 10
+
+
+def test_openai_failure_error_function_for_tools_that_set_their_own(transport):
+    calls = transport()
+    arguments = json.dumps({"url": "https://example.com/a?b=1"})
+    wrapped = ahn_openai.with_ahn_note(lambda context, error: "base message")
+    assert asyncio.iscoroutinefunction(wrapped) and asyncio.iscoroutinefunction(ahn_openai.ahn_failure_error_function)
+    out = asyncio.run(wrapped(Ctx(arguments), HTTPStatusError("429 Too Many Requests")))
     assert out.startswith("base message\nAHN example.com: recommendation=use_official_path")
     assert sent(calls)[0][3].endswith("(+openai-agents; +https://agenthelpnetwork.com)")
-    assert sent(calls)[0][:3] == ("example.com", "service_error", None)
+    assert asyncio.run(wrapped(Ctx(arguments), not_found())) == "base message"
+    assert asyncio.run(wrapped(object(), RuntimeError("x"))) == "base message"
 
-
-def test_openai_default_message_is_the_sdk_default_and_never_includes_the_exception(transport):
-    transport()
-    out = ahn_openai.ahn_failure_error_function(Ctx(json.dumps({"url": "https://example.com/a"})), forbidden("https://example.com/a?secret=1"))
-    first, _, rest = out.partition("\n")
-    assert first == ahn_openai.FALLBACK_MESSAGE or first.startswith("An error occurred")  # installed SDK: its own default text
-    assert "secret" not in first and rest.startswith("AHN example.com:")
-
-
-def test_openai_message_is_unchanged_when_there_is_nothing_to_add(transport):
-    calls = transport()
-    fn = ahn_openai.with_ahn_note(lambda context, error: "base")
-    assert fn(Ctx(json.dumps({"url": "https://example.com/a"})), not_found()) == "base"
-    assert fn(Ctx(None), forbidden("http://localhost/x")) == "base"
-    assert fn(object(), RuntimeError("x")) == "base"
-    assert calls == []
-    transport(error=urllib.error.URLError("down"))
-    assert fn(Ctx(json.dumps({"url": "https://example.org/a"})), forbidden("https://example.org/a")) == "base"
-
-
-def test_openai_non_string_base_is_passed_through(transport):
-    transport()
-    sentinel = object()
-    assert ahn_openai.with_ahn_note(lambda context, error: sentinel)(Ctx(), forbidden()) is sentinel
-
-
-def test_openai_async_form(transport):
-    transport()
-
-    async def base(context, error):
+    async def async_base(context, error):
         return "async base"
 
-    fn = ahn_openai.with_ahn_note(base, asynchronous=True)
-    assert asyncio.iscoroutinefunction(fn)
-    out = asyncio.run(fn(Ctx(json.dumps({"url": "https://example.com/a"})), HTTPStatusError("503 Service Unavailable")))
+    out = asyncio.run(ahn_openai.with_ahn_note(async_base)(Ctx(arguments), HTTPStatusError("503 Service Unavailable")))
     assert out.startswith("async base\nAHN example.com:")
-    plain = ahn_openai.with_ahn_note(lambda context, error: "sync base", asynchronous=True)
-    assert asyncio.run(plain(Ctx(None), not_found())) == "sync base"
+    sentinel = object()
+    assert asyncio.run(ahn_openai.with_ahn_note(lambda c, e: sentinel)(Ctx(), forbidden())) is sentinel
+    # The default base is the SDK's message, and never the exception text.
+    ahn.clear_cache()
+    default = asyncio.run(ahn_openai.ahn_failure_error_function(Ctx(arguments), forbidden("https://example.com/a?secret=1")))
+    first, _, rest = default.partition("\n")
+    assert first.startswith("An error occurred") and "secret" not in first and rest.startswith("AHN example.com:")
 
 
-def test_openai_documented_signature():
+def test_openai_plain_failure_error_function_is_the_documented_signature(transport):
     import inspect
-    assert list(inspect.signature(ahn_openai.ahn_failure_error_function).parameters) == ["context", "error"]
-    assert not asyncio.iscoroutinefunction(ahn_openai.ahn_failure_error_function)  # the documented form is plain
+    plain = ahn_openai.with_ahn_note(lambda context, error: "base", asynchronous=False)
+    assert not asyncio.iscoroutinefunction(plain)
+    assert list(inspect.signature(plain).parameters) == ["context", "error"]
+    transport()
+    out = plain(Ctx(json.dumps({"url": "https://example.com/a"})), HTTPStatusError("429 Too Many Requests"))
+    assert out.startswith("base\nAHN example.com:")
+    assert plain(Ctx(None), not_found()) == "base"
+    sentinel = object()  # an awaitable from an async base is passed through untouched
+    assert ahn_openai.with_ahn_note(lambda c, e: sentinel, asynchronous=False)(Ctx(), forbidden()) is sentinel
 
 
-def test_openai_failure_error_function_in_a_real_function_tool(transport):
+def test_openai_real_function_tools_with_the_run_config_formatter(transport):
     pytest.importorskip("agents")
-    from agents import function_tool
+    from agents import RunConfig, function_tool
     from agents.tool_context import ToolContext
 
     calls = transport()
+    seen = []
 
-    @function_tool(failure_error_function=ahn_openai.ahn_failure_error_function)
+    @function_tool
     def fetch_page(url: str) -> str:
         """Fetch a page."""
         raise forbidden(url)
 
-    @function_tool(failure_error_function=ahn_openai.with_ahn_note(asynchronous=True))
-    async def fetch_page_async(url: str) -> str:
+    @function_tool(failure_error_function=ahn_openai.with_ahn_note())
+    async def fetch_page_own(url: str) -> str:
         """Fetch a page."""
-        raise HTTPStatusError("Server error '503 Service Unavailable'")
+        raise HTTPStatusError("Server error '503 Service Unavailable'", request_url=url)
 
-    async def run(tool, url):
+    async def run(tool, url, run_config):
         arguments = json.dumps({"url": url})
-        context = ToolContext(context=None, tool_name=tool.name, tool_call_id="call_1", tool_arguments=arguments)
-        return await tool.on_invoke_tool(context, arguments)
+        context = ToolContext(context=None, tool_name=tool.name, tool_call_id="call_1", tool_arguments=arguments, run_config=run_config)
+        return await tool.on_invoke_tool(context, arguments), context
 
-    out = asyncio.run(run(fetch_page, "https://example.com/a?b=1"))
-    assert out.startswith("An error occurred while running the tool. Please try again.\nAHN example.com:")
+    default_text = "An error occurred while running the tool. Please try again."
+    # The implicit default handler: the RunConfig formatter is what the SDK calls, and the SDK's own handling stays as it is.
+    out, context = asyncio.run(run(fetch_page, "https://example.com/a?b=1", RunConfig(tool_error_formatter=ahn_openai.ahn_tool_error_formatter)))
+    assert out.startswith(default_text + "\nAHN example.com:")
+    assert getattr(context, "_function_tool_default_failure_handled", False) is True  # still the default policy: traces stay redacted
+    # With your own formatter in the RunConfig, chained.
     ahn.clear_cache()
-    out = asyncio.run(run(fetch_page_async, "https://example.com/z"))
-    assert out.startswith("An error occurred while running the tool. Please try again.\nAHN example.com:")
-    assert [row[:3] for row in sent(calls)] == [("example.com", "site_access", None), ("example.com", "service_error", None)]
+
+    def mine(args):
+        seen.append((args.kind, args.tool_name))
+        return "mine: " + args.default_message
+
+    out, _ = asyncio.run(run(fetch_page, "https://example.com/a", RunConfig(tool_error_formatter=ahn_openai.tool_error_formatter(mine))))
+    assert out.startswith("mine: " + default_text + "\nAHN example.com:") and seen == [("tool_exception", "fetch_page")]
+    # No formatter configured: the SDK default, no lookup.
+    calls.clear()
+    out, _ = asyncio.run(run(fetch_page, "https://example.com/a", RunConfig()))
+    assert out == default_text and calls == []
+    # A tool with its own failure_error_function, wrapped.
+    ahn.clear_cache()
+    out, _ = asyncio.run(run(fetch_page_own, "https://example.com/z", None))
+    assert out.startswith(default_text + "\nAHN example.com:")
+    assert [row[:3] for row in sent(calls)] == [("example.com", "service_error", None)]
+    assert sent(calls)[0][3].endswith("(+openai-agents; +https://agenthelpnetwork.com)")
 
 
 # --- CrewAI ----------------------------------------------------------------------------------------------
@@ -904,8 +1211,10 @@ def test_extras_are_declared_and_the_base_install_has_no_dependencies():
     head, _, extras = pyproject.partition("[project.optional-dependencies]")
     assert "dependencies = []" in head
     extras = extras.split("[project.urls]")[0]
-    for line in ('langchain = ["langchain>=1.0"]', 'crewai = ["crewai>=1.15.9"]', 'openai-agents = ["openai-agents"]',
-                 'claude-agent-sdk = ["claude-agent-sdk"]'):
+    # Lower bounds are the versions the adapters were run against: openai-agents 0.24 is the first with RunConfig.tool_error_formatter
+    # for tool exceptions, claude-agent-sdk 0.1.27 the oldest whose PostToolUseFailure hook was run (see the README).
+    for line in ('langchain = ["langchain>=1.0"]', 'crewai = ["crewai>=1.15.9"]', 'openai-agents = ["openai-agents>=0.24"]',
+                 'claude-agent-sdk = ["claude-agent-sdk>=0.1.27"]'):
         assert line in extras
 
 
@@ -923,3 +1232,98 @@ def test_examples_parse_and_name_the_browser_use_adapter():
     text = (examples / "browser_use_actions_example.py").read_text(encoding="utf-8")
     assert 'ADAPTER = "browser-use"' in text and "adapter=ADAPTER" in text
     assert "@tools.action(" in text and "on_step_end" in text
+
+
+# --- hosts that are never looked up -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("value", [
+    "web.default.svc", "redis.prod.cluster", "api.service.consul", "x.svc", "db.cluster",
+    "10.0.0.1.nip.io", "10-0-0-1.sslip.io", "app.192.168.1.5.nip.io", "x.xip.io", "www.nip.io",
+    "192-168-1-5.example.com", "ec2-10-0-0-1.compute.example.com", "10.0.0.1.example.com",
+])
+def test_cluster_and_address_names_are_never_looked_up(value, transport):
+    calls = transport()
+    assert ahn.check(value) is None
+    assert ahn.check(f"https://{value}/x", "site_access") is None
+    assert _adapter.note_for(forbidden(f"https://{value}/x"), None, adapter="langchain") is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", ["example.com", "svc.example.com", "cluster.example.org", "consul.io", "nipio.net", "1-2-3.example.com",
+                                   "v1.2.3.example.com", "api.v2.example.com"])
+def test_ordinary_names_with_similar_parts_are_still_looked_up(value, transport):
+    calls = transport()
+    assert ahn.check(value) is not None
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("value", ["fa\u00df.de", "https://fa\u00df.de/x", "fa\u03c2.de", "a\u200db.example.com", "a\u200cb.example.com"])
+def test_idna_2003_deviation_names_are_refused_like_the_plugin_does(value, transport):
+    calls = transport()
+    assert _hosts.normalize_host(value) is None and hook.normalize_host(value) is None
+    assert ahn.check(value) is None
+    assert calls == []
+    assert _claude_code.hostname(value) is None and hook.hostname(value) is None
+    assert _hosts.IDNA_DEVIATIONS == hook.IDNA_DEVIATIONS
+
+
+def test_a_name_without_a_deviation_character_still_works_in_idna(transport):
+    calls = transport()
+    assert _hosts.normalize_host("https://m\u00fcnchen.de/x") == "xn--mnchen-3ya.de" == hook.normalize_host("https://m\u00fcnchen.de/x")
+    assert ahn.check("m\u00fcnchen.de") is not None and len(calls) == 1
+
+
+@pytest.mark.parametrize("value", ["https://evil.com\\@good.com", "https://evil.com\\@good.com/path", "http://good.com\\.evil.com/", "evil.com\\good.com"])
+def test_a_backslash_has_two_readings_so_no_host_is_looked_up(value, transport):
+    # urlsplit reads the host after the "@" (good.com); a browser reads the backslash as a slash (evil.com).
+    calls = transport()
+    assert _hosts.normalize_host(value) is None
+    assert ahn.check(value) is None
+    assert _adapter.host_from_args({"url": value}) is None
+    assert _adapter.host_from_error(f"GET {value} failed") is None
+    assert _claude_code.url_host(value) is None and _claude_code.hostname(value) is None
+    assert _claude_code.failure({"hook_event_name": "PostToolUseFailure", "tool_name": "WebFetch", "tool_input": {"url": value},
+                                 "error": "403 Forbidden"}) is None
+    assert calls == []
+
+
+# --- the Browser Use example -----------------------------------------------------------------------------
+
+def load_browser_use_example(monkeypatch):
+    package = types.ModuleType("browser_use")
+
+    class Tools:
+        def action(self, description, **kwargs):
+            return lambda function: function
+
+    package.Tools, package.Agent, package.ActionResult = Tools, object, object
+    monkeypatch.setitem(sys.modules, "browser_use", package)
+    spec = importlib.util.spec_from_file_location("browser_use_actions_example_under_test",
+                                                  ROOT / "clients" / "python" / "examples" / "browser_use_actions_example.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("S&P 500 - Yahoo Finance", None), ("500 Startups", None), ("Top 403 Songs", None), ("Example Domain", None), ("", None), (None, None),
+    ("Pricing - 429 Dollars", None), ("The 502 bus", None),
+    ("403 Forbidden", "site_access"), ("Access Denied", "site_access"), ("Error 403", "site_access"),
+    ("Just a moment...", "human_verification"), ("Attention Required! | Cloudflare", "human_verification"),
+    ("Verify you are human", "human_verification"), ("Captcha", "human_verification"),
+    ("429 Too Many Requests", "service_error"), ("Error 503", "service_error"), ("500 Internal Server Error", "service_error"),
+    ("502 Bad Gateway", "service_error"), ("504 Gateway Time-out", "service_error"), ("503 Service Unavailable", "service_error"),
+])
+def test_browser_use_example_block_titles(monkeypatch, title, expected):
+    assert load_browser_use_example(monkeypatch).block_class(title) == expected
+
+
+# --- the README ------------------------------------------------------------------------------------------
+
+def test_client_readme_links_are_absolute_so_they_work_on_pypi():
+    import re
+    text = (ROOT / "clients" / "python" / "README.md").read_text(encoding="utf-8")
+    links = re.findall(r"\]\(([^)\s]+)\)", text)
+    assert links
+    relative = [link for link in links if not link.startswith(("https://", "http://", "#"))]
+    assert relative == [], relative

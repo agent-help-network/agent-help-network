@@ -8,32 +8,49 @@
     agent = create_agent(model, tools=[fetch_page], middleware=[ahn_tool_failure_middleware()])
 
 The middleware implements the documented ``wrap_tool_call`` / ``awrap_tool_call`` hooks
-(https://docs.langchain.com/oss/python/langchain/middleware/custom). When a tool call fails with a
-block or an outage (403, 429, a challenge, a login wall, 5xx, a timeout, a refused connection), it
-looks up the hostname of the call's URL and adds one line to the tool's result:
+(https://docs.langchain.com/oss/python/langchain/middleware/custom). It acts on a tool call that failed with a
+block or an outage (403, 429, a challenge, a login wall, 5xx, a timeout, a refused connection) and whose URL names
+a host (in the call's arguments, or in the exception's request):
 
-* A tool that raises: the exception becomes a ``ToolMessage`` with ``status="error"`` whose content is
-  ``Error: <the original exception's repr>`` and then the line. This is what ``ToolNode`` itself does
-  with ``handle_tool_errors=True`` (``convert_exceptions=False`` re-raises instead and never changes
-  an exception into a message).
-* A tool that returns a ``ToolMessage`` with ``status="error"``: the line is appended to its content.
+* A tool call that comes back as a ``ToolMessage`` with ``status="error"`` (a ``ToolNode`` with
+  ``handle_tool_errors``, ``ToolRetryMiddleware``'s default after its last attempt, or a tool that returns one):
+  the line is appended to its content. The original content stays, in front.
+* A tool that raises: **the exception is re-raised unchanged**, so the run behaves exactly as it does without the
+  middleware, whether or not Agent Help Network answers. (An exception cannot carry text to the model.)
 
-Nothing else is touched: a failure that is not a block or an outage (404, 422, a typo in an address),
-an unreachable service, a slow lookup (``timeout``, 2 s) and a missing URL all leave the tool call exactly
-as the tool produced it. A tool that returns the text of a 403 page as an ordinary result is not an
-error to LangChain, so nothing is added; raise from the tool (``response.raise_for_status()``) or return
-``ToolMessage(..., status="error")`` to opt in. Only the hostname and two enum codes leave the machine.
+``ahn_tool_failure_middleware(convert_exceptions=True)`` also handles raised exceptions, and always the same way, for
+every block or outage with a host, whatever the lookup returned: the exception becomes
+``ToolMessage(status="error")`` whose content is ``Error: <exception class> (<error class>)`` followed by the line
+when there is one. The exception's text, URL, path and query are not put into the message. That changes how the
+run continues (it goes on instead of stopping), which is why it is off by default.
+
+Order matters: middleware listed first is outermost. List this one **before** ``ToolRetryMiddleware``, so retries
+happen first and this middleware sees the final failure once:
+``middleware=[ahn_tool_failure_middleware(), ToolRetryMiddleware()]``. Listed after it, with ``convert_exceptions=True``,
+it would turn the first exception into a message and the retries would never run.
+
+Nothing else is touched: a failure that is not a block or an outage (404, 422, a typo, a tool-argument validation error),
+an unreachable service, a slow lookup (``timeout``, 2 s) and a missing URL all leave the call exactly as the tool produced it.
+A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so nothing is added; raise
+from the tool (``response.raise_for_status()``) or return ``ToolMessage(..., status="error")`` to opt in. Only the
+hostname and two enum codes leave the machine.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from ._adapter import DEFAULT_TIMEOUT, anote_for, note_for
+from ._adapter import DEFAULT_TIMEOUT, anote_for, failure_target, note_for
 
 ADAPTER = "langchain"
 
 __all__ = ["ADAPTER", "ahn_tool_failure_middleware", "handle_tool_call", "ahandle_tool_call"]
+
+# LangGraph's control-flow signals travel as exceptions through a tool call: GraphBubbleUp (and its subclasses GraphInterrupt,
+# NodeInterrupt, ParentCommand, GraphDrained), the node cancel and timeout errors, and the pydantic ValidationError that
+# interrupt() raises for a resume value of the wrong shape (marked with the attribute below; see langgraph.errors.is_invalid_resume).
+CONTROL_FLOW = frozenset({"GraphBubbleUp", "NodeCancelledError", "NodeTimeoutError"})
+INVALID_RESUME_MARK = "_langgraph_invalid_resume"
 
 
 def _tool_message_cls():
@@ -43,8 +60,10 @@ def _tool_message_cls():
 
 
 def _control_flow(error: BaseException) -> bool:
-    """LangGraph's interrupt and command signals travel as exceptions; they are never tool failures."""
-    return any(cls.__name__ in ("GraphBubbleUp", "ParentCommand") for cls in type(error).__mro__)
+    """True for LangGraph's control-flow signals; they are never tool failures and always propagate."""
+    if getattr(error, INVALID_RESUME_MARK, False) is True:
+        return True
+    return any(cls.__name__ in CONTROL_FLOW for cls in type(error).__mro__)
 
 
 def _call(request: Any) -> dict:
@@ -82,13 +101,14 @@ def _error_text(message: Any) -> Optional[str]:
     return None
 
 
-def _error_message(request: Any, error: Exception, note: str) -> Any:
+def _converted(request: Any, error: Exception, error_class: str, note: Optional[str]) -> Any:
+    """The error ToolMessage that stands for an exception: its class and the error class, never its text."""
     call = _call(request)
-    return _tool_message_cls()(content=f"Error: {error!r}\n{note}", name=call.get("name"),
-                               tool_call_id=call.get("id"), status="error")
+    content = f"Error: {type(error).__name__} ({error_class})" + (f"\n{note}" if note else "")
+    return _tool_message_cls()(content=content, name=call.get("name"), tool_call_id=call.get("id"), status="error")
 
 
-def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = True,
+def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = False,
                      timeout: float = DEFAULT_TIMEOUT) -> Any:
     """The body of the middleware's ``wrap_tool_call``; usable on its own inside your own middleware."""
     args = _call(request).get("args")
@@ -97,13 +117,17 @@ def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = T
     except Exception as error:
         if not convert_exceptions or _control_flow(error):
             raise
-        note = note_for(error, args, adapter=ADAPTER, timeout=timeout)
-        if note is None:
+        target = failure_target(error, args)
+        if target is None:
             raise
+        note = note_for(error, args, adapter=ADAPTER, timeout=timeout)
         try:
-            return _error_message(request, error, note)
+            message = _converted(request, error, target[1], note)
         except Exception:
-            raise error from None
+            message = None
+        if message is None:
+            raise
+        return message
     text = _error_text(result)
     if text:
         note = note_for(text, args, adapter=ADAPTER, timeout=timeout)
@@ -112,22 +136,26 @@ def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = T
     return result
 
 
-async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = True,
+async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = False,
                             timeout: float = DEFAULT_TIMEOUT) -> Any:
-    """The async twin of ``handle_tool_call``: the lookup runs in a worker thread, not on the event loop."""
+    """The async twin of ``handle_tool_call``: the wait never blocks the event loop and ends at ``timeout``."""
     args = _call(request).get("args")
     try:
         result = await handler(request)
     except Exception as error:
         if not convert_exceptions or _control_flow(error):
             raise
-        note = await anote_for(error, args, adapter=ADAPTER, timeout=timeout)
-        if note is None:
+        target = failure_target(error, args)
+        if target is None:
             raise
+        note = await anote_for(error, args, adapter=ADAPTER, timeout=timeout)
         try:
-            return _error_message(request, error, note)
+            message = _converted(request, error, target[1], note)
         except Exception:
-            raise error from None
+            message = None
+        if message is None:
+            raise
+        return message
     text = _error_text(result)
     if text:
         note = await anote_for(text, args, adapter=ADAPTER, timeout=timeout)
@@ -136,8 +164,12 @@ async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: b
     return result
 
 
-def ahn_tool_failure_middleware(*, convert_exceptions: bool = True, timeout: float = DEFAULT_TIMEOUT):
-    """A LangChain agent middleware (pass it in ``create_agent(..., middleware=[...])``); needs ``langchain`` v1."""
+def ahn_tool_failure_middleware(*, convert_exceptions: bool = False, timeout: float = DEFAULT_TIMEOUT):
+    """A LangChain agent middleware (pass it in ``create_agent(..., middleware=[...])``); needs ``langchain`` v1.
+
+    List it before ``ToolRetryMiddleware`` (see the module documentation). ``convert_exceptions=True`` turns a raised
+    block or outage into an error ``ToolMessage`` without the exception's text; the default re-raises it unchanged.
+    """
     from langchain.agents.middleware import AgentMiddleware
 
     class AHNToolFailureMiddleware(AgentMiddleware):

@@ -1,25 +1,34 @@
 """OpenAI Agents SDK: add an Agent Help Network line to the message a failed web tool sends the model.
 
-    pip install "ahn-client[openai-agents]"
+    pip install "ahn-client[openai-agents]"        # openai-agents 0.24 or newer
 
-    from agents import function_tool
-    from ahn_client.openai_agents import ahn_failure_error_function
+    from agents import RunConfig, Runner
+    from ahn_client.openai_agents import ahn_tool_error_formatter
 
-    @function_tool(failure_error_function=ahn_failure_error_function)
-    def fetch_page(url: str) -> str: ...
+    result = await Runner.run(agent, "...", run_config=RunConfig(tool_error_formatter=ahn_tool_error_formatter))
 
-``failure_error_function`` is the documented hook of ``@function_tool``
-(https://openai.github.io/openai-agents-python/tools/): when the tool raises, the SDK calls
-``failure_error_function(context, error)`` and sends the returned string to the model. This module
-returns what the SDK would have sent (``default_tool_error_function``, or the function you pass as
-``base``) and, when the failure is a block or an outage on a web host, one more line.
+``RunConfig.tool_error_formatter`` (https://openai.github.io/openai-agents-python/running_agents/) formats the
+model-visible message of a tool error. The SDK calls it with ``ToolErrorFormatterArgs``; for a function tool that
+raised, ``kind == "tool_exception"`` and ``error`` is the exception (the 0.24 source and its type annotations; the docs
+page lists the approval and tool-not-found kinds). The formatter may be async, so the wait never blocks the event loop.
 
-* The original message is kept as it is. The SDK's default does not show the model the exception text;
-  that stays so. To show it, pass a ``base`` that does.
-* Not a block or an outage (a 404, a bad request, no URL), an unreachable service or a lookup slower than
-  ``timeout`` (2 s): the result is exactly what ``base`` returns.
-* The URL is read from the tool's arguments (``context.tool_arguments``) or from the exception. Only the
-  hostname and two enum codes leave the machine.
+What it does, for ``kind == "tool_exception"`` when the failure is a block or an outage on a web host:
+
+* The message the model gets is what it would have got (``default_message``, or what your own formatter returns when you
+  pass it as ``base``) plus one line. The original exception text is not added: the SDK's default does not show it to
+  the model, and that stays.
+* The SDK keeps treating the failure as the default one, so traces still show the redacted error, not ``str(error)``.
+* Other kinds, a failure that is not a block or an outage (404, a bad request, no URL), an unreachable service and a
+  lookup slower than ``timeout`` (2 s) return exactly what ``base`` returns (or None).
+
+The URL is read from the tool's arguments (``run_context.tool_arguments``) or from the exception's request. Only the
+hostname and two enum codes leave the machine.
+
+This formatter applies only to function tools that use the SDK's implicit default failure handler. A tool that sets its
+own ``failure_error_function``, tools made by ``Agent.as_tool()`` and local MCP tools keep their own policies; for a tool that
+sets one, wrap it with ``with_ahn_note(your_function)``. Be aware of what the SDK does then: with an explicit
+``failure_error_function`` it no longer applies ``RunConfig.tool_error_formatter`` to that tool (so a formatter you set there
+is ignored), and a handled error is recorded in the trace span with its text instead of "redacted".
 """
 
 from __future__ import annotations
@@ -32,7 +41,7 @@ from ._adapter import DEFAULT_TIMEOUT, anote_for, note_for
 ADAPTER = "openai-agents"
 FALLBACK_MESSAGE = "An error occurred while running the tool. Please try again."  # the SDK's own default text
 
-__all__ = ["ADAPTER", "ahn_failure_error_function", "with_ahn_note"]
+__all__ = ["ADAPTER", "ahn_failure_error_function", "ahn_tool_error_formatter", "tool_error_formatter", "with_ahn_note"]
 
 
 def _default_base() -> Callable[[Any, Exception], Any]:
@@ -52,15 +61,51 @@ def _join(message: str, note: Optional[str]) -> str:
     return f"{message}\n{note}" if note else message
 
 
-def with_ahn_note(base: Optional[Callable[[Any, Exception], Any]] = None, *, asynchronous: bool = False,
+def tool_error_formatter(base: Optional[Callable[[Any], Any]] = None, *, timeout: float = DEFAULT_TIMEOUT
+                         ) -> Callable[[Any], Any]:
+    """A ``RunConfig.tool_error_formatter`` that adds an Agent Help Network line to a failed web tool's message.
+
+    ``base`` is the formatter you would have set (sync or async); its result is what the line is added to, and what is
+    returned when there is no line. Without ``base`` the line is added to the SDK's ``default_message``.
+    """
+
+    async def formatter(args: Any) -> Optional[str]:
+        message = None
+        if base is not None:
+            try:
+                message = base(args)
+                if inspect.isawaitable(message):
+                    message = await message
+            except Exception:
+                message = None  # the SDK falls back to its default message when a formatter fails; so do we
+        try:
+            if getattr(args, "kind", None) != "tool_exception":
+                return message
+            text = message if isinstance(message, str) else getattr(args, "default_message", None)
+            if not isinstance(text, str):
+                return message
+            note = await anote_for(getattr(args, "error", None), _arguments(getattr(args, "run_context", None)),
+                                   adapter=ADAPTER, timeout=timeout)
+            return _join(text, note) if note else message
+        except Exception:
+            return message
+
+    return formatter
+
+
+ahn_tool_error_formatter = tool_error_formatter()
+
+
+def with_ahn_note(base: Optional[Callable[[Any, Exception], Any]] = None, *, asynchronous: bool = True,
                   timeout: float = DEFAULT_TIMEOUT) -> Callable[[Any, Exception], Any]:
     """A ``failure_error_function`` that returns ``base(context, error)`` plus an Agent Help Network line.
 
-    ``base`` defaults to the SDK's ``default_tool_error_function``. With ``asynchronous=False`` (the
-    documented form) the function is plain and waits at most ``timeout`` seconds, only when the failure is
-    a block or an outage that is not cached. With ``asynchronous=True`` it is a coroutine function, so the
-    wait never blocks the event loop; SDK versions whose ``ToolErrorFunction`` accepts an awaitable (the
-    0.24 line does) await it, and ``base`` may then be async as well.
+    For a tool that sets its own ``failure_error_function``
+    (https://openai.github.io/openai-agents-python/tools/: ``(context, error) -> str``). ``base`` defaults to the SDK's
+    ``default_tool_error_function``. By default the result is a coroutine function (the SDK awaits an awaitable result in
+    0.24 and newer), so the wait never blocks the event loop and ``base`` may be async. ``asynchronous=False`` gives a plain
+    function, the form the docs show; it waits up to ``timeout`` seconds on the event loop thread, and only when the failure
+    is a block or an outage that is not cached.
     """
     chosen = base if base is not None else _default_base()
 

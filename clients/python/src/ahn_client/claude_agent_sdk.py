@@ -24,10 +24,9 @@ and two enum codes leave the machine.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
-from ._adapter import DEFAULT_TIMEOUT, bounded_check
+from ._adapter import DEFAULT_TIMEOUT, abounded_check
 from ._claude_code import failure
 
 ADAPTER = "claude-agent-sdk"
@@ -48,8 +47,7 @@ def make_hook(*, timeout: float = DEFAULT_TIMEOUT):
             if found is None:
                 return {}
             host, error_class, stage = found
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, bounded_check, host, error_class, stage, ADAPTER, timeout)
+            result = await abounded_check(host, error_class, stage, ADAPTER, timeout)
             if result is None:
                 return {}
             return {"hookSpecificOutput": {"hookEventName": input_data["hook_event_name"],
