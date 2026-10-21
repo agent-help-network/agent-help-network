@@ -18,7 +18,7 @@ The hook is read-only: it sends a hostname and enum codes and reports nothing. T
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.3 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.4 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -82,7 +82,9 @@ For thrown errors (`PostToolUseFailure`), text that names none of a block, a log
 It sends nothing when:
 
 
-- the host is local, private or special-use by name: `localhost`, IP literals including short and hex forms such as `127.1` or `0x7f.1`, single-label names, and names under `.local`, `.internal`, `.test`, `.lan`, `.arpa`, `.onion`, `.invalid`, `.example`, `.home`, `.corp`, `.intranet`, `.private`, `.localdomain`, `.alt` (nothing is resolved);
+- the host is local, private or special-use by name: `localhost`, IP literals including short and hex forms such as `127.1` or `0x7f.1`, single-label names, and names under `.local`, `.internal`, `.test`, `.lan`, `.arpa`, `.onion`, `.invalid`, `.example`, `.home`, `.corp`, `.intranet`, `.private`, `.localdomain`, `.alt` and the cluster-internal `.svc`, `.consul`, `.cluster` (nothing is resolved);
+- the host name carries an IPv4 address, since it stands for an address: a name under `nip.io`, `sslip.io` or `xip.io`, or any name with four numbers written into it with dots or dashes (`10-0-0-1.example.com`, `ec2-10-0-0-1.compute.example.com`). `v1.2.3.example.com` and `1-2-3.example.com` have fewer than four numbers and are still looked up;
+- the URL contains a backslash (`https://evil.com\@good.com`): a browser reads the backslash as a slash and goes to `evil.com`, while a URL parser reads `good.com`. With two readings possible, no host is looked up;
 - the host is `agenthelpnetwork.com` or one of its subdomains;
 - the host or a parent domain is listed in `AHN_HOOK_SKIP_HOSTS` (compared with and without a leading `www.` on both sides);
 - an MCP tool failed without any URL in its input or error;

@@ -207,9 +207,34 @@ def test_tool_input_url_wins_over_error_text():
 
 @pytest.mark.parametrize("host", ["localhost", "intranet", "10.0.0.1", "127.0.0.1", "127.1", "0x7f.1", "192.168.1.20",
                                   "foo.local", "printer.lan", "svc.internal", "app.test", "1.0.0.127.in-addr.arpa",
-                                  "abc.onion", "agenthelpnetwork.com", "api.agenthelpnetwork.com"])
+                                  "abc.onion", "agenthelpnetwork.com", "api.agenthelpnetwork.com",
+                                  "web.default.svc", "redis.prod.cluster", "api.service.consul", "x.svc", "db.cluster",
+                                  "10.0.0.1.nip.io", "10-0-0-1.sslip.io", "app.192.168.1.5.nip.io", "x.xip.io", "nip.io", "sslip.io",
+                                  "192-168-1-5.example.com", "ec2-10-0-0-1.compute.example.com", "10.0.0.1.example.com"])
 def test_skip_host(host):
     assert hook.skip_host(host)
+
+
+@pytest.mark.parametrize("host", ["svc.example.com", "cluster.example.org", "consul.io", "nipio.net", "1-2-3.example.com",
+                                  "v1.2.3.example.com", "api.v2.example.com", "mynip.io", "10-0-0.example.com", "1234-1-1-1.example.com"])
+def test_ordinary_names_with_similar_parts_are_not_skipped(host):
+    assert not hook.skip_host(host)
+
+
+@pytest.mark.parametrize("value", ["https://evil.com\\@good.com", "https://evil.com\\@good.com/path", "http://good.com\\.evil.com/",
+                                   "evil.com\\good.com"])
+def test_a_backslash_has_two_readings_so_no_host_is_read(value):
+    # urlsplit reads the host after the "@" (good.com); a browser reads the backslash as a slash (evil.com).
+    assert hook.hostname(value) is None and hook.normalize_host(value) is None and hook.url_host(value) is None
+    assert hook.host_from_text(f"GET {value} failed") is None
+    assert hook.failure(json.loads(payload(url=value, error="403 Forbidden"))) is None
+
+
+@pytest.mark.parametrize("url", ["http://web.default.svc/", "https://api.service.consul/v1", "http://10.0.0.1.nip.io/", "https://10-0-0-1.sslip.io/",
+                                 "https://192-168-1-5.example.com/", "https://evil.com\\@good.com/"])
+def test_internal_and_ambiguous_hosts_make_no_request(monkeypatch, capsys, captured, url):
+    code, out, err = run_main(monkeypatch, capsys, payload(url=url, error="403 Forbidden"))
+    assert (code, out, err, captured) == (0, "", "", [])
 
 
 @pytest.mark.parametrize("host", ["example.com", "nytimes.com", "bbc.co.uk", "xn--p1ai.com", "a-b.example.org"])
@@ -925,7 +950,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.3"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.4"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}

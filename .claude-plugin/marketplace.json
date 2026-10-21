@@ -9,7 +9,7 @@
     {
       "name": "ahn",
       "source": "./plugins/claude-code/ahn",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "description": "Look up a failed web step's hostname on Agent Help Network: declared agent policy, official developer path, provider status, and one recommended action. The hook is read-only and sends the hostname only; the bundled MCP server's report_observation write tool is for use only with the user's explicit approval, never automatically.",
       "category": "productivity"
     }

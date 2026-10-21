@@ -54,7 +54,13 @@ HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 # Special-use and private-network names (RFC 6761/6762/8375, Tor, common LAN
 # suffixes). Decided by name only: the hook never resolves anything.
 SKIP_TLDS = frozenset({"localhost", "local", "internal", "test", "lan", "arpa", "onion", "invalid", "example",
-                       "home", "corp", "intranet", "private", "localdomain", "alt"})
+                       "home", "corp", "intranet", "private", "localdomain", "alt",
+                       # Cluster-internal names: Kubernetes services (web.default.svc), Consul, cluster DNS.
+                       "svc", "consul", "cluster"})
+# Wildcard-DNS services that turn an address into a name (10.0.0.1.nip.io, 10-0-0-1.sslip.io): the name stands for an address.
+ADDRESS_NAME_SUFFIXES = ("nip.io", "sslip.io", "xip.io")
+# An IPv4 address written into a name with dots or dashes (192-168-1-5.example.com, ec2-10-0-0-1.compute.internal).
+EMBEDDED_IPV4 = re.compile(r"(?<![0-9])[0-9]{1,3}([.-])[0-9]{1,3}\1[0-9]{1,3}\1[0-9]{1,3}(?![0-9])")
 URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>()\[\]{}`]+", re.IGNORECASE)
 # Claude Code's own WebFetch refusal ("Claude Code is unable to fetch from <host>") is the only
 # place a bare, scheme-less hostname is read from error text. Elsewhere dotted tokens are code
@@ -129,6 +135,10 @@ def hostname(value: str | None) -> str | None:
     value = value.strip()
     if not value:
         return None
+    if "\\" in value:
+        # Browsers read a backslash as a slash (https://evil.com\@good.com goes to evil.com); urlsplit does not (good.com).
+        # With two readings possible, no host is looked up.
+        return None
     try:
         parts = urllib.parse.urlsplit(value if "://" in value else "//" + value)
         host = parts.hostname
@@ -176,7 +186,7 @@ def url_host(value) -> str | None:
 
 
 def special_use(host: str) -> bool:
-    """True for single-label, special-use and private-network names and for address literals."""
+    """True for single-label, special-use, private-network, cluster-internal and address-embedding names and for address literals."""
     labels = host.split(".")
     if len(labels) < 2:
         return True
@@ -189,11 +199,14 @@ def special_use(host: str) -> bool:
         ipaddress.ip_address(host)
         return True
     except ValueError:
-        return False
+        pass
+    if EMBEDDED_IPV4.search(host):
+        return True
+    return any(host == suffix or host.endswith("." + suffix) for suffix in ADDRESS_NAME_SUFFIXES)
 
 
 def skip_host(host: str, extra: str = "") -> bool:
-    """True for special-use names, AHN's own hosts, and AHN_HOOK_SKIP_HOSTS entries and their subdomains.
+    """True for special-use and address-embedding names, AHN's own hosts, and AHN_HOOK_SKIP_HOSTS entries and their subdomains.
 
     Both the host as given and its "www."-less form are compared, against each entry as given and
     normalised the same way, so "www.secret.example" in the list also covers "secret.example".
