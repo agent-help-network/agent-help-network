@@ -11,6 +11,24 @@ from fastapi.templating import Jinja2Templates
 
 from .db import connect
 from .settings import Settings
+from .traffic import OPERATOR_SOURCE
+
+# Display order and labels for the lookup summary. Kinds not listed fall into "other" so the parts always sum to the total.
+LOOKUP_KIND_LABELS = (
+    ("plugin_hint", "플러그인"), ("ahn_client_hint", "ahn-client"), ("mcp_hint", "MCP"),
+    ("browser_hint", "브라우저"), ("unknown", "unknown"),
+)
+
+
+def summarize_lookup_kinds(rows) -> dict:
+    """Group (client_type, total, external) rows into the fixed lookup summary. Counts only, nothing identifying."""
+    by_kind = {row["client_type"]: (int(row["total"]), int(row["external"])) for row in rows}
+    listed = {kind for kind, _ in LOOKUP_KIND_LABELS}
+    parts = [{"label": label, "total": by_kind.get(kind, (0, 0))[0], "external": by_kind.get(kind, (0, 0))[1]}
+             for kind, label in LOOKUP_KIND_LABELS]
+    other = [counts for kind, counts in by_kind.items() if kind not in listed]
+    parts.append({"label": "기타", "total": sum(c[0] for c in other), "external": sum(c[1] for c in other)})
+    return {"parts": parts, "total": sum(p["total"] for p in parts), "external": sum(p["external"] for p in parts)}
 
 
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -117,6 +135,21 @@ def _snapshot(settings: Settings) -> dict:
                GROUP BY client_type ORDER BY requests DESC,client_type""",
             (start,),
         ).fetchall()
+        lookup_kind_rows = conn.execute(
+            """SELECT client_type,sum(requests)::bigint AS total,
+                      COALESCE(sum(requests) FILTER (WHERE source<>%s),0)::bigint AS external
+               FROM traffic_attribution_daily
+               WHERE day >= %s AND method='GET' AND status_class='2xx' AND route_code='/v1/incidents/check'
+               GROUP BY client_type""",
+            (OPERATOR_SOURCE, start),
+        ).fetchall()
+        web_search = conn.execute(
+            """SELECT COALESCE(sum(requests),0)::bigint AS total,
+                      COALESCE(sum(requests) FILTER (WHERE source<>%s),0)::bigint AS external
+               FROM traffic_attribution_daily
+               WHERE day >= %s AND method='GET' AND status_class='2xx' AND route_code='/{lang}/search'""",
+            (OPERATOR_SOURCE, start),
+        ).fetchone()
         client_days = conn.execute(
             "SELECT count(DISTINCT (day,client_digest))::bigint AS n FROM traffic_client_daily WHERE day >= %s",
             (start,),
@@ -205,6 +238,7 @@ def _snapshot(settings: Settings) -> dict:
         "error_rate": error_rate, "p95_bucket": p95_bucket, "routes": routes,
         "sources": sources, "agent_sources": agent_sources,
         "client_types": client_types, "client_days": client_days,
+        "lookup_kinds": summarize_lookup_kinds(lookup_kind_rows), "web_search": web_search,
         "top_clients": top_clients, "render_metrics": {row["metric"]: row for row in render_rows},
         "database_stats": database_stats,
         "counts": counts, "withdrawals": withdrawals, "events": events, "pending": pending,

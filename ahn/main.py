@@ -23,7 +23,7 @@ from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
-from .traffic import client_type, daily_client_digest, request_source
+from .traffic import attribute_request, client_type, daily_client_digest
 from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
@@ -275,11 +275,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 route_code = "/static"
             elapsed_ms = (perf_counter() - start) * 1000
             bucket = next((limit for limit in (50, 100, 250, 500, 1000, 5000) if elapsed_ms <= limit), 10000)
-            source, medium, campaign, referrer = request_source(request)
-            if valid_owner_ip(request.headers.get("cf-connecting-ip", ""), settings.owner_allowed_ips):
-                # Network category only. A shared home address is not a person or proof of a test.
-                source, medium, campaign, referrer = "owner_network", "internal", "none_or_other", "none"
-            kind = client_type(request)
+            source, medium, campaign, referrer = attribute_request(request, settings.owner_allowed_ips)
+            kind = client_type(request, settings.key_pepper)
             day, digest = daily_client_digest(request, settings.key_pepper)
             def save_metric():
                 with connect(settings) as conn:

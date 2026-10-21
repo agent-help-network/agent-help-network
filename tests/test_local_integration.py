@@ -293,6 +293,39 @@ def test_owner_network_is_aggregated_separately_without_storing_address(env):
         assert "일별 핵심 활동" in body and "운영자 네트워크" in body
 
 
+def test_client_kinds_are_stored_as_categories_and_summarised_on_owner(env):
+    settings, _, _, _ = env
+    from ahn.tool_metrics import mcp_metric_token
+    owner_settings = replace(settings, owner_allowed_ips=("198.51.100.23",))
+    check = {"site_host": "example.org"}
+    plugin = {"User-Agent": "ahn-claude-code-plugin/0.2"}
+    with TestClient(create_app(owner_settings)) as client:
+        for _ in range(3):
+            assert client.get("/v1/incidents/check", params=check, headers=plugin).status_code == 200
+        # Same plugin from the operator's network: counted in the first number only.
+        assert client.get("/v1/incidents/check", params=check, headers={**plugin, "CF-Connecting-IP": "198.51.100.23"}).status_code == 200
+        assert client.get("/v1/incidents/check", params=check, headers={"User-Agent": "ahn-client/0.2 (+https://agenthelpnetwork.com)"}).status_code == 200
+        assert client.get("/v1/incidents/check", params=check, headers={"User-Agent": "python-httpx/0.28.1", "X-AHN-MCP-Call": mcp_metric_token(settings.key_pepper)}).status_code == 200
+        assert client.get("/v1/incidents/check", params=check, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+        assert client.get("/v1/incidents/check", params=check).status_code == 200
+        assert client.get("/v1/incidents/check", params={"site_host": "bad/path"}, headers=plugin).status_code == 400  # not a 2xx lookup
+        assert client.get("/en/search", headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+        assert client.get("/en/search", headers={"User-Agent": "Mozilla/5.0", "CF-Connecting-IP": "198.51.100.23"}).status_code == 200
+    with connect(settings) as conn:
+        kinds = {row["client_type"]: row["n"] for row in conn.execute(
+            "SELECT client_type,sum(requests)::bigint AS n FROM traffic_attribution_daily WHERE route_code='/v1/incidents/check' AND status_class='2xx' GROUP BY client_type")}
+        assert kinds == {"plugin_hint": 4, "ahn_client_hint": 1, "mcp_hint": 1, "browser_hint": 1, "unknown": 1}
+    expected = ("총 8건, 운영자 네트워크 제외 7건 — 플러그인 4→3 · ahn-client 1→1 · MCP 1→1 · 브라우저 1→1 · unknown 1→1 · 기타 0→0 "
+                "(전체→운영자 제외). 웹 검색 페이지 요청 2→1건")
+    with TestClient(create_monitor_app(owner_settings), client=("127.0.0.1", 4321)) as local:
+        assert expected in local.get("/").text
+    # The same line is on the hosted /owner page, behind the same gate, and carries no address or per-client key.
+    with TestClient(create_app(owner_settings)) as client:
+        page = client.get("/owner", headers={"CF-Connecting-IP": "198.51.100.23"})
+        assert page.status_code == 200 and expected in page.text
+        assert client.get("/owner", headers={"CF-Connecting-IP": "198.51.100.24"}).status_code == 404
+
+
 def test_render_metrics_snapshot_and_client_key_retention(env):
     settings, _, _, _ = env
     now = datetime.now(timezone.utc)
