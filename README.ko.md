@@ -41,7 +41,7 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 
 | `action` | 조건 | `confidence` |
 | --- | --- | --- |
-| `wait_provider_incident` | 신선한 업체 피드가 `minor`, `major`, `critical`, `maintenance` 활성 상태를 발표했고, 그 근거가 발표된 사건이나 점검이다(`provider_status.basis` 가 `components_only` 가 아님). | medium |
+| `wait_provider_incident` | 신선한 업체 피드가 `minor`, `major`, `critical`, `maintenance` 활성 상태를 발표했고, 그 근거가 발표된 사건이나 점검이다(`provider_status.basis` 가 `components_only` 가 아님). 발표가 없어도 페이지가 `major`·`critical` 이면 대기한다. | medium |
 | `hand_off_to_human` | `error_class` 가 `human_verification`(high) 또는 `login_auth`(medium). | high / medium |
 | `use_official_path` | 차단 선언(아래)이 있고 공식 경로가 있다. | high |
 | `stop_declared_block` | 차단 선언이 있고 공식 경로가 없다. 페이지 자동 재시도를 멈춘다. | medium |

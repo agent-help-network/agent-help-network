@@ -1179,7 +1179,8 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None,
         if (scope is not None and indicator in status_scope.ACTIVE_INDICATORS
                 and status_scope.statuspage_page_id(payload) == page_id):
             scope.update(status_scope.read_scope(
-                lambda path: _pool_get(pool, status_host, "/api/v2/" + path, status_scope.SCOPE_CAP), page_id))
+                lambda path: _pool_get(pool, status_host, "/api/v2/" + path, status_scope.SCOPE_CAP), page_id,
+                label=failure_label))
     finally:
         pool.close()
     source = Source(f"{name} Status", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage")
@@ -1400,7 +1401,8 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
         page_id = status_scope.statuspage_page_id(body)
         if page_id:
             base = source.api_url[: -len("status.json")]
-            scope.update(status_scope.read_scope(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP), page_id))
+            scope.update(status_scope.read_scope(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP), page_id,
+                                                 label=failure_label))
     return result
 
 
@@ -1410,6 +1412,47 @@ def _cached_ok(settings: Settings, site_host: str) -> bool | None:
     if row is None:
         return None
     return bool(row["fetched_at"] and (not row["last_error_at"] or row["fetched_at"] > row["last_error_at"]))
+
+
+def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | None, digest: dict, scope: dict) -> None:
+    """Record a successful read for one host.
+
+    The scope columns are replaced with every successful read: a feed that no longer yields them (a quiet page,
+    another platform, a failed or oversized list, lists resting after failures) keeps no older scope. The scope
+    failure counters are cleared when both lists were read, raised when one failed, and kept when the lists were
+    not asked for (status_scope.read_scope ``scope_outcome``)."""
+    outcome = scope.get("scope_outcome") or "skipped"
+    error = scope.get("scope_error")
+    conn.execute(
+        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
+                                     origin_operator,vantage,reader_version,body_sha256,
+                                     active_incidents,max_incident_impact,incident_updated_at,
+                                     active_maintenances,affected,affected_regional,
+                                     scope_failures,scope_failed_at,scope_error)
+           VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                   CASE WHEN %s::text='failed' THEN 1 END, CASE WHEN %s::text='failed' THEN now() END,
+                   CASE WHEN %s::text='failed' THEN %s::text END)
+           ON CONFLICT (site_host) DO UPDATE SET
+           indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
+           fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
+           origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
+           reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
+           active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
+           incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
+           affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional,
+           scope_failures=CASE %s::text WHEN 'ok' THEN NULL
+                               WHEN 'failed' THEN LEAST(COALESCE(status_cache.scope_failures,0)+1,32767)
+                               ELSE status_cache.scope_failures END,
+           scope_failed_at=CASE %s::text WHEN 'ok' THEN NULL WHEN 'failed' THEN now() ELSE status_cache.scope_failed_at END,
+           scope_error=CASE %s::text WHEN 'ok' THEN NULL WHEN 'failed' THEN %s::text ELSE status_cache.scope_error END""",
+        (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
+         scope.get("active_incidents"), scope.get("max_incident_impact"), scope.get("incident_updated_at"),
+         scope.get("active_maintenances"), scope.get("affected"), scope.get("affected_regional"),
+         outcome, outcome, outcome, error, outcome, outcome, outcome, error),
+    )
+    # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
+    from .signal_history import record_provider_status
+    record_provider_status(conn, site_host, indicator, updated_at)
 
 
 def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | None = None, min_interval: int = 15,
@@ -1440,46 +1483,25 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
             return cached
         lock.acquire()
     try:
-        if min_interval:
-            with connect(settings) as conn:
-                previous = conn.execute(
-                    "SELECT fetched_at,last_error_at FROM status_cache WHERE site_host=%s",
-                    (site_host,),
-                ).fetchone()
-            if previous:
-                fetched_at, error_at = previous["fetched_at"], previous["last_error_at"]
-                latest = max((t for t in (fetched_at, error_at) if t is not None), default=None)
-                if latest and latest >= datetime.now(timezone.utc) - timedelta(seconds=min_interval):
-                    return bool(fetched_at and (not error_at or fetched_at > error_at))
+        with connect(settings) as conn:
+            previous = conn.execute(
+                "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
+                (site_host,),
+            ).fetchone()
+        if min_interval and previous:
+            fetched_at, error_at = previous["fetched_at"], previous["last_error_at"]
+            latest = max((t for t in (fetched_at, error_at) if t is not None), default=None)
+            if latest and latest >= datetime.now(timezone.utc) - timedelta(seconds=min_interval):
+                return bool(fetched_at and (not error_at or fetched_at > error_at))
         own_client = client is None
         client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
         try:
             digest: dict = {}
-            scope: dict = {}
+            # While the two scope lists rest after failures, read status.json only (scope None: no list request).
+            scope: dict | None = None if status_scope.scope_paused(previous, datetime.now(timezone.utc)) else {}
             indicator, updated_at = _read_source(source, client, digest, scope)
             with connect(settings) as conn:
-                # The scope columns are replaced with every successful read: a feed that no longer yields
-                # them (another platform, a failed or oversized list) must not keep an older scope.
-                conn.execute(
-                    """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
-                                                 origin_operator,vantage,reader_version,body_sha256,
-                                                 active_incidents,max_incident_impact,incident_updated_at,
-                                                 active_maintenances,affected,affected_regional)
-                       VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
-                       indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
-                       fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
-                       origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
-                       reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
-                       active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
-                       incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
-                       affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional""",
-                    (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
-                     scope.get("active_incidents"), scope.get("max_incident_impact"), scope.get("incident_updated_at"),
-                     scope.get("active_maintenances"), scope.get("affected"), scope.get("affected_regional")),
-                )
-                # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
-                from .signal_history import record_provider_status
-                record_provider_status(conn, site_host, indicator, updated_at)
+                _store_read(conn, site_host, indicator, updated_at, digest, scope or {})
             return True
         except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError) as exc:
             # Keep why the read failed: a bare "stale" would show a 403 from the feed and a timeout as the same word.

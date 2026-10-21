@@ -57,6 +57,11 @@ def read(page: dict, source: Source = STATUSPAGE, **kw) -> tuple[str, datetime |
     return indicator, updated_at, scope, seen
 
 
+def fields(scope: dict) -> dict:
+    """The stored scope fields, without the read's outcome bookkeeping."""
+    return {key: value for key, value in scope.items() if key not in ("scope_outcome", "scope_error")}
+
+
 def provider_status(indicator: str, scope: dict, freshness: str = "fresh") -> dict:
     """provider_status as the lookup builds it from a stored row (service._provider_scope)."""
     base = {"source_name": "S", "source_url": "https://status.example.com/", "indicator": indicator,
@@ -177,7 +182,7 @@ def test_the_discovered_reader_reads_the_lists_through_the_same_pinned_pool(monk
 def test_cloudflare_type_keeps_waiting_but_says_the_scope_is_partial():
     indicator, updated_at, scope, _seen = read(fixture("cloudflare"))
     assert indicator == "major" and updated_at == datetime(2026, 8, 27, tzinfo=timezone.utc)
-    assert scope == {"active_incidents": 1, "max_incident_impact": "minor",
+    assert fields(scope) == {"active_incidents": 1, "max_incident_impact": "minor",
                      "incident_updated_at": datetime(2026, 9, 1, 8, 29, 56, tzinfo=timezone.utc),
                      "active_maintenances": 2,  # the "scheduled" one is not in progress
                      "affected": ["WARP", "Paris, France - (CDG)", "Nashville, United States - (BNA)"],
@@ -193,7 +198,7 @@ def test_cloudflare_type_keeps_waiting_but_says_the_scope_is_partial():
 def test_rubygems_type_is_components_only_and_not_a_reason_to_wait():
     indicator, _at, scope, _seen = read(fixture("rubygems"))
     assert indicator == "maintenance"
-    assert scope == {"active_incidents": 0, "max_incident_impact": "none", "incident_updated_at": None,
+    assert fields(scope) == {"active_incidents": 0, "max_incident_impact": "none", "incident_updated_at": None,
                      "active_maintenances": 0, "affected": None, "affected_regional": None}
     status = provider_status(indicator, scope)
     assert status["basis"] == "components_only" and "affected" not in status and "incident_updated_at" not in status
@@ -247,7 +252,7 @@ def test_an_oversized_list_leaves_only_its_own_fields_out():
     big = dict(page["unresolved"], padding="x" * status_scope.SCOPE_CAP)  # like the live 112 KB list
     indicator, _at, scope, seen = read(page, overrides={"/api/v2/incidents/unresolved.json": big})
     assert indicator == "minor" and len(seen) == 3
-    assert scope == {"active_incidents": None, "max_incident_impact": None, "incident_updated_at": None,
+    assert fields(scope) == {"active_incidents": None, "max_incident_impact": None, "incident_updated_at": None,
                      "active_maintenances": 1, "affected": None, "affected_regional": None}
     status = provider_status(indicator, scope)
     assert "basis" not in status and "active_incidents" not in status and status["active_maintenances"] == 1
@@ -328,14 +333,84 @@ def test_wait_is_unchanged_whenever_something_is_announced_or_unknown(indicator,
     assert recommendation("login_auth", status, None, None)["action"] == "wait_provider_incident"
 
 
-@pytest.mark.parametrize("indicator", sorted(ACTIVE_INDICATORS))
+@pytest.mark.parametrize("indicator", ["minor", "maintenance"])
 @pytest.mark.parametrize("error_class,official", [(None, None), ("site_access", {"developer_portal": "https://dev.example.com/"}),
                                                   ("human_verification", None), ("login_auth", None)])
-def test_components_only_answers_exactly_as_if_no_provider_were_active(indicator, error_class, official):
+def test_minor_or_maintenance_components_only_answers_as_if_no_provider_were_active(indicator, error_class, official):
     status = {"indicator": indicator, "freshness": "fresh", "basis": "components_only"}
     assert recommendation(error_class, status, None, official) == recommendation(error_class, None, None, official)
     checks = codes(next_checks(error_class, status, "no_reports", official=official))
     assert "provider_components_only" in checks and "provider_scope" not in checks
+
+
+@pytest.mark.parametrize("indicator", ["major", "critical"])
+@pytest.mark.parametrize("error_class,official,profile", [
+    ("service_error", None, {"robots_status": "ok"}),  # the review's reproduction: this used to answer proceed
+    (None, {"developer_portal": "https://dev.example.com/"}, None),
+    ("site_access", None, None), ("human_verification", None, None), ("login_auth", None, None)])
+def test_major_or_critical_components_only_still_waits(indicator, error_class, official, profile):
+    # A monitoring integration can flip components to major_outage before an incident is posted, and the incident
+    # list can come from a cache that lags status.json: nothing announced is not a reason to stop waiting here.
+    status = {"indicator": indicator, "freshness": "fresh", "basis": "components_only"}
+    assert recommendation(error_class, status, profile, official) == {
+        "action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
+    checks = codes(next_checks(error_class, status, "no_reports", official=official))
+    assert "provider_components_only" in checks and "provider_scope" not in checks
+    assert "major or critical one still is" in CHECKS["provider_components_only"]
+
+
+def test_a_stale_major_components_only_does_not_wait():
+    status = {"indicator": "major", "freshness": "stale", "basis": "components_only"}
+    assert recommendation(None, status, None, None)["action"] != "wait_provider_incident"
+
+
+# --- the two lists back off ---------------------------------------------------------------------------
+
+def test_a_refused_list_stops_the_other_and_is_recorded():
+    page = fixture("cloudflare")
+    _i, _a, scope, seen = read(page, overrides={"/api/v2/incidents/unresolved.json": httpx.Response(429)})
+    assert seen == ["/api/v2/status.json", "/api/v2/incidents/unresolved.json"]  # maintenances not asked for
+    assert scope["scope_outcome"] == "failed" and scope["scope_error"] == "http_429"
+    assert scope["active_incidents"] is None and scope["active_maintenances"] is None
+    # A refusal of the second list is recorded the same way.
+    _i, _a, scope, seen = read(page, overrides={"/api/v2/scheduled-maintenances/active.json": httpx.Response(403)})
+    assert len(seen) == 3 and scope["scope_error"] == "http_403" and scope["active_incidents"] == 1
+
+
+@pytest.mark.parametrize("answer,label", [
+    (httpx.Response(502), "http_502"),
+    (httpx.Response(200, content=b"x" * (status_scope.SCOPE_CAP + 1)), "too_large"),
+    (httpx.Response(200, text="<html></html>"), "invalid_body"),
+])
+def test_a_failed_list_is_a_scope_failure_but_the_other_list_is_still_read(answer, label):
+    _i, _a, scope, seen = read(fixture("cloudflare"), overrides={"/api/v2/incidents/unresolved.json": answer})
+    assert len(seen) == 3 and scope["scope_outcome"] == "failed" and scope["scope_error"] == label
+    assert scope["active_maintenances"] == 2
+
+
+def test_both_lists_read_is_ok_and_a_quiet_page_asks_for_none():
+    assert read(fixture("cloudflare"))[2]["scope_outcome"] == "ok"
+    page = fixture("cloudflare")
+    page["status"]["status"]["indicator"] = "none"
+    assert "scope_outcome" not in read(page)[2]  # nothing asked for: the stored counters stay as they are
+
+
+def test_a_read_that_is_not_allowed_is_skipped_not_failed():
+    calls = []
+    out = status_scope.read_scope(lambda path: calls.append(path) or b"{}", "yh6f0r4529hb", allowed=lambda: False)
+    assert calls == [] and out["scope_outcome"] == "skipped" and out["scope_error"] is None
+
+
+@pytest.mark.parametrize("failures,error,rest", [(1, "timeout", 15), (2, "too_large", 30), (3, "http_502", 60),
+                                                 (1, "http_429", 60), (2, "http_403", 120), (20, "too_large", 1440),
+                                                 (20, "http_401", 1440)])
+def test_the_lists_rest_after_failures(failures, error, rest):
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    row = {"scope_failures": failures, "scope_failed_at": now, "scope_error": error}
+    assert status_scope.scope_backoff(failures, error) == timedelta(minutes=rest)
+    assert status_scope.scope_paused(row, now + timedelta(minutes=rest) - timedelta(seconds=1))
+    assert not status_scope.scope_paused(row, now + timedelta(minutes=rest))
+    assert not status_scope.scope_paused(None, now) and not status_scope.scope_paused({"scope_failures": None}, now)
 
 
 def test_stale_components_only_is_still_provider_unknown():

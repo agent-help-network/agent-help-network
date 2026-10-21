@@ -259,7 +259,8 @@ def _store_discovered(settings, site_host: str, found, digest: dict) -> None:
                origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
                reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
                active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
-               active_maintenances=NULL,affected=NULL,affected_regional=NULL""",
+               active_maintenances=NULL,affected=NULL,affected_regional=NULL,
+               scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL""",
             (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), access_profile.USER_AGENT,
              digest.get("body_sha256")),
         )

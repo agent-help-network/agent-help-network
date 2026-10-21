@@ -55,12 +55,15 @@ class Feeds:
     def __init__(self, **pages):
         self.pages = {host: json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8")) for host, name in pages.items()}
         self.seen: list[str] = []
+        self.refuse: str | None = None  # a path answered 429
 
     def set_indicator(self, host, indicator):
         self.pages[host]["status"]["status"]["indicator"] = indicator
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(f"{request.url.host}{request.url.path}")
+        if request.url.path == self.refuse:
+            return httpx.Response(429)
         page = self.pages.get(request.url.host)
         key = {"/api/v2/status.json": "status", "/api/v2/incidents/unresolved.json": "unresolved",
                "/api/v2/scheduled-maintenances/active.json": "maintenances"}.get(request.url.path)
@@ -188,3 +191,50 @@ def test_an_active_cached_indicator_is_read_again_after_fifteen_minutes(lookup, 
     answer = check(client, "cloudflare.com")
     assert answer["provider_status"]["indicator"] == "none"
     assert answer["recommendation"]["action"] != "wait_provider_incident"
+
+
+def q_counters(settings, host):
+    with connect(settings) as conn:
+        return conn.execute("SELECT scope_failures,scope_error FROM status_cache WHERE site_host=%s", (host,)).fetchone()
+
+
+def age_scope(settings, host, minutes):
+    with connect(settings) as conn:
+        conn.execute("UPDATE status_cache SET scope_failed_at=scope_failed_at - make_interval(mins => %s) WHERE site_host=%s",
+                     (minutes, host))
+
+
+def test_failed_lists_rest_and_a_refusal_stops_the_other_list(lookup, monkeypatch):
+    settings, client = lookup
+    feeds = Feeds(**{"status.twilio.com": "twilio"})
+    original = feeds.pages["status.twilio.com"]["unresolved"]
+    feeds.pages["status.twilio.com"]["unresolved"] = dict(original, padding="x" * 40_000)  # like the live 112 KB list
+    with use(monkeypatch, feeds) as remote:
+        check(client, "twilio.com")
+        assert refresh_one(settings, "twilio.com", client=remote, min_interval=0, wait=True)
+        assert len(feeds.seen) == 3
+        assert q_counters(settings, "twilio.com") == {"scope_failures": 1, "scope_error": "too_large"}
+        assert scope_row(settings, "twilio.com")["active_maintenances"] == 1
+        # While the lists rest, a refresh reads status.json only, shows no scope and keeps the count.
+        feeds.seen.clear()
+        assert refresh_one(settings, "twilio.com", client=remote, min_interval=0, wait=True)
+        assert feeds.seen == ["status.twilio.com/api/v2/status.json"]
+        assert q_counters(settings, "twilio.com")["scope_failures"] == 1
+        assert all(value is None for value in scope_row(settings, "twilio.com").values())
+        # After the rest the lists are asked for again; a refusal of the first one stops the second.
+        age_scope(settings, "twilio.com", 16)
+        feeds.refuse = "/api/v2/incidents/unresolved.json"
+        feeds.seen.clear()
+        assert refresh_one(settings, "twilio.com", client=remote, min_interval=0, wait=True)
+        assert feeds.seen == ["status.twilio.com/api/v2/status.json", "status.twilio.com/api/v2/incidents/unresolved.json"]
+        assert q_counters(settings, "twilio.com") == {"scope_failures": 2, "scope_error": "http_429"}
+        age_scope(settings, "twilio.com", 60)  # a second failure after a refusal rests two hours
+        feeds.seen.clear()
+        assert refresh_one(settings, "twilio.com", client=remote, min_interval=0, wait=True) and len(feeds.seen) == 1
+        # Reading both lists again clears the count.
+        age_scope(settings, "twilio.com", 61)
+        feeds.refuse = None
+        feeds.pages["status.twilio.com"]["unresolved"] = original
+        assert refresh_one(settings, "twilio.com", client=remote, min_interval=0, wait=True)
+    assert q_counters(settings, "twilio.com") == {"scope_failures": None, "scope_error": None}
+    assert scope_row(settings, "twilio.com")["active_incidents"] == 7

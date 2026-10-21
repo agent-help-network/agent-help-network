@@ -7,11 +7,17 @@
 -- or a row written before this migration. Nullable columns without defaults: no table rewrite.
 -- Rollback: ALTER TABLE status_cache DROP COLUMN active_incidents, DROP COLUMN max_incident_impact,
 -- DROP COLUMN incident_updated_at, DROP COLUMN active_maintenances, DROP COLUMN affected,
--- DROP COLUMN affected_regional; then DELETE FROM schema_migrations WHERE version=25.
+-- DROP COLUMN affected_regional, DROP COLUMN scope_failures, DROP COLUMN scope_failed_at, DROP COLUMN scope_error;
+-- then DELETE FROM schema_migrations WHERE version=25.
 ALTER TABLE status_cache
     ADD COLUMN active_incidents smallint CHECK (active_incidents >= 0),
     ADD COLUMN max_incident_impact varchar(8) CHECK (max_incident_impact IN ('none', 'minor', 'major', 'critical')),
     ADD COLUMN incident_updated_at timestamptz,
     ADD COLUMN active_maintenances smallint CHECK (active_maintenances >= 0),
     ADD COLUMN affected text[] CHECK (cardinality(affected) BETWEEN 1 AND 3),
-    ADD COLUMN affected_regional boolean;
+    ADD COLUMN affected_regional boolean,
+    -- When a scope read fails (a refusal, too large, a timeout, a bad body): how many times in a row, when, and the
+    -- short label of the first failure. The two lists then rest (status_scope.scope_backoff); a success clears them.
+    ADD COLUMN scope_failures smallint CHECK (scope_failures > 0),
+    ADD COLUMN scope_failed_at timestamptz,
+    ADD COLUMN scope_error varchar(32);

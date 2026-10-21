@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 SCOPE_CAP = 32_768  # bytes per list, the same cap as the status.json feed
 INCIDENTS_PATH = "incidents/unresolved.json"
@@ -166,15 +166,49 @@ def summarize(incidents: dict | None, maintenances: dict | None, page_id: str) -
     return out
 
 
-def read_scope(fetch, page_id: str) -> dict:
-    """Read both lists with fetch(path) -> bytes (which raises on any failure) and summarize them."""
-    parts = []
+def read_scope(fetch, page_id: str, *, label=lambda _exc: "error", allowed=lambda: True) -> dict:
+    """Read both lists with fetch(path) -> bytes (which raises on any failure) and summarize them.
+
+    label(exc) names a failure (status_refresh.failure_label); allowed() is asked before each list (the cron's
+    time budget). The result also carries ``scope_outcome``: ``ok`` (both read), ``failed`` (a list failed;
+    ``scope_error`` names the first failure) or ``skipped`` (a list was not asked for). After a refusal
+    (401, 403, 429) the other list is not asked for either."""
+    parts: list[dict | None] = []
+    error = None
+    skipped = False
     for path, parse in ((INCIDENTS_PATH, parse_incidents), (MAINTENANCES_PATH, parse_maintenances)):
+        if error in SCOPE_REFUSALS or not allowed():
+            parts.append(None)
+            skipped = skipped or error is None
+            continue
         try:
             parts.append(parse(json.loads(fetch(path)), page_id))
-        except Exception:  # any failure (HTTP status, too_large, timeout, bad JSON) only leaves this list out
+        except Exception as exc:  # any failure (HTTP status, too_large, timeout, bad JSON) only leaves this list out
             parts.append(None)
-    return summarize(parts[0], parts[1], page_id)
+            error = error or label(exc)
+    out = summarize(parts[0], parts[1], page_id)
+    out["scope_outcome"] = "failed" if error else "skipped" if skipped else "ok"
+    out["scope_error"] = error
+    return out
+
+
+SCOPE_REFUSALS = frozenset({"http_401", "http_403", "http_429"})
+SCOPE_BACKOFF_MAX = timedelta(hours=24)
+
+
+def scope_backoff(failures: int | None, error: str | None) -> timedelta:
+    """How long the two lists rest after ``failures`` consecutive failed scope reads: 15 minutes (one hour after a
+    refusal), doubled with each further failure, at most a day. Too large counts as a failure: the list keeps its
+    size for a while, so it is not fetched and dropped every 15 minutes."""
+    base = 60 if error in SCOPE_REFUSALS else 15
+    return min(SCOPE_BACKOFF_MAX, timedelta(minutes=base * 2 ** min(max(1, failures or 1) - 1, 16)))
+
+
+def scope_paused(row, now: datetime) -> bool:
+    """True while the lists of a feed rest after failures (status_cache scope_failures, scope_failed_at, scope_error)."""
+    if not row or not row.get("scope_failures") or row.get("scope_failed_at") is None:
+        return False
+    return now < row["scope_failed_at"] + scope_backoff(row["scope_failures"], row.get("scope_error"))
 
 
 def basis(indicator: str | None, active_incidents: int | None, active_maintenances: int | None) -> str | None:

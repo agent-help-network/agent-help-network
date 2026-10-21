@@ -531,8 +531,18 @@ def test_status_scope_reads_and_limits_in_the_policy_match_the_code():
         f"at most {status_scope.MAX_AFFECTED} incident or component names as the provider published them "
         f"({status_scope.AFFECTED_CHARS} characters each)",
         f"업체가 공개한 사건·컴포넌트 이름 최대 {status_scope.MAX_AFFECTED}개(각 {status_scope.AFFECTED_CHARS}자)"),
-        "rest_dropped": Phrase("nothing else from those two lists is kept", "두 목록의 나머지는 저장하지 않습니다")}
+        "rest_dropped": Phrase("nothing else from those two lists is kept", "두 목록의 나머지는 저장하지 않습니다"),
+        # The lists' own backoff and refusal rule (status_scope.scope_backoff, read_scope).
+        "scope_rest": Phrase("we do not ask for the two lists again for a while (15 minutes, or an hour after a refusal, "
+                             "doubling with each further failure, at most a day)",
+                             "한동안(15분, 거절 뒤에는 1시간부터, 실패할 때마다 두 배, 최대 하루) 두 목록을 다시 요청하지 않습니다"),
+        "scope_refusal": Phrase("after a refusal (401, 403 or 429) of one list the other is not asked for either",
+                                "한 목록이 거절(401·403·429)되면 다른 목록도 요청하지 않습니다")}
     assert_phrases("status scope storage", {lang: section(lang, "06") for lang in LANGS}, kept)
+    from datetime import timedelta as _td
+    assert status_scope.scope_backoff(1, "timeout") == _td(minutes=15) and status_scope.scope_backoff(1, "http_429") == _td(hours=1)
+    assert status_scope.scope_backoff(40, "too_large") == status_scope.SCOPE_BACKOFF_MAX == _td(days=1)
+    assert status_scope.SCOPE_REFUSALS == {"http_401", "http_403", "http_429"}
 
 
 def test_stored_provenance_is_described_in_the_policy():
@@ -559,6 +569,8 @@ _HASH = Phrase("SHA-256 hash of the file or feed as received (never the file its
 _EVIDENCE = Phrase("the evidence that it belongs to the host (its DNS delegation), the page address and the operator that recorded it",
                    "그 호스트의 것이라는 근거(DNS 위임), 페이지 주소, 기록한 운영자")
 _RECEIVED_BY = Phrase("the operator that received it together with its own report ID", "그 제보를 받은 운영자 및 그 운영자의 제보 ID")
+_SCOPE_FAILURES = Phrase("how many times in a row that happened, when, and a short label for why",
+                         "연속 실패 횟수, 시각, 이유를 나타내는 짧은 라벨")
 _SCOPE_COUNTS = Phrase("the number of unresolved incidents and of maintenances in progress", "미해결 사건 수와 진행 중 점검 수")
 COLUMNS = {
     "status_cache.active_incidents": _SCOPE_COUNTS,
@@ -567,8 +579,11 @@ COLUMNS = {
     "status_cache.incident_updated_at": Phrase("the latest incident update time", "가장 늦은 사건 갱신 시각"),
     "status_cache.affected": Phrase("at most 3 incident or component names as the provider published them (80 characters each)",
                                     "업체가 공개한 사건·컴포넌트 이름 최대 3개(각 80자)"),
-    "status_cache.affected_regional": Phrase("whether all of them are region or point-of-presence groups",
-                                             "그것이 모두 지역·거점 그룹인지"),
+    "status_cache.affected_regional": Phrase("whether every affected component is in a region or point-of-presence group",
+                                             "영향받는 컴포넌트가 모두 지역·거점 그룹에 속하는지"),
+    "status_cache.scope_failures": _SCOPE_FAILURES,
+    "status_cache.scope_failed_at": _SCOPE_FAILURES,
+    "status_cache.scope_error": _SCOPE_FAILURES,
     "host_access_profile.origin_operator": _READ_BY,
     "host_access_profile.vantage": _READ_BY,
     "host_access_profile.reader_version": _READ_BY,
