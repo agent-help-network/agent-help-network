@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -16,7 +17,8 @@ from ._result import Result
 __all__ = ["check", "clear_cache", "lookup_url"]
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
-USER_AGENT = "ahn-client/0.2 (+https://agenthelpnetwork.com)"
+# The framework adapters name themselves in the User-Agent: "ahn-client/0.3.0 (+langchain; +https://agenthelpnetwork.com)".
+ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 CACHE_TTL_SECONDS = 600
 FAILURE_TTL_SECONDS = 60
 CACHE_MAX_ENTRIES = 200
@@ -53,9 +55,18 @@ def lookup_url(host: str, error_class: Optional[str], failure_stage: Optional[st
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
-def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], timeout: float) -> Optional[Result]:
+def user_agent(adapter: Optional[str] = None) -> str:
+    """The User-Agent for a lookup; ``adapter`` is the integration's name (a short lowercase label), or None."""
+    from . import __version__  # Read when used: the package imports this module before it is complete.
+
+    label = f"+{adapter}; " if isinstance(adapter, str) and ADAPTER_NAME.fullmatch(adapter) else ""
+    return f"ahn-client/{__version__} ({label}+https://agenthelpnetwork.com)"
+
+
+def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], timeout: float,
+           adapter: Optional[str] = None) -> Optional[Result]:
     url = lookup_url(host, error_class, failure_stage)
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
     try:
         with _urlopen(request, timeout) as response:
             if getattr(response, "status", 200) != 200:
@@ -69,7 +80,7 @@ def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], 
 
 
 def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optional[str] = None, *,
-          timeout: float = 4.0) -> Optional[Result]:
+          timeout: float = 4.0, adapter: Optional[str] = None) -> Optional[Result]:
     """Ask Agent Help Network about the host of ``host_or_url``; None when there is no answer.
 
     Only the bare hostname, ``error_class`` and ``failure_stage`` are sent: scheme,
@@ -81,6 +92,9 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
     this function does not raise. Answers are cached in memory for 10 minutes per host,
     error class and stage (a failed lookup for 1 minute, and an answer whose declared policy is
     still being read only for its ``retry_after_seconds``).
+
+    ``adapter`` is for integrations: a short lowercase label such as ``"langchain"`` that is
+    added to the User-Agent so the service can count client kinds. It changes nothing else.
     """
     try:
         if error_class is not None and error_class not in ERROR_CLASSES:
@@ -96,7 +110,7 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
             hit = _cache.get(key)
             if hit and hit[0] > now:
                 return hit[1]
-        result = _fetch(host, error_class, failure_stage, timeout)
+        result = _fetch(host, error_class, failure_stage, timeout, adapter)
         now = time.monotonic()
         with _lock:
             for stale in [k for k, (expires, _) in _cache.items() if expires <= now]:

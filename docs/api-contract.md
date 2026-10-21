@@ -82,7 +82,7 @@
 
 ## 클라이언트
 
-이 저장소의 두 패키지는 `GET /v1/incidents/check` 만 부르며 제보하지 않는다: Claude Code 플러그인 훅(`plugins/claude-code/ahn`, User-Agent `ahn-claude-code-plugin/0.2`)과 Python 패키지 `ahn-client`(`pip install ahn-client`, 소스는 `clients/python`, User-Agent `ahn-client/0.2 (+https://agenthelpnetwork.com)`)다. 둘 다 `site_host` 와 알 때의 `error_class`·`failure_stage` 만 보내며 자세한 것은 각 README 에 있다. 0.2.0 부터 둘 다 `pending`·`profile_pending` 을 받아들이고 계약 밖의 값은 `unknown` 으로 다룬다. 프로필이 `pending` 이면 요약 줄에 읽는 중이며 언제 한 번 더 조회할지를 적고, `ahn-client` 는 그런 답을 `retry_after_seconds` 동안만 캐시한다. 연결 화면에 플러그인, Cursor, OpenAI Agents SDK, 일반 MCP 클라이언트의 설정 방법이 있다. 어느 것도 공식 통합이 아니다.
+이 저장소의 두 패키지는 `GET /v1/incidents/check` 만 부르며 제보하지 않는다: Claude Code 플러그인 훅(`plugins/claude-code/ahn`, User-Agent `ahn-claude-code-plugin/0.2`)과 Python 패키지 `ahn-client`(`pip install ahn-client`, 소스는 `clients/python`, User-Agent `ahn-client/<버전> (+https://agenthelpnetwork.com)`)다. 0.3.0 부터 프레임워크 어댑터는 이름을 덧붙인다(`ahn-client/<버전> (+langchain; +https://agenthelpnetwork.com)`, 이름은 `langchain`·`crewai`·`openai-agents`·`claude-agent-sdk`·`browser-use`). 둘 다 `site_host` 와 알 때의 `error_class`·`failure_stage` 만 보내며 자세한 것은 각 README 에 있다. 0.2.0 부터 둘 다 `pending`·`profile_pending` 을 받아들이고 계약 밖의 값은 `unknown` 으로 다룬다. 프로필이 `pending` 이면 요약 줄에 읽는 중이며 언제 한 번 더 조회할지를 적고, `ahn-client` 는 그런 답을 `retry_after_seconds` 동안만 캐시한다. 연결 화면에 플러그인, Cursor, OpenAI Agents SDK, 일반 MCP 클라이언트의 설정 방법이 있다. 어느 것도 공식 통합이 아니다.
 
 ## OpenAPI 및 MCP
 

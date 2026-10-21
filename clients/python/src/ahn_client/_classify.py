@@ -48,8 +48,25 @@ def without_urls(text: str) -> str:
     return URL_IN_TEXT.sub(lambda match: normalize_host(match.group(0)) or "", text)
 
 
-def classify_text(text: str) -> Tuple[Optional[str], Optional[str]]:
-    text = without_urls(text or "")
+HOST_LIKE = re.compile(r"[A-Za-z0-9.-]+")
+
+
+def blank_host(text: str, host: Optional[str]) -> str:
+    """Blank every token naming ``host`` or one of its subdomains, so the site's own name
+    (login.example.com, developers.cloudflare.com) never shapes the classification."""
+    if not host:
+        return text
+    host = host.lower()
+
+    def blank(match) -> str:
+        token = match.group(0).lower().rstrip(".")
+        return " " if token == host or token.endswith("." + host) else match.group(0)
+
+    return HOST_LIKE.sub(blank, text)
+
+
+def classify_text(text: str, host: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    text = blank_host(without_urls(text or ""), host)
     error_class = next((name for name, pattern in CLASSES if pattern.search(text)), None)
     stage = "before_target_response" if BEFORE_RESPONSE.search(text) else None
     if error_class is None and stage:
@@ -78,7 +95,7 @@ def _chain(exc: BaseException):
     return seen
 
 
-def classify(exc_or_text) -> Tuple[Optional[str], Optional[str]]:
+def classify(exc_or_text, host: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """``(error_class, failure_stage)`` for an exception object or a message.
 
     error_class is one of human_verification, login_auth, service_error, site_access;
@@ -90,6 +107,9 @@ def classify(exc_or_text) -> Tuple[Optional[str], Optional[str]]:
     422, or a message that names nothing. Do not look such an error up; a typo in an
     address is not a site that refuses agents. 401 and 407 give login_auth, 403 and 451
     site_access (402 too), 408, 429 and 5xx service_error (the contract has no rate-limit class).
+
+    ``host``, when given, is the hostname the error is about: tokens naming it are ignored,
+    so a site called ``login.example.com`` is not read as a login wall.
     """
     if isinstance(exc_or_text, BaseException):
         chain = _chain(exc_or_text)
@@ -98,7 +118,7 @@ def classify(exc_or_text) -> Tuple[Optional[str], Optional[str]]:
         text = " ".join(names + [str(item) for item in chain])
         if status:
             text += f" HTTP {status}"
-        error_class, stage = classify_text(text)
+        error_class, stage = classify_text(text, host)
         if stage is None and any(name.lower() in CONNECT_NAMES for name in names):
             stage = "before_target_response"
             error_class = error_class or "site_access"
@@ -109,4 +129,4 @@ def classify(exc_or_text) -> Tuple[Optional[str], Optional[str]]:
         return error_class, stage
     if isinstance(exc_or_text, bytes):
         exc_or_text = exc_or_text.decode("utf-8", errors="replace")
-    return classify_text(exc_or_text if isinstance(exc_or_text, str) else "")
+    return classify_text(exc_or_text if isinstance(exc_or_text, str) else "", host)
