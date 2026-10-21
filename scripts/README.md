@@ -113,3 +113,27 @@ Hosts that already have a mapping, are not `aggregate_eligible_host`, or fold on
 `input.json`. A curator reads `final.csv` (ownership evidence A/B/C) and the `needs_review` rows of `excluded.csv`, and adds
 mappings by hand. `--stop-at HH:MM` stops starting new hosts at that local time; rerunning with `--date` set to the original
 date resumes from `cache.json`.
+
+## Weekly answer-quality check: `answer_quality.py`
+
+Measures what a first lookup of a host answers, on a frozen set of 100 hosts where agents get blocked or ask for help
+(`ahn/quality/failure_hosts_v1.txt`; the selection rules are in its header; a changed list is a new file, `..._v2.txt`).
+
+```
+python scripts/answer_quality.py --offline-only --no-save     # coverage from the code tables only, no network
+python scripts/answer_quality.py --out-dir <folder>           # offline + live, writes <folder>/<date>.json
+```
+
+- **Offline coverage:** the share of set hosts with a seed entry, an official path (`api_docs` or `developer_portal`), a status
+  mapping (feed or page only) and a current access bundle. Reads the same tables the service reads; no request.
+- **Live answers:** one `GET /v1/incidents/check` per host, at most one per second, with the User-Agent
+  `ahn-quality-check/1 (+https://agenthelpnetwork.com)` and no `error_class`. An answer is actionable when it lists an official
+  path or its `recommendation.action` is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`. Also reported:
+  the share still `profile_pending` and the share with no data (action `unknown`, no official path, no status). A failed
+  lookup is counted as an error and is left out of the percentages; it is never retried.
+- **Result:** the JSON file has the metrics, one row per host and the change against the newest earlier file in the folder
+  (metric deltas, hosts that lost coverage or stopped being actionable, hosts that improved). Stdout prints the same without
+  the rows. The default folder, `work/`, is ignored by git; results are not committed.
+
+The lookups are real lookups: they count in the service's lookup totals unless the server leaves out requests whose
+User-Agent starts with `ahn-quality-check/`.
