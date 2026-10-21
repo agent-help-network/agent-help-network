@@ -91,6 +91,44 @@ def feed_refresh_after(indicator: str | None, idle: timedelta) -> timedelta:
     return timedelta(minutes=FEED_RETRY_MINUTES) if indicator in FEED_ACTIVE_INDICATORS else idle
 
 
+FEED_BACKOFF_MAX = timedelta(hours=24)         # refusals only
+FEED_FAILURE_BACKOFF_MAX = timedelta(hours=1)  # any other failure: below FEED_STALE_HOURS
+FEED_REFUSED_BACKOFF_MINUTES = 60   # a refusal is the provider's answer: start slower and never retry around it
+FEED_REFUSALS = frozenset({"http_401", "http_403", "http_429"})
+
+
+def feed_backoff(failures: int | None, error_detail: str | None, indicator: str | None = None) -> timedelta:
+    """Wait after the latest of ``failures`` consecutive failed reads (D44).
+
+    A refusal (401, 403, 429) is the provider's answer: FEED_REFUSED_BACKOFF_MINUTES, doubled with each further
+    refusal, at most FEED_BACKOFF_MAX. Any other failure (a timeout, a 5xx, too large) is often the status page
+    struggling during the very outage it should report, so it never waits longer than FEED_FAILURE_BACKOFF_MAX
+    (shorter than the FEED_STALE_HOURS after which the answer reads as stale and stops advising a wait), and a feed
+    whose last successful statement was active (``indicator``) keeps its FEED_RETRY_MINUTES interval."""
+    exponent = min(max(1, failures or 1) - 1, 16)
+    if error_detail in FEED_REFUSALS:
+        return min(FEED_BACKOFF_MAX, timedelta(minutes=FEED_REFUSED_BACKOFF_MINUTES * 2 ** exponent))
+    if indicator in FEED_ACTIVE_INDICATORS:
+        return timedelta(minutes=FEED_RETRY_MINUTES)
+    return min(FEED_FAILURE_BACKOFF_MAX, timedelta(minutes=FEED_RETRY_MINUTES * 2 ** exponent))
+
+
+def feed_next_due(row, idle: timedelta) -> datetime | None:
+    """When a feed is next due, from its status_cache row (indicator, fetched_at, last_error_at, failures,
+    last_error_detail); None when it was never attempted (due now). The lookup path (idle FEED_STALE_HOURS) and
+    the cron (idle one hour) use this one rule: a success is due again after feed_refresh_after, and a failure
+    after feed_backoff; both must have passed."""
+    fetched_at, error_at = row.get("fetched_at"), row.get("last_error_at")
+    if fetched_at is None and error_at is None:
+        return None
+    due = [fetched_at + feed_refresh_after(row.get("indicator"), idle)] if fetched_at is not None else []
+    if error_at is not None and (fetched_at is None or error_at >= fetched_at):
+        due.append(error_at + feed_backoff(row.get("failures"), row.get("last_error_detail"), row.get("indicator")))
+    elif error_at is not None:
+        due.append(error_at + timedelta(minutes=FEED_RETRY_MINUTES))
+    return max(due)
+
+
 def enabled_by_env() -> bool:
     return os.environ.get("AHN_BACKGROUND_READS", "1").strip() != "0"
 
@@ -260,7 +298,7 @@ def _store_discovered(settings, site_host: str, found, digest: dict) -> None:
                reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
                active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
                active_maintenances=NULL,affected=NULL,affected_regional=NULL,
-               scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL""",
+               scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,failures=NULL""",
             (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), access_profile.USER_AGENT,
              digest.get("body_sha256")),
         )

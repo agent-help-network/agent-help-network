@@ -1100,6 +1100,17 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts
 _clock = time.monotonic  # patched in tests
+_sleep = time.sleep      # patched in tests
+SCOPE_GAP_SECONDS = 1.0  # between two reads of the same status page: at most one request per second per host (D44)
+FEED_HEADERS = {"Accept": "application/json", "User-Agent": READER_VERSION}  # identified as AgentHelpNetwork
+
+
+def _paced(fetch):
+    """fetch, called after a SCOPE_GAP_SECONDS pause: the scope lists follow status.json on the same host."""
+    def call(path):
+        _sleep(SCOPE_GAP_SECONDS)
+        return fetch(path)
+    return call
 INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 _SOURCE_LOCKS = {host: threading.Lock() for host in SOURCES}
 _STATUSPAGE_CNAME = re.compile(r"^([a-z0-9]{8,32})\.stspg-customer\.com\.$")
@@ -1129,7 +1140,7 @@ def _statuspage_target(site_host: str) -> tuple[str, str] | None:
 def _pool_get(pool, status_host: str, path: str, cap: int) -> bytes:
     """GET one path of a discovered Statuspage page through its pinned pool; raises FeedFailure on any non-answer."""
     response = pool.request(
-        "GET", path, headers={"Host": status_host, "Accept": "application/json"},
+        "GET", path, headers={"Host": status_host, **FEED_HEADERS},
         redirect=False, preload_content=False,
     )
     try:
@@ -1143,8 +1154,8 @@ def _pool_get(pool, status_host: str, path: str, cap: int) -> bytes:
         response.release_conn()
 
 
-def _read_discovered_statuspage(site_host: str, digest: dict | None = None,
-                                scope: dict | None = None) -> tuple[Source, str, datetime | None]:
+def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scope: dict | None = None,
+                                scope_allowed=None) -> tuple[Source, str, datetime | None]:
     """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256.
 
     With scope (a feed refresh, not the first discovery), the page's unresolved incidents and active
@@ -1179,8 +1190,8 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None,
         if (scope is not None and indicator in status_scope.ACTIVE_INDICATORS
                 and status_scope.statuspage_page_id(payload) == page_id):
             scope.update(status_scope.read_scope(
-                lambda path: _pool_get(pool, status_host, "/api/v2/" + path, status_scope.SCOPE_CAP), page_id,
-                label=failure_label))
+                _paced(lambda path: _pool_get(pool, status_host, "/api/v2/" + path, status_scope.SCOPE_CAP)), page_id,
+                label=failure_label, allowed=scope_allowed or (lambda: True)))
     finally:
         pool.close()
     source = Source(f"{name} Status", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage")
@@ -1342,6 +1353,11 @@ def register_source(conn, site_host: str, source: Source | None = None) -> bool:
         ).fetchone()
         page_url = f"https://status.{site_host}/"
         return bool(row and row["enabled"] and row["status_page_url"] == page_url and row["api_url"] == page_url + "api/v2/status.json")
+    # A feed address that changed since the row was written (a lookup can come before the cron's sync) drops the
+    # cached read of the old address, so the answer is pending until the new one is read, never the old feed's value.
+    old = conn.execute("SELECT api_url FROM status_sources WHERE site_host=%s", (site_host,)).fetchone()
+    if old and old["api_url"] != source.api_url:
+        conn.execute("DELETE FROM status_cache WHERE site_host=%s", (site_host,))
     row = conn.execute(
         """INSERT INTO status_sources (site_host,source_name,status_page_url,api_url)
            VALUES (%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
@@ -1355,7 +1371,7 @@ def register_source(conn, site_host: str, source: Source | None = None) -> bool:
 def _get_capped(client: httpx.Client, url: str, cap: int) -> bytes:
     """GET url with a hard byte cap and the whole-body time limit; raises FeedFailure on any non-answer."""
     # Follow no redirects, stream with a hard byte cap, and never send credentials.
-    with client.stream("GET", url, headers={"Accept": "application/json"}) as response:
+    with client.stream("GET", url, headers=FEED_HEADERS) as response:
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
         data = bytearray()
@@ -1374,18 +1390,19 @@ STATUS_JSON_SUFFIX = "/api/v2/status.json"
 
 
 def _read_source(source: Source, client: httpx.Client, digest: dict | None = None,
-                 scope: dict | None = None) -> tuple[str, datetime | None]:
+                 scope: dict | None = None, scope_allowed=None) -> tuple[str, datetime | None]:
     """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received.
 
     scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
     indicator is active (minor or above, or maintenance): two more capped reads of the same page (unresolved
     incidents, active maintenances). Their failure never fails the feed read; an indicator of none, other
-    kinds and other platforms leave scope empty and make no further request."""
+    kinds and other platforms leave scope empty and make no further request. scope_allowed() is asked before each
+    list (the cron's time budget): a list it refuses is skipped, not counted as a failure."""
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
             raise FeedFailure("error")
-        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest, scope)
+        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest, scope, scope_allowed)
         return indicator, updated_at
     if source.kind not in FEED_KINDS:
         raise FeedFailure("error")
@@ -1401,8 +1418,9 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
         page_id = status_scope.statuspage_page_id(body)
         if page_id:
             base = source.api_url[: -len("status.json")]
-            scope.update(status_scope.read_scope(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP), page_id,
-                                                 label=failure_label))
+            scope.update(status_scope.read_scope(
+                _paced(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP)), page_id,
+                label=failure_label, allowed=scope_allowed or (lambda: True)))
     return result
 
 
@@ -1414,8 +1432,12 @@ def _cached_ok(settings: Settings, site_host: str) -> bool | None:
     return bool(row["fetched_at"] and (not row["last_error_at"] or row["fetched_at"] > row["last_error_at"]))
 
 
+READ_ERRORS = (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError,
+               json.JSONDecodeError, RecursionError)
+
+
 def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | None, digest: dict, scope: dict) -> None:
-    """Record a successful read for one host.
+    """Record a successful read for one host and clear its failure count.
 
     The scope columns are replaced with every successful read: a feed that no longer yields them (a quiet page,
     another platform, a failed or oversized list, lists resting after failures) keeps no older scope. The scope
@@ -1427,9 +1449,9 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
         """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
                                      origin_operator,vantage,reader_version,body_sha256,
                                      active_incidents,max_incident_impact,incident_updated_at,
-                                     active_maintenances,affected,affected_regional,
+                                     active_maintenances,affected,affected_regional,failures,
                                      scope_failures,scope_failed_at,scope_error)
-           VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+           VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,
                    CASE WHEN %s::text='failed' THEN 1 END, CASE WHEN %s::text='failed' THEN now() END,
                    CASE WHEN %s::text='failed' THEN %s::text END)
            ON CONFLICT (site_host) DO UPDATE SET
@@ -1439,7 +1461,7 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
            reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
            active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
            incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
-           affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional,
+           affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional,failures=NULL,
            scope_failures=CASE %s::text WHEN 'ok' THEN NULL
                                WHEN 'failed' THEN LEAST(COALESCE(status_cache.scope_failures,0)+1,32767)
                                ELSE status_cache.scope_failures END,
@@ -1455,14 +1477,78 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
     record_provider_status(conn, site_host, indicator, updated_at)
 
 
+def _store_failure(conn, site_host: str, label: str) -> None:
+    """Keep why the read failed (a bare "stale" would show a 403 and a timeout as the same word) and count
+    consecutive failures for the backoff (background_reads.feed_backoff)."""
+    conn.execute(
+        """INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+           VALUES (%s,'unknown',NULL,now(),%s,1) ON CONFLICT (site_host) DO UPDATE SET
+           last_error_at=now(),last_error_detail=EXCLUDED.last_error_detail,
+           failures=LEAST(COALESCE(status_cache.failures,0)+1,32767)""",
+        (site_host, label),
+    )
+
+
+def _read_and_store(settings: Settings, hosts: list[str], source: Source, client: httpx.Client | None, *,
+                    min_interval: int = 15, scope_allowed=None) -> bool | None:
+    """Read one feed once and record the result for every host mapped to it (aliases share one feed).
+
+    The read holds a database lock on the feed address (pg_try_advisory_xact_lock), so the cron and the web
+    process never read one feed at the same time; a feed whose lock is held, or that was attempted within
+    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome."""
+    own_client = client is None
+    with connect(settings) as lock_conn:
+        if not lock_conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok", (source.api_url,)).fetchone()["ok"]:
+            return None
+        previous = lock_conn.execute(
+            "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
+            (hosts[0],),
+        ).fetchone()
+        now = datetime.now(timezone.utc)
+        if min_interval and previous:
+            latest = max((t for t in (previous["fetched_at"], previous["last_error_at"]) if t is not None), default=None)
+            if latest and latest >= now - timedelta(seconds=min_interval):
+                return None
+        client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
+        try:
+            digest: dict = {}
+            # While the two scope lists rest after failures, read status.json only (scope None: no list request).
+            scope: dict | None = None if status_scope.scope_paused(previous, now) else {}
+            try:
+                indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed)
+            except READ_ERRORS as exc:
+                label = failure_label(exc)
+                with connect(settings) as conn:
+                    for host in hosts:
+                        _store_failure(conn, host, label)
+                return False
+            with connect(settings) as conn:
+                for host in hosts:
+                    _store_read(conn, host, indicator, updated_at, digest, scope or {})
+            return True
+        finally:
+            if own_client:
+                client.close()
+
+
+def _discovered_source(site_host: str, row) -> Source | None:
+    """The discovered Statuspage source a status_sources row describes, only in its verified status.<host> form."""
+    expected_page = f"https://status.{site_host}/"
+    if row and row["status_page_url"] == expected_page and row["api_url"] == expected_page + "api/v2/status.json":
+        return Source(row["source_name"], row["status_page_url"], row["api_url"], "discovered_statuspage")
+    return None
+
+
 def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | None = None, min_interval: int = 15,
-                wait: bool = False) -> bool:
+                wait: bool = False, scope_allowed=None) -> bool:
     """Fetch one verified source now; retain prior data as stale on failure.
 
     Request-path callers leave wait=False: when another thread is already
     fetching this host, they return the cached verdict instead of queueing
     on the per-host lock. Only a host with no cache row yet waits, so the
-    first lookup still answers fresh. The cron passes wait=True.
+    first lookup still answers fresh. The cron passes wait=True. Across
+    processes the feed address's database lock decides (_read_and_store):
+    when another process holds it, the cached verdict is returned.
     """
     source = SOURCES.get(site_host)
     if source is None:
@@ -1471,9 +1557,7 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
                 "SELECT source_name,status_page_url,api_url FROM status_sources WHERE site_host=%s AND enabled=true",
                 (site_host,),
             ).fetchone()
-        expected_page = f"https://status.{site_host}/"
-        if row and row["status_page_url"] == expected_page and row["api_url"] == expected_page + "api/v2/status.json":
-            source = Source(row["source_name"], row["status_page_url"], row["api_url"], "discovered_statuspage")
+        source = _discovered_source(site_host, row)
     if source is None:
         return False
     lock = _SOURCE_LOCKS.setdefault(site_host, threading.Lock())
@@ -1483,68 +1567,125 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
             return cached
         lock.acquire()
     try:
-        with connect(settings) as conn:
-            previous = conn.execute(
-                "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
-                (site_host,),
-            ).fetchone()
-        if min_interval and previous:
-            fetched_at, error_at = previous["fetched_at"], previous["last_error_at"]
-            latest = max((t for t in (fetched_at, error_at) if t is not None), default=None)
-            if latest and latest >= datetime.now(timezone.utc) - timedelta(seconds=min_interval):
-                return bool(fetched_at and (not error_at or fetched_at > error_at))
-        own_client = client is None
-        client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
-        try:
-            digest: dict = {}
-            # While the two scope lists rest after failures, read status.json only (scope None: no list request).
-            scope: dict | None = None if status_scope.scope_paused(previous, datetime.now(timezone.utc)) else {}
-            indicator, updated_at = _read_source(source, client, digest, scope)
-            with connect(settings) as conn:
-                _store_read(conn, site_host, indicator, updated_at, digest, scope or {})
-            return True
-        except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError) as exc:
-            # Keep why the read failed: a bare "stale" would show a 403 from the feed and a timeout as the same word.
-            with connect(settings) as conn:
-                conn.execute(
-                    """INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail)
-                       VALUES (%s,'unknown',NULL,now(),%s) ON CONFLICT (site_host) DO UPDATE SET
-                       last_error_at=now(),last_error_detail=EXCLUDED.last_error_detail""",
-                    (site_host, failure_label(exc)),
-                )
-            return False
-        finally:
-            if own_client:
-                client.close()
+        outcome = _read_and_store(settings, [site_host], source, client, min_interval=min_interval, scope_allowed=scope_allowed)
+        return bool(_cached_ok(settings, site_host)) if outcome is None else outcome
     finally:
         lock.release()
 
 
-def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, limit: int = 20) -> dict:
-    """Periodically refresh only sources registered by an actual lookup."""
-    if not 1 <= limit <= 20:
-        raise ValueError("limit must be 1-20")
-    # The same rule as the lookup path (background_reads.feed_refresh_after): a cached active indicator is
-    # read again after FEED_RETRY_MINUTES, so a resolved problem stops reading as active within that time.
-    from .background_reads import FEED_ACTIVE_INDICATORS, FEED_RETRY_MINUTES
+# --- Curated feeds, read on a schedule without a lookup (D44) ------------------------------------------------
+
+CURATED_EVIDENCE = "curated_mapping"  # status_sources.evidence of a row the cron registered from SOURCES
+FEED_BATCH_MAX = 90         # feeds read by one 5-minute cron run at most
+FEED_BATCH_SECONDS = 60.0   # no feed and no scope list is started after this long (the run's other steps share 300 s)
+CRON_IDLE = timedelta(hours=1)  # a quiet feed is read about hourly; an active one every FEED_RETRY_MINUTES
+
+
+def sync_curated_sources(settings: Settings) -> dict:
+    """Register every curated feed mapping (SOURCES) in status_sources, and unregister rows this sync added
+    whose mapping left SOURCES. Rows registered by a lookup for other hosts (discovered Statuspage pages) are
+    left as they are, and an operator's enabled=false is kept. A changed feed address drops its cached read."""
+    added = changed = 0
     with connect(settings) as conn:
-        rows = conn.execute(
-            """SELECT s.site_host FROM status_sources s
-               JOIN queried_hosts q ON q.site_host=s.site_host
-               LEFT JOIN status_cache c ON c.site_host=s.site_host
-               WHERE s.enabled=true AND
-                 COALESCE(GREATEST(c.fetched_at,c.last_error_at),'-infinity'::timestamptz)
-                   < now() - CASE WHEN c.indicator = ANY(%s) THEN make_interval(mins => %s) ELSE interval '1 hour' END
-               ORDER BY GREATEST(c.fetched_at,c.last_error_at) NULLS FIRST,s.site_host LIMIT %s""",
-            (sorted(FEED_ACTIVE_INDICATORS), FEED_RETRY_MINUTES, limit),
-        ).fetchall()
-    result = {"checked": 0, "updated": 0, "failed": 0}
+        existing = {row["site_host"]: row for row in conn.execute(
+            "SELECT site_host,source_name,status_page_url,api_url,evidence FROM status_sources").fetchall()}
+        for host, source in SOURCES.items():
+            row = existing.get(host)
+            if row is None:
+                added += 1
+            elif (row["source_name"], row["status_page_url"], row["api_url"], row["evidence"]) == (
+                    source.name, source.page_url, source.api_url, CURATED_EVIDENCE):
+                continue
+            elif row["api_url"] != source.api_url:
+                changed += 1
+                conn.execute("DELETE FROM status_cache WHERE site_host=%s", (host,))
+            conn.execute(
+                """INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,curated_by,evidence,evidence_url)
+                   VALUES (%s,%s,%s,%s,NULL,%s,NULL) ON CONFLICT (site_host) DO UPDATE SET
+                   source_name=EXCLUDED.source_name,status_page_url=EXCLUDED.status_page_url,api_url=EXCLUDED.api_url,
+                   curated_by=NULL,evidence=EXCLUDED.evidence,evidence_url=NULL""",
+                (host, source.name, source.page_url, source.api_url, CURATED_EVIDENCE),
+            )
+        gone = sorted(host for host, row in existing.items() if row["evidence"] == CURATED_EVIDENCE and host not in SOURCES)
+        if gone:
+            conn.execute("DELETE FROM status_cache WHERE site_host=ANY(%s)", (gone,))
+            conn.execute("DELETE FROM status_sources WHERE site_host=ANY(%s)", (gone,))
+    return {"curated": len(SOURCES), "added": added, "changed": changed, "removed": len(gone)}
+
+
+def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Source | None]]:
+    """Feeds the cron should read now, earliest first: every enabled curated mapping (D44) and every enabled
+    mapping registered by a lookup (D22). Hosts that share one feed address are read once (aliases)."""
+    from .background_reads import feed_next_due
+
+    rows = conn.execute(
+        """SELECT s.site_host,s.source_name,s.status_page_url,s.api_url,
+                  c.indicator,c.fetched_at,c.last_error_at,c.last_error_detail,c.failures
+           FROM status_sources s
+           LEFT JOIN queried_hosts q ON q.site_host=s.site_host
+           LEFT JOIN status_cache c ON c.site_host=s.site_host
+           WHERE s.enabled=true AND (q.site_host IS NOT NULL OR s.evidence=%s)
+           ORDER BY s.site_host""",
+        (CURATED_EVIDENCE,),
+    ).fetchall()
+    groups: dict[str, dict] = {}
     for row in rows:
-        result["checked"] += 1
-        if refresh_one(settings, row["site_host"], client=client, wait=True):
-            result["updated"] += 1
+        host = row["site_host"]
+        source = SOURCES.get(host)
+        if source is not None:
+            key = "feed:" + source.api_url
+        elif _discovered_source(host, row) is not None:
+            key, source = "host:" + host, None  # read by refresh_one, which rebuilds and checks the source
         else:
-            result["failed"] += 1
+            continue
+        due = feed_next_due(row, CRON_IDLE)
+        group = groups.setdefault(key, {"hosts": [], "source": source, "due": due})
+        group["hosts"].append(host)
+        if due is None or (group["due"] is not None and due < group["due"]):
+            group["due"] = due
+    ready = [(group["due"], group["hosts"], group["source"]) for group in groups.values()
+             if group["due"] is None or group["due"] <= now]
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(ready, key=lambda item: (item[0] or floor, item[1][0]))
+
+
+def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, limit: int = FEED_BATCH_MAX,
+                  time_budget: float = FEED_BATCH_SECONDS, now: datetime | None = None) -> dict:
+    """The cron's feed step: read the due feeds (due_feeds), at most ``limit``, paced like the background reads
+    (two per second per process). Once ``time_budget`` seconds have passed no feed and no scope list is started;
+    a feed already being read keeps its own 10-second body limit, so the budget never turns into a feed failure.
+    A feed another process is reading (its database lock is held) is skipped and stays due."""
+    if not 1 <= limit <= FEED_BATCH_MAX:
+        raise ValueError(f"limit must be 1-{FEED_BATCH_MAX}")
+    from .background_reads import _pace
+
+    deadline = _clock() + time_budget
+
+    def within_budget() -> bool:
+        return _clock() <= deadline
+
+    with connect(settings) as conn:
+        ready = due_feeds(conn, now or datetime.now(timezone.utc))
+    result = {"checked": 0, "updated": 0, "failed": 0, "remaining": len(ready)}
+    own_client = client is None
+    client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
+    try:
+        for _due, hosts, source in ready[:limit]:
+            if not within_budget():
+                break
+            _pace()
+            if source is None:
+                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget)
+            else:
+                ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget)
+                if ok is None:
+                    continue  # read elsewhere right now (or just now): it stays due for a later run
+            result["checked"] += 1
+            result["remaining"] -= 1
+            result["updated" if ok else "failed"] += 1
+    finally:
+        if own_client:
+            client.close()
     return result
 
 

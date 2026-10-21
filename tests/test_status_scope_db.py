@@ -19,7 +19,7 @@ if not TEST_URL:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from ahn import background_reads  # noqa: E402
+from ahn import background_reads, status_refresh  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.main import create_app  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
@@ -47,6 +47,7 @@ def lookup():
 def unpaced(monkeypatch):
     monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
     monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(status_refresh, "_sleep", lambda _seconds: None)  # the 1 s gap between reads of one status page
 
 
 class Feeds:
@@ -179,10 +180,10 @@ def test_an_active_cached_indicator_is_read_again_after_fifteen_minutes(lookup, 
         age(settings, "cloudflare.com", 16)
         age(settings, "github.com", 16)
         feeds.seen.clear()
-        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0}
+        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0, "remaining": 0}
         assert [path for path in feeds.seen if path.endswith("status.json")] == ["www.cloudflarestatus.com/api/v2/status.json"]
         age(settings, "github.com", 50)
-        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0}
+        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0, "remaining": 0}
         # A cached active value that the provider has since resolved stops reading as active on the next read.
         feeds.set_indicator("www.cloudflarestatus.com", "none")
         age(settings, "cloudflare.com", 16)

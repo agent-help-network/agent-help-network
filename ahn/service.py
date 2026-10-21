@@ -376,7 +376,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
             source = conn.execute(
                 """SELECT s.source_name,s.status_page_url,c.indicator,c.source_updated_at,
-                          c.fetched_at,c.last_error_at,c.last_error_detail,
+                          c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
                           c.active_incidents,c.max_incident_impact,c.incident_updated_at,
                           c.active_maintenances,c.affected,c.affected_regional
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
@@ -400,12 +400,11 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     # Stale-while-revalidate: answer with the cached statement; once it would read as
                     # stale by age (or was never read), refresh it behind the lookup, not again within
                     # FEED_RETRY_MINUTES of the last attempt. An active indicator is due after
-                    # FEED_RETRY_MINUTES already (the cron uses the same rule), so a resolved problem
-                    # stops reading as active within about that long.
-                    latest = max((t for t in (fetched_at, source["last_error_at"]) if t is not None), default=None)
-                    idle = background_reads.feed_refresh_after(source["indicator"], timedelta(hours=background_reads.FEED_STALE_HOURS))
-                    aged = fetched_at is None or fetched_at < now - idle
-                    if aged and (latest is None or latest < now - timedelta(minutes=background_reads.FEED_RETRY_MINUTES)):
+                    # FEED_RETRY_MINUTES already, and a failing feed backs off (the cron uses the same
+                    # rule, background_reads.feed_next_due), so a resolved problem stops reading as
+                    # active within about that long. Curated feeds are also read by the cron (D44).
+                    due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
+                    if due is None or due <= now:
                         jobs.append(("status_feed", host))
             if eligible:
                 volume = conn.execute(

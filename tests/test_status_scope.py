@@ -23,6 +23,14 @@ FIXTURES = Path(__file__).parent / "fixtures" / "status_scope"
 STATUSPAGE = Source("Example Status", "https://status.example.com/", "https://status.example.com/api/v2/status.json")
 
 
+@pytest.fixture(autouse=True)
+def no_gap(monkeypatch):
+    """Record the pauses between reads of one status page instead of sleeping."""
+    pauses: list[float] = []
+    monkeypatch.setattr(status_refresh, "_sleep", pauses.append)
+    return pauses
+
+
 def fixture(name: str) -> dict:
     return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
 
@@ -81,12 +89,27 @@ def codes(checks) -> list[str]:
 # --- request count and platform detection -----------------------------------------------------------------
 
 @pytest.mark.parametrize("indicator", sorted(ACTIVE_INDICATORS))
-def test_an_active_statuspage_refresh_makes_exactly_three_requests_to_the_same_page(indicator):
+def test_an_active_statuspage_refresh_makes_exactly_three_requests_to_the_same_page(indicator, no_gap):
     page = fixture("single_incident")
     page["status"]["status"]["indicator"] = indicator
     _indicator, _at, scope, seen = read(page)
     assert seen == ["/api/v2/status.json", "/api/v2/incidents/unresolved.json", "/api/v2/scheduled-maintenances/active.json"]
     assert scope["active_incidents"] == 1
+    # At most one request per second to one status host (D44): a pause before each of the two lists.
+    assert no_gap == [status_refresh.SCOPE_GAP_SECONDS] * 2 and status_refresh.SCOPE_GAP_SECONDS >= 1.0
+
+
+def test_every_feed_request_identifies_the_reader():
+    agents = []
+
+    def handler(request):
+        agents.append(request.headers.get("user-agent"))
+        return serve(fixture("cloudflare"))[0](request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        status_refresh._read_source(STATUSPAGE, client, scope={})
+    assert len(agents) == 3 and set(agents) == {status_refresh.READER_VERSION}
+    assert status_refresh.READER_VERSION.startswith("AgentHelpNetwork/")
 
 
 @pytest.mark.parametrize("indicator", ["none", "unknown"])

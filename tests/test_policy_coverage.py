@@ -432,6 +432,12 @@ def test_deleted_tables_match_the_policy_mapping():
     expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient, UntilSwitchedOff))}
     # A replaced list copy is rewritten in place by ahn/gov_registry.py; only the domain rows are deleted from.
     expected_deleted |= {"gov_domain_registry"}
+    # Kept without a period, but a provider that leaves the status-mapping table is unregistered (D44,
+    # status_refresh.sync_curated_sources); the policy says so next to "no automatic deletion date".
+    expected_deleted |= {"status_cache", "status_sources"}
+    for lang, removal in (("en", "When a provider leaves our status-mapping table, its registration and cached status are deleted."),
+                          ("ko", "업체가 상태 매핑 표에서 빠지면 그 등록과 상태 캐시를 삭제합니다.")):
+        assert removal in section(lang, "06"), f"the {lang} retention section does not say when a status mapping is removed"
     assert deleted_tables_in_code() == expected_deleted, (
         f"Code deletes from {sorted(deleted_tables_in_code())}, the mapping expects {sorted(expected_deleted)}.")
 
@@ -545,6 +551,39 @@ def test_status_scope_reads_and_limits_in_the_policy_match_the_code():
     assert status_scope.SCOPE_REFUSALS == {"http_401", "http_403", "http_429"}
 
 
+def test_scheduled_status_feed_reads_in_the_policy_match_the_code():
+    # D44: every curated feed is read on a schedule without a lookup, with the cadence and backoff the code uses.
+    from datetime import timedelta as _td
+
+    from ahn import status_refresh
+    assert status_refresh.CRON_IDLE == _td(hours=1) and background_reads.FEED_RETRY_MINUTES == 15
+    assert background_reads.FEED_BACKOFF_MAX == _td(days=1) and status_refresh.SCOPE_GAP_SECONDS >= 1.0
+    assert background_reads.FEED_FAILURE_BACKOFF_MAX == _td(hours=1) < _td(hours=background_reads.FEED_STALE_HOURS)
+    assert background_reads.FEED_REFUSALS == {"http_401", "http_403", "http_429"}
+    assert background_reads.feed_backoff(1, "timeout") == _td(minutes=15)
+    assert background_reads.feed_backoff(9, "http_502", "major") == _td(minutes=15)  # last statement active
+    assert background_reads.feed_backoff(30, "http_403") == background_reads.FEED_BACKOFF_MAX
+    wanted = {
+        "schedule": Phrase("we read the status feed of every provider in our status-mapping table (ahn/status_refresh.py in the "
+                           "public source repository) whether or not anyone looked the host up, about once an hour, and every "
+                           "15 minutes while the feed reports an active status",
+                           "상태 매핑 표(공개 소스 저장소의 ahn/status_refresh.py)에 있는 모든 업체의 상태 피드를 호스트 조회 여부와 "
+                           "관계없이 약 1시간마다, 피드가 활성 상태를 발표하는 동안은 15분마다 읽습니다"),
+        "address": Phrase("Each read requests only the feed's own address (for most pages /api/v2/status.json), at most one "
+                          "request per second to one status host",
+                          "그 피드 자체의 주소(대부분 /api/v2/status.json)만 요청하고, 한 상태 호스트에는 초당 최대 한 번만 요청합니다"),
+        "backoff": Phrase("A feed that fails is read again after 15 minutes and then at most an hour apart (every 15 minutes "
+                          "while its last statement was active)",
+                          "실패한 피드는 15분 뒤 다시 읽고 그 뒤로는 최대 1시간 간격으로 읽습니다(마지막 발표가 활성이었으면 15분마다)"),
+        "refusal": Phrase("a refusal (401, 403 or 429) is never retried another way, and a feed that keeps refusing is read "
+                          "less often, down to once a day",
+                          "거절(401·403·429)은 다른 방법으로 다시 시도하지 않으며, 계속 거절하는 피드는 점점 드물게(최대 하루 한 번까지) 읽습니다"),
+    }
+    assert_phrases("scheduled status feed reads", {lang: section(lang, "05") for lang in LANGS}, wanted)
+    for lang, old in (("en", "These reads run in the background after a lookup"), ("ko", "이 읽기는 조회가 기다리는 동안이 아니라")):
+        assert old not in section(lang, "05"), f"the {lang} policy still says every read follows a lookup"
+
+
 def test_stored_provenance_is_described_in_the_policy():
     # Migration 020 stores, with each cached read, a hash of the bytes received and who read it from where,
     # and, with each report, the interface it arrived through.
@@ -573,6 +612,7 @@ _SCOPE_FAILURES = Phrase("how many times in a row that happened, when, and a sho
                          "연속 실패 횟수, 시각, 이유를 나타내는 짧은 라벨")
 _SCOPE_COUNTS = Phrase("the number of unresolved incidents and of maintenances in progress", "미해결 사건 수와 진행 중 점검 수")
 COLUMNS = {
+    "status_cache.failures": Phrase("the number of consecutive failed reads of its feed", "그 피드를 연속으로 읽지 못한 횟수"),
     "status_cache.active_incidents": _SCOPE_COUNTS,
     "status_cache.active_maintenances": _SCOPE_COUNTS,
     "status_cache.max_incident_impact": Phrase("the highest incident impact", "가장 높은 사건 영향"),
