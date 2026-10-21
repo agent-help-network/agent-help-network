@@ -736,6 +736,9 @@ SOURCES: dict[str, Source] = {
     "waipu.tv": Source("waipu.tv Status", "https://status.waipu.tv/", "https://status.waipu.tv/api/v2/status.json"),
     "xsolla.com": Source("Xsolla Status", "https://status.xsolla.com/", "https://status.xsolla.com/api/v2/status.json"),
     "yubico.com": Source("Yubico Status", "https://status.yubico.com/", "https://status.yubico.com/api/v2/status.json"),
+    "hmrc.gov.uk": Source("HMRC API Platform Status", "https://api-platform-status.production.tax.service.gov.uk/", "https://api-platform-status.production.tax.service.gov.uk/api/v2/status.json"),
+    "humansecurity.com": Source("HUMAN Status", "https://status.humansecurity.com/", "https://status.humansecurity.com/api/v2/status.json"),
+    "ietf.org": Source("IETF System Status", "https://status.ietf.org/", "https://status.ietf.org/summary.json", "instatus"),
 }
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.

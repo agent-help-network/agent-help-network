@@ -82,6 +82,7 @@ BETTERSTACK_HOSTS = {"brave.com", "firecrawl.dev", "huggingface.co", "openalex.o
 # Hosts moved from a link to a feed by the 2026-10-20 re-verification (the page's public feed parsed with the existing parser).
 REVERIFIED_INSTATUS_HOSTS = {
     "stacker.com",  # agent-demand collection, 2026-10-20: feed parsed on the first check
+    "ietf.org",  # agent-demand collection, 2026-10-21: upgraded from link after the feed parsed on re-check
     "1rpc.io", "appfolio.com", "aternos.org", "cloudez.io", "code.org", "decodo.com", "discogs.com", "doofinder.com",
     "fetlife.com", "flashbots.net", "freeconvert.com", "gamma.app", "growthbook.io", "mediavine.com", "narvar.com",
     "optable.co", "padlet.com", "polymarket.com", "wistia.com",
