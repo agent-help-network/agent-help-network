@@ -1,0 +1,137 @@
+# Failure host set v1: 100 hosts where AI agents are known to get blocked or are known to ask for help.
+# Used by scripts/answer_quality.py to measure, once a week, how useful the answer to a first lookup is.
+# A set is frozen once published. Any change to the list is a new file (failure_hosts_v2.txt); never edit v1 in place.
+#
+# Format: one line per host, "<host> <source>". Lines starting with # are comments. Host names only, chosen by
+# the maintainers from public documents and from the service's own aggregate counts. No candidate site was
+# contacted to build the list, and listing a host is not an endorsement or a statement about the site.
+#
+# Selection rules (a host appears once, under the first source in this order that names it):
+#   bench_wall (13): sites that a web-agent benchmark paper names as the place its agents were stopped by a
+#       bot wall or a sign-up wall. ClawBench (TIGER-AI-Lab, arXiv 2604.08523): zotero.org (Cloudflare Turnstile),
+#       paypal.com (DataDome), zillow.com (PerimeterX), instacart.com, indeed.com, ziprecruiter.com, sixt.com,
+#       roomsketcher.com. BrowserArena (arXiv 2510.02418): expedia.com (CAPTCHA), bbc.com (consent pop-ups).
+#       The ClawBench failure-analysis dataset: github.com, trello.com, overleaf.com (account creation stopped by CAPTCHA).
+#   bench_task (26): other live-site task platforms of ClawBench and BrowserArena (travel, food delivery, ticketing,
+#       job boards, marketplaces, banking and shipping portals). Chosen from the hosts that several benchmark
+#       families name, then by task type for variety.
+#   lookup (30): hosts that were looked up on the live service in the week before 2026-10-20 (the operator's
+#       aggregate list of queried hosts), minus the service's own and test hosts (example.*, agenthelpnetwork.com),
+#       content-delivery, tracking and telemetry hosts, hosts that look like a person's or a small business's own
+#       site, and hosts already listed above. Hostnames only; no counts, no requesters.
+#   d35 (31): from the seed list's agent-demand block (docs/decisions.md D35: the hosts after the official-paths
+#       block and before the curated Korean block of ahn/seed_hosts.txt, as of main 00ffa7d), the 31 hosts named by
+#       the most independent source families (web-agent benchmarks, agent-product partner lists, coding-agent
+#       allowlists, studies of sites that name AI agents in robots.txt), ties broken by seed file order,
+#       skipping hosts already listed above.
+# The set is chosen for the agent's need, not for what the service already covers: hosts without a seed entry or an
+# official path are in it on purpose, because that gap is what the weekly numbers are meant to show.
+# Every host must be a valid public host name that passes aggregate_eligible_host (a registrable domain).
+
+# --- bench_wall
+zotero.org bench_wall
+paypal.com bench_wall
+zillow.com bench_wall
+instacart.com bench_wall
+indeed.com bench_wall
+ziprecruiter.com bench_wall
+sixt.com bench_wall
+roomsketcher.com bench_wall
+expedia.com bench_wall
+bbc.com bench_wall
+github.com bench_wall
+trello.com bench_wall
+overleaf.com bench_wall
+
+# --- bench_task
+ticketmaster.com bench_task
+glassdoor.com bench_task
+craigslist.org bench_task
+doordash.com bench_task
+ubereats.com bench_task
+airbnb.com bench_task
+booking.com bench_task
+opentable.com bench_task
+etsy.com bench_task
+target.com bench_task
+tripadvisor.com bench_task
+homedepot.com bench_task
+lowes.com bench_task
+amazon.com bench_task
+reddit.com bench_task
+linkedin.com bench_task
+ebay.com bench_task
+fedex.com bench_task
+usps.com bench_task
+amtrak.com bench_task
+chase.com bench_task
+stubhub.ca bench_task
+resy.com bench_task
+ulta.com bench_task
+coursera.org bench_task
+goodreads.com bench_task
+
+# --- lookup
+hmrc.gov.uk lookup
+irs.gov lookup
+quizlet.com lookup
+dota2.com lookup
+pagerduty.com lookup
+gocardless.com lookup
+yelp.com lookup
+whatsapp.com lookup
+google.com lookup
+chatgpt.com lookup
+openai.com lookup
+bitbucket.org lookup
+gitlab.com lookup
+microsoft.com lookup
+nytimes.com lookup
+beatport.com lookup
+dcinside.com lookup
+facebook.com lookup
+jisho.org lookup
+duckduckgo.com lookup
+huggingface.co lookup
+notion.so lookup
+1password.com lookup
+plaid.com lookup
+yahoo.com lookup
+disneyplus.com lookup
+microcenter.com lookup
+amazon.de lookup
+amazon.co.uk lookup
+netflix.com lookup
+
+# --- d35
+cnn.com d35
+quora.com d35
+espn.com d35
+bbc.co.uk d35
+cnbc.com d35
+macys.com d35
+marriott.com d35
+people.com d35
+reuters.com d35
+ikea.com d35
+allrecipes.com d35
+berkeley.edu d35
+cambridge.org d35
+cornell.edu d35
+dailymail.co.uk d35
+fandom.com d35
+forbes.com d35
+harvard.edu d35
+independent.co.uk d35
+investopedia.com d35
+kayak.com d35
+kohls.com d35
+mayoclinic.org d35
+nationalgeographic.com d35
+nypost.com d35
+python.org d35
+rottentomatoes.com d35
+statista.com d35
+umich.edu d35
+united.com d35
+usatoday.com d35
