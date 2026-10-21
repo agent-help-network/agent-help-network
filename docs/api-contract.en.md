@@ -341,9 +341,6 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 | `use_official_path` | Wildcard-only disallow (below) and an official path is listed. | medium | `robots_wildcard_disallow`, `official_path_available` |
 | `unknown` | Wildcard-only disallow and no official path. | low | `robots_wildcard_disallow` |
 | `use_official_path` | Official path listed and `error_class` absent, `site_access`, or `service_error`. | medium | `official_path_available` |
-| `government_registry_listed` | The domain appears in a public government domain list (`host_facts.government_registry`). The list says who registered the domain; it does not vouch for every page or link on it. |
-| `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (`host_facts.suffix_rule`). That says who may register a domain, not that any page or link is vouched for. |
-| `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site. Compare the address with one the organisation publishes elsewhere before entering credentials or payment details. |
 | `proceed` | `robots_status` is `ok` with neither a declared block nor a wildcard-only disallow. | low | `robots_allows_agents` |
 | `unknown` | Anything else. | low | `robots_unknown` when an access profile exists (for example, unreadable `robots.txt`); `profile_not_read` when the hostname is a subdomain or tenant host in public mode (a `www.<apex>` name gets the apex's profile instead); otherwise empty |
 
@@ -379,6 +376,9 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 | `llms_txt_present` | The host publishes `llms.txt`; read it first. |
 | `content_use_ai_input_declared_no` | The host's `robots.txt` declares `ai-input=no` (or AIPREF `ai-use=n`) for user-directed agents; a content-use preference, not an access rule. Follow your operator's policy and tell the user if it matters. |
 | `official_path_available` | An official developer path is listed; prefer it over page automation. |
+| `government_registry_listed` | The domain appears in a public government domain list (`host_facts.government_registry`). The list says who registered the domain; it does not vouch for every page or link on it. |
+| `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (`host_facts.suffix_rule`). That says who may register a domain, not that any page or link is vouched for. |
+| `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site. Compare the address with one the organisation publishes elsewhere before entering credentials or payment details. |
 | `provider_scope` | The provider reports an active issue; compare affected services and update time with the blocked step. |
 | `provider_components_only` | The provider's page-level status is active, but it has announced no incident or maintenance (`basis: components_only`); only some components are marked. Check on the provider's status page whether a component you use is one of them. A `minor` or `maintenance` page is then not a reason to wait; a `major` or `critical` one still is. |
 | `provider_incident_stale` | The provider's active incidents have had no update for more than 7 days and no maintenance is in progress. If `provider_status.affected` names a service you use, wait for the provider; otherwise continue. A `major` or `critical` page above the worst incident's impact is still a reason to wait. |
