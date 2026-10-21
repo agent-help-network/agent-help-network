@@ -727,12 +727,17 @@ def _read(reader, site_host: str, path: str, cap_bytes: int, **options) -> tuple
 def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP)
     read_host = site_host
+    www_attempt = None
     if robots_status in ("error", "refused", "redirected", "invalid") and not site_host.startswith("www."):
         # Apex failed or refused: the www alias is still the host's own file and often the one that answers.
         # The apex->www step is the one redirect hop a read may spend: the www host has to answer itself.
         alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP, _hop=1)
         if alt_status in ("ok", "absent", "too_large"):
             robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
+        else:
+            # Not stored with the profile. The signal history uses it to tell "the www alias answered (a refusal,
+            # a redirect, a web page)" from a failure of the whole host; the requests made are the same.
+            www_attempt = {"robots_status": alt_status, "robots_detail": alt_detail}
     robots = parse_robots(robots_body) if robots_status == "ok" and robots_body is not None else None
     # Parsed from the same bytes as the robots rules: content-use preferences cost no extra request.
     # The robots.txt hash travels with the result, so a later rewrite of the row by another reader is detectable.
@@ -747,6 +752,7 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
         # Provenance only: hashes of the bytes received; the files themselves are never stored.
         "robots_sha256": sha256_hex(robots_body) if robots_status == "ok" else None,
         "llms_sha256": sha256_hex(llms_body) if llms_status == "ok" else None,
+        "www_attempt": www_attempt,
     }
 
 
@@ -812,8 +818,13 @@ def cached_profile(conn, site_host: str, *, now: datetime | None = None, max_age
     return _as_profile(site_host, row, now, max_age), due
 
 
-def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file) -> dict | None:
-    """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure)."""
+def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file,
+                trigger: str = "lookup") -> dict | None:
+    """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure).
+
+    ``trigger`` ("lookup" or "seed") only picks the daily per-host counter of the signal history of a curated host
+    (ahn/signal_history.py), which is written in a savepoint next to the cache row: it never changes or stops the read.
+    """
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(hours=max_age_hours)
     query = f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s"
@@ -855,4 +866,6 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                      operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
                      Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None),
                 ).fetchone()
+            from .signal_history import record_read
+            record_read(conn, site_host, profile, now, trigger)
         return _as_profile(site_host, row, now, max_age)

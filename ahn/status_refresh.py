@@ -1429,6 +1429,9 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
                        reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256""",
                     (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256")),
                 )
+                # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
+                from .signal_history import record_provider_status
+                record_provider_status(conn, site_host, indicator, updated_at)
             return True
         except (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RecursionError) as exc:
             # Keep why the read failed: a bare "stale" would show a 403 from the feed and a timeout as the same word.

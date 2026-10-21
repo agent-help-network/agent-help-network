@@ -1,0 +1,25 @@
+{# Owner-only card: signal history for the future "Site problems right now" board (ahn/signal_history.py). Not public. #}
+{% set kind_ko = {"no_response": "robots.txt 판독 응답 없음", "server_error": "서버 오류 응답", "tls_error": "TLS·인증서 오류"} %}
+{% set indicator_ko = {"minor": "일부 문제", "major": "주요 문제", "critical": "심각한 문제", "maintenance": "예정된 점검"} %}
+{% set ended_ko = {"answered": "응답", "answered_refused": "거절 응답", "answered_other": "기타 응답"} %}
+<section class="panel wide" id="board-signals" aria-label="현황판 신호">
+  <h2>현황판 신호 기록 · 최근 {{ board.days }}일 (비공개)</h2>
+  <div class="grid">
+    <div class="card"><span>등록 피드</span><strong>{{ board.coverage.registered_feeds }}</strong><small>조회로 등록돼 약 1시간마다 읽는 공식 피드 · 큐레이션 {{ board.coverage.registered_feeds_curated }}</small></div>
+    <div class="card"><span>기록 중인 호스트</span><strong>{{ board.coverage.recording_hosts }}</strong><small>기간 안에 판독 이력이 있는 큐레이션 호스트 · 대상 {{ board.coverage.target_hosts }}</small></div>
+    <div class="card"><span>현재 표시 후보</span><strong>{{ board.candidates_now }}</strong><small>업체 발표 {{ board.candidate_sources.provider }} · AHN 점검 {{ board.candidate_sources.ahn_check }} · 48시간 판독 없어 뺀 구간(stale) {{ board.stale_now }}</small></div>
+    <div class="card"><span>보류한 15분 창</span><strong>{{ board.held_windows }}</strong><small>{% if board.held_now %}지금 보류 중 · {% endif %}공통 인프라 발표로 보류 안 함 {{ board.infra_explained_windows }}</small></div>
+    <div class="card"><span>빈 시간 비율</span><strong>{% if board.empty_ratio is not none %}{{ '%.1f'|format(100 * board.empty_ratio) }}%{% else %}—{% endif %}</strong><small>기록 시작 뒤 15분 칸 {{ board.empty_ratio_slots }}개 중 후보가 없던 비율</small></div>
+  </div>
+  <div class="scroll"><table><thead><tr><th>호스트</th><th>업체 발표</th><th>AHN 점검(robots.txt 판독)</th><th>시작(UTC)</th></tr></thead><tbody>
+    {% for row in board.candidates %}<tr><td>{{ row.site_host }}</td>
+      <td>{% if row.provider %}{{ indicator_ko.get(row.provider.indicator, row.provider.indicator) }} · 읽음 {{ row.provider.fetched_at }}{% else %}—{% endif %}</td>
+      <td>{% if row.ahn_check %}{{ kind_ko.get(row.ahn_check.kind, row.ahn_check.kind) }} · 실패 {{ row.ahn_check.failed_reads }}회 · 마지막 판독 {{ row.ahn_check.last_read_at }}{% if row.ahn_check.baseline != 'shown' %} · 우리 위치에서 불안정{% endif %}{% else %}—{% endif %}</td>
+      <td>{% if row.ahn_check %}{{ row.ahn_check.since }}{% elif row.provider and row.provider.source_updated_at %}{{ row.provider.source_updated_at }}{% else %}—{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4">지금 표시할 후보가 없습니다. 목록에 없다고 사이트가 정상이라는 뜻은 아닙니다.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted" id="board-infra-feeds">공통 인프라 피드(보류 해제 근거): {% for feed in board.infra_feeds %}{{ feed.host }} {% if not feed.feed %}피드 없음(링크만){% elif not feed.registered %}미등록{% elif feed.fresh %}읽는 중({{ feed.indicator }}, {{ feed.fetched_at }}){% else %}등록됐지만 2시간 넘게 못 읽음{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}. 등록은 조회로만 됩니다(D22).</p>
+  <p class="muted">AHN 점검 구간 {{ board.a_episodes }}개(피드 연결 {{ board.a_feed_connected }} · 업체 발표와 겹침 {{ board.a_matched_feed }} · 업체보다 먼저 {{ board.a_ahead_of_feed }}{% if board.a_ahead_of_feed_median_minutes is not none %}, 중앙값 {{ board.a_ahead_of_feed_median_minutes }}분{% endif %} · 오탐 의심 {{ board.a_likely_false_positive }} · 피드 없어 확인 불가 {{ board.a_unverifiable }}{% for reason, count in board.a_ended_by.items() %}{% if loop.first %} · 끝난 방식: {% endif %}{{ ended_ko.get(reason, reason) }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}) · 업체 발표 구간 {{ board.p_episodes }}개 · 확인 전 실패(의심) {{ board.suspects_now }} · 6시간 안 반복 {{ board.intermittent_now }} · 제외: 기준선 없음 {{ board.excluded_now.no_baseline }}, 평소 실패율 10% 초과(30일 판독 20회 이상) {{ board.excluded_now.unstable }}, 48시간 판독 없음 {{ board.excluded_now.stale }}.
+  판독 {{ board.reads.total }}회(응답 {{ board.reads.responding }} · 실패 {{ board.reads.failed }} · 거절 {{ board.reads.refused }} · 보류 {{ board.reads.held }}; 조회 뒤 {{ board.reads.by_trigger.lookup }} · 시드 {{ board.reads.by_trigger.seed }}){% for reason, count in board.held_by_reason.items() %}{% if loop.first %} · 보류 사유: {% endif %}{{ reason }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.
+  문턱: 연속 실패 {{ board.stage_thresholds.n_fail }}회 + {{ board.stage_thresholds.t_min_minutes }}분 이상, 응답 {{ board.stage_thresholds.n_ok }}회면 회복. 거절(401·403·429·503)은 실패로도 회복으로도 세지 않지만, 응답 없음·TLS 구간은 거절 응답이 오면 닫습니다. 보류 판정은 30일 안에 응답한 적이 있는 호스트만 셉니다. AHN 점검은 판독할 때만 갱신되는 데이터센터 한 곳의 결과이며 제보가 아닙니다. 공개 페이지는 아직 없습니다. JSON: <a href="/owner/board.json?days={{ board.days }}">/owner/board.json</a></p>
+</section>
