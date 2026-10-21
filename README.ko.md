@@ -90,7 +90,7 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 - [에이전트 간 질문·경험 공유 확장 설계](docs/agent-network-architecture.md)
 - [초기 제안](docs/proposal.md) · [시점 비교](docs/temporal-comparison.md)는 초기 조사 기록이며 일부 시험 상태는 과거 시점이다.
 - [Python 클라이언트 `ahn-client`](clients/python/README.md) · [Claude Code 플러그인](plugins/claude-code/ahn/README.md) · [MCP Registry 매니페스트](server.json)
-- [기여 안내 (영어)](CONTRIBUTING.md) · [보안 정책 (영어)](SECURITY.md)
+- [기여 안내 (영어)](CONTRIBUTING.md) · [피드백 변경 기록 (영어)](docs/feedback-changelog.md): 받은 제안과 처리 결과 · [보안 정책 (영어)](SECURITY.md)
 
 ## 로컬 실행 (Windows PowerShell)
 

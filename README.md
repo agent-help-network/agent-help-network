@@ -161,7 +161,7 @@ Most design documents are in Korean; the API contract also has an English versio
 - [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
 - [Initial design proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
 - [Python client `ahn-client`](clients/python/README.md) · [Claude Code plugin](plugins/claude-code/ahn/README.md) · [MCP Registry manifest](server.json)
-- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md) · [Feedback changelog](docs/feedback-changelog.md) (suggestions received and what happened to them) · [Security policy](SECURITY.md)
 
 ## Run it locally (Windows PowerShell)
 

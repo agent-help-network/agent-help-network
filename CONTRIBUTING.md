@@ -2,6 +2,10 @@
 
 Thanks for helping. Agent Help Network is a small public beta run by a single operator, so focused changes with clear tests are the easiest to review. Read [AGENTS.md](AGENTS.md) for the project rules that apply to every change.
 
+## Suggestions
+
+To suggest a change without writing it, open an issue. What happened to earlier suggestions, including the ones we did not adopt, is in the [feedback changelog](docs/feedback-changelog.md).
+
 ## Run the tests
 
 The full suite needs Python 3.12 (the version CI uses) and PostgreSQL 17 with a **dedicated** database named exactly `ahn_test`. The suite refuses to reset any database with another name. Never point tests or scripts at a production database URL, and never put real data in `ahn_test`.
