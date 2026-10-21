@@ -130,15 +130,45 @@ def test_skip_hosts_and_disable_env(monkeypatch, transport):
 
 # --- same rules as the plugin ----------------------------------------------------------------------------
 
-@pytest.mark.parametrize("value", [
+# One list of inputs for both implementations: whatever the plugin hook reads, skips or refuses, the client does the same.
+HOST_RULE_INPUTS = [
     "example.com", "https://www.nytimes.com/x", "Example.COM/a?b", "127.1", "0x7f.1", "localhost", "a.b.local", "x.test", "user@example.com",
-    "https://[::1]:80/", "agenthelpnetwork.com", "docs.agenthelpnetwork.com", "münchen.de", "co", "a.b.c.d.example.org", "foo.example",
-])
+    "https://[::1]:80/", "agenthelpnetwork.com", "docs.agenthelpnetwork.com", "m\u00fcnchen.de", "co", "a.b.c.d.example.org", "foo.example",
+    "", "   ", 5, None,
+    # cluster-internal names
+    "web.default.svc", "x.svc", "redis.prod.cluster", "db.cluster", "api.service.consul", "https://web.default.svc:8080/x",
+    # names that stand for an address
+    "10.0.0.1.nip.io", "10-0-0-1.sslip.io", "app.192.168.1.5.nip.io", "x.xip.io", "nip.io", "www.nip.io", "https://10-0-0-1.sslip.io/x",
+    "192-168-1-5.example.com", "ec2-10-0-0-1.compute.example.com", "10.0.0.1.example.com", "https://user:pw@10-0-0-1.example.com:8443/x",
+    # ordinary names with similar parts
+    "svc.example.com", "cluster.example.org", "consul.io", "nipio.net", "mynip.io", "1-2-3.example.com", "v1.2.3.example.com",
+    "api.v2.example.com", "10-0-0.example.com", "1234-1-1-1.example.com",
+    # a backslash: two readings, no host
+    "https://evil.com\\@good.com", "https://evil.com\\@good.com/path", "http://good.com\\.evil.com/", "evil.com\\good.com", "example.com\\",
+    # IDNA2003 deviations
+    "fa\u00df.de", "https://fa\u03c2.de/x", "a\u200db.example.com",
+]
+
+
+@pytest.mark.parametrize("value", HOST_RULE_INPUTS)
 def test_host_rules_match_the_plugin(value):
     plugin_host = hook.normalize_host(value)
     assert _hosts.normalize_host(value) == plugin_host
     if plugin_host:
         assert _hosts.skip_host(plugin_host) == hook.skip_host(plugin_host)
+    # The end result: the same hostname is looked up, or none.
+    plugin_lookup = plugin_host if plugin_host and not hook.skip_host(plugin_host) else None
+    assert _hosts.eligible_host(value, env={}) == plugin_lookup
+
+
+def test_host_rule_tables_are_the_plugins():
+    assert _hosts.SKIP_TLDS == hook.SKIP_TLDS
+    assert _hosts.ADDRESS_NAME_SUFFIXES == hook.ADDRESS_NAME_SUFFIXES
+    assert (_hosts.EMBEDDED_IPV4.pattern, _hosts.EMBEDDED_IPV4.flags) == (hook.EMBEDDED_IPV4.pattern, hook.EMBEDDED_IPV4.flags)
+    assert _hosts.IDNA_DEVIATIONS == hook.IDNA_DEVIATIONS
+    assert _hosts.OWN_HOST == hook.OWN_HOST
+    assert {"svc", "consul", "cluster"} <= hook.SKIP_TLDS
+    assert {"nip.io", "sslip.io", "xip.io"} == set(hook.ADDRESS_NAME_SUFFIXES)
 
 
 @pytest.mark.parametrize("text", [

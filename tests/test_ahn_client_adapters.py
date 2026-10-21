@@ -1245,6 +1245,7 @@ def test_examples_parse_and_name_the_browser_use_adapter():
 ])
 def test_cluster_and_address_names_are_never_looked_up(value, transport):
     calls = transport()
+    assert hook.skip_host(hook.normalize_host(value)), "the plugin refuses the same names"
     assert ahn.check(value) is None
     assert ahn.check(f"https://{value}/x", "site_access") is None
     assert _adapter.note_for(forbidden(f"https://{value}/x"), None, adapter="langchain") is None
@@ -1255,6 +1256,7 @@ def test_cluster_and_address_names_are_never_looked_up(value, transport):
                                    "v1.2.3.example.com", "api.v2.example.com"])
 def test_ordinary_names_with_similar_parts_are_still_looked_up(value, transport):
     calls = transport()
+    assert not hook.skip_host(hook.normalize_host(value)), "the plugin looks up the same names"
     assert ahn.check(value) is not None
     assert len(calls) == 1
 
@@ -1279,13 +1281,13 @@ def test_a_name_without_a_deviation_character_still_works_in_idna(transport):
 def test_a_backslash_has_two_readings_so_no_host_is_looked_up(value, transport):
     # urlsplit reads the host after the "@" (good.com); a browser reads the backslash as a slash (evil.com).
     calls = transport()
-    assert _hosts.normalize_host(value) is None
+    assert _hosts.normalize_host(value) is None and hook.normalize_host(value) is None and hook.url_host(value) is None
     assert ahn.check(value) is None
     assert _adapter.host_from_args({"url": value}) is None
     assert _adapter.host_from_error(f"GET {value} failed") is None
     assert _claude_code.url_host(value) is None and _claude_code.hostname(value) is None
-    assert _claude_code.failure({"hook_event_name": "PostToolUseFailure", "tool_name": "WebFetch", "tool_input": {"url": value},
-                                 "error": "403 Forbidden"}) is None
+    failed = {"hook_event_name": "PostToolUseFailure", "tool_name": "WebFetch", "tool_input": {"url": value}, "error": "403 Forbidden"}
+    assert _claude_code.failure(failed) is None and hook.failure(failed) is None
     assert calls == []
 
 

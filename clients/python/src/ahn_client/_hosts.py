@@ -1,11 +1,9 @@
 """Hostname extraction and the list of hosts that are never looked up.
 
-Mirrors normalize_host and skip_host in plugins/claude-code/ahn/hooks/ahn_lookup.py;
-tests/test_ahn_client.py checks the two stay in step. The client refuses a little more than the plugin does, for
-inputs the plugin has not been given yet: cluster-internal TLDs (svc, consul, cluster), wildcard-DNS and
-address-embedding names (nip.io, sslip.io, 10-0-0-1.example.com) and a URL with a backslash (two readings). The plugin
-may adopt the same rules; until then tests/test_ahn_client_adapters.py states these differences. Nothing here
-resolves a name.
+Mirrors normalize_host and skip_host in plugins/claude-code/ahn/hooks/ahn_lookup.py (hostname and special_use there):
+the same inputs give the same answer, including cluster-internal TLDs (svc, consul, cluster), wildcard-DNS and
+address-embedding names (nip.io, sslip.io, 10-0-0-1.example.com) and a URL with a backslash (two readings).
+tests/test_ahn_client.py checks the two stay in step. Change the two together. Nothing here resolves a name.
 """
 
 from __future__ import annotations
