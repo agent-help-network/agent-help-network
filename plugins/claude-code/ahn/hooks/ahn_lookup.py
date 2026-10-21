@@ -15,6 +15,10 @@ Environment:
   AHN_HOOK_DEBUG=1            one-line note on stderr about what happened
   AHN_HOOK_FAKE_RESPONSE=path read the answer from a JSON file (no network)
   CLAUDE_PLUGIN_DATA          set by Claude Code; the rate-limit cache lives there
+
+A lookup carries the hostname, error_class, failure_stage and, when the tool result already holds them, four more
+enum codes: http_status, challenge, retry_after and via. Nothing else is read out of the result for the request: no
+path, query, body text or header value leaves the machine.
 """
 
 from __future__ import annotations
@@ -289,11 +293,9 @@ def http_status(tool_response) -> int | None:
 def challenge_cue(tool_response: dict, host: str) -> bool:
     """True when a response header or the page text says the refusal is a bot challenge or CAPTCHA."""
     headers = tool_response.get("headers")
-    if isinstance(headers, dict):
-        for key, value in headers.items():
-            # Cloudflare's documented marker of a challenge response.
-            if isinstance(key, str) and key.lower() == "cf-mitigated" and isinstance(value, str) and "challenge" in value.lower():
-                return True
+    # Cloudflare's documented marker of a challenge response.
+    if isinstance(headers, dict) and challenge_header(headers):
+        return True
     for field in BODY_FIELDS:
         value = tool_response.get(field)
         if isinstance(value, str) and HUMAN_VERIFICATION.search(without_urls(value[:BODY_SCAN_CHARS], host)):
@@ -331,22 +333,93 @@ def status_class(code: int, tool_response: dict, host: str) -> str | None:
 
 
 def retry_note(payload: dict) -> str:
-    """A short clause when a 429 came with a Retry-After of whole seconds, else "". Only that integer is kept."""
-    seconds = None
+    """A short clause when a 429 or 503 came with a Retry-After of whole seconds, else "". Only that integer is kept."""
+    seconds, code = None, 429
     if payload.get("hook_event_name") == "PostToolUse":
         response = payload.get("tool_response")
-        if http_status(response) == 429 and isinstance(response.get("headers"), dict):
+        code = http_status(response)
+        if code in (429, 503) and isinstance(response.get("headers"), dict):
             for key, value in response["headers"].items():
                 if isinstance(key, str) and key.lower() == "retry-after" and RETRY_AFTER_VALUE.fullmatch(str(value).strip()):
                     seconds = int(str(value).strip())
     else:
         text = payload.get("error")
-        if isinstance(text, str) and re.search(r"\b429\b|too many requests", text, re.I):
+        if isinstance(text, str) and re.search(r"\b(?:429|503)\b|too many requests|service unavailable", text, re.I):
+            code = 503 if re.search(r"\b503\b|service unavailable", text, re.I) else 429
             match = RETRY_AFTER_TEXT.search(text)
             seconds = int(match.group(1)) if match else None
     if seconds is None or not 1 <= seconds <= MAX_RETRY_SECONDS:
         return ""
-    return f"HTTP 429, the site asks to retry after {seconds} s."
+    return f"HTTP {code}, the site asks to retry after {seconds} s."
+
+
+# Lookup signals: enum codes taken from what the tool result already holds. They describe the site's answer, never the
+# request: no path, query, body text or header value is sent. ahn-client has the same lists (_signals.py); a test
+# runs both and fails when they differ.
+SIGNAL_STATUSES = frozenset({401, 402, 403, 407, 408, 429, 451}) | frozenset(range(500, 600))
+CHALLENGES = ("header", "none")
+RETRY_AFTER_BANDS = ("none", "lt_60", "60_3600", "gt_3600")
+VIAS = ("http_fetch", "browser", "unknown")
+RETRY_AFTER_SECONDS = re.compile(r"[0-9]{1,10}")
+BROWSER_TOOL = re.compile(r"browser|chrome|playwright|puppeteer|selenium|webdriver|devtools|firefox|camoufox|stagehand", re.I)
+FETCH_TOOL = re.compile(r"fetch", re.I)
+
+
+def challenge_header(headers: dict) -> bool:
+    """True when a header says the answer is a bot challenge: Cloudflare's documented cf-mitigated: challenge."""
+    return any(isinstance(key, str) and key.lower() == "cf-mitigated" and isinstance(value, str) and "challenge" in value.lower()
+               for key, value in headers.items())
+
+
+def retry_after_band(headers: dict) -> str:
+    """none (no header, an HTTP date or anything else), lt_60, 60_3600 or gt_3600 for a Retry-After of whole seconds."""
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == "retry-after":
+            value = str(value).strip()
+            if not RETRY_AFTER_SECONDS.fullmatch(value):
+                return "none"
+            seconds = int(value)
+            return "lt_60" if seconds < 60 else "60_3600" if seconds <= 3600 else "gt_3600"
+    return "none"
+
+
+def via_for(tool: str) -> str | None:
+    """http_fetch for WebFetch and MCP fetch tools, browser for MCP browser tools, None when the tool name says neither."""
+    if tool == "WebFetch":
+        return "http_fetch"
+    if tool.startswith("mcp__"):
+        if BROWSER_TOOL.search(tool):
+            return "browser"
+        if FETCH_TOOL.search(tool):
+            return "http_fetch"
+    return None
+
+
+def signals(payload: dict) -> dict:
+    """The optional lookup codes this payload already holds, as {parameter: value}; empty when it holds none.
+
+    http_status: the code of a PostToolUse result (never one read out of an error text).
+    challenge, retry_after: only when the result carries a headers object; "none" then means the header was not there.
+    retry_after: only for 429 and 503. via: from the tool's name.
+    """
+    found = {}
+    if not isinstance(payload, dict):
+        return found
+    tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else ""
+    if payload.get("hook_event_name") == "PostToolUse":
+        response = payload.get("tool_response")
+        code = http_status(response)
+        if code in SIGNAL_STATUSES:
+            found["http_status"] = code
+            headers = response.get("headers")
+            if isinstance(headers, dict):
+                found["challenge"] = "header" if challenge_header(headers) else "none"
+                if code in (429, 503):
+                    found["retry_after"] = retry_after_band(headers)
+    via = via_for(tool)
+    if via:
+        found["via"] = via
+    return found
 
 
 def failure(payload: dict) -> tuple[str, str, str | None] | None:
@@ -446,10 +519,21 @@ def recently_seen(host: str, now: float | None = None, env=None) -> bool:
     return False
 
 
-def lookup_url(host: str, error_class: str, stage: str | None) -> str:
+def valid_signals(found: dict | None) -> dict:
+    """found without any parameter or value outside the closed lists, in the order they are sent."""
+    found = found if isinstance(found, dict) else {}
+    allowed = (("http_status", lambda value: isinstance(value, int) and not isinstance(value, bool) and value in SIGNAL_STATUSES),
+               ("challenge", lambda value: value in CHALLENGES),
+               ("retry_after", lambda value: value in RETRY_AFTER_BANDS),
+               ("via", lambda value: value in VIAS))
+    return {name: found[name] for name, ok in allowed if name in found and ok(found[name])}
+
+
+def lookup_url(host: str, error_class: str, stage: str | None, extra: dict | None = None) -> str:
     query = {"site_host": host, "error_class": error_class}
     if stage:
         query["failure_stage"] = stage
+    query.update(valid_signals(extra))
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
@@ -631,7 +715,8 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     if recently_seen(host, env=env):
         return None, f"{host} looked up within 10 minutes"
     url = lookup_url(host, error_class, stage)
-    text = summary(host, fetch_within(url), url, retry_note(payload) if error_class == "service_error" else "")
+    # The signals ride on the request only. The "Full JSON" link in the line stays without them, so following it counts nothing twice.
+    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload))), url, retry_note(payload) if error_class == "service_error" else "")
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 

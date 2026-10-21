@@ -19,7 +19,8 @@ WebFetch reports an HTTP 401, 403, 429 or 5xx as a successful call with a status
 
 The original error is never changed or hidden, nothing is retried, and the hook always returns (an
 empty ``{}`` when there is nothing to add), within ``timeout`` seconds (2 by default). Only the hostname
-and two enum codes leave the machine.
+and enum codes leave the machine: the error class and stage, and when the tool result already holds them the
+HTTP status, whether a challenge header was present, a Retry-After band and whether the tool was a fetch or a browser.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ._adapter import DEFAULT_TIMEOUT, abounded_check
-from ._claude_code import failure
+from ._claude_code import failure, signals
 
 ADAPTER = "claude-agent-sdk"
 # The plugin's matcher for PostToolUseFailure (plugins/claude-code/ahn/hooks/hooks.json).
@@ -47,7 +48,7 @@ def make_hook(*, timeout: float = DEFAULT_TIMEOUT):
             if found is None:
                 return {}
             host, error_class, stage = found
-            result = await abounded_check(host, error_class, stage, ADAPTER, timeout)
+            result = await abounded_check(host, error_class, stage, ADAPTER, timeout, signals(input_data) or None)
             if result is None:
                 return {}
             return {"hookSpecificOutput": {"hookEventName": input_data["hook_event_name"],

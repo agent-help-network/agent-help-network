@@ -8,9 +8,10 @@ aiohttp are never imported) and an HTTP status carried on the exception.
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ._hosts import normalize_host
+from ._signals import from_headers, header_pairs, valid_signals, via_for_exception
 
 URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>()\[\]{}`]+", re.IGNORECASE)
 # The first match wins. Text that matches none of these is neither a block nor an outage (a 404 page, a 422
@@ -74,14 +75,22 @@ def classify_text(text: str, host: Optional[str] = None) -> Tuple[Optional[str],
     return error_class, stage
 
 
+def _attr(holder: Any, name: str) -> Any:
+    """``getattr(holder, name, None)`` that also survives a property that raises."""
+    try:
+        return getattr(holder, name, None)
+    except Exception:
+        return None
+
+
 def _status(exc: BaseException) -> Optional[int]:
     """An HTTP error status (400-599) carried by the exception: httpx/requests .response, aiohttp .status."""
-    response = getattr(exc, "response", None)
+    response = _attr(exc, "response")
     for holder, names in ((exc, ("status_code", "status")), (response, ("status_code", "status"))):
         if holder is None:
             continue
         for name in names:
-            code = getattr(holder, name, None)
+            code = _attr(holder, name)
             if isinstance(code, int) and not isinstance(code, bool) and 400 <= code <= 599:
                 return code
     return None
@@ -130,3 +139,25 @@ def classify(exc_or_text, host: Optional[str] = None) -> Tuple[Optional[str], Op
     if isinstance(exc_or_text, bytes):
         exc_or_text = exc_or_text.decode("utf-8", errors="replace")
     return classify_text(exc_or_text if isinstance(exc_or_text, str) else "", host)
+
+
+def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
+    """The optional lookup codes an exception already holds, as keyword arguments for ``check``.
+
+    ``ahn.check(url, error_class, stage, **ahn.signals(exc))``. Possible keys: ``http_status`` (the HTTP status the
+    exception carries, only 401, 402, 403, 407, 408, 429, 451 and 500-599), ``challenge`` (``header`` when the response
+    has a ``cf-mitigated: challenge`` header, ``none`` when it has headers without it), ``retry_after`` (for 429 and
+    503: ``none``, ``lt_60``, ``60_3600`` or ``gt_3600`` seconds; an HTTP date counts as ``none``) and ``via``
+    (``http_fetch`` for httpx, requests, aiohttp and urllib errors, ``browser`` for Playwright, Selenium and similar
+    ones; pass ``via="browser"`` or ``"http_fetch"`` yourself when you know). A key whose value is not known is left
+    out. The result is empty for text, for an exception without a status, and for a status outside that list. No
+    header value, URL or message text is read into the result.
+    """
+    found: Dict[str, Any] = {}
+    if isinstance(exc, BaseException):
+        headers = header_pairs(_attr(exc, "response"))
+        found = from_headers(_status(exc), headers if headers is not None else header_pairs(exc))
+        via = via or via_for_exception(_chain(exc))
+    if via:
+        found["via"] = via
+    return valid_signals(found)

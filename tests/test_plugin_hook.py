@@ -357,7 +357,8 @@ def test_webfetch_status_decides_the_request(monkeypatch, capsys, captured, code
     else:
         (request, _), = captured
         assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
-            "site_host": ["example.com"], "error_class": [expected], "failure_stage": ["response_observed"]}
+            "site_host": ["example.com"], "error_class": [expected], "failure_stage": ["response_observed"],
+            "http_status": [str(code)], "via": ["http_fetch"]}
 
 
 def test_the_nytimes_403_example_still_looks_up_site_access(monkeypatch, capsys, captured):
@@ -365,7 +366,8 @@ def test_the_nytimes_403_example_still_looks_up_site_access(monkeypatch, capsys,
     _, out, _ = run_main(monkeypatch, capsys, raw)
     (request, _), = captured
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
-        "site_host": ["nytimes.com"], "error_class": ["site_access"], "failure_stage": ["response_observed"]}
+        "site_host": ["nytimes.com"], "error_class": ["site_access"], "failure_stage": ["response_observed"],
+        "http_status": ["403"], "via": ["http_fetch"]}
     assert json.loads(out)["hookSpecificOutput"]["additionalContext"].startswith("AHN nytimes.com: recommendation=")
 
 
@@ -408,17 +410,23 @@ def test_retry_after_on_a_429_becomes_one_clause(headers, note):
     assert hook.retry_note(webfetch(429, headers=headers)) == note
 
 
-def test_retry_after_is_only_for_429(monkeypatch, capsys, captured):
-    assert hook.retry_note(webfetch(503, headers={"Retry-After": "30"})) == ""
+def test_retry_after_is_for_429_and_503_only(monkeypatch, capsys, captured):
+    assert hook.retry_note(webfetch(503, headers={"Retry-After": "30"})) == "HTTP 503, the site asks to retry after 30 s."
+    assert hook.retry_note(webfetch(500, headers={"Retry-After": "30"})) == ""
+    assert hook.retry_note(webfetch(403, headers={"Retry-After": "30"})) == ""
     thrown = json.loads(payload(url="https://example.com/", error="429 Too Many Requests, Retry-After: 45"))
     assert hook.retry_note(thrown) == "HTTP 429, the site asks to retry after 45 s."
-    assert hook.retry_note(json.loads(payload(url="https://example.com/", error="503, Retry-After: 45"))) == ""
+    unavailable = json.loads(payload(url="https://example.com/", error="503, Retry-After: 45"))
+    assert hook.retry_note(unavailable) == "HTTP 503, the site asks to retry after 45 s."
+    assert hook.retry_note(json.loads(payload(url="https://example.com/", error="500, Retry-After: 45"))) == ""
     raw = payload("PostToolUse", url="https://example.com/a", response={"code": 429, "codeText": "x", "headers": {"Retry-After": "30"}})
     _, out, _ = run_main(monkeypatch, capsys, raw)
     context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
     assert context.startswith("AHN example.com: HTTP 429, the site asks to retry after 30 s. recommendation=")
     assert len(context) <= 700 and "error_class=service_error" in context
-    assert "etry" not in captured[0][0].full_url
+    # The request carries the band, not the number; the "Full JSON" link in the line carries neither.
+    assert "retry_after=lt_60" in captured[0][0].full_url and "30" not in urllib.parse.urlsplit(captured[0][0].full_url).query
+    assert "retry_after" not in context
 
 
 @pytest.mark.parametrize("error", [
@@ -538,7 +546,8 @@ def test_request_carries_only_hostname_and_codes(monkeypatch, capsys, captured):
     assert timeout == 4
     parts = urllib.parse.urlsplit(request.full_url)
     assert (parts.scheme, parts.netloc, parts.path) == ("https", "agenthelpnetwork.com", "/v1/incidents/check")
-    assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"]}
+    # The status in the error text is not sent (only a PostToolUse result's code is); the tool is WebFetch.
+    assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"], "via": ["http_fetch"]}
     assert request.get_method() == "GET" and request.data is None
     assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.2"
     for secret in ("user", "pw", "8443", "account", "claims", "12345", "token", "secret"):
@@ -951,7 +960,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.2.5"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.0"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}

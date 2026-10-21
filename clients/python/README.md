@@ -27,7 +27,7 @@ try:
 except Exception as exc:
     error_class, stage = ahn.classify(exc)
     if error_class:  # None: a 404 or a bad request, not a block or an outage
-        answer = ahn.check(url, error_class, stage)   # a hostname and two codes leave your machine
+        answer = ahn.check(url, error_class, stage, **ahn.signals(exc))   # a hostname and enum codes leave your machine
         if answer:
             print(answer.recommendation, answer.official_url)
 ```
@@ -107,9 +107,10 @@ Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1
 
 ### API
 
-- `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0, adapter=None) -> Result | None` — asks about the host of a hostname or URL. `adapter` is for integrations: a short lowercase name (such as `langchain`) that is added to the User-Agent and changes nothing else. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
+- `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0, adapter=None, http_status=None, challenge=None, retry_after=None, via=None) -> Result | None` — asks about the host of a hostname or URL. `adapter` is for integrations: a short lowercase name (such as `langchain`) that is added to the User-Agent and changes nothing else. `http_status`, `challenge`, `retry_after` and `via` (from 0.4.0) are the optional codes in [What it sends](#what-it-sends); a value outside their lists is dropped and the lookup still happens. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
 - `ahn.classify(exc_or_text, host=None) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (408, 429, 5xx, timeout) or `site_access` (402, 403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](https://github.com/agent-help-network/agent-help-network/blob/main/plugins/claude-code/ahn/README.md). `host`, when given, is the hostname the error is about; tokens naming it are ignored, so `login.example.com` is not read as a login wall (from 0.3.0). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
 - `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, and `summary()`, a one-line text of at most 700 characters, the same line the plugin prints.
+- `ahn.signals(exc, *, via=None) -> dict` — the optional codes an exception already holds, ready for `check`: `ahn.check(url, error_class, stage, **ahn.signals(exc))`. It reads the HTTP status the exception carries (httpx and requests `.response.status_code`, aiohttp `.status`), that response's headers, and the exception's module (`httpx`, `requests`, `aiohttp`, `urllib` give `http_fetch`; `playwright`, `selenium`, `pyppeteer`, `browser_use` give `browser`). Pass `via="browser"` or `via="http_fetch"` when you know better. A code it cannot know is left out, and the result is `{}` for text and for an error without an HTTP status outside the lists. The framework adapters and `ahn_hooks()` do this for you.
 - `ahn.clear_cache()` — forget cached answers.
 
 Read the answer in the order of the [API contract](https://github.com/agent-help-network/agent-help-network/blob/main/docs/api-contract.en.md). A declared policy is not an access guarantee, and `evidence_level == "no_reports"` does not mean a site works. `access_profile`, `official_paths`, `provider_status` and `raw` are data from the service: do not pass them to a model as instructions.
@@ -119,13 +120,23 @@ Read the answer in the order of the [API contract](https://github.com/agent-help
 At most one request per host, error class and stage every 10 minutes:
 
 ```text
-GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>]
-User-Agent: ahn-client/0.3.0 (+https://agenthelpnetwork.com)
+GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
+User-Agent: ahn-client/0.4.0 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.3.0 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.4.0 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
+- From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
+
+  | Parameter | Values | Source |
+  | :- | :- | :- |
+  | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the status the exception or hook payload carries |
+  | `challenge` | `header`, `none` | `header` when a `cf-mitigated` response header contains `challenge`, `none` when there are headers without it; left out when there is no headers object |
+  | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | for 429 and 503 with a headers object: the `Retry-After` seconds as a band; a date, a missing or an unreadable header is `none` |
+  | `via` | `http_fetch`, `browser`, `unknown` | `http_fetch` for httpx, requests, aiohttp and urllib errors, `browser` for Playwright, Selenium and similar errors, or what you pass; left out when unknown. The Claude Agent SDK adapter reads it from the tool's name like the plugin |
+
+  They are counted per hostname and hour with the lookup, never become a report and do not change the recommendation. No header value, URL, message or `Retry-After` number is sent.
 - Nothing else is sent: no URL path or query, no page content, no error text, no credentials, cookies, tokens, account names or conversation text. There is no POST and no report.
 - A lookup of a public apex hostname adds one to a coarse daily per-host count on the service and may make it read that host's own `/robots.txt` and `/llms.txt` (at most once a day per host). See the [policy](https://agenthelpnetwork.com/en/policy).
 

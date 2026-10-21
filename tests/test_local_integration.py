@@ -381,3 +381,13 @@ def test_not_found_and_database_outage(env):
         page = unavailable.get("/ko/search", params={"site_host": "example.org"})
         assert page.status_code == 503 and "잠시 후 다시 시도해 주세요" in page.text
         assert "postgresql" not in page.text.lower()
+
+def test_lookup_with_the_client_signal_codes_gets_the_same_answer(env):
+    """Plugin 0.3 and ahn-client 0.4 add http_status, challenge, retry_after and via to a lookup. A server that does not use them yet ignores them."""
+    _, client, _, _ = env
+    base = {"site_host": "example.org", "error_class": "service_error", "failure_stage": "response_observed"}
+    plain = client.get("/v1/incidents/check", params=base)
+    coded = client.get("/v1/incidents/check", params={**base, "http_status": "503", "challenge": "none", "retry_after": "60_3600", "via": "http_fetch"})
+    assert plain.status_code == coded.status_code == 200
+    assert coded.json()["recommendation"] == plain.json()["recommendation"]
+    assert coded.json()["evidence_level"] == plain.json()["evidence_level"]

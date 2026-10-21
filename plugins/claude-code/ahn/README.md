@@ -18,7 +18,7 @@ The hook is read-only: it sends a hostname and enum codes and reports nothing. T
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.2.5 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.0 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -55,12 +55,22 @@ That covers, for example, `mcp__Claude_Browser__navigate` (desktop browser pane)
 At most one request per failure:
 
 ```text
-GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>[&failure_stage=<stage>]
+GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>[&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
 User-Agent: ahn-claude-code-plugin/0.2
 ```
 
 - `site_host` is the bare lowercase hostname taken from `tool_input.url` (for MCP tools, also `uri`, `href`, `link`, `page_url` or `target_url`; only `http(s)://` or scheme-less host values), or else from the first `http(s)://` URL in the error text, or else, for `WebFetch` only, from Claude Code's own refusal `is unable to fetch from <host>`. No other bare dotted word in an error is read as a hostname (`document.querySelector`, `locator.click`, `urllib3.exceptions...`, Windows path segments). Scheme, userinfo, port, path, query and fragment are dropped, and a leading `www.` is removed.
 - `error_class` is one of `human_verification`, `login_auth`, `service_error`, `site_access`; `failure_stage` is `before_target_response`, `response_observed`, or omitted. Both are derived locally from the HTTP status or from the error text with URLs reduced to hostnames, so a path or query never influences them. There is no default class: an error that is neither a block nor an outage sends nothing (next section).
+- From version 0.3.0 a lookup can also carry up to four more codes that describe the site's answer. The hook adds one only when the tool result it was handed already holds the value, and leaves it out otherwise:
+
+  | Parameter | Values | Added when | How the hook decides |
+  | :- | :- | :- | :- |
+  | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the result is a `WebFetch` answer (`PostToolUse`) | `tool_response.code`. A status mentioned in an error text is never sent |
+  | `challenge` | `header`, `none` | the result carries a `headers` object | `header` when a `cf-mitigated` header contains `challenge`, else `none`. The page text is not used for this code |
+  | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | a 429 or 503 whose result carries a `headers` object | the `Retry-After` seconds as a band (under 60, 60 to 3600, over 3600); a date, a missing or an unreadable header is `none` |
+  | `via` | `http_fetch`, `browser` | the tool's name says it | `WebFetch` and MCP tools with `fetch` in the name: `http_fetch`; MCP tools with `browser`, `chrome`, `playwright`, `puppeteer`, `selenium`, `webdriver`, `devtools`, `firefox`, `camoufox` or `stagehand` in the name: `browser`; any other tool: left out |
+
+  These codes are counted per hostname and hour next to the error class. They never become a report and do not change the recommendation. The hook still sends nothing from the request or the page: no URL path or query, no page text, no header value (a header is only tested for the marker above or reduced to the band), no `Retry-After` seconds, no tool name.
 - Nothing else leaves your machine: no URL paths or queries, no page content, no error text, no conversation text, no credentials, cookies or account names, no session or user identifiers.
 
 ### Which errors are looked up
@@ -73,8 +83,8 @@ A mistyped address is not a site that refuses agents, so only statuses that repo
 | 402 | `site_access` | payment required: a site that asks for payment to be crawled (for example [Cloudflare Pay per Crawl](https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/)) has declared an access policy, and the lookup reports what the host declares. The plugin never suggests a way around a paywall |
 | 403, 451 | `site_access` | `human_verification` instead when a `cf-mitigated: challenge` header or the page text (CAPTCHA, "verify you are human", "checking your browser") points to a challenge |
 | 408 | `service_error` | request timeout |
-| 429 | `service_error` | the contract has no rate-limit class; a `Retry-After` of whole seconds, when the tool result carries one, is added to the line as `HTTP 429, the site asks to retry after N s.` and is not sent anywhere |
-| 500–599 | `service_error` | the server failed |
+| 429 | `service_error` | the contract has no rate-limit class; a `Retry-After` of whole seconds, when the tool result carries one, is added to the line as `HTTP 429, the site asks to retry after N s.` Only its band (`retry_after`, see above) is sent, never the number of seconds |
+| 500–599 | `service_error` | the server failed; a 503 with a `Retry-After` of whole seconds is added to the line the same way (`HTTP 503, the site asks to retry after N s.`) |
 | every other 4xx (400, 404, 405, 409, 410, 411, 413, 414, 415, 422 ...) | none: no lookup, nothing added | the address or the request was wrong, not blocked |
 
 For thrown errors (`PostToolUseFailure`), text that names none of a block, a login, a challenge, a timeout or a 5xx, such as `Not Found`, `404` or `422 Unprocessable`, is not looked up either. Nothing received from the site at all (DNS failure, refused connection, Claude Code's own `is unable to fetch from` refusal) is still sent as `site_access` with `before_target_response`.
@@ -141,7 +151,7 @@ From the repository root, without network access to the service:
 echo '{"hook_event_name":"PostToolUse","tool_name":"WebFetch","tool_input":{"url":"https://www.nytimes.com/section/world"},"tool_response":{"code":403,"codeText":"Forbidden"}}' | AHN_HOOK_FAKE_RESPONSE=response.json python3 plugins/claude-code/ahn/hooks/ahn_lookup.py
 ```
 
-`tests/test_plugin_hook.py` covers host extraction, the skip list, classification, the cache and its location, the exact request URL, response validation against the contract enums, the 256 KB cap, the total deadline, refused redirects (against a local server on 127.0.0.1), TLS verification, output length, the launcher, and the silent-failure paths, without network access beyond 127.0.0.1. Run it with `python -m pytest tests/test_plugin_hook.py -q`.
+`tests/test_plugin_hook.py` covers host extraction, the skip list, classification, the cache and its location, the exact request URL and the four optional codes (that no path, query, text or header value reaches it), response validation against the contract enums, the 256 KB cap, the total deadline, refused redirects (against a local server on 127.0.0.1), TLS verification, output length, the launcher, and the silent-failure paths, without network access beyond 127.0.0.1. Run it with `python -m pytest tests/test_plugin_hook.py -q`.
 
 ## Differences from the design contract
 
