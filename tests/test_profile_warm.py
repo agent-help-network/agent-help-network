@@ -156,7 +156,7 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
     failing = Reader(robots=("error", None), llms=("error", None))
 
     first = profile_warm.warm_profiles(settings, batch=3, reader=failing, now=now)
-    assert first == {"candidates": 2, "read": 3, "ok": 0, "errors": 3}
+    assert first == {"candidates": 2, "read": 3, "ok": 0, "errors": 3, "causes": {"no_detail": 3}}
 
     failing.calls.clear()
     healthy = Reader()
@@ -167,11 +167,73 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
         row = conn.execute("SELECT fetched_at,last_error_at,robots_status FROM host_access_profile WHERE site_host=%s", (SEEDS[0],)).fetchone()
     assert row["fetched_at"] is None and row["last_error_at"] is not None and row["robots_status"] == "error"
 
-    # Transport failures are due again after ERROR_RETRY, ahead of the weekly refresh of healthy hosts.
+    # Transport failures are tried again after WARM_ERROR_RETRY (the lookup path retries sooner, after ERROR_RETRY).
     healthy.calls.clear()
-    third = profile_warm.warm_profiles(settings, batch=3, reader=healthy, now=now + timedelta(hours=1, minutes=1))
+    early = profile_warm.warm_profiles(settings, batch=3, reader=healthy, now=now + timedelta(hours=1, minutes=1))
+    assert healthy.calls == [] and early == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
+    third = profile_warm.warm_profiles(settings, batch=3, reader=healthy,
+                                       now=now + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
     assert healthy.hosts == SEEDS[:3]
     assert third == {"candidates": 0, "read": 3, "ok": 3, "errors": 0}
+
+
+def test_warm_profiles_reads_hosts_never_attempted_before_retrying_failed_ones(warm_settings):
+    # The production failure: dead names came due again every hour at their place in the file, ahead of every
+    # host not yet read, so each run spent its whole batch on them (ok=0 errors=10) and the backlog never shrank.
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    dead = Reader(robots=("error", None, "dns_failed"), llms=("error", None, "dns_failed"))
+    first = profile_warm.warm_profiles(settings, batch=2, reader=dead, now=now)
+    assert first == {"candidates": 3, "read": 2, "ok": 0, "errors": 2, "causes": {"dns_failed": 2}}
+
+    healthy = Reader()
+    # An hour later the dead hosts would have been due again (ERROR_RETRY) and, being first in the file, taken the batch.
+    later = profile_warm.warm_profiles(settings, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=5))
+    assert healthy.hosts == SEEDS[2:4]
+    assert later == {"candidates": 1, "read": 2, "ok": 2, "errors": 0}
+
+    healthy.calls.clear()
+    last = profile_warm.warm_profiles(settings, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=10))
+    assert healthy.hosts == SEEDS[4:]  # the backlog is down to the failed hosts, which keep waiting
+    assert last == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
+
+    healthy.calls.clear()
+    retried = profile_warm.warm_profiles(settings, batch=5, reader=healthy,
+                                         now=now + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
+    assert healthy.hosts == SEEDS[:2]
+
+
+def test_warm_profiles_puts_expired_answers_before_failed_retries(warm_settings):
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    profile_warm.warm_profiles(settings, batch=5, reader=Reader(), now=now)
+    # seed-a, first in the file, later hit a transport failure; the other four answers are simply a week old by now.
+    with connect(settings) as conn:
+        conn.execute("UPDATE host_access_profile SET last_error_at=%s WHERE site_host=%s", (now + timedelta(hours=1), SEEDS[0]))
+    healthy = Reader()
+    result = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(days=8))
+    assert healthy.hosts == SEEDS[1:] + [SEEDS[0]]
+    assert result == {"candidates": 0, "read": 5, "ok": 5, "errors": 0}
+
+
+def test_warm_profiles_names_the_cause_of_each_failure_without_host_names(warm_settings):
+    settings, _ = warm_settings
+
+    class Mixed(Reader):
+        def __call__(self, site_host, path, *, cap_bytes, **_):
+            self.calls.append((site_host, path))
+            # The www alias is tried after an apex failure, so it fails the same way.
+            label = {"seed-a.com": "dns_failed", "seed-b.com": "connect_timeout", "seed-c.org": "dns_failed"}.get(
+                site_host.removeprefix("www."))
+            if label:
+                return ("error", None, label)
+            return self.robots if path == "/robots.txt" else self.llms
+
+    result = profile_warm.warm_profiles(settings, batch=5, reader=Mixed(), now=datetime.now(timezone.utc))
+    assert result["errors"] == 3 and result["ok"] == 2
+    assert result["causes"] == {"dns_failed": 2, "connect_timeout": 1}
+    assert profile_warm.format_causes(result["causes"]) == "dns_failed:2,connect_timeout:1"
+    assert "seed" not in profile_warm.format_causes(result["causes"])
 
 
 def test_warm_profiles_retries_a_transport_failure_that_followed_an_earlier_answer(warm_settings):
@@ -187,7 +249,8 @@ def test_warm_profiles_retries_a_transport_failure_that_followed_an_earlier_answ
     healthy.calls.clear()
     too_soon = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(hours=1))
     assert healthy.calls == [] and too_soon == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
-    due = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(hours=1, minutes=31))
+    due = profile_warm.warm_profiles(settings, batch=5, reader=healthy,
+                                     now=now + timedelta(minutes=30) + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
     assert healthy.hosts == [SEEDS[2]] and due == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
     with connect(settings) as conn:
         row = conn.execute("SELECT robots_status,last_error_at,read_host FROM host_access_profile WHERE site_host=%s", (SEEDS[2],)).fetchone()
@@ -215,7 +278,7 @@ def test_warm_profiles_swallows_an_exception_for_one_host_and_continues(warm_set
 
     result = profile_warm.warm_profiles(settings, batch=3, reader=reader, now=datetime.now(timezone.utc))
 
-    assert result == {"candidates": 2, "read": 2, "ok": 2, "errors": 1}
+    assert result == {"candidates": 2, "read": 2, "ok": 2, "errors": 1, "causes": {"exception:RuntimeError": 1}}
     assert reader.hosts == SEEDS[:3]
     assert stored_hosts(settings) == {SEEDS[0], SEEDS[2]}  # the raising host left no row, so it stays due
 
@@ -265,6 +328,19 @@ def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypat
     monkeypatch.setenv("AHN_WARM_BATCH", "not-a-number")
     auto_review.main()
     assert seen == [10, 4, 10]
+
+
+def test_cron_main_prints_the_failure_causes_after_the_counts(monkeypatch, capsys):
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
+    monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
+    monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
+    monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch, **_options: {
+        "candidates": 5, "read": 10, "ok": 0, "errors": 10, "causes": {"connect_timeout": 3, "dns_failed": 7}})
+    auto_review.main()
+    out = capsys.readouterr().out
+    assert "profile_warm read=10 ok=0 errors=10 remaining=5 causes=dns_failed:7,connect_timeout:3" in out
 
 
 def test_cron_main_survives_a_failing_status_step(monkeypatch, capsys):
