@@ -70,6 +70,50 @@ def test_hold_rule_for_dns_and_tls_clusters():
     assert hold_decision(same_host, False) == (False, None)
 
 
+def test_hold_rule_counts_only_hosts_with_a_baseline():
+    # Seven dead names fail with DNS next to one real host: nothing in the window with a baseline points at us.
+    events = _events(7, 7, "no_response:dns") + [{"site_host": "real.example", "a_outcome": "no_response:connect"}]
+    assert hold_decision(events, False) == (True, "simultaneous_failures")  # counting every host
+    assert hold_decision(events, False, {"real.example"}) == (False, None)
+    assert hold_decision(events, False, {f"fail{i}.example" for i in range(5)}) == (True, "dns_cluster")
+    assert hold_decision(events, False, set()) == (False, None)
+
+
+@pytest.mark.parametrize("profile,expected", [
+    ({"robots_status": "error", "robots_detail": "connect_timeout", "read_host": "x.org",
+      "www_attempt": {"robots_status": "refused", "robots_detail": "http_403"}}, ("refused", "http_403", "www.x.org", "refused")),
+    ({"robots_status": "error", "robots_detail": "tls_error", "read_host": "x.org",
+      "www_attempt": {"robots_status": "redirected", "robots_detail": "redirect:y.org"}},
+     ("redirected", "redirect:y.org", "www.x.org", "responding")),
+    ({"robots_status": "error", "robots_detail": "connect_timeout", "read_host": "x.org",
+      "www_attempt": {"robots_status": "error", "robots_detail": "dns_failed"}}, ("error", "connect_timeout", "x.org", "no_response:connect")),
+    ({"robots_status": "refused", "robots_detail": "http_403", "read_host": "x.org",
+      "www_attempt": {"robots_status": "error", "robots_detail": "connect_timeout"}}, ("refused", "http_403", "x.org", "refused")),
+    ({"robots_status": "ok", "robots_detail": "http_200", "read_host": "www.x.org", "www_attempt": None},
+     ("ok", "http_200", "www.x.org", "responding")),
+    ({"robots_status": "not_public", "robots_detail": "not_public", "read_host": "x.org", "www_attempt": None}, None),
+])
+def test_read_outcome_lets_an_answer_from_the_www_alias_decide(profile, expected):
+    assert signal_history.read_outcome("x.org", profile) == expected
+
+
+def test_build_profile_hands_over_the_www_attempt_without_extra_requests():
+    calls = []
+
+    def reader(host, path, *, cap_bytes, **_):
+        calls.append((host, path))
+        if path != "/robots.txt":
+            return ("absent", None, "http_404")
+        return ("refused", None, "http_403") if host.startswith("www.") else ("error", None, "connect_timeout")
+
+    profile = access_profile.build_profile("x.org", reader=reader)
+    assert calls == [("x.org", "/robots.txt"), ("www.x.org", "/robots.txt"), ("x.org", "/llms.txt")]
+    assert profile["robots_status"] == "error" and profile["robots_detail"] == "connect_timeout"
+    assert profile["www_attempt"] == {"robots_status": "refused", "robots_detail": "http_403"}
+    ok = access_profile.build_profile("x.org", reader=lambda h, p, *, cap_bytes, **_: ("ok", b"User-agent: *\nAllow: /\n", "http_200"))
+    assert ok["www_attempt"] is None
+
+
 def test_board_hosts_are_the_curated_tables_without_the_tranco_block():
     hosts = signal_history.board_hosts()
     assert set(OFFICIAL_PATHS) <= hosts and set(SOURCES) <= hosts and set(OFFICIAL_STATUS_PAGES) <= hosts

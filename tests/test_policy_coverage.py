@@ -331,16 +331,17 @@ TABLES = {
         Phrase("removed after {days} days without a lookup", "{days}일 동안 조회가 없으면 삭제")),
     # Signal history for curated hosts (migration 024, ahn/signal_history.py): host facts, no request or client data.
     "robots_read_events": Pruned(Phrase(
-        "History of robots.txt reads for curated public hostnames (time, outcome and failure label, and whether the read followed a lookup or the seed-list read): {days} days",
-        "큐레이션한 공개 호스트명별 robots.txt 읽기 이력(시각, 결과, 실패 사유 라벨, 조회 뒤의 읽기인지 시드 목록 읽기인지): {days}일")),
+        "History of robots.txt reads for curated public hostnames (time, host read, status, label, classification, operator, declared network location, and whether the read's window was held and why): {days} days",
+        "큐레이션한 공개 호스트명별 robots.txt 읽기 이력(시각, 읽은 호스트, 상태, 라벨, 분류, 운영자, 선언한 네트워크 위치, 그 구간의 보류 여부와 사유): {days}일")),
     "outage_episodes": Pruned(Phrase(
         "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
         "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
     "provider_status_events": Pruned(Phrase(
         "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
         "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
-    "robots_read_daily": Pruned(Phrase("Daily per-host totals of robots.txt reads, failures and refusals: {days} days",
-                                       "호스트별 일일 robots.txt 읽기·실패·거절 합계: {days}일")),
+    "robots_read_daily": Pruned(Phrase(
+        "Daily per-host totals of robots.txt reads, answers, failures, refusals and held reads, with the number of reads that followed a lookup and of seed-list reads: {days} days",
+        "호스트별 일일 robots.txt 읽기·응답·실패·거절·보류 합계와 조회 뒤 읽기 수·시드 목록 읽기 수: {days}일")),
     "render_metric_samples": Pruned(  # hosting-provider totals, no per-request detail
         Phrase("hosting-usage samples from Render (CPU, memory and request totals): {days} days",
                "시간별 사용량 표본(CPU·메모리·요청 합계): {days}일")),
@@ -734,15 +735,89 @@ def test_signal_history_is_described_as_host_facts_kept_private_for_now():
         assert periods_in_prune_analytics()[table] == signal_history.ROLLUP_RETENTION_DAYS == 90
     wanted = {
         "scope": Phrase("For curated public hostnames only", "큐레이션한 공개 호스트명"),
-        "what": Phrase("failed with a DNS, connection, TLS, timeout or server (5xx) error",
-                       "DNS·연결·TLS·시간 초과·서버 오류(5xx)로 실패"),
+        "what": Phrase("a DNS, connection, TLS, timeout or server (5xx) error", "DNS·연결·TLS·시간 초과·서버 오류(5xx)"),
         "refusal": Phrase("A refused read (401, 403, 429 or 503) is never counted as a problem with the site",
                           "거절된 읽기(401·403·429·503)는 사이트의 문제로 세지 않습니다"),
         "no_people": Phrase("they contain no lookup, report, IP address or client information",
                             "조회·제보·IP 주소·클라이언트 정보가 없으며"),
-        "trigger": Phrase("only whether a read followed a lookup or the seed-list read",
-                          "읽기가 조회 뒤의 읽기인지 시드 목록 읽기인지만 둡니다"),
+        "trigger": Phrase("whether a read followed a lookup is kept only as a daily count per host",
+                          "읽기가 조회 뒤의 읽기였는지는 호스트별 일일 개수로만 둡니다"),
         "no_request": Phrase("Keeping them adds no request to any site", "어떤 사이트에도 요청이 늘지 않습니다"),
+        "owner_view": Phrase("a private dashboard that shows the hostnames of current problem candidates",
+                             "현재 문제 후보의 호스트명과 집계를 보여 주는 비공개 화면"),
         "private": Phrase("they are not shown on public pages or in lookup answers", "공개 페이지나 조회 응답에는 나오지 않습니다"),
+        "open_provider_period": Phrase("a provider-reported problem that is still open is kept until it ends",
+                                       "업체가 아직 문제를 발표 중인 구간은 끝날 때까지 둡니다"),
     }
     assert_phrases("signal history", {lang: policy_text(lang) for lang in LANGS}, wanted)
+
+
+# Every column of the signal-history tables (migration 024) and the policy wording that names it.
+_SH_READ = {
+    "site_host": Phrase("we keep the hostname", "호스트명"), "read_at": Phrase("the time", "시각"),
+    "read_host": Phrase("the host that was read (the host itself or its www. alias)", "읽은 호스트(그 호스트 또는 www. 별칭)"),
+    "robots_status": Phrase("the read status", "읽기 상태"),
+    "detail": Phrase("for an answer its HTTP status code or, for a redirect, the target hostname",
+                     "응답이면 HTTP 상태 코드, 리디렉션이면 대상 호스트명"),
+    "a_outcome": Phrase("our classification of the result", "우리가 매긴 분류"),
+    "origin_operator": Phrase("the operator and declared network location that made the read", "읽은 운영자와 선언한 네트워크 위치"),
+    "vantage": Phrase("the operator and declared network location that made the read", "읽은 운영자와 선언한 네트워크 위치"),
+    "applied_at": Phrase("once our summary job has processed it (we keep that time)", "요약 작업이 처리한 뒤에는 처리 시각"),
+    "held": Phrase("whether its 15-minute window was held as a possible problem on our side and why",
+                   "그 15분 구간을 우리 쪽 문제 가능성 때문에 보류했는지와 그 사유"),
+    "hold_reason": Phrase("whether its 15-minute window was held as a possible problem on our side and why",
+                          "그 15분 구간을 우리 쪽 문제 가능성 때문에 보류했는지와 그 사유"),
+}
+_SH_PERIOD_TIMES = Phrase("start, confirmation and end times", "시작·확인·종료 시각")
+_SH_PERIOD_FEED = Phrase("whether a provider feed was registered for the host and reported a problem at the same time",
+                         "그 호스트에 업체 피드가 등록돼 있었는지와 같은 때 문제를 발표했는지")
+_SH_PERIOD_COUNTS = Phrase("the numbers of failed, held and answering reads in it", "그 안의 실패·보류·응답 읽기 수")
+_SH_DAILY = Phrase("daily totals of reads, answers, failures, refusals and held reads", "일일 읽기·응답·실패·거절·보류 합계")
+_SH_TRIGGER = Phrase("with the number of reads that followed a lookup and of seed-list reads", "조회 뒤의 읽기 수와 시드 목록 읽기 수")
+_SH_PROVIDER = Phrase("each change of its published indicator", "발표한 상태 값이 바뀔 때마다 그 변화")
+SIGNAL_HISTORY_COLUMNS = {
+    "robots_read_events": {"id": None, **_SH_READ},
+    "provider_status_events": {
+        "id": None, "site_host": _SH_PROVIDER, "at": _SH_PROVIDER, "from_indicator": _SH_PROVIDER, "to_indicator": _SH_PROVIDER,
+        "source_updated_at": Phrase("with the provider's own update time", "업체 자신의 갱신 시각"),
+        "applied_at": None,  # when the summary job applied the change: bookkeeping about our own processing
+    },
+    "outage_episodes": {
+        "id": None, "site_host": Phrase("periods in which a host's robots.txt could not be read", "호스트의 robots.txt 를 읽지 못한 구간"),
+        "signal": Phrase("Periods in which a curated host's robots.txt could not be read or its provider reported a problem",
+                         "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간"),
+        "kind": Phrase("for a failure its kind", "실패면 DNS·연결·TLS·시간 초과·서버 오류(5xx) 같은 종류"),
+        "first_fail_at": _SH_PERIOD_TIMES, "confirmed_at": _SH_PERIOD_TIMES, "ended_at": _SH_PERIOD_TIMES,
+        "last_event_at": Phrase("90 days after their last change", "90일(마지막 변화 기준)"),
+        "ended_reason": Phrase("how the period ended", "끝난 방식"),
+        "reads": _SH_PERIOD_COUNTS, "ok_streak": _SH_PERIOD_COUNTS, "held_overlap": _SH_PERIOD_COUNTS,
+        "feed_connected": _SH_PERIOD_FEED, "matched_episode_id": _SH_PERIOD_FEED,
+    },
+    "robots_read_daily": {
+        "site_host": _SH_DAILY, "day": _SH_DAILY, "reads": _SH_DAILY, "responding": _SH_DAILY, "failed": _SH_DAILY,
+        "refused": _SH_DAILY, "held": _SH_DAILY, "lookup_reads": _SH_TRIGGER, "seed_reads": _SH_TRIGGER,
+    },
+}
+
+
+def test_every_signal_history_column_is_named_in_the_policy():
+    text = (ROOT / "migrations" / "024_signal_history.sql").read_text(encoding="utf-8")
+    for table, columns in SIGNAL_HISTORY_COLUMNS.items():
+        body = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\n\);", text, re.S).group(1)
+        found = {line.split()[0] for line in body.strip().splitlines() if line.strip() and not line.strip().startswith("PRIMARY KEY")}
+        assert found == set(columns), f"{table}: columns {sorted(found)} differ from the policy mapping {sorted(columns)}"
+    wanted = {f"{table}.{column}": phrase for table, columns in SIGNAL_HISTORY_COLUMNS.items()
+              for column, phrase in columns.items() if phrase is not None}
+    assert_phrases("signal history columns", {lang: policy_text(lang) for lang in LANGS}, wanted)
+    # Whether a read followed a lookup is never kept per read (only as a daily count).
+    assert "trigger" not in SIGNAL_HISTORY_COLUMNS["robots_read_events"]
+
+
+def test_seed_read_retry_in_the_policy_matches_the_code():
+    from ahn import profile_warm
+    assert profile_warm.WARM_ERROR_RETRY == timedelta(hours=24)
+    wanted = {"seed_retry": Phrase("a transport failure there is retried after 24 hours",
+                                   "여기서는 전송 실패를 24시간 뒤 다시 시도합니다")}
+    assert_phrases("seed read retry", {lang: policy_text(lang) for lang in LANGS}, wanted)
+    for lang, stale in (("en", "a transport failure there is also retried after one hour"), ("ko", "여기서도 전송 실패는 1시간 뒤")):
+        assert stale not in policy_text(lang)

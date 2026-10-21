@@ -139,11 +139,13 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     # Signal history (migration 024, ahn/signal_history.py): raw read events 14 days, periods, provider-status
     # changes and daily totals 90 days. Its own transaction: if this cron runs before the web service has applied
     # the migration, the missing tables must neither undo the deletions above nor stop the bandwidth guard.
+    # A provider period that is still open (the provider still reports the problem) is kept until it ends.
     try:
         with psycopg.connect(database_url) as conn:
             conn.execute("DELETE FROM robots_read_events WHERE read_at < now() - interval '14 days'")
             conn.execute("DELETE FROM provider_status_events WHERE at < now() - interval '90 days'")
-            conn.execute("DELETE FROM outage_episodes WHERE last_event_at < now() - interval '90 days'")
+            conn.execute("DELETE FROM outage_episodes WHERE last_event_at < now() - interval '90 days'"
+                         " AND (signal = 'A' OR ended_at IS NOT NULL)")
             conn.execute("DELETE FROM robots_read_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"signal_history_prune failed={type(exc).__name__}")

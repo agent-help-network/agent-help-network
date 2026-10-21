@@ -2,12 +2,14 @@
 -- Facts about curated public hostnames only: the outcome of AHN's own robots.txt reads and changes in a
 -- provider's published status. No lookup, report, IP address, client or file content is stored here.
 -- Nothing is public yet; the operator view (/owner) reads these tables. Retention is enforced by
--- platform_metrics.prune_analytics: raw read events 14 days, episodes and daily totals 90 days.
+-- platform_metrics.prune_analytics: raw read events 14 days, periods, provider changes and daily totals 90 days.
+-- Rollback: DROP the four tables, then DELETE FROM schema_migrations WHERE version=24.
 
 -- One row per robots.txt read of a curated host, written where the read result is stored (get_profile).
 -- a_outcome is the board's classification (responding, no_response:*, tls_error, server_error, refused, other).
--- trigger (lookup or seed) is for internal totals only and is never shown publicly. applied_at, held and
--- hold_reason are set by the rollup once the read's 15-minute window has closed.
+-- detail is the reader's label: a failure label, or for an answer its HTTP status or redirect target host.
+-- applied_at, held and hold_reason are set by the rollup once the read's 15-minute window has closed.
+-- Whether a read followed a lookup is not kept here; robots_read_daily counts it per host and day only.
 CREATE TABLE IF NOT EXISTS robots_read_events (
     id bigserial PRIMARY KEY,
     site_host text NOT NULL,
@@ -16,7 +18,6 @@ CREATE TABLE IF NOT EXISTS robots_read_events (
     robots_status text NOT NULL,
     detail text,
     a_outcome text NOT NULL,
-    trigger text NOT NULL CHECK (trigger IN ('lookup','seed')),
     origin_operator text NOT NULL,
     vantage jsonb NOT NULL,
     applied_at timestamptz,
@@ -42,7 +43,9 @@ CREATE INDEX IF NOT EXISTS provider_status_events_pending ON provider_status_eve
 
 -- Problem periods per host and signal, derived by the rollup. Signal A (AHN check): opened by the first
 -- counted read failure (a suspect while confirmed_at is NULL), confirmed after repeated failures over a
--- minimum time, ended by a responding read. Signal P (provider): one period per published problem indicator.
+-- minimum time, ended by an answer (ended_reason answered, or answered_refused / answered_other when a
+-- refusal or another non-failure ends a no-response or TLS period). Signal P (provider): one period per
+-- published problem indicator, ended_reason provider_changed.
 CREATE TABLE IF NOT EXISTS outage_episodes (
     id bigserial PRIMARY KEY,
     site_host text NOT NULL,
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS outage_episodes (
     first_fail_at timestamptz NOT NULL,
     confirmed_at timestamptz,
     ended_at timestamptz,
+    ended_reason text,
     last_event_at timestamptz NOT NULL,
     reads integer NOT NULL DEFAULT 0 CHECK (reads >= 0),
     ok_streak integer NOT NULL DEFAULT 0 CHECK (ok_streak >= 0),
@@ -62,6 +66,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS outage_episodes_one_open ON outage_episodes (s
 CREATE INDEX IF NOT EXISTS outage_episodes_first_fail ON outage_episodes (first_fail_at);
 
 -- Daily per-host totals of robots.txt reads, kept longer than the raw events for the 30-day baseline.
+-- lookup_reads and seed_reads are added when a read is recorded; the other counts by the rollup.
 CREATE TABLE IF NOT EXISTS robots_read_daily (
     site_host text NOT NULL,
     day date NOT NULL,
@@ -70,6 +75,8 @@ CREATE TABLE IF NOT EXISTS robots_read_daily (
     failed integer NOT NULL DEFAULT 0 CHECK (failed >= 0),
     refused integer NOT NULL DEFAULT 0 CHECK (refused >= 0),
     held integer NOT NULL DEFAULT 0 CHECK (held >= 0),
+    lookup_reads integer NOT NULL DEFAULT 0 CHECK (lookup_reads >= 0),
+    seed_reads integer NOT NULL DEFAULT 0 CHECK (seed_reads >= 0),
     PRIMARY KEY (site_host, day)
 );
 CREATE INDEX IF NOT EXISTS robots_read_daily_day ON robots_read_daily (day);

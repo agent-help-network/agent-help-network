@@ -61,8 +61,8 @@ def add_reads(settings, rows):
     with connect(settings) as conn:
         for host, at, outcome in rows:
             conn.execute(
-                """INSERT INTO robots_read_events (site_host,read_at,read_host,robots_status,detail,a_outcome,trigger,origin_operator,vantage)
-                   VALUES (%s,%s,%s,%s,NULL,%s,'seed','agenthelpnetwork.com','{}'::jsonb)""",
+                """INSERT INTO robots_read_events (site_host,read_at,read_host,robots_status,detail,a_outcome,origin_operator,vantage)
+                   VALUES (%s,%s,%s,%s,NULL,%s,'agenthelpnetwork.com','{}'::jsonb)""",
                 (host, at, host, "ok" if outcome == "responding" else "refused" if outcome == "refused" else "error", outcome))
 
 
@@ -83,12 +83,50 @@ def test_a_read_of_a_curated_host_is_recorded_without_any_extra_request(db):
     get_profile(db, "not-curated-example.org", now=T0, reader=plain)
     # Same requests as an unrecorded host: robots.txt and llms.txt, nothing else.
     assert [path for _, path in curated.calls] == [path for _, path in plain.calls] == ["/robots.txt", "/llms.txt"]
-    rows = q(db, "SELECT site_host,read_at,read_host,robots_status,detail,a_outcome,trigger,origin_operator FROM robots_read_events")
+    rows = q(db, "SELECT site_host,read_at,read_host,robots_status,detail,a_outcome,origin_operator FROM robots_read_events")
     assert rows == [{"site_host": host, "read_at": T0, "read_host": host, "robots_status": "ok", "detail": "http_200",
-                     "a_outcome": "responding", "trigger": "seed", "origin_operator": "agenthelpnetwork.com"}]
+                     "a_outcome": "responding", "origin_operator": "agenthelpnetwork.com"}]
+    # Whether the read followed a lookup is kept only as the host's daily count, never on the event row.
+    columns = {row["column_name"] for row in q(db, "SELECT column_name FROM information_schema.columns WHERE table_name='robots_read_events'")}
+    assert "trigger" not in columns
+    assert q(db, "SELECT day,lookup_reads,seed_reads,reads FROM robots_read_daily") == [
+        {"day": T0.date(), "lookup_reads": 0, "seed_reads": 1, "reads": 0}]
     # A cached answer is not a read and records nothing.
     get_profile(db, host, now=T0 + timedelta(hours=1), reader=curated)
     assert len(q(db, "SELECT id FROM robots_read_events")) == 1 and len(curated.calls) == 2
+    get_profile(db, host, now=T0 + timedelta(days=1, hours=1), reader=curated)  # a lookup read the next day
+    assert q(db, "SELECT lookup_reads,seed_reads FROM robots_read_daily ORDER BY day") == [
+        {"lookup_reads": 0, "seed_reads": 1}, {"lookup_reads": 1, "seed_reads": 0}]
+
+
+class ApexFails:
+    """Apex robots.txt fails; the www alias gives ``www`` (the same requests as any read: apex, www, llms)."""
+
+    def __init__(self, www):
+        self.www, self.calls = www, []
+
+    def __call__(self, host, path, *, cap_bytes, **_):
+        self.calls.append((host, path))
+        if path != "/robots.txt":
+            return ("absent", None, "http_404")
+        return self.www if host.startswith("www.") else ("error", None, "connect_timeout")
+
+
+@pytest.mark.parametrize("www,expected", [
+    (("refused", None, "http_403"), ("refused", "http_403", "www.github.com", "refused")),
+    (("redirected", None, "redirect:example.net"), ("redirected", "redirect:example.net", "www.github.com", "responding")),
+    (("invalid", None, "html_body"), ("invalid", "html_body", "www.github.com", "responding")),
+    (("error", None, "http_400"), ("error", "http_400", "www.github.com", "responding")),
+    (("error", None, "dns_failed"), ("error", "connect_timeout", "github.com", "no_response:connect")),
+    (("error", None, "http_502"), ("error", "connect_timeout", "github.com", "no_response:connect")),
+])
+def test_an_answer_from_the_www_alias_is_not_a_failure(db, www, expected):
+    reader = ApexFails(www)
+    profile = get_profile(db, "github.com", now=T0, reader=reader)
+    assert profile["robots_status"] == "error"  # the cached profile is unchanged by the history
+    assert [path for _, path in reader.calls] == ["/robots.txt", "/robots.txt", "/llms.txt"]  # no extra request
+    rows = q(db, "SELECT robots_status,detail,read_host,a_outcome FROM robots_read_events")
+    assert [tuple(row.values()) for row in rows] == [expected]
 
 
 def test_tranco_only_and_not_public_reads_are_not_recorded(db):
@@ -122,19 +160,45 @@ def test_state_machine_two_failures_over_45_minutes_then_one_answer(db):
     rollup(db, T0 + timedelta(hours=2))
     [down] = episodes(db)
     assert down["confirmed_at"] == T0 + timedelta(minutes=50) and down["ended_at"] is None and down["reads"] == 3
-    add_reads(db, [(host, T0 + timedelta(minutes=110), "refused")])  # a refusal is neither failure nor recovery
-    rollup(db, T0 + timedelta(hours=3))
-    assert episodes(db)[0]["ended_at"] is None
     add_reads(db, [(host, T0 + timedelta(minutes=170), "responding")])
     rollup(db, T0 + timedelta(hours=4))
     [ended] = episodes(db)
-    assert ended["ended_at"] == T0 + timedelta(minutes=170)
+    assert ended["ended_at"] == T0 + timedelta(minutes=170) and ended["ended_reason"] == "answered"
     daily = q(db, "SELECT reads,responding,failed,refused,held FROM robots_read_daily WHERE site_host=%s", (host,))
-    assert daily == [{"reads": 5, "responding": 1, "failed": 3, "refused": 1, "held": 0}]
+    assert daily == [{"reads": 4, "responding": 1, "failed": 3, "refused": 0, "held": 0}]
     # Every event is applied exactly once.
     assert q(db, "SELECT count(*) AS n FROM robots_read_events WHERE applied_at IS NULL") == [{"n": 0}]
     rollup(db, T0 + timedelta(hours=5))
-    assert q(db, "SELECT reads FROM robots_read_daily WHERE site_host=%s", (host,)) == [{"reads": 5}]
+    assert q(db, "SELECT reads FROM robots_read_daily WHERE site_host=%s", (host,)) == [{"reads": 4}]
+
+
+def test_a_refusal_ends_a_no_response_period_without_counting_as_a_recovery(db):
+    # Review R1: a host that answers 403 to our datacenter after a no-response period must not stay a candidate.
+    host = CURATED[0]
+    day = timedelta(days=1)
+    add_reads(db, [(host, T0 - 5 * day, "responding")])
+    add_reads(db, [(host, T0, "no_response:connect"), (host, T0 + timedelta(minutes=60), "no_response:connect")])
+    add_reads(db, [(host, T0 + timedelta(hours=h), "refused") for h in (3, 27, 51, 75)])
+    rollup(db, T0 + timedelta(days=4))
+    [ep] = episodes(db)
+    assert ep["confirmed_at"] == T0 + timedelta(minutes=60)
+    assert ep["ended_at"] == T0 + timedelta(hours=3) and ep["ended_reason"] == "answered_refused"
+    summary = board(db, T0 + timedelta(days=4))
+    assert summary["candidates"] == [] and summary["a_ended_by"] == {"answered_refused": 1}
+    # The refusals are counted as refusals only: not failures, not answers.
+    totals = q(db, "SELECT sum(responding)::int AS r,sum(failed)::int AS f,sum(refused)::int AS x FROM robots_read_daily")
+    assert totals == [{"r": 1, "f": 2, "x": 4}]
+
+
+def test_a_tls_period_also_ends_on_a_refusal_but_a_server_error_period_does_not(db):
+    tls, server = CURATED[0], CURATED[1]
+    add_reads(db, [(tls, T0, "tls_error"), (tls, T0 + timedelta(minutes=60), "tls_error"), (tls, T0 + timedelta(minutes=120), "refused")])
+    add_reads(db, [(server, T0, "server_error"), (server, T0 + timedelta(minutes=60), "server_error"),
+                   (server, T0 + timedelta(minutes=120), "refused")])  # a 503 can be the same server trouble
+    rollup(db, T0 + timedelta(hours=3))
+    by_host = {row["site_host"]: row for row in episodes(db)}
+    assert by_host[tls]["ended_reason"] == "answered_refused"
+    assert by_host[server]["ended_at"] is None and by_host[server]["confirmed_at"] is not None
 
 
 def test_a_suspect_clears_on_one_answer_and_refusals_never_open_a_period(db):
@@ -152,19 +216,60 @@ def test_an_open_window_waits(db):
     assert rollup(db, T0 + timedelta(minutes=20))["a_events"] == 1
 
 
+def with_baseline(settings, hosts):
+    """Each host answered a read two days before T0 (applied), so the hold rule counts it."""
+    add_reads(settings, [(host, T0 - timedelta(days=2), "responding") for host in hosts])
+    rollup(settings, T0 - timedelta(days=1))
+
+
 def test_simultaneous_failures_are_held_and_change_no_state(db):
     hosts = CURATED[:7]
+    with_baseline(db, hosts)
     start = T0 + timedelta(minutes=1)
     add_reads(db, [(host, start, "no_response:connect") for host in hosts])
     result = rollup(db, T0 + timedelta(hours=1))
     assert result["held_windows"] == 1 and episodes(db) == []
-    assert {(row["held"], row["hold_reason"]) for row in q(db, "SELECT held,hold_reason FROM robots_read_events")} == {(True, "simultaneous_failures")}
+    held = q(db, "SELECT held,hold_reason FROM robots_read_events WHERE read_at >= %s", (T0,))
+    assert {(row["held"], row["hold_reason"]) for row in held} == {(True, "simultaneous_failures")}
     assert q(db, "SELECT sum(held)::int AS h, sum(failed)::int AS f FROM robots_read_daily") == [{"h": 7, "f": 0}]
     summary = board(db, T0 + timedelta(hours=1))
     assert summary["held_windows"] == 1 and summary["held_by_reason"] == {"simultaneous_failures": 1}
 
 
+def test_dead_names_without_a_baseline_do_not_hold_a_window(db):
+    # Review R3: seven names that never answered fail with DNS in the same window as one real host.
+    real, dead = CURATED[0], CURATED[1:8]
+    with_baseline(db, [real])
+    add_reads(db, [(host, T0 + timedelta(minutes=1), "no_response:dns") for host in dead])
+    add_reads(db, [(real, T0 + timedelta(minutes=2), "no_response:connect"), (real, T0 + timedelta(minutes=62), "no_response:connect")])
+    result = rollup(db, T0 + timedelta(hours=2))
+    assert result["held_windows"] == 0
+    [ep] = [row for row in episodes(db) if row["site_host"] == real]
+    assert ep["reads"] == 2 and ep["confirmed_at"] == T0 + timedelta(minutes=62)
+
+
+def test_a_late_row_follows_the_judgement_of_its_window(db):
+    # Review R6: a read of a held window that is stored after the window was judged is held too.
+    hosts = CURATED[:8]
+    with_baseline(db, hosts)
+    add_reads(db, [(host, T0 + timedelta(minutes=1), "no_response:connect") for host in hosts[:7]])
+    assert rollup(db, T0 + timedelta(minutes=30))["held_windows"] == 1
+    add_reads(db, [(hosts[7], T0 + timedelta(minutes=2), "no_response:connect")])
+    result = rollup(db, T0 + timedelta(minutes=45))
+    assert result["held_windows"] == 0 and result["a_events"] == 1  # not judged again, and not counted twice
+    assert q(db, "SELECT held,hold_reason FROM robots_read_events WHERE site_host=%s AND read_at >= %s", (hosts[7], T0)) == [
+        {"held": True, "hold_reason": "simultaneous_failures"}]
+    assert episodes(db) == []
+    # A late row of a window that was judged and not held is applied as usual.
+    add_reads(db, [(hosts[0], T0 + timedelta(minutes=31), "no_response:connect")])
+    rollup(db, T0 + timedelta(minutes=55))
+    add_reads(db, [(hosts[1], T0 + timedelta(minutes=32), "no_response:connect")])
+    rollup(db, T0 + timedelta(minutes=70))
+    assert sorted(row["site_host"] for row in episodes(db)) == sorted(hosts[:2])
+
+
 def test_a_shared_infrastructure_incident_explains_the_window(db):
+    with_baseline(db, CURATED[:7])
     with connect(db) as conn:
         assert signal_history.record_provider_status(conn, "cloudflare.com", "major", T0)
     with connect(db) as conn:
@@ -174,11 +279,13 @@ def test_a_shared_infrastructure_incident_explains_the_window(db):
     result = rollup(db, T0 + timedelta(hours=1))
     assert result["held_windows"] == 0 and result["p_events"] == 1
     assert len(episodes(db)) == 7
-    assert {(row["held"], row["hold_reason"]) for row in q(db, "SELECT held,hold_reason FROM robots_read_events")} == {(False, "infra_provider_reported")}
+    marked = q(db, "SELECT held,hold_reason FROM robots_read_events WHERE read_at >= %s", (T0,))
+    assert {(row["held"], row["hold_reason"]) for row in marked} == {(False, "infra_provider_reported")}
 
 
 def test_dns_cluster_is_held(db):
     hosts = CURATED[:12]
+    with_baseline(db, hosts)
     rows = [(host, T0 + timedelta(minutes=2), "no_response:dns") for host in hosts[:5]]
     rows += [(host, T0 + timedelta(minutes=3), "responding") for host in hosts[5:] for _ in range(5)]
     add_reads(db, rows)
@@ -195,9 +302,9 @@ def test_candidates_need_a_baseline_and_a_usual_failure_rate_under_ten_percent(d
     steady, never, flaky = CURATED[0], CURATED[1], CURATED[2]
     day = timedelta(days=1)
     history = [(steady, T0 - 10 * day + timedelta(hours=h), "responding") for h in range(20)]
-    # 2 single failures in 10 reads, each cleared by the next answer: never a period, but a usual failure rate of 20%.
-    history += [(flaky, T0 - 10 * day + timedelta(hours=h), "no_response:connect" if h in (3, 7) else "responding")
-                for h in range(10)]
+    # 4 single failures in 20 reads, each cleared by the next answer: never a period, but a usual failure rate of 20%.
+    history += [(flaky, T0 - 10 * day + timedelta(hours=h), "no_response:connect" if h in (3, 7, 11, 15) else "responding")
+                for h in range(20)]
     add_reads(db, history)
     rollup(db, T0 - 8 * day)
     for host in (steady, never, flaky):
@@ -206,8 +313,50 @@ def test_candidates_need_a_baseline_and_a_usual_failure_rate_under_ten_percent(d
     summary = board(db, T0 + timedelta(hours=2))
     assert [c["site_host"] for c in summary["candidates"]] == [steady]
     assert summary["candidates"][0]["ahn_check"]["kind"] == "no_response"
-    assert summary["excluded_now"] == {"no_baseline": 1, "unstable": 1}
+    assert summary["excluded_now"] == {"no_baseline": 1, "unstable": 1, "stale": 0}
     assert 0 <= summary["empty_ratio"] < 1 and summary["coverage"]["recording_hosts"] == 3
+
+
+def test_few_reads_are_not_enough_to_call_a_host_unstable(db):
+    # Review R5: weekly seed reads with one transient failure are 1 in 5, but 5 reads cannot show a usual rate.
+    host = CURATED[0]
+    day = timedelta(days=1)
+    add_reads(db, [(host, T0 - d * day, "responding") for d in (28, 21, 7, 1)] + [(host, T0 - 14 * day, "no_response:timeout")])
+    rollup(db, T0 - timedelta(hours=12))
+    add_reads(db, [(host, T0, "no_response:connect"), (host, T0 + timedelta(minutes=60), "no_response:connect")])
+    rollup(db, T0 + timedelta(hours=2))
+    summary = board(db, T0 + timedelta(hours=2))
+    assert summary["excluded_now"]["unstable"] == 0 and [c["site_host"] for c in summary["candidates"]] == [host]
+
+
+def test_a_confirmed_period_without_a_read_for_48_hours_is_stale_not_a_candidate(db):
+    # Review R4: the last read is weeks old, so the period is not a current problem.
+    host = CURATED[0]
+    day = timedelta(days=1)
+    add_reads(db, [(host, T0 - 25 * day, "responding")])
+    add_reads(db, [(host, T0 - 20 * day, "no_response:connect"), (host, T0 - 19 * day, "no_response:connect")])
+    rollup(db, T0)
+    [ep] = episodes(db)
+    assert ep["confirmed_at"] is not None and ep["ended_at"] is None
+    summary = board(db, T0)
+    assert summary["candidates"] == [] and summary["stale_now"] == 1 and summary["excluded_now"]["stale"] == 1
+    # The empty-time ratio counts the period only until 48 hours after its last read.
+    assert summary["empty_ratio"] == 1.0
+    fresh = board(db, T0 - 19 * day + timedelta(hours=47), days=1)
+    assert fresh["candidates_now"] == 1 and fresh["stale_now"] == 0
+
+
+def test_the_owner_view_says_whether_shared_infrastructure_feeds_are_read(db):
+    with connect(db) as conn:
+        assert register_source(conn, "cloudflare.com")
+        conn.execute("INSERT INTO queried_hosts (site_host) VALUES ('cloudflare.com')")
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at) VALUES ('cloudflare.com','none',now())""")
+    feeds = {feed["host"]: feed for feed in board(db, datetime.now(timezone.utc))["infra_feeds"]}
+    assert set(feeds) == set(signal_history.INFRA_HOSTS)
+    assert feeds["cloudflare.com"] | {"fetched_at": None} == {"host": "cloudflare.com", "feed": True, "registered": True,
+                                                              "fresh": True, "fetched_at": None, "indicator": "none"}
+    assert feeds["akamai.com"]["feed"] and not feeds["akamai.com"]["registered"] and not feeds["akamai.com"]["fresh"]
+    assert not feeds["amazonaws.com"]["feed"]  # a link-only mapping cannot explain a window
 
 
 def test_provider_changes_are_recorded_once_and_shown_while_fresh(db):
@@ -260,12 +409,16 @@ def test_cleanup_keeps_raw_events_14_days_and_the_rest_90(db):
         conn.execute("""INSERT INTO outage_episodes (site_host,signal,kind,first_fail_at,last_event_at)
                         VALUES (%s,'A','no_response',%s,%s),(%s,'A','no_response',now(),now())""",
                      (CURATED[2], old_rollup, old_rollup, CURATED[3]))
+        # Provider periods: one ended long ago (deleted), one opened long ago and still open (kept until it ends).
+        conn.execute("""INSERT INTO outage_episodes (site_host,signal,kind,first_fail_at,confirmed_at,ended_at,last_event_at)
+                        VALUES (%s,'P','minor',%s,%s,%s,%s),(%s,'P','minor',%s,%s,NULL,%s)""",
+                     (CURATED[5], old_rollup, old_rollup, old_rollup, old_rollup, CURATED[6], old_rollup, old_rollup, old_rollup))
         conn.execute("INSERT INTO robots_read_daily (site_host,day,reads) VALUES (%s,CURRENT_DATE - 90,1),(%s,CURRENT_DATE - 89,1)",
                      (CURATED[4], CURATED[4]))
     platform_metrics.prune_analytics(TEST_URL)
     assert len(q(db, "SELECT id FROM robots_read_events")) == 1
     assert len(q(db, "SELECT id FROM provider_status_events")) == 1
-    assert [row["site_host"] for row in q(db, "SELECT site_host FROM outage_episodes")] == [CURATED[3]]
+    assert [row["site_host"] for row in q(db, "SELECT site_host FROM outage_episodes ORDER BY id")] == [CURATED[3], CURATED[6]]
     assert len(q(db, "SELECT day FROM robots_read_daily")) == 1
 
 
@@ -286,3 +439,5 @@ def test_owner_board_json_and_card_use_the_owner_gate(db):
         assert client.get("/owner/board.json?days=14", headers=token).json()["days"] == 14
         page = client.get("/owner", headers=token)
         assert page.status_code == 200 and 'id="board-signals"' in page.text and "빈 시간 비율" in page.text
+        assert 'id="board-infra-feeds"' in page.text and "cloudflare.com 미등록" in page.text and "stale" in page.text
+        assert {"infra_feeds", "stale_now", "a_ended_by"} <= set(body)
