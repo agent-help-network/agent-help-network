@@ -1,7 +1,11 @@
 """Hostname extraction and the list of hosts that are never looked up.
 
 Mirrors normalize_host and skip_host in plugins/claude-code/ahn/hooks/ahn_lookup.py;
-tests/test_ahn_client.py checks the two stay in step. Nothing here resolves a name.
+tests/test_ahn_client.py checks the two stay in step. The client refuses a little more than the plugin does, for
+inputs the plugin has not been given yet: cluster-internal TLDs (svc, consul, cluster), wildcard-DNS and
+address-embedding names (nip.io, sslip.io, 10-0-0-1.example.com) and a URL with a backslash (two readings). The plugin
+may adopt the same rules; until then tests/test_ahn_client_adapters.py states these differences. Nothing here
+resolves a name.
 """
 
 from __future__ import annotations
@@ -17,7 +21,16 @@ OWN_HOST = "agenthelpnetwork.com"
 HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 # Special-use and private-network names (RFC 6761/6762/8375, Tor, common LAN suffixes).
 SKIP_TLDS = frozenset({"localhost", "local", "internal", "test", "lan", "arpa", "onion", "invalid", "example",
-                       "home", "corp", "intranet", "private", "localdomain", "alt"})
+                       "home", "corp", "intranet", "private", "localdomain", "alt",
+                       # Cluster-internal names: Kubernetes services (web.default.svc), Consul, cluster DNS.
+                       "svc", "consul", "cluster"})
+# Wildcard-DNS services that turn an address into a name (10.0.0.1.nip.io, 10-0-0-1.sslip.io): the name stands for an address.
+ADDRESS_NAME_SUFFIXES = ("nip.io", "sslip.io", "xip.io")
+# An IPv4 address written into a name with dots or dashes (192-168-1-5.example.com, ec2-10-0-0-1.compute.internal).
+EMBEDDED_IPV4 = re.compile(r"(?<![0-9])[0-9]{1,3}([.-])[0-9]{1,3}\1[0-9]{1,3}\1[0-9]{1,3}(?![0-9])")
+# Characters IDNA2003 (Python's "idna" codec) maps to a different domain than IDNA2008 (browsers) uses: faß.de would be
+# looked up as fass.de. Such names are refused, as the Claude Code plugin does.
+IDNA_DEVIATIONS = frozenset("\u00df\u03c2\u200c\u200d")
 
 
 def normalize_host(value: object) -> Optional[str]:
@@ -31,6 +44,10 @@ def normalize_host(value: object) -> Optional[str]:
     value = value.strip()
     if not value:
         return None
+    if "\\" in value:
+        # Browsers read a backslash as a slash (https://evil.com\@good.com goes to evil.com); urlsplit does not (good.com).
+        # With two readings possible, no host is looked up.
+        return None
     try:
         parts = urllib.parse.urlsplit(value if "://" in value else "//" + value)
         host = parts.hostname
@@ -40,6 +57,8 @@ def normalize_host(value: object) -> Optional[str]:
         return None
     host = host.rstrip(".").lower()
     if not host.isascii():
+        if IDNA_DEVIATIONS.intersection(host):
+            return None
         try:
             host = host.encode("idna").decode("ascii")
         except UnicodeError:
@@ -53,7 +72,7 @@ def normalize_host(value: object) -> Optional[str]:
 
 
 def skip_host(host: str, extra: str = "") -> bool:
-    """True for local, private, special-use, address-literal, single-label and own hosts."""
+    """True for local, private, special-use, address-literal, address-embedding, single-label and own hosts."""
     labels = host.split(".")
     if len(labels) < 2:
         return True
@@ -67,7 +86,9 @@ def skip_host(host: str, extra: str = "") -> bool:
         return True
     except ValueError:
         pass
-    suffixes = [OWN_HOST] + [item.strip().lower().lstrip(".") for item in extra.split(",") if item.strip()]
+    if EMBEDDED_IPV4.search(host):
+        return True
+    suffixes = [OWN_HOST, *ADDRESS_NAME_SUFFIXES] + [item.strip().lower().lstrip(".") for item in extra.split(",") if item.strip()]
     return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
 
 

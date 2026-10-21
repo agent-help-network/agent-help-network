@@ -32,7 +32,7 @@ except Exception as exc:
             print(answer.recommendation, answer.official_url)
 ```
 
-Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](examples/playwright_example.py), [`examples/browser_use_example.py`](examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
+Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/playwright_example.py), [`examples/browser_use_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
 
 ## Framework adapters
 
@@ -41,8 +41,9 @@ When a web tool fails inside an agent framework with a block or an outage (403, 
 All four follow the same rules:
 
 - They use only the extension point the framework's own documentation gives for a failed tool call.
-- The original error is never hidden or changed, nothing is retried, and no workaround is tried. A failure that is not a block or an outage (404, 422, a typo in an address), a call without an http(s) URL, an excluded host, a failed lookup or one slower than the time limit (2 seconds) adds nothing, and the run goes on exactly as it would have.
+- The original error is not hidden or changed (LangChain's optional `convert_exceptions=True` is the one stated exception), nothing is retried, and no workaround is tried. A failure that is not a block or an outage (404, 422, a typo in an address), a call without an http(s) URL, an excluded host, a failed lookup or one slower than the time limit (2 seconds) adds nothing, and the run goes on exactly as it would have.
 - Only the hostname and two enum codes are sent (see [What it sends](#what-it-sends)). The error text, URL path and query stay on your machine.
+- The hostname comes from an http(s) URL in the call's arguments, or from the request the exception carries (httpx, requests, aiohttp, urllib). **The text of an error is never searched for URLs**, so an exception that only names a URL in its message, with no URL argument and no request, is not looked up (a message also links to help pages such as `errors.pydantic.dev` or `docs.mistral.ai`). The Claude Agent SDK hook is the exception: it reads its payloads by the Claude Code plugin's rules, which include the URL of a failed WebFetch. Tool-argument validation errors and errors with nothing web-like in them (a `PermissionError`, "Task blocked on mutex") are not looked up. Cluster-internal names (`.svc`, `.consul`, `.cluster`), address-embedding names (`10-0-0-1.sslip.io`), internationalized names that IDNA 2003 and 2008 read differently (`faß.de`) and URLs with a backslash are never looked up.
 - A tool has to fail for the adapter to see it. A tool that returns the text of a 403 page as an ordinary result is not a failure to the framework; make it raise (`response.raise_for_status()`) or report an error.
 - The same host is answered from the in-memory cache for 10 minutes, and each failing call gets the line again.
 
@@ -55,7 +56,13 @@ from ahn_client.langchain import ahn_tool_failure_middleware   # pip install "ah
 agent = create_agent(model, tools=[fetch_page], middleware=[ahn_tool_failure_middleware()])
 ```
 
-Implements the documented [`wrap_tool_call` / `awrap_tool_call`](https://docs.langchain.com/oss/python/langchain/middleware/custom) hooks. A tool that raises becomes a `ToolMessage(status="error")` with `Error: <the exception's repr>` followed by the line, as `ToolNode` does with `handle_tool_errors=True`; an error `ToolMessage` the tool returns gets the line appended. `ahn_tool_failure_middleware(convert_exceptions=False)` never turns an exception into a message.
+Implements the documented [`wrap_tool_call` / `awrap_tool_call`](https://docs.langchain.com/oss/python/langchain/middleware/custom) hooks.
+
+- A tool call that comes back as a `ToolMessage` with `status="error"` (a `ToolNode` with `handle_tool_errors`, `ToolRetryMiddleware` after its last attempt, or a tool that returns one) gets the line appended; the original content stays in front.
+- A tool that **raises** is left alone: the exception is re-raised unchanged, so the run behaves exactly as it does without the middleware whether or not Agent Help Network answers. An exception cannot carry text to the model.
+- `ahn_tool_failure_middleware(convert_exceptions=True)` also handles raised blocks and outages, always the same way and whatever the lookup returned: the exception becomes a `ToolMessage(status="error")` whose content is `Error: <exception class> (<error class>)` and the line when there is one. The exception's own text, URL, path and query are not put in the message. The run then goes on instead of stopping, which is why it is off by default.
+- **If you already use `ToolRetryMiddleware`, list this middleware before it** (the first middleware listed is the outermost): `middleware=[ahn_tool_failure_middleware(), ToolRetryMiddleware()]`. Retries then run first and this middleware sees the final failure once. After it, with `convert_exceptions=True`, the first exception would become a message and the retries would never run.
+- Not our behaviour, but worth knowing: `ToolRetryMiddleware`'s default failure message (`on_failure="continue"`) puts the exception's own text, including a URL with its query, into the message the model reads. This adapter only appends its line to it; use `on_failure="error"` or a function of your own there if the text should not reach the model.
 
 ### CrewAI: `ToolFailureDetectedEvent`
 
@@ -67,17 +74,19 @@ listener = register_listener(on_note=print)        # once, before crew.kickoff()
 
 Subscribes to [`ToolFailureDetectedEvent`](https://docs.crewai.com/en/concepts/tools) on `crewai_event_bus`. CrewAI event listeners only observe: the event arrives after the agent's text is built, so the line goes to your callback, the log and `listener.notes`, not into the prompt. To append it to the tool result too, register `ahn_client.crewai.append_note_to_result` as an [`after_tool_call` hook](https://docs.crewai.com/en/learn/tool-hooks); it sees tools that return a `ToolFailure`, not exceptions.
 
-### OpenAI Agents SDK: `failure_error_function`
+### OpenAI Agents SDK: `RunConfig.tool_error_formatter`
 
 ```python
-from agents import function_tool
-from ahn_client.openai_agents import ahn_failure_error_function   # pip install "ahn-client[openai-agents]"
+from agents import RunConfig, Runner
+from ahn_client.openai_agents import ahn_tool_error_formatter   # pip install "ahn-client[openai-agents]"   (0.24 or newer)
 
-@function_tool(failure_error_function=ahn_failure_error_function)
-def fetch_page(url: str) -> str: ...
+result = await Runner.run(agent, "...", run_config=RunConfig(tool_error_formatter=ahn_tool_error_formatter))
 ```
 
-Implements the documented [`failure_error_function(context, error) -> str`](https://openai.github.io/openai-agents-python/tools/). It returns what the SDK would have sent (its default message, which does not show the model the exception text) and the line on a second line. `with_ahn_note(base=my_function)` keeps your own function's message; `with_ahn_note(asynchronous=True)` returns a coroutine function for SDK versions that await the result.
+Uses [`RunConfig.tool_error_formatter`](https://openai.github.io/openai-agents-python/running_agents/): for a function tool that raised, the SDK calls it with `kind="tool_exception"`, the exception as `error`, `default_message` and `run_context.tool_arguments`. (The docs page lists the approval and tool-not-found kinds; the `tool_exception` kind is in the 0.24 source and its type annotations.) The formatter is async, so a lookup never blocks the event loop. It returns the SDK's `default_message` (the SDK's default does not show the model the exception text, and that stays) and the line on a second line; with a formatter of your own, chain it: `tool_error_formatter(your_formatter)`.
+
+- It applies to function tools that use the SDK's implicit default failure handler. A tool with its own `failure_error_function`, tools made by `Agent.as_tool()` and local MCP tools keep their own policies. For a tool with its own function, wrap it: `failure_error_function=with_ahn_note(your_function)` (async by default; `asynchronous=False` gives the plain form the docs show, which waits up to 2 seconds on the event loop thread when the failure is a block or outage that is not cached).
+- Be aware of two SDK behaviours for tools that set their own `failure_error_function`, whichever function it is: the SDK then no longer applies `RunConfig.tool_error_formatter` to that tool, and a handled error is recorded in the trace span with its text instead of "redacted". The `RunConfig` formatter above keeps the SDK's default handling, so traces stay as they are.
 
 ### Claude Agent SDK (Python): `PostToolUseFailure` hook
 
@@ -88,18 +97,18 @@ from ahn_client.claude_agent_sdk import ahn_hooks   # pip install "ahn-client[cl
 options = ClaudeAgentOptions(hooks=ahn_hooks())      # or ahn_hooks(my_existing_hooks) to merge
 ```
 
-Registers a [`PostToolUseFailure`](https://code.claude.com/docs/en/agent-sdk/hooks) callback that returns the line as `additionalContext`. Which failures are looked up (WebFetch, and MCP browser or fetch tools whose input or error names an http(s) URL) is the [Claude Code plugin](../../plugins/claude-code/ahn/README.md)'s rule, which the adapter shares; a test runs both on the same payloads. Because WebFetch reports an HTTP 401, 403, 429 or 5xx as a successful call, `ahn_hooks()` also registers the plugin's `PostToolUse` case for `WebFetch`.
+Registers a [`PostToolUseFailure`](https://code.claude.com/docs/en/agent-sdk/hooks) callback (`claude-agent-sdk` 0.1.27 or newer; that version and the current one were run) that returns the line as `additionalContext`. Which failures are looked up (WebFetch, and MCP browser or fetch tools whose input or error names an http(s) URL) is the [Claude Code plugin](https://github.com/agent-help-network/agent-help-network/blob/main/plugins/claude-code/ahn/README.md)'s rule, which the adapter shares; a test runs both on the same payloads. Because WebFetch reports an HTTP 401, 403, 429 or 5xx as a successful call, `ahn_hooks()` also registers the plugin's `PostToolUse` case for `WebFetch`.
 
 ### Browser Use: example
 
-[`examples/browser_use_actions_example.py`](examples/browser_use_actions_example.py) adds a custom action the model calls on a block page (`@tools.action`) and an `on_step_end` hook that reports a block page's answer to the developer. Browser Use documents no way for a hook to add text to the model's context, so only the action reaches the model.
+[`examples/browser_use_actions_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_actions_example.py) adds a custom action the model calls on a block page (`@tools.action`) and an `on_step_end` hook that reports a block page's answer to the developer. Browser Use documents no way for a hook to add text to the model's context, so only the action reaches the model.
 
 Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1` and `AHN_CLIENT_SKIP_HOSTS` apply to the adapters too.
 
 ### API
 
 - `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0, adapter=None) -> Result | None` — asks about the host of a hostname or URL. `adapter` is for integrations: a short lowercase name (such as `langchain`) that is added to the User-Agent and changes nothing else. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
-- `ahn.classify(exc_or_text, host=None) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (408, 429, 5xx, timeout) or `site_access` (402, 403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](../../plugins/claude-code/ahn/README.md). `host`, when given, is the hostname the error is about; tokens naming it are ignored, so `login.example.com` is not read as a login wall (from 0.3.0). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
+- `ahn.classify(exc_or_text, host=None) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (408, 429, 5xx, timeout) or `site_access` (402, 403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](https://github.com/agent-help-network/agent-help-network/blob/main/plugins/claude-code/ahn/README.md). `host`, when given, is the hostname the error is about; tokens naming it are ignored, so `login.example.com` is not read as a login wall (from 0.3.0). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
 - `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, and `summary()`, a one-line text of at most 700 characters, the same line the plugin prints.
 - `ahn.clear_cache()` — forget cached answers.
 
@@ -122,7 +131,7 @@ The adapters send `User-Agent: ahn-client/0.3.0 (+langchain; +https://agenthelpn
 
 ## What it never looks up
 
-`check` returns `None` and sends nothing for: `localhost`, IP addresses (including short and hex forms such as `127.1`), single-label names, names under `.local`, `.internal`, `.test`, `.lan`, `.arpa`, `.onion`, `.invalid`, `.example`, `.home`, `.corp`, `.intranet`, `.private`, `.localdomain`, `.alt`, and `agenthelpnetwork.com` and its subdomains. Nothing is resolved to decide this. Hostnames under a public suffix can still be internal (`jenkins.yourcompany.com`); list them in `AHN_CLIENT_SKIP_HOSTS`.
+`check` returns `None` and sends nothing for: `localhost`, IP addresses (including short and hex forms such as `127.1`), single-label names, names under `.local`, `.internal`, `.test`, `.lan`, `.arpa`, `.onion`, `.invalid`, `.example`, `.home`, `.corp`, `.intranet`, `.private`, `.localdomain`, `.alt`, `.svc`, `.consul`, `.cluster`, names that stand for an address (`nip.io`, `sslip.io`, `xip.io`, and any name with an IPv4 address written into it such as `192-168-1-5.example.com`), a URL containing a backslash (a browser and a parser read it differently), names that IDNA 2003 and IDNA 2008 map to different domains (`faß.de`), and `agenthelpnetwork.com` and its subdomains. Nothing is resolved to decide this. Hostnames under a public suffix can still be internal (`jenkins.yourcompany.com`); list them in `AHN_CLIENT_SKIP_HOSTS`.
 
 | Environment | Effect |
 | :- | :- |
@@ -137,4 +146,4 @@ From the repository root: `python -m pytest tests/test_ahn_client.py tests/test_
 
 ## License
 
-[Apache-2.0](LICENSE). Source: [agent-help-network/agent-help-network](https://github.com/agent-help-network/agent-help-network), `clients/python/`.
+[Apache-2.0](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/LICENSE). Source: [agent-help-network/agent-help-network](https://github.com/agent-help-network/agent-help-network), `clients/python/`.

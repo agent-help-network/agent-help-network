@@ -30,8 +30,8 @@ dependencies = []
 [project.optional-dependencies]
 langchain = ["langchain>=1.0"]
 crewai = ["crewai>=1.15.9"]
-openai-agents = ["openai-agents"]
-claude-agent-sdk = ["claude-agent-sdk"]
+openai-agents = ["openai-agents>=0.24"]
+claude-agent-sdk = ["claude-agent-sdk>=0.1.27"]
 
 [project.urls]
 Homepage = "https://agenthelpnetwork.com"

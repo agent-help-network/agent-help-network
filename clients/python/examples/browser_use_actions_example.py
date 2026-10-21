@@ -36,9 +36,11 @@ CLASS_FOR_REASON = {
     "rate_limited_or_server_error": "service_error",
 }
 # Titles of the usual block pages. A title that matches none of these is left alone.
-BLOCK_TITLE = re.compile(r"just a moment|attention required|access denied|forbidden|verify (?:that )?you are (?:a )?human"
-                         r"|are you a robot|captcha|too many requests|service unavailable|bad gateway|403|429|50[0-4]", re.I)
-VERIFICATION_TITLE = re.compile(r"just a moment|attention required|verify (?:that )?you are (?:a )?human|are you a robot|captcha", re.I)
+BLOCK_TITLE = re.compile(r"\b(?:just a moment|attention required|access denied|forbidden|verify (?:that )?you are (?:a )?human"
+                         r"|are you a robot|captcha|too many requests|service unavailable|bad gateway"
+                         r"|internal server error|gateway time-?out)\b|\b(?:error|http)\s*(?:403|429|50[0-4])\b", re.I)
+# A bare number is not enough: "S&P 500" and "500 Startups" are page titles, not a 500.
+VERIFICATION_TITLE = re.compile(r"\b(?:just a moment|attention required|verify (?:that )?you are (?:a )?human|are you a robot|captcha)\b", re.I)
 
 tools = Tools()
 

@@ -44,7 +44,7 @@ def hostname(value) -> Optional[str]:
     if not isinstance(value, str):
         return None
     value = value.strip()
-    if not value:
+    if not value or "\\" in value:  # a backslash has two readings (browsers: a slash); look up no host
         return None
     try:
         parts = urllib.parse.urlsplit(value if "://" in value else "//" + value)
