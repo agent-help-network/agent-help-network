@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -34,7 +34,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
-from ahn import background_reads, gov_registry, platform_metrics
+from ahn import background_reads, bundle, gov_registry, platform_metrics
 from ahn.main import create_app
 from ahn.models import AttemptFields, CheckObservation, CheckResponse, ObservationIn, OutcomeIn, Receipt
 from ahn.settings import Settings
@@ -302,6 +302,12 @@ class Replaced:
 
 
 @dataclass(frozen=True)
+class UntilSwitchedOff:
+    """Kept while a feature's switch is on and deleted by code when it is turned off. Described only while on."""
+    wording: Phrase              # names the table's contents; its sentence must say it is deleted when switched off
+
+
+@dataclass(frozen=True)
 class ReportRows:
     """Report rows: deleted after AHN_REPORT_RETENTION_DAYS, withdrawn ones after the grace period."""
 
@@ -357,6 +363,9 @@ TABLES = {
     "service_flags": Exempt("operator on/off switches"),
     "bandwidth_guard_samples": Exempt("hosting bandwidth totals in gigabytes from the provider's API, not request data"),
     "bandwidth_guard_state": Exempt("state of the operator's bandwidth guard"),
+    # The offline bundle's one row: the file and the day's served-byte total. Checked in section 6 below.
+    "public_bundle": UntilSwitchedOff(Phrase("the latest file and the day's total of bytes served (no client data)",
+                                             "최신 파일과 그날 전송한 바이트 합계(클라이언트 정보 없음)")),
 }
 
 
@@ -407,7 +416,7 @@ def test_deleted_tables_match_the_policy_mapping():
         "prune_analytics deletes a different set of tables than TABLES marks as Pruned. "
         "Update the mapping and the policy together.")
     # Tables mapped as 'no automatic deletion' must not be deleted anywhere, or the policy would be wrong.
-    expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient))}
+    expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient, UntilSwitchedOff))}
     # A replaced list copy is rewritten in place by ahn/gov_registry.py; only the domain rows are deleted from.
     expected_deleted |= {"gov_domain_registry"}
     assert deleted_tables_in_code() == expected_deleted, (
@@ -607,3 +616,97 @@ def test_content_use_storage_limits_match_the_policy():
     known = {token for token, _kind in ap.AGENT_USER_AGENTS}
     for group in parsed["named_groups"]:
         assert len(group["agents"]) <= ap.MAX_USE_GROUP_AGENTS and set(group["agents"]) <= known and group["other_agents"] >= 1
+
+
+# --- 6. Offline data bundle ---------------------------------------------------------------------
+
+# What ahn/bundle.py puts in the file and what it never does, matched to policy section 05. A new kind or a
+# changed exclusion in the code fails here until the policy says so.
+BUNDLE_INCLUDES = {
+    "access_profile": Phrase("the robots.txt and llms.txt reads of the hosts on the curated part of our public seed list",
+                             "공개 시드 목록 중 큐레이션한 부분에 있는 호스트의 robots.txt·llms.txt 판독 결과"),
+    "official_path": Phrase("the curated official developer paths", "큐레이션한 공식 개발자 경로"),
+    "status_source": Phrase("the curated status-page mappings", "큐레이션한 상태 페이지 매핑"),
+}
+BUNDLE_EXCLUDES = {
+    "reports": Phrase("reports", "제보"),
+    "looked_up_hosts_outside_seed_list": Phrase("hostnames people looked up that are not on the seed list", "시드 목록에 없는 조회된 호스트명"),
+    "lookup_counts": Phrase("lookup counts", "조회 수"),
+    "request_logs": Phrase("request logs", "요청 기록"),
+    "ip_digests": Phrase("IP digests", "IP 변환값"),
+    "reporter_keys": Phrase("reporter keys", "제보자 키"),
+    "status_feed_values": Phrase("a status feed's current value", "상태 피드의 현재 값"),
+    "ranking_list_seed_hosts": Phrase("seed hosts taken only from a third-party popularity ranking", "제3자 인기 순위에서만 가져온 시드 호스트"),
+    "seed_order_or_rank": Phrase("the seed list's order or rank", "시드 목록의 순서나 순위"),
+}
+
+
+BUNDLE_SINCE = date(2026, 11, 3)  # later than the policy's own date, so the switch must move "Last updated"
+BUNDLE_SELECTION = Phrase("Many of those mapped hosts were found by scanning bands of the Tranco popularity ranking, but each "
+                          "mapping was checked on that host's own status page, and no rank is included",
+                          "매핑한 호스트 중 상당수는 Tranco 인기 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 "
+                          "직접 확인했으며 순위는 담지 않습니다")
+BUNDLE_QUOTES = Phrase("short quotes from publisher pages stay the publishers' material and are not covered by that license",
+                       "업체 문서 짧은 인용은 업체의 저작물이라 이 라이선스 대상이 아닙니다")
+BUNDLE_DAY = Phrase("Read times are given to the day only", "판독 시각은 날짜까지만 적습니다")
+
+
+def bundle_policy_text(lang: str, public_bundle: bool, since: date | None = BUNDLE_SINCE) -> str:
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True,
+                        public_bundle=public_bundle, public_bundle_since=since if public_bundle else None)
+    response = TestClient(create_app(settings)).get(f"/{lang}/policy")
+    assert response.status_code == 200
+    return response.text
+
+
+def test_offline_bundle_is_described_while_it_is_served():
+    assert set(BUNDLE_INCLUDES) == set(bundle.KINDS), "bundle kinds changed: describe them in policy section 05"
+    assert set(BUNDLE_EXCLUDES) == set(bundle.EXCLUDED), "bundle exclusions changed: state them in policy section 05"
+    pages = {lang: bundle_policy_text(lang, True) for lang in LANGS}
+    sections = {}
+    for lang, markup in pages.items():
+        found = re.search(r'<article><span class="policy-index">05</span>.*?</article>', markup, re.S)
+        assert found, f"policy section 05 not found in the {lang} page"
+        sections[lang] = plain(found.group())
+    for lang in LANGS:
+        assert bundle.PATH in sections[lang] and "CC BY 4.0" in sections[lang], f"the {lang} policy does not name the bundle and its license"
+    assert_phrases("bundle contents", sections, BUNDLE_INCLUDES)
+    assert_phrases("bundle selection, quotes and times", sections,
+                   {"selection": BUNDLE_SELECTION, "quotes": BUNDLE_QUOTES, "day": BUNDLE_DAY})
+    never = {"en": sentence_with(sections["en"], "It never contains"), "ko": sentence_with(sections["ko"], "절대 담지 않습니다")}
+    assert_phrases("bundle exclusions", never, BUNDLE_EXCLUDES)
+
+
+def test_offline_bundle_is_not_described_while_it_is_off():
+    for lang in LANGS:
+        text = plain(bundle_policy_text(lang, False))
+        assert "/v1/bundle/" not in text and "CC BY 4.0" not in text, f"the {lang} policy describes a bundle that is not served"
+        for entry in TABLES.values():
+            if isinstance(entry, UntilSwitchedOff):
+                assert getattr(entry.wording, lang) not in text
+
+
+def test_offline_bundle_row_retention_is_stated_while_it_is_served():
+    for lang, when, memory in (("en", "deleted when the bundle is switched off", "counted in memory only"),
+                               ("ko", "번들을 끄면 삭제", "메모리에서만 세고 저장하지 않습니다")):
+        found = re.search(r'<article><span class="policy-index">06</span>.*?</article>', bundle_policy_text(lang, True), re.S)
+        text = plain(found.group())
+        for table, entry in TABLES.items():
+            if isinstance(entry, UntilSwitchedOff):
+                wording = getattr(entry.wording, lang)
+                assert wording in text, f"{table}: the {lang} retention section lacks {wording!r}"
+                assert when in sentence_with(text, wording), f"{table}: its {lang} sentence does not say {when!r}"
+        assert memory in text, f"the {lang} retention section does not say per-client download limits stay in memory"
+
+
+def test_policy_date_moves_with_the_bundle_switch():
+    from ahn.main import POLICY_UPDATED
+
+    off = {"en": f"Last updated {POLICY_UPDATED:%B} {POLICY_UPDATED.day}, {POLICY_UPDATED.year}.",
+           "ko": f"최종 수정: {POLICY_UPDATED.year}년 {POLICY_UPDATED.month}월 {POLICY_UPDATED.day}일."}
+    on = {"en": "Last updated November 3, 2026.", "ko": "최종 수정: 2026년 11월 3일."}
+    for lang in LANGS:
+        assert off[lang] in plain(bundle_policy_text(lang, False)), f"the {lang} policy date changed without the switch"
+        assert on[lang] in plain(bundle_policy_text(lang, True)), f"the {lang} policy date does not follow AHN_PUBLIC_BUNDLE_SINCE"
+        # A since date before the policy's own date never moves the date backwards.
+        assert off[lang] in plain(bundle_policy_text(lang, True, date(2026, 1, 1)))

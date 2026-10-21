@@ -25,7 +25,10 @@ from .provenance import operator_id
 
 SCHEMA_VERSION = 1
 KINDS = ("access_profile", "status", "observation")
-EXPIRES = {"access_profile": timedelta(hours=24), "status": timedelta(days=7), "observation": timedelta(days=7)}
+# Kinds that only the offline bundle writes (ahn/bundle.py): its head record and the curated tables from the code.
+BUNDLE_KINDS = ("bundle_meta", "official_path", "status_source")
+EXPIRES = {"access_profile": timedelta(hours=24), "status": timedelta(days=7), "observation": timedelta(days=7),
+           "bundle_meta": timedelta(hours=48), "official_path": timedelta(days=7), "status_source": timedelta(days=7)}
 _KEY_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?:\d{4}-(?:0[1-9]|1[0-2])$")
 
 
@@ -123,7 +126,7 @@ def envelope(kind: str, *, site_host: str, observed_at: datetime, received_at: d
              origin_operator: str | None = None, vantage: dict | None = None, reader_version: str | None = None,
              source_url: str | None = None, content_sha256: str | None = None, record_suffix: str | None = None) -> dict:
     """One export record (schema_version 1) with signature still null."""
-    if kind not in KINDS:
+    if kind not in KINDS + BUNDLE_KINDS:
         raise ValueError("unknown export kind")
     operator = origin_operator or operator_id()
     observed = iso(observed_at)

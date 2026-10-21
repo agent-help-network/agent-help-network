@@ -339,7 +339,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 ## 내보내기 v1 (운영자 CLI, 2026-10-19)
 
-운영자는 저장된 사실을 JSON Lines(한 줄에 봉투 하나)로 내보낼 수 있다: `python -m ahn.cli export --kind access_profile|status|observation [--since ISO | --all] [--out 파일]`. 공개 내보내기 엔드포인트는 없으며 데이터셋 공개는 별도 결정이다. 봉투 필드와 예시는 [영어 계약의 Export v1](api-contract.en.md#export-v1-operator-cli)과 같다.
+운영자는 저장된 사실을 JSON Lines(한 줄에 봉투 하나)로 내보낼 수 있다: `python -m ahn.cli export --kind access_profile|status|observation [--since ISO | --all] [--out 파일]`. 이 CLI 는 공개 엔드포인트가 아니다. 공개 데이터셋은 운영자 스위치가 켜져 있을 때만 제공하는 별도 파일인 [오프라인 번들](#오프라인-번들-2026-10-20-준비-스위치를-켜야-제공)이다. 봉투 필드와 예시는 [영어 계약의 Export v1](api-contract.en.md#export-v1-operator-cli)과 같다.
 
 - 필드: `schema_version`(1), `kind`, `record_id`(`ahn:<운영자>:<kind>:<호스트>:<observed_at>`, 제보는 운영자 자신의 관찰 id 의 짧은 다이제스트를 덧붙이며 id 자체는 내보내지 않는다), `origin_operator`, `vantage`, `reader_version`, `observed_at`, `received_at`, `expires_at`(판독 24시간, 상태·제보 7일), `source_url`, `content_sha256`, `payload`, `signature`.
 - 판독·상태는 확정 읽기(`fetched_at` 있음)만 내보낸다. 그 읽기 뒤 마지막 시도가 실패한 행은 읽기와 실패 라벨이 섞이므로 빼고, 다음 성공 읽기 뒤에 다시 내보낸다. `content_sha256` 은 받은 `robots.txt`·피드 바이트의 SHA-256 이며 원문은 저장하지 않는다. 출처 열(`origin_operator`, `vantage`, `reader_version`, 해시)은 마이그레이션 020 에서 생겼고 그 전에 읽은 행은 `null` 이며 백필하지 않는다. 운영자가 비어 있는 행은 이 운영자 자신의 읽기다. 판독 봉투의 `payload` 에는 저장된 `content_use`(해석한 선호, 해석기 버전 `vocab`, 해석한 파일의 `robots_sha256`)도 담기며, `robots.txt` 본문이 없던 읽기나 마이그레이션 021 이전 읽기는 `null` 이다.
@@ -347,6 +347,38 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - **서명.** `AHN_EXPORT_SIGNING_KEY` 가 Ed25519 개인키 파일(PEM, PKCS#8)을 가리킬 때만, `signature` 를 뺀 봉투의 RFC 8785(JCS) 정규형에 서명하고 `{"alg": "ed25519", "key_id": "<운영자>:<YYYY-MM>", "sig": 패딩 없는 base64url}` 로 적는다. `AHN_EXPORT_KEY_ID` 로 키 id 를 정한다(기본: 운영자와 현재 UTC 월). 키가 없으면 `signature: null` 이다.
 - 운영자 id 는 `AHN_OPERATOR_ID`(기본 `agenthelpnetwork.com`), 선언 관측 위치는 `AHN_VANTAGE`(JSON, 기본 `{"kind":"datacenter","region":"US","asn":null,"declared":true}`)다.
 - 계획만 있고 아직 게시하지 않음: 검증 키 `/.well-known/ahn-operator.json` 의 형식은 `{"operator": "<운영자>", "keys": [{"key_id": "<운영자>:<YYYY-MM>", "alg": "ed25519", "public_key": "<원시 32바이트 base64url>", "not_before": "<ISO>", "not_after": "<ISO 또는 null>"}]}` 이다. 게시 전에는 운영자가 직접 건넨 키로만 서명을 확인할 수 있다.
+- **내보내기 v1 읽기.** 소비자는 모르는 kind 와 필드를 무시해야 한다. 새 kind·필드는 `schema_version` 을 바꾸지 않고 추가한다. CLI 의 `access_profile`·`status`·`observation` 말고도 [오프라인 번들](#오프라인-번들-2026-10-20-준비-스위치를-켜야-제공)이 `bundle_meta`·`official_path`·`status_source` 를 쓴다. 이 셋은 읽기가 아니라 큐레이션 표와 파일 자체를 설명한다: `received_at` 은 `null`(받은 것이 없음)이고, `observed_at`(따라서 `record_id`·`expires_at`)은 파일을 만든 시각이라 같은 항목도 빌드마다 `record_id` 가 바뀐다.
+
+## 오프라인 번들 (2026-10-20 준비, 스위치를 켜야 제공)
+
+**운영자 스위치가 켜져 있을 때만 제공한다.** 웹 서비스와 검토 크론 양쪽의 `AHN_PUBLIC_BUNDLE=1` 이 스위치다(웹 서비스에는 그때 개인정보 처리방침이 최종 수정일로 보일 날짜 `AHN_PUBLIC_BUNDLE_SINCE` 도 필요하다). 기본은 꺼짐이다. 꺼져 있으면 아무것도 만들지 않고, 크론은 저장된 파일을 지우며, 아래 두 경로는 없는 경로처럼 `404` 를 돌려준다. agenthelpnetwork.com 에서 스위치가 켜지기 전까지 이 절은 준비된 형식을 설명할 뿐, 받을 수 있는 파일이 아니다.
+
+번들은 gzip JSON Lines 파일 하나다. 네트워크 조회 없이(호스트명을 밖으로 보내지 않고, 기다림 없이) 이 데이터를 쓰려는 에이전트·프레임워크와, 데이터를 미러하려는 운영자를 위한 것이다.
+
+- `GET /v1/bundle/latest.jsonl.gz` 는 파일을 돌려준다(`Content-Type: application/gzip`, `Content-Encoding` 없음: 받은 바이트를 그대로 저장). `GET /v1/bundle/latest.jsonl.gz.sha256` 은 `sha256sum` 형식(`<hex>  ahn-bundle-<UTC 시각>.jsonl.gz`)의 SHA-256 을 돌려준다. 둘 다 `HEAD` 를 받는다. 파일 응답에는 `ETag: "<sha256>"`, `Repr-Digest: sha-256=:<base64>:`, `Last-Modified`, `Cache-Control: public, max-age=3600`, `Accept-Ranges: none` 이 붙는다. ETag 를 `If-None-Match` 로 보내면 파일이 그대로일 때 본문 없이 `304` 를 돌려준다. `Range` 요청에는 전체 파일을 `200` 으로 주고 전체 다운로드로 센다.
+- 검토 크론이 하루 한 번 정도(저장된 파일이 23시간 지났을 때) 다시 만들고, 웹 서비스는 마지막으로 저장된 파일을 준다. 하루에 한 번 넘게 받지 말 것. 첫 빌드 전에는 `503 {"error": "bundle_not_ready"}`, 저장된 파일이 48시간을 넘으면 내주지 않고 `503 {"error": "bundle_stale"}` 을 돌려준다(둘 다 `Retry-After: 300`).
+- 다운로드 상한: 클라이언트마다(비밀키로 날짜별 변환한 IP 값으로 메모리에서만 셈) UTC 하루 전체 다운로드 3회, 넘으면 `429 {"error": "bundle_client_limit"}`. 모든 전체 다운로드를 합쳐 UTC 하루 25 MiB 이며, 재시작해도 초기화되지 않게 DB 에서 센다. 넘으면 `429 {"error": "bundle_daily_limit"}`. 둘 다 다음 UTC 날까지 `Retry-After` 를 붙인다. `304`·`HEAD` 는 세지 않는다.
+- 파일 상한: 레코드 20,000개, 압축 8 MiB, 압축 해제 128 MiB. 하나라도 넘으면 빌드가 실패하고 이전 파일이 남는다. 큐레이션 시드 호스트 전부에 일부러 무겁게 만든 가상 `robots.txt` 해석 결과를 넣어 재면 레코드 약 3,600개에 압축 약 0.84 MB(서명 포함 1.1 MB)다.
+
+**형식.** 모든 줄이 내보내기 v1 봉투다(`schema_version` 1, [내보내기 v1](#내보내기-v1-운영자-cli-2026-10-19)과 같은 필드. 모르는 kind·필드는 무시할 것). 첫 줄은 머리 레코드 `kind: "bundle_meta"` 이고, payload 에 `title`, `creator`(운영자 표시명, 라이선스 권리자), `generated_at`, `valid_until`, `record_count`(머리 다음 레코드 수), 종류별 `counts`, `license: "CC-BY-4.0"`, `license_url`, `notice`, `attribution`, `third_party_quotes`, `status_source_note`, `schema_url`(이 절의 영문판), `includes`, `excludes` 가 있다. 나머지 레코드는 종류, 그다음 호스트명 순으로 정렬한다.
+
+| kind | 내용 | 출처 |
+|---|---|---|
+| `access_profile` | 최근 확정 `robots.txt`·`llms.txt` 판독. 운영자 내보내기 레코드와 같되 판독 시각을 UTC 날짜로 자른다(`observed_at`·`received_at`·`record_id` 가 `T00:00:00Z`) | 공개 시드 목록([`ahn/seed_hosts.txt`](../ahn/seed_hosts.txt)) 중 Tranco 블록을 여는 `# Hosts chosen from the Tranco top 1,000` 주석 위의 큐레이션 부분 호스트만 |
+| `official_path` | `name`, `api_docs`, `developer_portal`, `note`, 그리고 `access`(인증, 키 발급, 한도, 샌드박스, OpenAPI, MCP, 약관). `access` 는 API 와 같은 90일 규칙으로 파일의 유효 기간 내내 유효할 때만 넣는다 | 큐레이션 표 [`ahn/official_paths.py`](../ahn/official_paths.py) |
+| `status_source` | `source_name`, `status_page_url`, `api_url`, `feed_kind`(링크만 있는 페이지는 둘 다 `null`) | [`ahn/status_refresh.py`](../ahn/status_refresh.py) 의 큐레이션 `SOURCES`·`OFFICIAL_STATUS_PAGES`. 이 호스트 중 상당수는 Tranco 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 직접 확인했으며 순위는 담지 않는다 |
+
+**신선도.** 번들 레코드의 신선도는 머리 레코드의 `valid_until`(빌드 시각 + 8일: 시드 목록을 주 1회 정도 다시 읽는다)로 판단한다. 각 레코드의 `expires_at` 은 온라인 API 의 캐시 규칙(판독 24시간, 큐레이션 표 7일)이고 봉투를 내보내기 v1 그대로 두려고 남긴 것이다. 오프라인에서는 `valid_until` 이 기준이다. 지나면 새 파일을 받거나, 호스트의 원본 파일을 읽거나, API 를 호출한다.
+
+**레코드가 없다고 선언이 없는 것은 아니다.** `access_profile` 레코드가 없는 호스트는 이 파일을 위해 확정 판독되지 않았을 뿐이다(큐레이션 시드 목록에 없거나 마지막 읽기가 실패). 그 호스트에도 `robots.txt` 가 있을 수 있다. `official_path`·`status_source` 가 없으면 단지 큐레이션하지 않은 것이다. 정부 등록부 사실(`host_facts`)도 번들에 없다. 공개된 전체 파일 목록 두 개(미국 .gov 등록부 CC0, 영국 .gov.uk 목록 Open Government Licence v3.0)에서 오며, 이 파일보다 자주 갱신되는 게시자 원본에서 직접 읽는 것이 낫다.
+
+**번들에 절대 들어가지 않는 것.** 모든 레코드에 필드 허용 목록(봉투, payload, robots 요약과 규칙, `content_use`, `access`), 금지 필드 검사, 호스트 검사를 적용하고, 하나라도 어기면 빌드가 실패한다: 제보와 제보에 관한 모든 것, 시드 목록에 없는 조회된 호스트명(그 판독·발견된 상태 페이지·조회 수 포함. 조회된 호스트가 공개 파일에 들어가면 누가 무엇을 조회했는지가 새어 나간다), 조회 수, 요청 기록, IP 변환값, 제보자 키, 상태 피드의 현재 값(피드는 직접 읽을 것. 번들에는 피드 위치만 있다), 제3자 인기 순위에서만 가져온 시드 호스트(시드 목록 끝의 Tranco 블록. 그 목록의 이용 조건이 정리될 때까지 뺀다. 그 블록 위 주석에 Tranco 가 나와도 빌드가 실패한다), 시드 목록의 순서나 순위(호스트명 순으로 정렬하고 순위는 쓰지 않는다). 상태 매핑은 조회가 있어야 행이 생기는 `status_sources` 표가 아니라 코드에서 가져온다.
+
+**쓰는 법.** 모든 레코드에 확인할 곳이 있다: `source_url`, 판독이면 `content_sha256`. `access_profile` 은 판독 시점에 호스트가 선언한 정책일 뿐 접근 보장이 아니다. 서명은 운영자 CLI 와 같게 `AHN_EXPORT_SIGNING_KEY` 가 설정됐을 때만 하고, 아니면 `signature` 는 `null` 이며 HTTPS 로 받은 SHA-256 파일이 무결성 확인 수단이다. `sha256sum -c ahn-bundle-<시각>.jsonl.gz.sha256` 으로 확인하고 `gzip -dc` 로 읽는다.
+
+**라이선스.** 번들은 `creator`(`AHN_OPERATOR_NAME`)에 적힌 운영자가 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ko) 으로 제공하고, 코드는 그대로 Apache-2.0 이다. 머리 레코드의 `notice` 가 표시 문구(`Agent Help Network offline bundle © <연도> by <creator> is licensed under CC BY 4.0. To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/`)이고, `attribution` 은 생성 시각이 든 출처 표기 문구다. 재사용·미러할 때는 creator 와 Agent Help Network 를 표기하고 라이선스를 링크하며, 데이터를 바꿨으면 그렇다고 밝힌다. **업체 문서 인용은 대상이 아니다:** `official_path` 의 `access.free_tier.quote`·`access.terms.quote` 는 업체 페이지를 그대로 옮긴 짧은 인용으로 제3자 저작물이며, 이 라이선스가 허락하지 않는다(파일의 `third_party_quotes` 에도 적는다). 라이선스는 여기서 엮은 데이터셋에 적용된다. 각 레코드는 읽은 공개 원본을 가리키며 사이트의 원본 파일은 담지 않는다.
+
+**운영자.** `python -m ahn.cli bundle --out 파일` 은 DB 에서 번들을 만들어 공개 없이 확인할 수 있게 쓰고, `--store` 는 크론과 같은 DB 잠금을 잡고 웹 서비스가 주는 저장 파일을 바꾼다. 둘 다 `AHN_OPERATOR_NAME` 이 필요하다.
 
 ## 다음 계약: 질문·경험 네트워크
 

@@ -44,6 +44,11 @@ def main():
     window.add_argument("--all", action="store_true", dest="all_reports",
                         help="reports only: every stored published report, not just the public 7-day horizon")
     export.add_argument("--out", default="-", help="output file; '-' (default) writes to standard output")
+    bundle = sub.add_parser("bundle", help="build the offline data bundle (gzip JSON Lines, Export v1) from the database")
+    bundle_target = bundle.add_mutually_exclusive_group(required=True)
+    bundle_target.add_argument("--out", help="write the .jsonl.gz file here (to inspect it; nothing is published)")
+    bundle_target.add_argument("--store", action="store_true",
+                               help="replace the stored bundle the web service serves while AHN_PUBLIC_BUNDLE=1")
     args = parser.parse_args()
     settings = Settings.from_env()
     if args.command == "migrate":
@@ -110,6 +115,23 @@ def main():
                 count = export(settings, args.kind, handle, since=args.since, all_reports=args.all_reports,
                                signing_key=signing_key, kid=key_id())
         print(f"exported={count} kind={args.kind} signed={'yes' if signing_key is not None else 'no'}", file=sys.stderr)
+    elif args.command == "bundle":
+        from .bundle import build_from_db, lock, signing_from_env, store
+
+        signing_key, kid = signing_from_env()
+        with connect(settings) as conn:
+            if args.store and not lock(conn):
+                print("bundle locked: another build is running; try again in a minute", file=sys.stderr)
+                raise SystemExit(1)
+            built = build_from_db(conn, signing_key=signing_key, kid=kid)
+            if args.store:
+                store(conn, built)
+        if args.out:
+            with open(args.out, "wb") as handle:
+                handle.write(built.body)
+        counts = " ".join(f"{kind}={count}" for kind, count in built.counts.items())
+        print(f"bundle records={built.record_count} {counts} bytes={len(built.body)} sha256={built.sha256} "
+              f"signed={'yes' if signing_key is not None else 'no'} {'stored' if args.store else 'file=' + args.out}", file=sys.stderr)
     elif args.command == "disable-reporter":
         with connect(settings) as conn:
             row = conn.execute("UPDATE reporters SET disabled_at=COALESCE(disabled_at,now()) WHERE id=%s RETURNING id", (args.reporter_id,)).fetchone()
