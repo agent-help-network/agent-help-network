@@ -106,6 +106,7 @@
     <section class="panel"><h2>7일 운영 이벤트</h2><div class="scroll"><table><thead><tr><th>이벤트</th><th>건수</th></tr></thead><tbody>
       {% for row in events %}<tr><td>{{ row.event_type }}</td><td>{{ row.events }}</td></tr>{% else %}<tr><td colspan="2">이벤트가 없습니다.</td></tr>{% endfor %}
     </tbody></table></div></section>
+    {% if board %}{% include "monitor_board.html" %}{% endif %}
   </div>
   <p class="legend">합계는 정확한 사람 수나 독립적인 에이전트 수가 아닙니다. 새 유입 분류는 배포 이후 요청부터 쌓이며 과거 유입은 복구할 수 없습니다. Render API 값은 시간별 수집 후 표시되어 지연될 수 있고, 자체 요청 집계와 측정 범위가 다릅니다. 데이터 수집 장애가 있으면 일부 수치는 누락될 수 있습니다. 자동 공개도 제보 사실의 진위를 증명하지 않습니다. 운영자 수동 조치는 CLI에서 수행합니다.</p>
 </main>

@@ -812,8 +812,13 @@ def cached_profile(conn, site_host: str, *, now: datetime | None = None, max_age
     return _as_profile(site_host, row, now, max_age), due
 
 
-def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file) -> dict | None:
-    """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure)."""
+def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file,
+                trigger: str = "lookup") -> dict | None:
+    """Cached declared policy; one read attempt per host per window (max_age, or ERROR_RETRY after a transport failure).
+
+    ``trigger`` ("lookup" or "seed") only labels the signal-history row of a curated host (ahn/signal_history.py),
+    which is written in a savepoint next to the cache row: it never changes or stops the read.
+    """
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(hours=max_age_hours)
     query = f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s"
@@ -855,4 +860,6 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                      operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
                      Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None),
                 ).fetchone()
+            from .signal_history import record_read
+            record_read(conn, site_host, profile, now, trigger)
         return _as_profile(site_host, row, now, max_age)

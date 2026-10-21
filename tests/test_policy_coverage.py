@@ -329,6 +329,18 @@ TABLES = {
     "queried_hosts": Pruned(  # hostnames that were looked up
         Phrase("removed after {days} days without a lookup", "{days}일 동안 조회가 없으면 삭제"),
         Phrase("removed after {days} days without a lookup", "{days}일 동안 조회가 없으면 삭제")),
+    # Signal history for curated hosts (migration 024, ahn/signal_history.py): host facts, no request or client data.
+    "robots_read_events": Pruned(Phrase(
+        "History of robots.txt reads for curated public hostnames (time, outcome and failure label, and whether the read followed a lookup or the seed-list read): {days} days",
+        "큐레이션한 공개 호스트명별 robots.txt 읽기 이력(시각, 결과, 실패 사유 라벨, 조회 뒤의 읽기인지 시드 목록 읽기인지): {days}일")),
+    "outage_episodes": Pruned(Phrase(
+        "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
+        "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
+    "provider_status_events": Pruned(Phrase(
+        "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
+        "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
+    "robots_read_daily": Pruned(Phrase("Daily per-host totals of robots.txt reads, failures and refusals: {days} days",
+                                       "호스트별 일일 robots.txt 읽기·실패·거절 합계: {days}일")),
     "render_metric_samples": Pruned(  # hosting-provider totals, no per-request detail
         Phrase("hosting-usage samples from Render (CPU, memory and request totals): {days} days",
                "시간별 사용량 표본(CPU·메모리·요청 합계): {days}일")),
@@ -710,3 +722,27 @@ def test_policy_date_moves_with_the_bundle_switch():
         assert on[lang] in plain(bundle_policy_text(lang, True)), f"the {lang} policy date does not follow AHN_PUBLIC_BUNDLE_SINCE"
         # A since date before the policy's own date never moves the date backwards.
         assert off[lang] in plain(bundle_policy_text(lang, True, date(2026, 1, 1)))
+
+
+# --- 7. Signal history (D41) -------------------------------------------------------------------
+
+def test_signal_history_is_described_as_host_facts_kept_private_for_now():
+    """The history of reads and provider changes: what it holds, that refusals are not problems, that it is not public."""
+    from ahn import signal_history
+    assert signal_history.RAW_RETENTION_DAYS == periods_in_prune_analytics()["robots_read_events"] == 14
+    for table in ("outage_episodes", "provider_status_events", "robots_read_daily"):
+        assert periods_in_prune_analytics()[table] == signal_history.ROLLUP_RETENTION_DAYS == 90
+    wanted = {
+        "scope": Phrase("For curated public hostnames only", "큐레이션한 공개 호스트명"),
+        "what": Phrase("failed with a DNS, connection, TLS, timeout or server (5xx) error",
+                       "DNS·연결·TLS·시간 초과·서버 오류(5xx)로 실패"),
+        "refusal": Phrase("A refused read (401, 403, 429 or 503) is never counted as a problem with the site",
+                          "거절된 읽기(401·403·429·503)는 사이트의 문제로 세지 않습니다"),
+        "no_people": Phrase("they contain no lookup, report, IP address or client information",
+                            "조회·제보·IP 주소·클라이언트 정보가 없으며"),
+        "trigger": Phrase("only whether a read followed a lookup or the seed-list read",
+                          "읽기가 조회 뒤의 읽기인지 시드 목록 읽기인지만 둡니다"),
+        "no_request": Phrase("Keeping them adds no request to any site", "어떤 사이트에도 요청이 늘지 않습니다"),
+        "private": Phrase("they are not shown on public pages or in lookup answers", "공개 페이지나 조회 응답에는 나오지 않습니다"),
+    }
+    assert_phrases("signal history", {lang: policy_text(lang) for lang in LANGS}, wanted)

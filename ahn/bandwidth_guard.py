@@ -230,6 +230,12 @@ def main() -> None:
     print(f"bandwidth_guard state={result['state']} usage_gb={result['usage_gb']} action={result['action']} coverage_gap={result['coverage_gap']}")
     metrics = collect_render_metrics(database_url, api_key, resource_id)
     print("render_metrics " + " ".join(f"{name}={state}" for name, state in metrics.items()))
+    # Signal history rollup (ahn/signal_history.py): closed 15-minute windows of recorded reads, no network.
+    try:
+        from .signal_history import run as signal_history_run
+        print(signal_history_run(database_url))
+    except Exception as exc:  # e.g. migration 024 not applied yet: the guard's own result above stands
+        print(f"signal_history failed={type(exc).__name__}")
     if result["action"] in {"warning", "suspended", "re_suspended", "suspended_externally"} or result["coverage_gap_new"]:
         # Render's existing failed-run notification sends the owner one email
         # per threshold transition and one per coverage gap. Later runs exit 0.

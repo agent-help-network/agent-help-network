@@ -9,7 +9,7 @@ from ipaddress import ip_address
 
 
 # Owner-only routes. They share the rate-limit exemption for the allowed network and stay out of traffic metrics.
-OWNER_PATHS = frozenset({"/owner", "/owner/hosts"})
+OWNER_PATHS = frozenset({"/owner", "/owner/hosts", "/owner/board.json"})
 
 
 def valid_owner_ip(header: str, allowed_ips: tuple[str, ...]) -> bool:

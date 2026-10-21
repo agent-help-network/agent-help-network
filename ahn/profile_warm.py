@@ -105,7 +105,7 @@ def warm_profiles(
             time.sleep(PAUSE_SECONDS)
         processed += 1
         try:
-            profile = get_profile(settings, host, max_age_hours=max_age_hours, now=now, **options)
+            profile = get_profile(settings, host, max_age_hours=max_age_hours, now=now, trigger="seed", **options)
         except Exception as exc:  # one misbehaving host or a brief database error must not stop the cron
             result["errors"] += 1
             label = f"exception:{type(exc).__name__}"
