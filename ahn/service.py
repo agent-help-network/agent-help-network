@@ -386,8 +386,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             ).fetchone()
             if source:
                 fetched_at = source["fetched_at"]
-                failed_later = source["last_error_at"] and (not fetched_at or source["last_error_at"] >= fetched_at)
-                freshness = "stale" if failed_later else "pending" if not fetched_at else "stale" if fetched_at < now - timedelta(hours=2) else "fresh"
+                # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
+                freshness, failed_later = background_reads.feed_freshness(
+                    fetched_at, source["last_error_at"], now, source["last_error_detail"])
                 provider_status = {
                     "source_name": source["source_name"], "source_url": source["status_page_url"],
                     "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],

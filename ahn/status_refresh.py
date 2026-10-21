@@ -1399,8 +1399,8 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
     indicator is active (minor or above, or maintenance): two more capped reads of the same page (unresolved
     incidents, active maintenances). Their failure never fails the feed read; an indicator of none, other
-    kinds and other platforms leave scope empty and make no further request. scope_allowed() is asked before each
-    list (the cron's time budget): a list it refuses is skipped, not counted as a failure."""
+    kinds and other platforms leave scope empty and make no further request. scope_allowed() is asked once before
+    the first list (the cron's time budget): when it refuses, both lists are skipped, not counted as a failure."""
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
@@ -1443,7 +1443,10 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
     """Record a successful read for one host and clear its failure count.
 
     The scope columns are replaced with every successful read: a feed that no longer yields them (a quiet page,
-    another platform, a failed or oversized list, lists resting after failures) keeps no older scope. The scope
+    another platform, a failed or oversized list, lists resting after failures, lists the cron's time budget
+    skipped) keeps no older scope. Carrying an older scope forward is not done even under the same indicator
+    (D46): no column records when the lists were read, and a list of stale incidents carried past a newly posted
+    one would lift a wait (D45); an empty scope keeps the wait until the next read (15 minutes for an active page). The scope
     failure counters are cleared when both lists were read, raised when one failed, and kept when the lists were
     not asked for (status_scope.read_scope ``scope_outcome``)."""
     outcome = scope.get("scope_outcome") or "skipped"
@@ -1660,7 +1663,8 @@ def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Sou
 def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, limit: int = FEED_BATCH_MAX,
                   time_budget: float = FEED_BATCH_SECONDS, now: datetime | None = None) -> dict:
     """The cron's feed step: read the due feeds (due_feeds), at most ``limit``, paced like the background reads
-    (two per second per process). Once ``time_budget`` seconds have passed no feed and no scope list is started;
+    (two per second per process). Once ``time_budget`` seconds have passed no feed and no pair of scope lists is
+    started (the two lists of one feed are read together or not at all);
     a feed already being read keeps its own 10-second body limit, so the budget never turns into a feed failure.
     A feed another process is reading (its database lock is held) is skipped and stays due."""
     if not 1 <= limit <= FEED_BATCH_MAX:

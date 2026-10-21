@@ -496,3 +496,48 @@ def test_an_active_cached_indicator_is_due_after_fifteen_minutes(indicator, expe
     assert background_reads.FEED_RETRY_MINUTES == 15
     assert background_reads.feed_refresh_after(indicator, timedelta(hours=background_reads.FEED_STALE_HOURS)) == expected
     assert background_reads.FEED_ACTIVE_INDICATORS == ACTIVE_INDICATORS
+
+
+def test_the_budget_is_asked_once_so_both_lists_are_read_together():
+    # The cron's budget can run out while the first list is read; the second list is still read, because one list
+    # without the other leaves the basis unknown and keeps a stale-incident wait (D45) the budget decided (D46).
+    page = fixture("cloudflare")
+    handler, seen = serve(page)
+    answers = iter([True])  # a second question would raise StopIteration
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        scope: dict = {}
+        status_refresh._read_source(STATUSPAGE, client, scope=scope, scope_allowed=lambda: next(answers, False))
+    assert seen == ["/api/v2/status.json", "/api/v2/incidents/unresolved.json", "/api/v2/scheduled-maintenances/active.json"]
+    assert scope["scope_outcome"] == "ok" and scope["active_incidents"] is not None and scope["active_maintenances"] == 2
+
+
+def test_a_tenable_type_page_lifts_the_wait_once_both_lists_are_read():
+    # One incident last updated 120 days ago, no maintenance (an empty list): D45 does not wait on it. Before D46
+    # the budget could end after the incident list, leave the maintenance count unknown, and keep the wait.
+    old = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+    page = {"status": {"page": {"id": "yh6f0r4529hb", "time_zone": "Etc/UTC", "updated_at": old},
+                       "status": {"indicator": "minor"}},
+            "unresolved": {"page": {"id": "yh6f0r4529hb"}, "incidents": [
+                {"name": "Degraded scans in one region", "status": "monitoring", "impact": "minor", "updated_at": old,
+                 "components": [{"name": "Scanning", "group_id": None}]}]},
+            "maintenances": {"page": {"id": "yh6f0r4529hb"}, "scheduled_maintenances": []}}
+    handler, _seen = serve(page)
+    answers = iter([True])
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        scope: dict = {}
+        indicator, _ = status_refresh._read_source(STATUSPAGE, client, scope=scope, scope_allowed=lambda: next(answers, False))
+    assert scope["active_incidents"] == 1 and scope["active_maintenances"] == 0
+    status = provider_status(indicator, fields(scope))
+    assert status["basis"] == "incident"
+    assert recommendation(None, status, None, None)["action"] != "wait_provider_incident"
+    assert "provider_incident_stale" in codes(next_checks(None, status, "no_reports"))
+    # The same read with the maintenance count unknown (the old partial read) keeps waiting: unknown is not stale.
+    unknown = provider_status(indicator, {**fields(scope), "active_maintenances": None})
+    assert recommendation(None, unknown, None, None)["action"] == "wait_provider_incident"
+
+
+def test_a_budget_that_refuses_the_lists_skips_both():
+    calls = []
+    answers = iter([False, True])  # even if a later question would say yes, nothing is read
+    out = status_scope.read_scope(lambda path: calls.append(path) or b"{}", "yh6f0r4529hb", allowed=lambda: next(answers))
+    assert calls == [] and out["scope_outcome"] == "skipped" and out["active_incidents"] is None

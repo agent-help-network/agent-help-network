@@ -553,29 +553,34 @@ def _baselines(conn, hosts: list[str], now: datetime) -> dict[str, str]:
 
 def _provider_now(conn, now: datetime) -> dict[str, dict]:
     """Curated hosts whose fresh provider value is a problem (the lookup answer's own freshness rule)."""
+    from .background_reads import feed_freshness
+
     curated = board_hosts()
     rows = conn.execute(
-        """SELECT site_host,indicator,fetched_at,source_updated_at FROM status_cache
-           WHERE indicator=ANY(%s) AND fetched_at >= %s AND (last_error_at IS NULL OR fetched_at >= last_error_at)""",
+        """SELECT site_host,indicator,fetched_at,source_updated_at,last_error_at,last_error_detail FROM status_cache
+           WHERE indicator=ANY(%s) AND fetched_at >= %s""",
         (sorted(PROVIDER_PROBLEMS), now - FEED_FRESH),
     ).fetchall()
-    return {row["site_host"]: dict(row) for row in rows if row["site_host"] in curated}
+    return {row["site_host"]: {key: row[key] for key in ("site_host", "indicator", "fetched_at", "source_updated_at")}
+            for row in rows if row["site_host"] in curated
+            and feed_freshness(row["fetched_at"], row["last_error_at"], now, row["last_error_detail"])[0] == "fresh"}
 
 
 def _infra_feeds(conn, feeds: set[str], now: datetime) -> list[dict]:
     """Whether each shared-infrastructure host that can explain a window has a feed that is registered and read."""
+    from .background_reads import feed_freshness
     from .status_refresh import SOURCES
 
     cache = {row["site_host"]: row for row in conn.execute(
-        "SELECT site_host,indicator,fetched_at,last_error_at FROM status_cache WHERE site_host=ANY(%s)",
+        "SELECT site_host,indicator,fetched_at,last_error_at,last_error_detail FROM status_cache WHERE site_host=ANY(%s)",
         (sorted(INFRA_HOSTS),)).fetchall()}
     result = []
     for host in sorted(INFRA_HOSTS):
         row = cache.get(host)
         fetched = row["fetched_at"] if row else None
         result.append({"host": host, "feed": host in SOURCES, "registered": host in feeds,
-                       "fresh": bool(fetched and fetched >= now - FEED_FRESH
-                                     and (row["last_error_at"] is None or fetched >= row["last_error_at"])),
+                       "fresh": bool(row and feed_freshness(fetched, row["last_error_at"], now,
+                                                            row["last_error_detail"])[0] == "fresh"),
                        "fetched_at": _iso(fetched), "indicator": row["indicator"] if row and fetched else None})
     return result
 

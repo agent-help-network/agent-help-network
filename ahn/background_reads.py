@@ -113,6 +113,31 @@ def feed_backoff(failures: int | None, error_detail: str | None, indicator: str 
     return min(FEED_FAILURE_BACKOFF_MAX, timedelta(minutes=FEED_RETRY_MINUTES * 2 ** exponent))
 
 
+# A discovered Statuspage source that fails its own verification (status_refresh._read_discovered_statuspage) is
+# no longer a verified source: unlike a timeout, a 5xx or a refusal, this says the last statement may not be the
+# provider's at all, so it reads as stale at once (D46).
+FEED_UNVERIFIED = frozenset({"no_cname", "id_mismatch", "not_public"})
+
+
+def feed_freshness(fetched_at: datetime | None, last_error_at: datetime | None,
+                   now: datetime, error_detail: str | None = None) -> tuple[str, bool]:
+    """provider_status.freshness and whether the latest attempt failed (error_detail is shown then).
+
+    Freshness is the age of the last successful statement: ``fresh`` within FEED_STALE_HOURS, ``stale`` after,
+    ``pending`` before any success (``stale`` when there were only failures). A failure after the success does not
+    make the statement stale by itself (D46): a timeout or a refusal says nothing about the provider's state, and
+    a status page that struggles during the very outage it reports must not drop its wait advice. The failure
+    backoff (feed_backoff) bounds how long the statement goes unconfirmed, and FEED_STALE_HOURS still ends it.
+    The exception is a latest failure in FEED_UNVERIFIED (``error_detail``): the source itself no longer verifies,
+    so the statement is stale at once."""
+    failed_later = bool(last_error_at and (not fetched_at or last_error_at >= fetched_at))
+    if not fetched_at:
+        return ("stale" if failed_later else "pending"), failed_later
+    if (failed_later and error_detail in FEED_UNVERIFIED) or fetched_at < now - timedelta(hours=FEED_STALE_HOURS):
+        return "stale", failed_later
+    return "fresh", failed_later
+
+
 def feed_next_due(row, idle: timedelta) -> datetime | None:
     """When a feed is next due, from its status_cache row (indicator, fetched_at, last_error_at, failures,
     last_error_detail); None when it was never attempted (due now). The lookup path (idle FEED_STALE_HOURS) and
