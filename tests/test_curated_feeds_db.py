@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+import psycopg
 import pytest
 
 TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
@@ -253,6 +254,49 @@ def test_a_feed_another_process_is_reading_is_skipped(db, small):
         assert not any("cloudflarestatus" in url for url in feeds.seen)
     # Released: the next run reads it.
     assert batch(db, feeds)["checked"] == 1
+
+
+@pytest.mark.parametrize("answer,expected", [
+    (lambda request: httpx.Response(200, json=QUIET), True),
+    (lambda request: httpx.Response(503, text="down"), False),
+], ids=["read_ok", "read_fails"])
+def test_the_feed_lock_connection_holds_no_table_lock_during_the_read(db, small, answer, expected):
+    # The connection holding the feed's advisory lock stays open for the whole HTTP read (up to about 70 s). If it
+    # had read status_cache, its ACCESS SHARE lock would make a deploy's ALTER wait and, behind it, every lookup.
+    sync_curated_sources(db)
+    with connect(db) as conn:  # an earlier attempt exists, so the 15 s rule has a row to read
+        conn.execute("INSERT INTO status_cache (site_host,indicator,fetched_at) VALUES "
+                     "('render.com','none',now() - interval '1 hour')")
+    seen = []
+
+    def during_read(request):
+        with connect(db) as probe:
+            table_locks = probe.execute(
+                """SELECT c.relname, l.mode FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
+                   WHERE l.locktype='relation' AND l.granted AND c.relname LIKE 'status_cache%'
+                     AND l.pid <> pg_backend_pid()""").fetchall()
+            advisory = probe.execute(
+                "SELECT count(*) AS n FROM pg_locks WHERE locktype='advisory' AND granted AND pid <> pg_backend_pid()"
+            ).fetchone()["n"]
+            try:  # what a deploy's ALTER needs: it must not have to wait for this read
+                probe.execute("LOCK TABLE status_cache IN ACCESS EXCLUSIVE MODE NOWAIT")
+                lockable = True
+            except psycopg.errors.LockNotAvailable:
+                lockable = False
+        seen.append((table_locks, advisory, lockable))
+        return answer(request)
+
+    with httpx.Client(transport=httpx.MockTransport(during_read)) as client:
+        outcome = status_refresh.refresh_one(db, "render.com", client=client, min_interval=15, wait=True)
+    assert outcome is expected
+    assert seen, "the feed was not requested"
+    for table_locks, advisory, lockable in seen:
+        assert table_locks == [] and lockable
+        assert advisory == 1  # the feed's own lock is held while it is read
+    # The lock is gone with the read: a second reader is not excluded.
+    with connect(db) as other:
+        assert other.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok",
+                             (SOURCES["render.com"].api_url,)).fetchone()["ok"]
 
 
 def test_a_feed_read_moments_ago_elsewhere_is_not_read_again(db, small):

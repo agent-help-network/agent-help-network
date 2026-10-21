@@ -1495,15 +1495,20 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
 
     The read holds a database lock on the feed address (pg_try_advisory_xact_lock), so the cron and the web
     process never read one feed at the same time; a feed whose lock is held, or that was attempted within
-    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome."""
+    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome.
+
+    The lock connection touches no table: the transaction stays open for the whole read (up to about 70 s), and
+    a table it had read would keep an ACCESS SHARE lock on it that makes a later ALTER wait and, behind the
+    ALTER, every lookup. The earlier attempt is read on a short connection of its own, after the lock is held."""
     own_client = client is None
     with connect(settings) as lock_conn:
         if not lock_conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok", (source.api_url,)).fetchone()["ok"]:
             return None
-        previous = lock_conn.execute(
-            "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
-            (hosts[0],),
-        ).fetchone()
+        with connect(settings) as conn:
+            previous = conn.execute(
+                "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
+                (hosts[0],),
+            ).fetchone()
         now = datetime.now(timezone.utc)
         if min_interval and previous:
             latest = max((t for t in (previous["fetched_at"], previous["last_error_at"]) if t is not None), default=None)
