@@ -39,6 +39,9 @@ services:
       # 0 turns off the in-process background reader; the review cron still processes the queue.
       - key: AHN_BACKGROUND_READS
         value: "1"
+      # 0 turns off gzip for text responses (ahn/compression.py); on by default. MCP and the offline bundle are never compressed.
+      - key: AHN_RESPONSE_GZIP
+        value: "1"
       # Provenance stamped on stored reads and reports (ahn/provenance.py); these are the defaults.
       - key: AHN_OPERATOR_ID
         value: agenthelpnetwork.com

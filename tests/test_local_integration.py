@@ -90,6 +90,24 @@ def test_health_and_bilingual_pages(env):
     assert "consent_confirmed" not in contract["components"]["schemas"]["ObservationIn"]["required"]
 
 
+def test_lookup_json_is_gzipped_only_when_asked_and_decodes_to_the_same_answer(env):
+    _, client, _, _ = env
+    host = "gzip-check.agenthelpnetwork.test"
+
+    def fetch(encoding):
+        with client.stream("GET", "/v1/incidents/check", params={"site_host": host}, headers={"Accept-Encoding": encoding}) as response:
+            response.read()
+        return response
+
+    plain, packed = fetch("identity"), fetch("gzip")
+    assert plain.status_code == packed.status_code == 200 and "content-encoding" not in plain.headers
+    assert plain.num_bytes_downloaded == len(plain.content) > 1000
+    assert packed.headers["content-encoding"] == "gzip" and packed.num_bytes_downloaded < len(packed.content) * 0.7
+    first, second = plain.json(), packed.json()
+    first.pop("generated_at"), second.pop("generated_at")
+    assert first == second and packed.headers["content-type"] == "application/json"
+
+
 def test_bilingual_search_zero_one_multiple_and_escaping(env, monkeypatch):
     _, client, _, _ = env
     host = "demo.agenthelpnetwork.test"

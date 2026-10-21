@@ -429,6 +429,15 @@ def test_switch_on_serves_the_file_and_its_sha256(served):
     assert head.status_code == 200 and head.headers["content-length"] == str(len(built.body)) and head.content == b""
 
 
+def test_the_file_is_never_compressed_again_for_a_client_that_accepts_gzip(served):
+    client, built, _state = served
+    for path, expected in ((bundle.PATH, built.body), (bundle.SHA256_PATH, f"{built.sha256}  {built.filename}\n".encode())):
+        with client.stream("GET", path, headers={"Accept-Encoding": "gzip, deflate, br"}) as response:
+            response.read()
+        assert response.status_code == 200 and "content-encoding" not in response.headers, path
+        assert response.num_bytes_downloaded == len(expected) and response.content == expected  # the bytes on the wire are the file
+
+
 def test_unchanged_file_answers_304(served):
     client, built, _state = served
     assert client.get(bundle.PATH, headers={"If-None-Match": f'"{built.sha256}"'}).status_code == 304

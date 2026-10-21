@@ -41,6 +41,8 @@ class Settings:
     public_bundle: bool = False
     # AHN_PUBLIC_BUNDLE_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date.
     public_bundle_since: date | None = None
+    # AHN_RESPONSE_GZIP=0 turns off gzip for text responses (ahn/compression.py); on by default.
+    response_gzip: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -75,4 +77,5 @@ class Settings:
             except ValueError:
                 raise RuntimeError("AHN_PUBLIC_BUNDLE=1 needs AHN_PUBLIC_BUNDLE_SINCE=YYYY-MM-DD, "
                                    "the date the privacy policy shows as last updated") from None
-        return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since)
+        return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
+                   os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0")
