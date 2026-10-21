@@ -15,7 +15,7 @@ from starlette.routing import Route
 os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
-from ahn.compression import TextGZipMiddleware, accepts_gzip  # noqa: E402
+from ahn.compression import BUFFER_LIMIT, TextGZipMiddleware, accepts_gzip  # noqa: E402
 from ahn.main import create_app  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 
@@ -76,8 +76,8 @@ def toy_app(**options) -> TextGZipMiddleware:
     return TextGZipMiddleware(Starlette(routes=routes), **options)
 
 
-def call(app, path: str, *, method: str = "GET", accept_encoding: str | None = "gzip", headers: dict | None = None):
-    """Drive the ASGI app directly; returns (status, headers dict, raw body bytes), exactly as sent on the wire."""
+def drive(app, path: str, *, method: str = "GET", accept_encoding: str | None = "gzip", headers: dict | None = None):
+    """Drive the ASGI app directly; returns (messages sent to the server, exception the app raised or None)."""
     raw_headers = [(b"host", b"testserver")]
     if accept_encoding is not None:
         raw_headers.append((b"accept-encoding", accept_encoding.encode()))
@@ -97,7 +97,19 @@ def call(app, path: str, *, method: str = "GET", accept_encoding: str | None = "
     async def send(message):
         sent.append(message)
 
-    asyncio.run(app(scope, receive, send))
+    failure = None
+    try:
+        asyncio.run(app(scope, receive, send))
+    except Exception as exc:  # noqa: BLE001 - the tests look at exactly what was sent before the failure
+        failure = exc
+    return sent, failure
+
+
+def call(app, path: str, **kwargs):
+    """Returns (status, headers dict, raw body bytes), exactly as sent on the wire; the response must end cleanly."""
+    sent, failure = drive(app, path, **kwargs)
+    if failure is not None:
+        raise failure
     start = sent[0]
     assert start["type"] == "http.response.start"
     body = b"".join(m.get("body", b"") for m in sent[1:] if m["type"] == "http.response.body")
@@ -190,6 +202,84 @@ def test_a_declared_length_body_sent_in_pieces_is_gathered_and_gets_the_new_exac
     assert gzip.decompress(body).decode() == BIG_TEXT
     status, headers, body = call(toy_app(), "/chunked-small")  # small and in pieces: delivered whole, as it was
     assert status == 200 and "content-encoding" not in headers and body == b"tiny" and headers["content-length"] == "4"
+
+
+def raw_app(declared: int | None, pieces: list[bytes], content_type: bytes = b"text/html; charset=utf-8", **options):
+    """An app that declares `declared` bytes but sends exactly `pieces`; the last piece ends the response (more_body False)."""
+    async def app(scope, receive, send):
+        headers = [(b"content-type", content_type)]
+        if declared is not None:
+            headers.append((b"content-length", str(declared).encode()))
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        for index, piece in enumerate(pieces):
+            await send({"type": "http.response.body", "body": piece, "more_body": index < len(pieces) - 1})
+    return TextGZipMiddleware(app, **options)
+
+
+def wire(sent):
+    return (sent[0]["status"], {k.decode().lower(): v.decode() for k, v in sent[0]["headers"]},
+            b"".join(m.get("body", b"") for m in sent[1:] if m["type"] == "http.response.body"), sent[-1].get("more_body", False))
+
+
+def test_a_gathered_body_shorter_than_its_declared_length_is_not_turned_into_a_complete_response():
+    # The failure BaseHTTPMiddleware hides: 6,040 of 12,080 declared bytes arrive and the response is closed normally.
+    half = (BIG_TEXT.encode() * 5)[:6040]
+    for pieces in ([half], [half[:3000], half[3000:]]):
+        sent, failure = drive(raw_app(12080, pieces), "/page")
+        status, headers, body, more = wire(sent)
+        assert failure is None and status == 200 and more is False
+        assert "content-encoding" not in headers and headers["content-length"] == "12080"  # the server sees 6040 != 12080
+        assert body == half
+
+
+def test_a_gathered_body_longer_than_its_declared_length_is_also_sent_unchanged():
+    sent, failure = drive(raw_app(1500, [BIG_TEXT.encode()]), "/page")
+    status, headers, body, _more = wire(sent)
+    assert failure is None and "content-encoding" not in headers and headers["content-length"] == "1500" and body == BIG_TEXT.encode()
+
+
+def test_a_streamed_body_cut_short_fails_the_request_and_is_not_finished():
+    declared = 2 * BUFFER_LIMIT  # past the gathering limit: the streaming path
+    piece = (BIG_TEXT.encode() * 3)[:5000]
+    sent, failure = drive(raw_app(declared, [piece, piece, piece]), "/page")
+    assert isinstance(failure, RuntimeError) and "Content-Length" in str(failure)
+    assert sent[0]["type"] == "http.response.start" and dict(sent[0]["headers"])[b"content-encoding"] == b"gzip"
+    # No closing message: the last body message announced more_body, so the server never saw a complete response.
+    assert all(m["type"] != "http.response.body" or m["more_body"] for m in sent[1:])
+
+
+def test_a_streamed_body_of_the_declared_length_is_compressed_and_complete():
+    piece = (BIG_TEXT.encode() * 600)[: BUFFER_LIMIT // 2 + 1]
+    pieces = [piece, piece, piece]
+    sent, failure = drive(raw_app(len(piece) * 3, pieces), "/page")
+    status, headers, body, more = wire(sent)
+    assert failure is None and more is False and headers["content-encoding"] == "gzip" and "content-length" not in headers
+    assert gzip.decompress(body) == b"".join(pieces)
+
+
+def test_a_streamed_body_of_unknown_length_that_just_ends_is_complete():
+    sent, failure = drive(raw_app(None, [BIG_TEXT.encode()[:1200], BIG_TEXT.encode()[1200:]]), "/page")
+    status, headers, body, more = wire(sent)
+    assert failure is None and more is False and gzip.decompress(body) == BIG_TEXT.encode()
+
+
+def test_vary_is_set_on_every_response_of_a_compressible_type_and_on_304():
+    vary = lambda headers: "accept-encoding" in headers.get("vary", "").lower()  # noqa: E731
+    for encoding in ("gzip", None, "identity"):
+        assert vary(call(toy_app(), "/html", accept_encoding=encoding)[1]), encoding
+        assert vary(call(toy_app(), "/small", accept_encoding=encoding)[1]), encoding  # small: left plain, still varies
+        assert vary(call(toy_app(), "/no-transform", accept_encoding=encoding)[1]), encoding
+    assert vary(call(toy_app(), "/html", method="HEAD")[1]) and vary(call(toy_app(), "/html", headers={"Range": "bytes=0-9"})[1])
+    assert vary(call(toy_app(), "/not-modified")[1]) and vary(call(toy_app(), "/not-modified", accept_encoding=None)[1])
+    # Not a compressible type, or no content type at all: no Vary added.
+    for path in ("/gzip-file", "/image", "/events", "/redirect", "/empty"):
+        assert not vary(call(toy_app(), path)[1]), path
+    # An app that already says Vary: Accept-Encoding is not given a second copy.
+    def own_vary(_request):
+        return PlainTextResponse(BIG_TEXT, headers={"Vary": "Accept-Encoding"})
+    app = TextGZipMiddleware(Starlette(routes=[Route("/v", own_vary)]))
+    assert call(app, "/v")[1]["vary"].lower().count("accept-encoding") == 1
+    assert call(app, "/v", accept_encoding=None)[1]["vary"].lower().count("accept-encoding") == 1
 
 
 def test_redirects_empty_and_not_modified_and_partial_responses_are_untouched():
@@ -331,4 +421,41 @@ def test_mcp_endpoint_is_never_compressed(monkeypatch):
         assert "check_incident" in {tool["name"] for tool in response.json()["result"]["tools"]}
         # The same client does get the website compressed from that same process.
         page = client.get("/en/policy", headers={"Accept-Encoding": "gzip"})
-        assert page.status_code == 200
+        assert page.status_code == 200 and page.headers["content-encoding"] == "gzip"
+        # GET /mcp is the SSE side of the endpoint. It cannot be read through TestClient (the stream never ends), so
+        # drive the app inside the client's own loop and look at the response headers only.
+        start = client.portal.call(first_response_start, combined.app, "/mcp",
+                                   {"Host": "127.0.0.1:10000", "Accept": "text/event-stream", "Accept-Encoding": "gzip, deflate"})
+        sent = {k.decode().lower(): v.decode() for k, v in start["headers"]}
+        assert start["status"] == 200 and sent["content-type"].startswith("text/event-stream"), sent
+        assert "content-encoding" not in sent and "vary" not in sent, sent
+
+
+async def first_response_start(app, path: str, headers: dict):
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "path": path, "raw_path": path.encode(),
+             "query_string": b"", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()], "scheme": "http",
+             "server": ("127.0.0.1", 10000), "client": ("127.0.0.1", 5000), "root_path": ""}
+    started, disconnect, box = asyncio.Event(), asyncio.Event(), {}
+
+    async def receive():
+        if "request" not in box:
+            box["request"] = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            box["start"] = message
+            started.set()
+
+    task = asyncio.ensure_future(app(scope, receive, send))
+    try:
+        await asyncio.wait_for(started.wait(), 10)
+    finally:
+        disconnect.set()
+        try:
+            await asyncio.wait_for(task, 5)
+        except Exception:  # noqa: BLE001 - a timeout or the app's own cancellation: only the headers matter
+            task.cancel()
+    return box["start"]

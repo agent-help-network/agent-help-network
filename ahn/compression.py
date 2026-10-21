@@ -15,7 +15,13 @@ an allow-list instead, so a new route cannot start double-compressing something 
   the compressed Content-Length. A body of unknown length is compressed as it streams (each chunk is
   flushed, so nothing is held back) and carries no Content-Length.
 * A compressed response turns a strong ETag into a weak one and drops Accept-Ranges (its bytes differ
-  from the identity form), and carries `Vary: Accept-Encoding` so a shared cache keeps the forms apart.
+  from the identity form).
+* Every GET/HEAD response of a compressible type (and every 304) outside the excluded paths carries
+  `Vary: Accept-Encoding`, compressed or not, so a shared cache keeps the forms apart consistently.
+* A response that ends shorter or longer than its declared Content-Length is never made to look
+  complete: a gathered body whose length differs from the declaration is sent unchanged, so the server
+  notices the mismatch and drops the connection, and a streamed one is cut off without its final flush
+  and the request fails, so the client sees a truncated transfer instead of a valid short gzip file.
 
 Order in the app: this middleware is added last, so it is the outermost one. The rate limiter and
 the request metrics run inside it and see the identity response; the metrics count requests and
@@ -40,7 +46,8 @@ COMPRESSIBLE_TYPES = frozenset({
 DEFAULT_MINIMUM_SIZE = 1000
 # zlib's own default. Level 9 costs several times the CPU for a few percent fewer bytes on pages this size.
 DEFAULT_LEVEL = 6
-# Larger declared bodies are compressed as a stream instead of being held in memory.
+# Larger declared bodies are compressed as a stream instead of being held in memory. Compressing a full
+# 1 MiB buffer in one call blocks the event loop for about 19 ms; real responses are 1 to 25 KB (about 1 ms).
 BUFFER_LIMIT = 1 << 20
 
 _GZIP_TOKEN = re.compile(r"^\s*(?:gzip|x-gzip|\*)\s*(?:;\s*q\s*=\s*([0-9.]+))?\s*$", re.IGNORECASE)
@@ -71,6 +78,20 @@ def media_type(content_type: str) -> str:
     return content_type.partition(";")[0].strip().lower()
 
 
+def _add_vary(headers: MutableHeaders) -> None:
+    existing = headers.get("vary", "")
+    tokens = {token.strip().lower() for token in existing.split(",")}
+    if "accept-encoding" not in tokens and "*" not in tokens:
+        headers["vary"] = f"{existing}, Accept-Encoding" if existing else "Accept-Encoding"
+
+
+def _with_vary(message: Message) -> Message:
+    message = dict(message)
+    message["headers"] = list(message["headers"])
+    _add_vary(MutableHeaders(raw=message["headers"]))
+    return message
+
+
 class TextGZipMiddleware:
     def __init__(self, app: ASGIApp, *, minimum_size: int = DEFAULT_MINIMUM_SIZE, compresslevel: int = DEFAULT_LEVEL,
                  skip_prefixes: Iterable[str] = (), skip_request: Callable[[Scope], bool] | None = None) -> None:
@@ -80,35 +101,38 @@ class TextGZipMiddleware:
         self.skip_prefixes = tuple(skip_prefixes)
         self.skip_request = skip_request
 
-    def _skipped(self, scope: Scope, headers: Headers) -> bool:
-        if scope["method"] != "GET":  # HEAD must keep the length of the identity body; replies to writes are tiny
-            return True
+    def _excluded(self, scope: Scope) -> bool:
         path = scope["path"]
         if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in self.skip_prefixes):
-            return True
-        if "range" in headers or not accepts_gzip(headers.get("accept-encoding", "")):
             return True
         return bool(self.skip_request and self.skip_request(scope))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or self._skipped(scope, Headers(scope=scope)):
+        if scope["type"] != "http" or scope["method"] not in {"GET", "HEAD"} or self._excluded(scope):
             await self.app(scope, receive, send)
             return
-        await _Responder(send, self.minimum_size, self.compresslevel)._run(self.app, scope, receive)
+        headers = Headers(scope=scope)
+        # HEAD must keep the length of the identity body, and a byte range is a range of the identity form.
+        compress = scope["method"] == "GET" and "range" not in headers and accepts_gzip(headers.get("accept-encoding", ""))
+        responder = _Responder(send, self.minimum_size, self.compresslevel, compress)
+        await self.app(scope, receive, responder.handle)
+        if responder.truncated:
+            raise RuntimeError("response body length differs from its Content-Length; transfer aborted")
 
 
 class _Responder:
-    def __init__(self, send: Send, minimum_size: int, level: int) -> None:
+    def __init__(self, send: Send, minimum_size: int, level: int, compress: bool) -> None:
         self.send = send
         self.minimum_size = minimum_size
         self.level = level
+        self.compress = compress
         self.start: Message = {}
         self.passthrough = False
+        self.declared: int | None = None  # Content-Length the app declared, when it did
+        self.seen = 0  # body bytes received so far on the streaming path
+        self.truncated = False
         self.buffer: bytearray | None = None  # set while a declared-length body is being gathered
         self.compressor: zlib._Compress | None = None  # set once a streamed body is being compressed
-
-    async def _run(self, app: ASGIApp, scope: Scope, receive: Receive) -> None:
-        await app(scope, receive, self.handle)
 
     def _eligible(self, message: Message) -> bool:
         headers = Headers(raw=message["headers"])
@@ -123,7 +147,7 @@ class _Responder:
 
     def _mark_compressed(self, length: int | None) -> None:
         headers = MutableHeaders(raw=self.start["headers"])
-        headers.add_vary_header("Accept-Encoding")
+        _add_vary(headers)
         headers["Content-Encoding"] = "gzip"
         if length is None:
             if "content-length" in headers:
@@ -139,21 +163,30 @@ class _Responder:
     async def _release(self) -> None:
         """Send the held start message (and any gathered bytes) unchanged, then stop interfering."""
         self.passthrough = True
-        await self.send(self.start)
+        await self.send(_with_vary(self.start))
         if self.buffer:
             await self.send({"type": "http.response.body", "body": bytes(self.buffer), "more_body": True})
         self.buffer = None
 
+    async def _send_unchanged(self, message: Message) -> None:
+        self.passthrough = True
+        await self.send(_with_vary(self.start))
+        await self.send(message)
+
     async def handle(self, message: Message) -> None:
         kind = message["type"]
         if kind == "http.response.start":
-            self.start = message
-            self.passthrough = not self._eligible(message)
-            if self.passthrough:
+            headers = Headers(raw=message["headers"])
+            if not (self.compress and self._eligible(message)):
+                self.passthrough = True
+                if media_type(headers.get("content-type", "")) in COMPRESSIBLE_TYPES or message["status"] == 304:
+                    message = _with_vary(message)
                 await self.send(message)
                 return
-            length = Headers(raw=message["headers"]).get("content-length", "")
-            if length.isdigit() and int(length) <= BUFFER_LIMIT:
+            self.start = message
+            length = headers.get("content-length", "")
+            self.declared = int(length) if length.isdigit() else None
+            if self.declared is not None and self.declared <= BUFFER_LIMIT:
                 self.buffer = bytearray()
             return
         if kind != "http.response.body" or self.passthrough:
@@ -170,25 +203,29 @@ class _Responder:
                 return
             data = bytes(self.buffer)
             self.buffer = None
-            if len(data) < self.minimum_size:
-                self.passthrough = True
-                await self.send(self.start)
-                await self.send({"type": "http.response.body", "body": data, "more_body": False})
+            # A body that is not the declared length (the app failed part-way) or is too small is sent exactly
+            # as it came, so the server sees the same mismatch it would have seen without compression.
+            if len(data) != self.declared or len(data) < self.minimum_size:
+                await self._send_unchanged({"type": "http.response.body", "body": data, "more_body": False})
                 return
             packed = zlib.compress(data, self.level, wbits=16 + zlib.MAX_WBITS)
             self._mark_compressed(len(packed))
             await self.send(self.start)
             await self.send({"type": "http.response.body", "body": packed, "more_body": False})
             return
-        if self.compressor is None:  # first piece of a body of unknown length
-            if len(body) < self.minimum_size and not more:
-                self.passthrough = True
-                await self.send(self.start)
-                await self.send(message)
+        if self.compressor is None:  # first piece of a body of unknown (or very large) length
+            if not more and (len(body) < self.minimum_size or (self.declared is not None and len(body) != self.declared)):
+                await self._send_unchanged(message)
                 return
             self.compressor = zlib.compressobj(self.level, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
             self._mark_compressed(None)
             await self.send(self.start)
+        self.seen += len(body)
+        if not more and self.declared is not None and self.seen != self.declared:
+            # Cut short (or long): no final flush, and the request fails once the app returns, so the
+            # connection is dropped mid-transfer instead of ending with a complete-looking gzip stream.
+            self.truncated = True
+            return
         data = self.compressor.compress(body)
         data += self.compressor.flush(zlib.Z_SYNC_FLUSH) if more else self.compressor.flush()
         await self.send({"type": "http.response.body", "body": data, "more_body": more})
