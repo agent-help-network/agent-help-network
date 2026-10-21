@@ -1,0 +1,10 @@
+Domain name,Domain type,Organization name,Suborganization name,City,State,Security contact email
+abilenetx.gov,City,City of Abilene,,Abilene,TX,jane.sample@example.test
+acton-ma.gov,City,"Town of Acton, Massachusetts",,Acton,MA,it@example.test
+ca.gov,State or territory,State of California,,Rancho Cordova,CA,(blank)
+cisa.gov,Federal - Executive,Department of Homeland Security,Cybersecurity and Infrastructure Security Agency,Arlington,VA,irt@example.test
+irs.gov,Federal - Executive,Department of the Treasury,Internal Revenue Service,Washington,DC,domainsecurity@example.test
+login.gov,Federal - Executive,General Services Administration,Federal Acquisition Service,Washington,DC,vulnerability@example.test
+nasa.gov,Federal - Executive,National Aeronautics and Space Administration,NASA Office of the Chief Information Officer,Huntsville,AL,soc@example.test
+unkira.gov,Tribal - Election,Native Village of Unalakleet,,Unalakleet,AK,(blank)
+usa.gov,Federal - Executive,General Services Administration,Federal Acquisition Service,Washington,DC,vulnerability@example.test

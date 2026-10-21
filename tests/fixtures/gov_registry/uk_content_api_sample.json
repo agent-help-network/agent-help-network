@@ -1,0 +1,45 @@
+{
+ "title": "List of .gov.uk domain names",
+ "base_path": "/government/publications/list-of-gov-uk-domain-names",
+ "public_updated_at": "2026-03-31T15:10:03+01:00",
+ "details": {
+  "attachments": [
+   {
+    "attachment_type": "file",
+    "content_type": "text/csv",
+    "file_size": 209450,
+    "filename": "List_of_.gov.uk_domain_names_as_of_31_March_2026_1.csv",
+    "id": "9218612",
+    "title": "List of .gov.uk domain names as of  31 March  2026",
+    "url": "https://assets.publishing.service.gov.uk/media/69cbd582024cdf09254f3f7d/List_of_.gov.uk_domain_names_as_of_31_March_2026_1.csv"
+   },
+   {
+    "attachment_type": "file",
+    "content_type": "text/csv",
+    "file_size": 135791,
+    "filename": "List_of_.gov.uk_domain_names_as_of_13_January_2025.csv",
+    "id": "9218391",
+    "title": "List of .gov.uk domain names as of 13 January 2025",
+    "url": "https://assets.publishing.service.gov.uk/media/6784f6eff029f40e508816d9/List_of_.gov.uk_domain_names_as_of_13_January_2025.csv"
+   },
+   {
+    "attachment_type": "file",
+    "content_type": "text/csv",
+    "file_size": 200239,
+    "filename": "List_of_gov.uk_domains_as_of_30_March_2023.csv",
+    "id": "9218392",
+    "title": "List of .gov.uk domain names as of 30 March 2023",
+    "url": "https://assets.publishing.service.gov.uk/media/6425aa8c60a35e00120cb279/List_of_gov.uk_domains_as_of_30_March_2023.csv"
+   },
+   {
+    "attachment_type": "file",
+    "content_type": "application/pdf",
+    "file_size": 1,
+    "filename": "notes_1_January_2030.pdf",
+    "id": "0",
+    "title": "Notes as of 1 January 2030",
+    "url": "https://assets.publishing.service.gov.uk/media/0/notes_1_January_2030.pdf"
+   }
+  ]
+ }
+}

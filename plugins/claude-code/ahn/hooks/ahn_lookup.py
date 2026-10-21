@@ -112,6 +112,7 @@ NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "resp
                          "robots_grouping_differs_by_parser", "profile_not_read",
                          "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no",
                          "official_path_available", "provider_scope", "provider_clear", "provider_unknown",
+                         "government_registry_listed", "government_suffix_restricted", "government_list_version_missing",
                          "reports_unknown", "reports_stale", "reports_unverified"})
 AGENT_KINDS = frozenset({"user_agent", "search_crawler", "training_crawler"})
 AGENT_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9-]{1,31}")

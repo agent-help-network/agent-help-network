@@ -836,7 +836,8 @@ def test_next_check_codes_match_the_contract_list():
         "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow",
         "robots_grouping_differs_by_parser", "robots_unknown",
         "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no",
-        "official_path_available"}
+        "official_path_available",
+        "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"}
 
 
 def test_next_check_codes_match_the_service_model():

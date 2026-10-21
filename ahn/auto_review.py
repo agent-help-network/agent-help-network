@@ -161,6 +161,14 @@ def main() -> None:
             print(f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}")
         except Exception as exc:  # the seed pre-read is best effort and must not fail the review cron
             print(f"profile_warm failed={type(exc).__name__}")
+    # Last, because it does real work only about once a day: the public government domain lists
+    # (U.S. .gov daily, UK .gov.uk monthly). A failed or odd download keeps the stored version.
+    try:
+        from .gov_registry import refresh_due
+        for result in refresh_due(Settings(database_url, "unused-by-status-refresh")):
+            print(f"gov_registry registry={result['registry']} outcome={result['outcome']} rows={result['rows']} reason={result['reason']}")
+    except Exception as exc:  # e.g. migration 022 not applied yet: nothing else in the cron depends on this step
+        print(f"gov_registry failed={type(exc).__name__}")
 
 
 if __name__ == "__main__":

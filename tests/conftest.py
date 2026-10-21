@@ -25,4 +25,9 @@ def no_live_access_profile(monkeypatch):
             monkeypatch.setattr(f"ahn.background_reads.{name}", _no_network)
         except Exception:
             pass
+    # The government-list download is the only other external read, and it only ever goes to the lists' publishers.
+    try:
+        monkeypatch.setattr("ahn.gov_registry.http_get", _no_network)
+    except Exception:
+        pass
     yield

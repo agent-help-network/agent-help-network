@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from . import background_reads
+from . import background_reads, gov_registry
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .models import ObservationIn, OutcomeIn
@@ -334,6 +334,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     access_profile = None
     profile_not_read = False
     profile_due = False
+    host_facts = None
     jobs: list[tuple[str, str]] = []
     official = official_paths(host) if public else None
     # One connection: the bookkeeping writes (committed at once, so their row locks are not held for
@@ -405,6 +406,15 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     # Only hosts inside the bounded lookup register (QUERIED_HOST_CAP) get a read queued.
                     if profile_due and registered:
                         jobs.append(("access_profile", host))
+                if gov_registry.enabled():
+                    # Registry facts (a government list, a government-only suffix) are database reads like the
+                    # layers above; a failure leaves the field out instead of failing the lookup.
+                    try:
+                        with conn.transaction():
+                            host_facts = gov_registry.host_facts(conn, host)
+                    except Exception:
+                        LOG.warning("host_facts_unavailable")
+                        host_facts = None
             else:
                 # Subdomain or tenant host: say so instead of leaving the layer silently empty.
                 profile_not_read = True
@@ -449,7 +459,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "task_step": row["task_step"], "synthetic": test_query,
         })
     official_page = OFFICIAL_STATUS_PAGES.get(host) if settings.public_mode and not test_query and provider_status is None else None
-    return {
+    result = {
         "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
         "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,
         "current_site_status": "unknown", "evidence_level": level,
@@ -465,8 +475,11 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read),
         "failure_stage": failure_stage,
         "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
-                                   profile_not_read=profile_not_read),
+                                   profile_not_read=profile_not_read, host_facts=host_facts),
     }
+    if host_facts is not None:
+        result["host_facts"] = host_facts
+    return result
 
 
 def public_incidents(settings: Settings, site_host: str | None = None, error_class: str | None = None, limit: int = 20):
