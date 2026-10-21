@@ -104,3 +104,18 @@ def test_the_freshness_rule_is_written_in_the_contract_and_the_decisions():
     assert "마지막 성공 읽기의 나이" in ko and "이전 값을 `stale`로 표시" not in ko
     assert "read together or not at all" in en and "함께 읽거나 함께 건너뛴다" in ko
     assert "| D46 (" in decisions and "마지막 성공 읽기의 나이" in decisions
+
+
+@pytest.mark.parametrize("label", ["no_cname", "id_mismatch", "not_public"])
+def test_a_verification_failure_ends_the_statement_at_once(label):
+    now = T + timedelta(minutes=20)
+    assert background_reads.feed_freshness(T, T + timedelta(minutes=15), now, label) == ("stale", True)
+    # Only as the latest attempt: a verification failure before the last success does not count.
+    assert background_reads.feed_freshness(T, T - timedelta(minutes=5), now, label) == ("fresh", False)
+    assert background_reads.feed_freshness(T, T + timedelta(minutes=15), now, "timeout") == ("fresh", True)
+
+
+def test_the_plugin_skill_says_fresh_can_come_with_a_failure():
+    from pathlib import Path
+    skill = Path(__file__).resolve().parents[1] / "plugins" / "claude-code" / "ahn" / "skills" / "ahn-lookup" / "SKILL.md"
+    assert "`freshness: fresh` plus `error_detail`: latest read failed" in skill.read_text(encoding="utf-8")

@@ -509,3 +509,32 @@ def test_the_search_page_shows_a_failure_under_a_fresh_statement(db, small):
         page = client.get("/en/search", params={"site_host": "render.com"}).text
     assert "Critical provider-reported issue" in page and "Latest feed read failed:" in page and "timeout" in page
     assert "Live source unavailable" not in page
+
+
+def test_the_owner_board_infra_feed_stays_fresh_after_one_failed_read(db, small):
+    sync_curated_sources(db)
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+                        VALUES ('cloudflare.com','major',now() - interval '70 minutes',now() - interval '1 minute','timeout',1)""")
+    with connect(db) as conn:
+        feeds = {feed["host"]: feed for feed in signal_history._infra_feeds(conn, set(), datetime.now(timezone.utc))}
+    assert feeds["cloudflare.com"]["fresh"] is True
+
+
+@pytest.mark.parametrize("label", sorted(background_reads.FEED_UNVERIFIED))
+def test_a_source_that_no_longer_verifies_is_stale_at_once(db, small, label):
+    # no_cname, id_mismatch, not_public: the discovered source is no longer verified, so its last statement may
+    # not be the provider's; unlike a timeout this ends the statement at once (D46).
+    sync_curated_sources(db)
+    datto_type_row(db, fetched_minutes=10, error=label)
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+                        VALUES ('cloudflare.com','major',now() - interval '10 minutes',now(),%s,1)""", (label,))
+    answer = service.check(db, "render.com")
+    assert answer["provider_status"]["freshness"] == "stale" and answer["provider_status"]["error_detail"] == label
+    assert answer["recommendation"]["action"] != "wait_provider_incident"
+    with connect(db) as conn:
+        now = datetime.now(timezone.utc)
+        assert "render.com" not in signal_history._provider_now(conn, now)
+        feeds = {feed["host"]: feed for feed in signal_history._infra_feeds(conn, set(), now)}
+    assert feeds["cloudflare.com"]["fresh"] is False

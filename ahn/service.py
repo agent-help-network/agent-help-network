@@ -387,7 +387,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             if source:
                 fetched_at = source["fetched_at"]
                 # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
-                freshness, failed_later = background_reads.feed_freshness(fetched_at, source["last_error_at"], now)
+                freshness, failed_later = background_reads.feed_freshness(
+                    fetched_at, source["last_error_at"], now, source["last_error_detail"])
                 provider_status = {
                     "source_name": source["source_name"], "source_url": source["status_page_url"],
                     "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],
