@@ -10,6 +10,9 @@ from urllib.parse import urlsplit
 
 from starlette.requests import Request
 
+from .owner_auth import valid_owner_ip
+from .tool_metrics import is_mcp_metric_request
+
 
 SOURCES = {"moltychan", "getpostingboard", "campfire", "agentboard", "openai", "muse", "google", "bing"}
 CAMPAIGNS = {"beta_launch", "beta_2026_10"}
@@ -53,8 +56,44 @@ def request_source(request: Request) -> tuple[str, str, str, str]:
     )
 
 
-def client_type(request: Request) -> str:
+# Attribution recorded for a request from the operator's allowed network. A shared home address is a network
+# category only: it is not a person and not proof that the request was a test.
+OPERATOR_ATTRIBUTION = ("owner_network", "internal", "none_or_other", "none")
+OPERATOR_SOURCE = OPERATOR_ATTRIBUTION[0]
+
+# Our own software announces itself with these User-Agent prefixes (ahn_lookup.py and ahn_client/_client.py).
+# Any caller can send them, so like every kind here they are hints, not identities. The values fit varchar(24).
+PLUGIN_UA_PREFIX = "ahn-claude-code-plugin/"
+AHN_CLIENT_UA_PREFIX = "ahn-client/"
+CLIENT_KINDS = ("plugin_hint", "ahn_client_hint", "mcp_hint", "browser_hint", "agent_or_script_hint", "crawler_hint", "unknown")
+
+
+def is_operator_request(request: Request, owner_allowed_ips: tuple[str, ...]) -> bool:
+    """True when the edge-provided address is one of the operator's allowed individual IPs.
+
+    One definition for every measurement that must leave the operator out. Nothing is stored: the caller
+    decides what to do with the answer. Existing daily lookup totals do not use it yet (owner decision pending).
+    """
+    return valid_owner_ip(request.headers.get("cf-connecting-ip", ""), owner_allowed_ips)
+
+
+def attribute_request(request: Request, owner_allowed_ips: tuple[str, ...]) -> tuple[str, str, str, str]:
+    """request_source(), except that operator-network requests collapse into one internal category."""
+    if is_operator_request(request, owner_allowed_ips):
+        return OPERATOR_ATTRIBUTION
+    return request_source(request)
+
+
+def client_type(request: Request, pepper: str = "") -> str:
+    """Coarse client-software hint from the request path, the MCP hop token and the User-Agent; the raw header is never kept."""
+    if request.url.path.startswith("/mcp") or (pepper and is_mcp_metric_request(request.headers.get("x-ahn-mcp-call"), pepper)):
+        # The remote MCP endpoint itself, or the adapter's loopback hop that carries one tool call to the REST API.
+        return "mcp_hint"
     ua = request.headers.get("user-agent", "").lower()[:512]
+    if ua.startswith(PLUGIN_UA_PREFIX):
+        return "plugin_hint"
+    if ua.startswith(AHN_CLIENT_UA_PREFIX):
+        return "ahn_client_hint"
     if any(token in ua for token in ("googlebot", "bingbot", "oai-searchbot", "gptbot", "claudebot", "facebookexternalhit")):
         return "crawler_hint"
     if any(token in ua for token in ("chatgpt", "claude-user", "anthropic", "muse", "python-requests", "httpx", "curl/", "wget/")):

@@ -58,6 +58,7 @@
     <div class="card"><span>DB 연결</span><strong>{{ database_stats.connections }}</strong><small>PostgreSQL 현재 연결 수</small></div>
   </section>
   {% if bandwidth %}<p class="notice">대역폭 상태: {{ bandwidth.state }} · 마지막 검사 {{ bandwidth.checked_at }} · 최근 측정 구간 {{ bandwidth.latest_sample_at }}. Render 지표는 약 60분 지연되며 청구액 상한이 아닙니다.</p>{% else %}<p class="notice">Render 대역폭 검사 결과가 아직 없습니다. 사용량 0으로 해석하지 마세요.</p>{% endif %}
+  <p class="notice" id="lookup-kinds">지난 7일 조회 요청(REST·MCP, 2xx) 총 {{ lookup_kinds.total }}건, 운영자 네트워크 제외 {{ lookup_kinds.external }}건 — {% for part in lookup_kinds.parts %}{{ part.label }} {{ part.total }}→{{ part.external }}{% if not loop.last %} · {% endif %}{% endfor %} (전체→운영자 제외). 웹 검색 페이지 요청 {{ web_search.total }}→{{ web_search.external }}건(빈 검색 양식 포함). MCP는 내부 연결로 들어와 운영자 구분이 되지 않으므로 두 수가 같습니다.</p>
   <div class="sections">
     <section class="panel wide" aria-label="일별 조회"><h2>일별 조회 수요</h2><div class="bars">
       {% for row in chart %}<div class="bar-col"><b>{{ row.checks }}</b><div class="bar" style="height: {{ row.pct }}%"></div><small>{{ row.day[5:] }}</small></div>{% endfor %}
