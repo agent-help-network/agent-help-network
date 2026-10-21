@@ -441,3 +441,8 @@ def test_owner_board_json_and_card_use_the_owner_gate(db):
         assert page.status_code == 200 and 'id="board-signals"' in page.text and "빈 시간 비율" in page.text
         assert 'id="board-infra-feeds"' in page.text and "cloudflare.com 미등록" in page.text and "stale" in page.text
         assert {"infra_feeds", "stale_now", "a_ended_by"} <= set(body)
+        # With the gzip middleware (D42, on by default): still the same JSON, still private and never stored.
+        zipped = client.get("/owner/board.json", headers={**token, "Accept-Encoding": "gzip"})
+        assert zipped.status_code == 200 and zipped.headers["content-encoding"] == "gzip"
+        assert zipped.headers["content-type"].startswith("application/json") and zipped.headers["cache-control"] == "private, no-store"
+        assert zipped.json()["days"] == 7 and zipped.json()["infra_feeds"] == body["infra_feeds"]
