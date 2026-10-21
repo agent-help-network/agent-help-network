@@ -5,8 +5,10 @@ Stub feeds only (MockTransport); no real status page is read.
 
 from __future__ import annotations
 
+import json
 import os
-import threading
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -207,6 +209,14 @@ def test_failures_back_off_and_refusals_are_not_retried_around(db, small):
     assert batch(db, feeds)["checked"] == 0  # the second failure waits 30 minutes
     age(db, 30)
     assert batch(db, feeds)["checked"] == 3  # 30 more minutes: the 502s again, and the 403's hour has passed
+    # A failure that is not a refusal never waits past an hour (the third and fourth 502), while the second 403 waits two.
+    age(db, 59)
+    assert batch(db, feeds)["checked"] == 0
+    age(db, 2)
+    assert batch(db, feeds)["checked"] == 2 and not any("cloudflarestatus" in url for url in feeds.seen[-2:])
+    assert q(db, "SELECT failures FROM status_cache WHERE site_host='render.com'")[0]["failures"] == 4
+    age(db, 61)
+    assert batch(db, feeds)["checked"] == 3  # the 502s after an hour again; the 403 after its two hours
     # A success clears the count.
     age(db, 24 * 60)
     feeds.answer = lambda request: httpx.Response(200, json=QUIET)
@@ -228,12 +238,134 @@ def test_one_run_is_bounded_by_its_limit_and_its_time_budget(db, small, monkeypa
     assert batch(db, feeds, time_budget=-1.0)["checked"] == 0  # no read starts once the budget is spent
 
 
-def test_a_feed_a_lookup_is_reading_is_skipped_by_the_run(db, small):
+def test_a_feed_another_process_is_reading_is_skipped(db, small):
+    # The lock is the database's, keyed by the feed address, so the cron and the web process exclude each other.
     sync_curated_sources(db)
-    lock = status_refresh._SOURCE_LOCKS.setdefault("cloudflare.com", threading.Lock())
-    with lock:
-        result = batch(db, Feeds())
-    assert result["checked"] == 2 and result["remaining"] == 1
+    feeds = Feeds()
+    with connect(db) as holder:
+        holder.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (SOURCES["cloudflare.com"].api_url,))
+        result = batch(db, feeds)
+        assert result["checked"] == 2 and result["remaining"] == 1
+        assert not any("cloudflarestatus" in url for url in feeds.seen)
+        # The lookup path's reader skips it too and answers from the cache (nothing cached yet: not ok).
+        with httpx.Client(transport=httpx.MockTransport(feeds)) as client:
+            assert status_refresh.refresh_one(db, "cloudflare.com", client=client, min_interval=0, wait=True) is False
+        assert not any("cloudflarestatus" in url for url in feeds.seen)
+    # Released: the next run reads it.
+    assert batch(db, feeds)["checked"] == 1
+
+
+def test_a_feed_read_moments_ago_elsewhere_is_not_read_again(db, small):
+    sync_curated_sources(db)
+    feeds = Feeds()
+    with httpx.Client(transport=httpx.MockTransport(feeds)) as client:
+        assert status_refresh.refresh_one(db, "render.com", client=client, min_interval=0, wait=True)
+    with connect(db) as conn:  # make it due again by age, but leave the attempt itself seconds old
+        conn.execute("UPDATE status_cache SET indicator='major' WHERE site_host='render.com'")
+    feeds.seen.clear()
+    batch(db, feeds, now=datetime.now(timezone.utc) + timedelta(hours=1))
+    assert not any("render" in url for url in feeds.seen)  # attempted within 15 s: skipped, at most 1 request/s per host
+
+
+@pytest.mark.parametrize("indicator,queued_at_16_minutes", [("major", True), ("maintenance", True), ("none", False)])
+def test_the_lookup_path_keeps_a_failing_active_feed_at_fifteen_minutes(db, small, indicator, queued_at_16_minutes):
+    # During a large outage the status page itself may time out or answer 5xx: a feed whose last statement was
+    # active is retried every 15 minutes however often it failed; a quiet one waits at most an hour.
+    sync_curated_sources(db)
+    with connect(db) as conn:
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+                        VALUES ('render.com',%s,now() - interval '40 minutes',now() - interval '16 minutes','timeout',6)""",
+                     (indicator,))
+    with TestClient(create_app(db)) as client:
+        client.get("/v1/incidents/check", params={"site_host": "render.com"})
+        assert bool(q(db, "SELECT kind FROM background_reads")) is queued_at_16_minutes
+    if not queued_at_16_minutes:
+        # A quiet statement stays fresh on the lookup path for two hours; the cron retries the failing feed after
+        # the one-hour ceiling, however many failures came before.
+        def due_hosts():
+            with connect(db) as conn:
+                return {host for _due, hosts, _source in status_refresh.due_feeds(conn, datetime.now(timezone.utc)) for host in hosts}
+        assert "render.com" not in due_hosts()
+        age(db, 45)  # 61 minutes after the sixth failure
+        assert "render.com" in due_hosts()
+
+
+ACTIVE_PAGE = json.loads((Path(__file__).parent / "fixtures" / "status_scope" / "cloudflare.json").read_text(encoding="utf-8"))
+
+
+def active_answer(refuse: str | None = None):
+    routes = {"/api/v2/status.json": ACTIVE_PAGE["status"], "/api/v2/incidents/unresolved.json": ACTIVE_PAGE["unresolved"],
+              "/api/v2/scheduled-maintenances/active.json": ACTIVE_PAGE["maintenances"]}
+
+    def answer(request):
+        if "cloudflarestatus" not in str(request.url):
+            return httpx.Response(200, json=QUIET)
+        if request.url.path == refuse:
+            return httpx.Response(429)
+        return httpx.Response(200, json=routes[request.url.path])
+    return answer
+
+
+def cloudflare_paths(feeds):
+    return [url.split("cloudflarestatus.com")[1] for url in feeds.seen if "cloudflarestatus" in url]
+
+
+def test_no_scope_list_starts_once_the_run_budget_is_spent(db, small, monkeypatch):
+    sync_curated_sources(db)
+    with connect(db) as conn:  # only Cloudflare is due
+        conn.execute("UPDATE status_sources SET enabled=false WHERE site_host<>'cloudflare.com'")
+    clock = [0.0]
+    monkeypatch.setattr(status_refresh, "_clock", lambda: clock[0])
+    # The pause before the feed moves the clock past the 60 s budget: status.json is still read (it was started),
+    # its lists are not, and that is not counted as a scope failure.
+    monkeypatch.setattr(background_reads, "_pace", lambda: clock.__setitem__(0, clock[0] + 70.0))
+    feeds = Feeds(active_answer())
+    assert batch(db, feeds, time_budget=60.0)["updated"] == 1
+    assert cloudflare_paths(feeds) == ["/api/v2/status.json"]
+    row = q(db, "SELECT indicator,active_incidents,scope_failures FROM status_cache WHERE site_host='cloudflare.com'")[0]
+    assert row == {"indicator": "major", "active_incidents": None, "scope_failures": None}
+
+
+def test_a_refused_scope_list_rests_in_the_cron_too(db, small):
+    sync_curated_sources(db)
+    feeds = Feeds(active_answer(refuse="/api/v2/incidents/unresolved.json"))
+    batch(db, feeds)
+    assert cloudflare_paths(feeds) == ["/api/v2/status.json", "/api/v2/incidents/unresolved.json"]
+    assert q(db, "SELECT scope_failures,scope_error FROM status_cache WHERE site_host='cloudflare.com'")[0] == {
+        "scope_failures": 1, "scope_error": "http_429"}
+    # Active, so due again after 15 minutes; the lists rest an hour after the refusal: status.json only.
+    age(db, 16)
+    feeds.seen.clear()
+    assert batch(db, feeds)["checked"] >= 1
+    assert cloudflare_paths(feeds) == ["/api/v2/status.json"]
+
+
+def test_a_lookup_before_the_sync_drops_the_cache_of_a_changed_feed_address(db, monkeypatch, small):
+    with connect(db) as conn:
+        assert status_refresh.register_source(conn, "render.com")
+        conn.execute("INSERT INTO status_cache (site_host,indicator,fetched_at) VALUES ('render.com','major',now())")
+    moved = {**SMALL, "render.com": Source("Render Status", "https://status.render.com/", "https://status.render.com/api/v2/status.json?moved")}
+    monkeypatch.setattr(status_refresh, "SOURCES", moved)
+    with connect(db) as conn:
+        assert status_refresh.register_source(conn, "render.com")
+    assert q(db, "SELECT count(*) AS n FROM status_cache WHERE site_host='render.com'")[0]["n"] == 0
+    # An unchanged address keeps its cache.
+    with connect(db) as conn:
+        conn.execute("INSERT INTO status_cache (site_host,indicator,fetched_at) VALUES ('render.com','none',now())")
+        assert status_refresh.register_source(conn, "render.com")
+    assert q(db, "SELECT count(*) AS n FROM status_cache WHERE site_host='render.com'")[0]["n"] == 1
+
+
+def test_a_successful_discovery_clears_the_failure_count(db):
+    page = "https://status.example.org/"
+    source = Source("Example Status", page, page + "api/v2/status.json", "discovered_statuspage")
+    with connect(db) as conn:
+        assert status_refresh.register_source(conn, "example.org", source)
+        conn.execute("""INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+                        VALUES ('example.org','unknown',NULL,now(),'timeout',5)""")
+    background_reads._store_discovered(db, "example.org", (source, "none", None), {"body_sha256": "a" * 64})
+    row = q(db, "SELECT indicator,failures,last_error_at FROM status_cache WHERE site_host='example.org'")[0]
+    assert row == {"indicator": "none", "failures": None, "last_error_at": None}
 
 
 def test_the_lookup_path_follows_the_same_backoff(db, small):

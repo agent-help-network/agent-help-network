@@ -1353,6 +1353,11 @@ def register_source(conn, site_host: str, source: Source | None = None) -> bool:
         ).fetchone()
         page_url = f"https://status.{site_host}/"
         return bool(row and row["enabled"] and row["status_page_url"] == page_url and row["api_url"] == page_url + "api/v2/status.json")
+    # A feed address that changed since the row was written (a lookup can come before the cron's sync) drops the
+    # cached read of the old address, so the answer is pending until the new one is read, never the old feed's value.
+    old = conn.execute("SELECT api_url FROM status_sources WHERE site_host=%s", (site_host,)).fetchone()
+    if old and old["api_url"] != source.api_url:
+        conn.execute("DELETE FROM status_cache WHERE site_host=%s", (site_host,))
     row = conn.execute(
         """INSERT INTO status_sources (site_host,source_name,status_page_url,api_url)
            VALUES (%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
@@ -1488,9 +1493,13 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
                     min_interval: int = 15, scope_allowed=None) -> bool | None:
     """Read one feed once and record the result for every host mapped to it (aliases share one feed).
 
-    A feed attempted within ``min_interval`` seconds is skipped (None). True or False is the read's outcome."""
+    The read holds a database lock on the feed address (pg_try_advisory_xact_lock), so the cron and the web
+    process never read one feed at the same time; a feed whose lock is held, or that was attempted within
+    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome."""
     own_client = client is None
     with connect(settings) as lock_conn:
+        if not lock_conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok", (source.api_url,)).fetchone()["ok"]:
+            return None
         previous = lock_conn.execute(
             "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
             (hosts[0],),
@@ -1642,13 +1651,19 @@ def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Sou
 
 def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, limit: int = FEED_BATCH_MAX,
                   time_budget: float = FEED_BATCH_SECONDS, now: datetime | None = None) -> dict:
-    """The cron's feed step: read the due feeds (due_feeds), at most ``limit`` and none started after
-    ``time_budget`` seconds, paced like the background reads (two per second per process)."""
+    """The cron's feed step: read the due feeds (due_feeds), at most ``limit``, paced like the background reads
+    (two per second per process). Once ``time_budget`` seconds have passed no feed and no scope list is started;
+    a feed already being read keeps its own 10-second body limit, so the budget never turns into a feed failure.
+    A feed another process is reading (its database lock is held) is skipped and stays due."""
     if not 1 <= limit <= FEED_BATCH_MAX:
         raise ValueError(f"limit must be 1-{FEED_BATCH_MAX}")
     from .background_reads import _pace
 
     deadline = _clock() + time_budget
+
+    def within_budget() -> bool:
+        return _clock() <= deadline
+
     with connect(settings) as conn:
         ready = due_feeds(conn, now or datetime.now(timezone.utc))
     result = {"checked": 0, "updated": 0, "failed": 0, "remaining": len(ready)}
@@ -1656,22 +1671,15 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
     client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
     try:
         for _due, hosts, source in ready[:limit]:
-            if _clock() > deadline:
+            if not within_budget():
                 break
-            lock = _SOURCE_LOCKS.setdefault(hosts[0], threading.Lock())
-            if source is not None and not lock.acquire(blocking=False):
-                continue  # a lookup is reading this feed right now
-            try:
-                _pace()
-                if source is None:
-                    ok = refresh_one(settings, hosts[0], client=client, wait=True)
-                else:
-                    ok = _read_and_store(settings, hosts, source, client)
-            finally:
-                if source is not None:
-                    lock.release()
-            if ok is None:
-                continue  # just read elsewhere: it stays due for a later run
+            _pace()
+            if source is None:
+                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget)
+            else:
+                ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget)
+                if ok is None:
+                    continue  # read elsewhere right now (or just now): it stays due for a later run
             result["checked"] += 1
             result["remaining"] -= 1
             result["updated" if ok else "failed"] += 1

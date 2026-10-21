@@ -558,7 +558,11 @@ def test_scheduled_status_feed_reads_in_the_policy_match_the_code():
     from ahn import status_refresh
     assert status_refresh.CRON_IDLE == _td(hours=1) and background_reads.FEED_RETRY_MINUTES == 15
     assert background_reads.FEED_BACKOFF_MAX == _td(days=1) and status_refresh.SCOPE_GAP_SECONDS >= 1.0
+    assert background_reads.FEED_FAILURE_BACKOFF_MAX == _td(hours=1) < _td(hours=background_reads.FEED_STALE_HOURS)
     assert background_reads.FEED_REFUSALS == {"http_401", "http_403", "http_429"}
+    assert background_reads.feed_backoff(1, "timeout") == _td(minutes=15)
+    assert background_reads.feed_backoff(9, "http_502", "major") == _td(minutes=15)  # last statement active
+    assert background_reads.feed_backoff(30, "http_403") == background_reads.FEED_BACKOFF_MAX
     wanted = {
         "schedule": Phrase("we read the status feed of every provider in our status-mapping table (ahn/status_refresh.py in the "
                            "public source repository) whether or not anyone looked the host up, about once an hour, and every "
@@ -568,9 +572,12 @@ def test_scheduled_status_feed_reads_in_the_policy_match_the_code():
         "address": Phrase("Each read requests only the feed's own address (for most pages /api/v2/status.json), at most one "
                           "request per second to one status host",
                           "그 피드 자체의 주소(대부분 /api/v2/status.json)만 요청하고, 한 상태 호스트에는 초당 최대 한 번만 요청합니다"),
-        "backoff": Phrase("a feed that keeps failing is read less often, down to once a day, and a refusal (401, 403 or 429) is "
-                          "never retried another way",
-                          "계속 실패하는 피드는 점점 드물게(최대 하루 한 번까지) 읽고, 거절(401·403·429)은 다른 방법으로 다시 시도하지 않습니다"),
+        "backoff": Phrase("A feed that fails is read again after 15 minutes and then at most an hour apart (every 15 minutes "
+                          "while its last statement was active)",
+                          "실패한 피드는 15분 뒤 다시 읽고 그 뒤로는 최대 1시간 간격으로 읽습니다(마지막 발표가 활성이었으면 15분마다)"),
+        "refusal": Phrase("a refusal (401, 403 or 429) is never retried another way, and a feed that keeps refusing is read "
+                          "less often, down to once a day",
+                          "거절(401·403·429)은 다른 방법으로 다시 시도하지 않으며, 계속 거절하는 피드는 점점 드물게(최대 하루 한 번까지) 읽습니다"),
     }
     assert_phrases("scheduled status feed reads", {lang: section(lang, "05") for lang in LANGS}, wanted)
     for lang, old in (("en", "These reads run in the background after a lookup"), ("ko", "이 읽기는 조회가 기다리는 동안이 아니라")):
