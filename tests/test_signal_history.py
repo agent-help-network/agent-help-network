@@ -144,12 +144,14 @@ def test_retention_constants_match_the_cleanup_job():
 
 
 def test_recording_happens_only_at_the_existing_write_points():
-    # The history is written where get_profile and refresh_one already store a result; nothing new reads a site.
+    # The history is written where get_profile and the feed reader already store a result; nothing new reads a site.
+    # Since D44 the feed result is stored by _store_read, which refresh_one and the cron's batch both use.
     assert "record_read(conn, site_host, profile, now, trigger)" in inspect.getsource(access_profile.get_profile)
     from ahn import status_refresh
-    # The feed result is stored by _store_read, which refresh_one calls (D43).
     assert "record_provider_status(conn, site_host, indicator, updated_at)" in inspect.getsource(status_refresh._store_read)
-    assert "_store_read(" in inspect.getsource(status_refresh.refresh_one)
+    assert "_store_read(" in inspect.getsource(status_refresh._read_and_store)
+    assert "_read_and_store(" in inspect.getsource(status_refresh.refresh_one)
+    assert "_read_and_store(" in inspect.getsource(status_refresh.refresh_batch)
     module = inspect.getsource(signal_history)
     for forbidden in ("httpx", "urllib3", "fetch_public_file", "socket"):
         assert forbidden not in module.replace("no network", "")

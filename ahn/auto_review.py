@@ -132,10 +132,17 @@ def main() -> None:
     result = review_batch(database_url)
     print(f"auto_review published={result['published']} held={result['held']}")
     from .settings import Settings
-    from .status_refresh import refresh_batch
+    from .status_refresh import refresh_batch, sync_curated_sources
+    # Every curated feed mapping is registered and read on a schedule, without a lookup (D44).
+    try:
+        synced = sync_curated_sources(Settings(database_url, "unused-by-status-refresh"))
+        print(f"status_sources curated={synced['curated']} added={synced['added']} changed={synced['changed']} removed={synced['removed']}")
+    except Exception as exc:  # the lookup-registered feeds below are still read
+        print(f"status_sources failed={type(exc).__name__}")
     try:
         source_result = refresh_batch(Settings(database_url, "unused-by-status-refresh"))
-        print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} failed={source_result['failed']}")
+        print(f"status_refresh checked={source_result['checked']} updated={source_result['updated']} "
+              f"failed={source_result['failed']} remaining={source_result['remaining']}")
     except Exception as exc:  # one step's failure (e.g. a migration the web service has not applied yet) must not skip the rest
         print(f"status_refresh failed={type(exc).__name__}")
     # Reads queued by lookups first, then the seed pre-read, within one shared time budget.

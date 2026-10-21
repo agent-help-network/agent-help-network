@@ -305,9 +305,13 @@ def _infra_periods(conn, start: datetime, end: datetime) -> list[tuple[datetime,
 
 
 def _registered_feed_hosts(conn) -> set[str]:
-    """Hosts whose feed refresh_batch actually reads now: an enabled mapping registered by a lookup (D22)."""
+    """Hosts whose feed refresh_batch actually reads now (status_refresh.due_feeds): an enabled curated mapping,
+    registered by the cron without a lookup (D44), or an enabled mapping registered by a lookup (D22)."""
+    from .status_refresh import CURATED_EVIDENCE
+
     return {row["site_host"] for row in conn.execute(
-        "SELECT s.site_host FROM status_sources s JOIN queried_hosts q ON q.site_host=s.site_host WHERE s.enabled=true"
+        """SELECT s.site_host FROM status_sources s LEFT JOIN queried_hosts q ON q.site_host=s.site_host
+           WHERE s.enabled=true AND (q.site_host IS NOT NULL OR s.evidence=%s)""", (CURATED_EVIDENCE,)
     ).fetchall()}
 
 

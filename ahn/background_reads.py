@@ -91,6 +91,35 @@ def feed_refresh_after(indicator: str | None, idle: timedelta) -> timedelta:
     return timedelta(minutes=FEED_RETRY_MINUTES) if indicator in FEED_ACTIVE_INDICATORS else idle
 
 
+FEED_BACKOFF_MAX = timedelta(hours=24)
+FEED_REFUSED_BACKOFF_MINUTES = 60   # a refusal is the provider's answer: start slower and never retry around it
+FEED_REFUSALS = frozenset({"http_401", "http_403", "http_429"})
+
+
+def feed_backoff(failures: int | None, error_detail: str | None) -> timedelta:
+    """Wait after the latest of ``failures`` consecutive failed reads: FEED_RETRY_MINUTES (FEED_REFUSED_BACKOFF_MINUTES
+    after a 401, 403 or 429), doubled with each further failure, at most FEED_BACKOFF_MAX (D44)."""
+    base = FEED_REFUSED_BACKOFF_MINUTES if error_detail in FEED_REFUSALS else FEED_RETRY_MINUTES
+    exponent = min(max(1, failures or 1) - 1, 16)
+    return min(FEED_BACKOFF_MAX, timedelta(minutes=base * 2 ** exponent))
+
+
+def feed_next_due(row, idle: timedelta) -> datetime | None:
+    """When a feed is next due, from its status_cache row (indicator, fetched_at, last_error_at, failures,
+    last_error_detail); None when it was never attempted (due now). The lookup path (idle FEED_STALE_HOURS) and
+    the cron (idle one hour) use this one rule: a success is due again after feed_refresh_after, and a failure
+    after feed_backoff; both must have passed."""
+    fetched_at, error_at = row.get("fetched_at"), row.get("last_error_at")
+    if fetched_at is None and error_at is None:
+        return None
+    due = [fetched_at + feed_refresh_after(row.get("indicator"), idle)] if fetched_at is not None else []
+    if error_at is not None and (fetched_at is None or error_at >= fetched_at):
+        due.append(error_at + feed_backoff(row.get("failures"), row.get("last_error_detail")))
+    elif error_at is not None:
+        due.append(error_at + timedelta(minutes=FEED_RETRY_MINUTES))
+    return max(due)
+
+
 def enabled_by_env() -> bool:
     return os.environ.get("AHN_BACKGROUND_READS", "1").strip() != "0"
 

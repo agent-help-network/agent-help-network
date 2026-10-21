@@ -235,7 +235,7 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
             assert conn.execute("SELECT count(*) AS n FROM queried_hosts WHERE site_host='github.com'").fetchone()["n"] == 1
             assert conn.execute("SELECT count(*) AS n FROM status_sources").fetchone()["n"] == 1
             conn.execute("UPDATE status_cache SET fetched_at=now()-interval '2 hours' WHERE site_host='github.com'")
-        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0}
+        assert refresh_batch(settings, client=remote) == {"checked": 1, "updated": 1, "failed": 0, "remaining": 0}
     for attempt in range(5):
         unmapped = client.get("/v1/incidents/check", params={"site_host": "example.org"}).json()
         if attempt == 0:

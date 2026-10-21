@@ -18,6 +18,7 @@ from ahn.settings import Settings
 TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
 SEEDS = ["seed-a.com", "seed-b.com", "seed-c.org", "seed-d.net", "seed-e.io"]
 QUEUE_IDLE = {"claimed": 0, "done": 0, "failed": 0, "dropped": 0, "remaining": 0}
+SYNC_IDLE = {"curated": 0, "added": 0, "changed": 0, "removed": 0}
 ROBOTS = b"User-agent: GPTBot\nDisallow: /\n"
 
 
@@ -312,7 +313,8 @@ def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypat
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
     # Only the new step is under test: keep the review and status-feed steps (and their network reads) out of it.
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
-    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0, "remaining": 0})
+    monkeypatch.setattr(status_refresh, "sync_curated_sources", lambda received_settings: SYNC_IDLE)
     monkeypatch.setattr(profile_warm, "warm_profiles", fake_warm)
     monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
 
@@ -334,7 +336,8 @@ def test_cron_main_prints_the_failure_causes_after_the_counts(monkeypatch, capsy
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
     monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
-    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0, "remaining": 0})
+    monkeypatch.setattr(status_refresh, "sync_curated_sources", lambda received_settings: SYNC_IDLE)
     monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
     monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch, **_options: {
         "candidates": 5, "read": 10, "ok": 0, "errors": 10, "causes": {"connect_timeout": 3, "dns_failed": 7}})
@@ -352,11 +355,13 @@ def test_cron_main_survives_a_failing_status_step(monkeypatch, capsys):
         raise RuntimeError("column last_error_detail does not exist")
 
     monkeypatch.setattr(status_refresh, "refresh_batch", broken)
+    monkeypatch.setattr(status_refresh, "sync_curated_sources", broken)
     monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
     monkeypatch.setattr(profile_warm, "warm_profiles", lambda received_settings, *, batch, **_options: {"candidates": 1, "read": 1, "ok": 1, "errors": 0})
     auto_review.main()
     out = capsys.readouterr().out
     assert "status_refresh failed=RuntimeError" in out and "does not exist" not in out
+    assert "status_sources failed=RuntimeError" in out  # the sync step fails on its own too
     assert "profile_warm read=1 ok=1 errors=0 remaining=1" in out  # the later step still ran
 
 
@@ -367,7 +372,8 @@ def test_cron_main_survives_a_failing_warm_step(monkeypatch, capsys):
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
     monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
-    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0, "remaining": 0})
+    monkeypatch.setattr(status_refresh, "sync_curated_sources", lambda received_settings: SYNC_IDLE)
     monkeypatch.setattr(background_reads, "drain", lambda received_settings, *, time_budget: dict(QUEUE_IDLE))
     monkeypatch.setattr(profile_warm, "warm_profiles", broken)
     auto_review.main()
@@ -390,7 +396,8 @@ def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(mo
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
     monkeypatch.delenv("AHN_WARM_BATCH", raising=False)
     monkeypatch.setattr(auto_review, "review_batch", lambda database_url: {"published": 0, "held": 0})
-    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0})
+    monkeypatch.setattr(status_refresh, "refresh_batch", lambda received_settings: {"checked": 0, "updated": 0, "failed": 0, "remaining": 0})
+    monkeypatch.setattr(status_refresh, "sync_curated_sources", lambda received_settings: SYNC_IDLE)
     monkeypatch.setattr(background_reads, "drain", fake_drain)
     monkeypatch.setattr(profile_warm, "warm_profiles", fake_warm)
     monkeypatch.setattr(auto_review.time, "monotonic", lambda: next(ticks["values"]))
