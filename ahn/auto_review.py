@@ -140,7 +140,7 @@ def main() -> None:
         print(f"status_refresh failed={type(exc).__name__}")
     # Reads queued by lookups first, then the seed pre-read, within one shared time budget.
     from .background_reads import drain
-    from .profile_warm import TIME_BUDGET_SECONDS, warm_profiles
+    from .profile_warm import TIME_BUDGET_SECONDS, format_causes, warm_profiles
     started = time.monotonic()
     try:
         queue = drain(Settings(database_url, "unused-by-status-refresh"), time_budget=TIME_BUDGET_SECONDS)
@@ -158,7 +158,10 @@ def main() -> None:
     elif warm_batch:
         try:
             warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch, time_budget=budget)
-            print(f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}")
+            line = f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}"
+            if warm.get("causes"):  # why the errors happened: labels such as dns_failed:7,connect_timeout:3, no host names
+                line += f" causes={format_causes(warm['causes'])}"
+            print(line)
         except Exception as exc:  # the seed pre-read is best effort and must not fail the review cron
             print(f"profile_warm failed={type(exc).__name__}")
     # Last, because it does real work only about once a day: the public government domain lists
