@@ -15,6 +15,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
+from .compression import TextGZipMiddleware
 from .db import connect
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
@@ -306,6 +307,16 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 # Metrics must never change a core API result.
                 pass
         return response
+
+    if settings.response_gzip:
+        # Added after the function middleware above, so it is the outermost layer: the rate limiter and the
+        # request metrics see the identity response, and a 429 never pays for compression. The MCP endpoint and the
+        # offline bundle are never transformed; the MCP adapter's own loopback hop skips it too (no wire to save).
+        app.add_middleware(
+            TextGZipMiddleware,
+            skip_prefixes=("/mcp/", "/v1/bundle/"),
+            skip_request=lambda scope: internal_mcp_hop(Request(scope)),
+        )
 
     def received_channel(request: Request) -> str:
         """Provenance of a report: the MCP adapter's authenticated loopback hop, the site's report form, or REST."""
