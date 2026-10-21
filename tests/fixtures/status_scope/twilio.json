@@ -1,0 +1,28 @@
+{
+  "_note": "Synthetic, shaped like status.twilio.com on 2026-10-21 (the live incident list was 112 KB, over the cap): indicator minor, seven minor incidents, every one on a component of the CARRIER NETWORK group, and one carrier maintenance.",
+  "status": {"page": {"id": "gpkpyklzq55q", "name": "Twilio", "url": "https://status.twilio.com", "time_zone": "America/Los_Angeles", "updated_at": "2026-10-20T20:00:13.682-07:00"},
+             "status": {"indicator": "minor", "description": "Partially Degraded Service"}},
+  "unresolved": {"page": {"id": "gpkpyklzq55q", "name": "Twilio", "url": "https://status.twilio.com", "time_zone": "America/Los_Angeles", "updated_at": "2026-10-20T20:00:13.682-07:00"},
+                 "incidents": [
+                   {"id": "inc000000011", "name": "SMS Delivery Delays to a carrier in Czech Republic", "status": "identified", "impact": "minor", "updated_at": "2026-10-20T19:16:14.084-07:00",
+                    "components": [{"id": "cmp000000011", "name": "SMS, Europe", "status": "degraded_performance", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000012", "name": "Voice Call Failures to Brazil", "status": "monitoring", "impact": "minor", "updated_at": "2026-10-20T17:27:41.667-07:00",
+                    "components": [{"id": "cmp000000012", "name": "Voice, Latin America", "status": "operational", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000013", "name": "Voice Call Post Dial Delay to Thailand", "status": "identified", "impact": "minor", "updated_at": "2026-10-20T05:38:07.376-07:00",
+                    "components": [{"id": "cmp000000013", "name": "Voice, APAC", "status": "degraded_performance", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000014", "name": "SMS Delivery Delays to Multiple Networks in Italy", "status": "identified", "impact": "minor", "updated_at": "2026-10-20T05:18:12.024-07:00",
+                    "components": [{"id": "cmp000000011", "name": "SMS, Europe", "status": "degraded_performance", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000015", "name": "MMS Delivery Delays to a carrier in the United States", "status": "investigating", "impact": "minor", "updated_at": "2026-10-20T04:53:16.465-07:00",
+                    "components": [{"id": "cmp000000014", "name": "MMS Long Code, North America", "status": "under_maintenance", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000016", "name": "MMS Delivery Failures in Australia", "status": "investigating", "impact": "minor", "updated_at": "2026-10-14T00:19:01.339-07:00",
+                    "components": [{"id": "cmp000000015", "name": "MMS, APAC", "status": "degraded_performance", "group_id": "j8hlnyphbbs0", "group": false}]},
+                   {"id": "inc000000017", "name": "SMS Delivery Delays to Mobile China", "status": "monitoring", "impact": "minor", "updated_at": "2026-10-09T08:35:31.776-07:00",
+                    "components": [{"id": "cmp000000016", "name": "SMS, APAC", "status": "operational", "group_id": "j8hlnyphbbs0", "group": false}]}
+                 ]},
+  "maintenances": {"page": {"id": "gpkpyklzq55q", "name": "Twilio", "url": "https://status.twilio.com", "time_zone": "America/Los_Angeles", "updated_at": "2026-10-20T20:00:13.682-07:00"},
+                   "scheduled_maintenances": [
+                     {"id": "mnt000000011", "name": "United States SMS and MMS Carrier Maintenance", "status": "in_progress", "impact": "maintenance", "updated_at": "2026-10-20T20:00:13.310-07:00",
+                      "components": [{"id": "cmp000000017", "name": "SMS Long Code, North America", "status": "under_maintenance", "group_id": "j8hlnyphbbs0", "group": false},
+                                     {"id": "cmp000000014", "name": "MMS Long Code, North America", "status": "under_maintenance", "group_id": "j8hlnyphbbs0", "group": false}]}
+                   ]}
+}

@@ -33,11 +33,11 @@ import math
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from psycopg.types.json import Jsonb
 
-from . import access_profile, status_refresh
+from . import access_profile, status_refresh, status_scope
 from .db import connect
 from .provenance import operator_id, vantage
 
@@ -57,6 +57,10 @@ RETRY_AFTER_MIN = 5
 RETRY_AFTER_MAX = 300      # also what a lookup says while only the 5-minute cron processes the queue
 FEED_STALE_HOURS = 2       # a feed is refreshed behind a lookup once its answer would read as stale
 FEED_RETRY_MINUTES = 15    # ... but not again within this long after the last attempt
+# While the cached indicator is active, the read is due after FEED_RETRY_MINUTES instead (D43), on the
+# lookup path and in the cron (status_refresh.refresh_batch): a resolved problem must not read as active
+# for hours. The minimum gap between two attempts stays FEED_RETRY_MINUTES.
+FEED_ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS
 _PRIORITY = "CASE {col} WHEN 'access_profile' THEN 0 WHEN 'status_discovery' THEN 1 ELSE 2 END"
 
 _wake = threading.Event()
@@ -79,6 +83,12 @@ def refresh_feed(settings, site_host):
 
 def discover(site_host, digest=None):
     return status_refresh.discover_source(site_host, digest=digest)
+
+
+def feed_refresh_after(indicator: str | None, idle: timedelta) -> timedelta:
+    """How old a successful feed read may get before it is due again: FEED_RETRY_MINUTES while the cached
+    indicator is active, otherwise ``idle`` (FEED_STALE_HOURS on the lookup path, one hour in the cron)."""
+    return timedelta(minutes=FEED_RETRY_MINUTES) if indicator in FEED_ACTIVE_INDICATORS else idle
 
 
 def enabled_by_env() -> bool:
@@ -247,7 +257,9 @@ def _store_discovered(settings, site_host: str, found, digest: dict) -> None:
                indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
                fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
                origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
-               reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256""",
+               reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
+               active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
+               active_maintenances=NULL,affected=NULL,affected_regional=NULL""",
             (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), access_profile.USER_AGENT,
              digest.get("body_sha256")),
         )

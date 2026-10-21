@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 10, 20)
+POLICY_UPDATED = date(2026, 10, 21)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 templates = Jinja2Templates(directory=str(ROOT / "templates"))

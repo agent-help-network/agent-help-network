@@ -1,0 +1,13 @@
+{
+  "_note": "Synthetic: a Statuspage page whose major indicator rests on one major incident on a product component, with no maintenance.",
+  "status": {"page": {"id": "exmpl0000001", "name": "Example Status", "url": "https://status.example.com", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T02:40:00.000Z"},
+             "status": {"indicator": "major", "description": "Partial System Outage"}},
+  "unresolved": {"page": {"id": "exmpl0000001", "name": "Example Status", "url": "https://status.example.com", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T02:40:00.000Z"},
+                 "incidents": [
+                   {"id": "inc000000021", "name": "Elevated API error rates", "status": "investigating", "impact": "major",
+                    "created_at": "2026-10-21T02:10:00.000Z", "updated_at": "2026-10-21T02:40:00.000Z",
+                    "components": [{"id": "cmp000000021", "name": "API", "status": "partial_outage", "group_id": null, "group": false}]}
+                 ]},
+  "maintenances": {"page": {"id": "exmpl0000001", "name": "Example Status", "url": "https://status.example.com", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T02:40:00.000Z"},
+                   "scheduled_maintenances": []}
+}

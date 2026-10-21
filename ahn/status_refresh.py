@@ -28,6 +28,7 @@ from psycopg.types.json import Jsonb
 # The service's reader version recorded with every stored read (provenance), as for robots.txt reads.
 from .access_profile import USER_AGENT as READER_VERSION
 from .access_profile import _resolve, read_capped
+from . import status_scope
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 from .settings import Settings
@@ -1125,8 +1126,29 @@ def _statuspage_target(site_host: str) -> tuple[str, str] | None:
     return (target.rstrip("."), match.group(1)) if match else None
 
 
-def _read_discovered_statuspage(site_host: str, digest: dict | None = None) -> tuple[Source, str, datetime | None]:
-    """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256."""
+def _pool_get(pool, status_host: str, path: str, cap: int) -> bytes:
+    """GET one path of a discovered Statuspage page through its pinned pool; raises FeedFailure on any non-answer."""
+    response = pool.request(
+        "GET", path, headers={"Host": status_host, "Accept": "application/json"},
+        redirect=False, preload_content=False,
+    )
+    try:
+        if response.status != 200:
+            raise FeedFailure(f"http_{response.status}")
+        body, failure = read_capped(response, cap, budget=FEED_READ_BUDGET)
+        if failure:
+            raise FeedFailure("too_large" if failure == "too_large" else "timeout")
+        return body
+    finally:
+        response.release_conn()
+
+
+def _read_discovered_statuspage(site_host: str, digest: dict | None = None,
+                                scope: dict | None = None) -> tuple[Source, str, datetime | None]:
+    """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256.
+
+    With scope (a feed refresh, not the first discovery), the page's unresolved incidents and active
+    maintenances are read through the same pinned pool and summarized into it (status_scope)."""
     target = _statuspage_target(site_host)
     if target is None:
         raise FeedFailure("no_cname")
@@ -1143,30 +1165,23 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None) -> t
         assert_hostname=status_host, timeout=urllib3.Timeout(connect=2.0, read=3.0), retries=False,
     )
     try:
-        response = pool.request(
-            "GET", "/api/v2/status.json", headers={"Host": status_host, "Accept": "application/json"},
-            redirect=False, preload_content=False,
-        )
-        try:
-            if response.status != 200:
-                raise FeedFailure(f"http_{response.status}")
-            body, failure = read_capped(response, 32_768, budget=FEED_READ_BUDGET)
-            if failure:
-                raise FeedFailure("too_large" if failure == "too_large" else "timeout")
-        finally:
-            response.release_conn()
+        body = _pool_get(pool, status_host, "/api/v2/status.json", 32_768)
+        if digest is not None:
+            digest["body_sha256"] = sha256_hex(body)
+        payload = json.loads(body)
+        page = payload.get("page") if isinstance(payload, dict) else None
+        if not isinstance(page, dict) or page.get("id") != page_id:
+            raise FeedFailure("id_mismatch")
+        name = page.get("name")
+        if not isinstance(name, str) or not 1 <= len(name) <= 72:
+            raise FeedFailure("invalid_body")
+        indicator, updated_at = parse_status(payload)
+        if (scope is not None and indicator in status_scope.ACTIVE_INDICATORS
+                and status_scope.statuspage_page_id(payload) == page_id):
+            scope.update(status_scope.read_scope(
+                lambda path: _pool_get(pool, status_host, "/api/v2/" + path, status_scope.SCOPE_CAP), page_id))
     finally:
         pool.close()
-    if digest is not None:
-        digest["body_sha256"] = sha256_hex(body)
-    payload = json.loads(body)
-    page = payload.get("page") if isinstance(payload, dict) else None
-    if not isinstance(page, dict) or page.get("id") != page_id:
-        raise FeedFailure("id_mismatch")
-    name = page.get("name")
-    if not isinstance(name, str) or not 1 <= len(name) <= 72:
-        raise FeedFailure("invalid_body")
-    indicator, updated_at = parse_status(payload)
     source = Source(f"{name} Status", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage")
     return source, indicator, updated_at
 
@@ -1336,19 +1351,10 @@ def register_source(conn, site_host: str, source: Source | None = None) -> bool:
     return bool(row["enabled"])
 
 
-def _read_source(source: Source, client: httpx.Client, digest: dict | None = None) -> tuple[str, datetime | None]:
-    """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received."""
-    if source.kind == "discovered_statuspage":
-        host = urlparse(source.page_url).hostname
-        if not host or not host.startswith("status."):
-            raise FeedFailure("error")
-        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest)
-        return indicator, updated_at
-    if source.kind not in FEED_KINDS:
-        raise FeedFailure("error")
-    cap, parse = FEED_KINDS[source.kind]
+def _get_capped(client: httpx.Client, url: str, cap: int) -> bytes:
+    """GET url with a hard byte cap and the whole-body time limit; raises FeedFailure on any non-answer."""
     # Follow no redirects, stream with a hard byte cap, and never send credentials.
-    with client.stream("GET", source.api_url, headers={"Accept": "application/json"}) as response:
+    with client.stream("GET", url, headers={"Accept": "application/json"}) as response:
         if response.status_code != 200:
             raise FeedFailure(f"http_{response.status_code}")
         data = bytearray()
@@ -1360,10 +1366,42 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
             if _clock() > deadline:
                 # httpx's timeout is per operation; a feed that trickles bytes is cut off here.
                 raise FeedFailure("timeout")
+    return bytes(data)
+
+
+STATUS_JSON_SUFFIX = "/api/v2/status.json"
+
+
+def _read_source(source: Source, client: httpx.Client, digest: dict | None = None,
+                 scope: dict | None = None) -> tuple[str, datetime | None]:
+    """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received.
+
+    scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
+    indicator is active (minor or above, or maintenance): two more capped reads of the same page (unresolved
+    incidents, active maintenances). Their failure never fails the feed read; an indicator of none, other
+    kinds and other platforms leave scope empty and make no further request."""
+    if source.kind == "discovered_statuspage":
+        host = urlparse(source.page_url).hostname
+        if not host or not host.startswith("status."):
+            raise FeedFailure("error")
+        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest, scope)
+        return indicator, updated_at
+    if source.kind not in FEED_KINDS:
+        raise FeedFailure("error")
+    cap, parse = FEED_KINDS[source.kind]
+    data = _get_capped(client, source.api_url, cap)
     if digest is not None:
-        digest["body_sha256"] = sha256_hex(bytes(data))
-    body = httpx.Response(200, content=bytes(data)).json()
-    return parse(body)
+        digest["body_sha256"] = sha256_hex(data)
+    body = httpx.Response(200, content=data).json()
+    result = parse(body)
+    # Only an active indicator needs a scope: a "none" page costs one request (the curated feeds are read on a schedule).
+    if (scope is not None and source.kind == "statuspage" and source.api_url.endswith(STATUS_JSON_SUFFIX)
+            and result[0] in status_scope.ACTIVE_INDICATORS):
+        page_id = status_scope.statuspage_page_id(body)
+        if page_id:
+            base = source.api_url[: -len("status.json")]
+            scope.update(status_scope.read_scope(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP), page_id))
+    return result
 
 
 def _cached_ok(settings: Settings, site_host: str) -> bool | None:
@@ -1417,17 +1455,27 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
         client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
         try:
             digest: dict = {}
-            indicator, updated_at = _read_source(source, client, digest)
+            scope: dict = {}
+            indicator, updated_at = _read_source(source, client, digest, scope)
             with connect(settings) as conn:
+                # The scope columns are replaced with every successful read: a feed that no longer yields
+                # them (another platform, a failed or oversized list) must not keep an older scope.
                 conn.execute(
                     """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
-                                                 origin_operator,vantage,reader_version,body_sha256)
-                       VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                                                 origin_operator,vantage,reader_version,body_sha256,
+                                                 active_incidents,max_incident_impact,incident_updated_at,
+                                                 active_maintenances,affected,affected_regional)
+                       VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                        indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
                        fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
                        origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
-                       reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256""",
-                    (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256")),
+                       reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
+                       active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
+                       incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
+                       affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional""",
+                    (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
+                     scope.get("active_incidents"), scope.get("max_incident_impact"), scope.get("incident_updated_at"),
+                     scope.get("active_maintenances"), scope.get("affected"), scope.get("affected_regional")),
                 )
                 # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
                 from .signal_history import record_provider_status
@@ -1454,6 +1502,9 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
     """Periodically refresh only sources registered by an actual lookup."""
     if not 1 <= limit <= 20:
         raise ValueError("limit must be 1-20")
+    # The same rule as the lookup path (background_reads.feed_refresh_after): a cached active indicator is
+    # read again after FEED_RETRY_MINUTES, so a resolved problem stops reading as active within that time.
+    from .background_reads import FEED_ACTIVE_INDICATORS, FEED_RETRY_MINUTES
     with connect(settings) as conn:
         rows = conn.execute(
             """SELECT s.site_host FROM status_sources s
@@ -1461,9 +1512,9 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
                LEFT JOIN status_cache c ON c.site_host=s.site_host
                WHERE s.enabled=true AND
                  COALESCE(GREATEST(c.fetched_at,c.last_error_at),'-infinity'::timestamptz)
-                   < now() - interval '1 hour'
+                   < now() - CASE WHEN c.indicator = ANY(%s) THEN make_interval(mins => %s) ELSE interval '1 hour' END
                ORDER BY GREATEST(c.fetched_at,c.last_error_at) NULLS FIRST,s.site_host LIMIT %s""",
-            (limit,),
+            (sorted(FEED_ACTIVE_INDICATORS), FEED_RETRY_MINUTES, limit),
         ).fetchall()
     result = {"checked": 0, "updated": 0, "failed": 0}
     for row in rows:

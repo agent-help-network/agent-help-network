@@ -183,14 +183,27 @@ class CheckObservation(StrictModel):
     synthetic: bool
 
 
+def _omit_none(value) -> bool:
+    return value is None
+
+
 class ProviderStatus(StrictModel):
     source_name: str
     source_url: str
     indicator: Literal["none", "minor", "major", "critical", "maintenance", "unknown"] | None
     fetched_at: datetime | None
+    # The feed's page.updated_at as the provider published it; not necessarily when the status changed (D43).
     source_updated_at: datetime | None
     freshness: Literal["pending", "fresh", "stale"]
     error_detail: str | None = None
+    # Scope of an Atlassian Statuspage feed (ahn/status_scope.py, D43). Each is left out when it was not read.
+    active_incidents: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    max_incident_impact: Literal["none", "minor", "major", "critical"] | None = Field(default=None, exclude_if=_omit_none)
+    incident_updated_at: datetime | None = Field(default=None, exclude_if=_omit_none)
+    active_maintenances: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    basis: Literal["incident", "maintenance", "components_only"] | None = Field(default=None, exclude_if=_omit_none)
+    affected: list[Annotated[str, Field(min_length=1, max_length=80)]] | None = Field(
+        default=None, min_length=1, max_length=3, exclude_if=_omit_none)
 
 
 class OfficialStatusPage(StrictModel):
@@ -354,10 +367,6 @@ class OfficialAccess(StrictModel):
 OfficialPaths.model_rebuild()
 
 
-def _omit_none(value) -> bool:
-    return value is None
-
-
 class GovernmentRegistry(StrictModel):
     """Which public government domain list names this domain, as of which version. A fact about the domain, not a judgement."""
     status: Literal["listed", "not_in_list_version"]
@@ -394,7 +403,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_components_only", "provider_scope_partial", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
     text: str
 
 

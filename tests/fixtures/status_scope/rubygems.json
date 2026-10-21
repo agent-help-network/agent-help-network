@@ -1,0 +1,9 @@
+{
+  "_note": "Synthetic, shaped like status.rubygems.org on 2026-10-21: page indicator maintenance with no incident and no maintenance, because old components were left under_maintenance.",
+  "status": {"page": {"id": "pclby00q90vc", "name": "RubyGems.org", "url": "https://status.rubygems.org", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T01:14:17.528Z"},
+             "status": {"indicator": "maintenance", "description": "Service Under Maintenance"}},
+  "unresolved": {"page": {"id": "pclby00q90vc", "name": "RubyGems.org", "url": "https://status.rubygems.org", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T01:14:17.528Z"},
+                 "incidents": []},
+  "maintenances": {"page": {"id": "pclby00q90vc", "name": "RubyGems.org", "url": "https://status.rubygems.org", "time_zone": "Etc/UTC", "updated_at": "2026-10-21T01:14:17.528Z"},
+                   "scheduled_maintenances": []}
+}
