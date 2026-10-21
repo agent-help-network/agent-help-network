@@ -10,8 +10,10 @@ from uuid import UUID
 import httpx
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, valid_host
 from .tool_metrics import mcp_metric_token
 
@@ -27,8 +29,9 @@ def api_base() -> str:
     return base
 
 
-async def call_api(method: str, path: str, *, params: dict | None = None, payload: dict | None = None, write: bool = False) -> dict:
-    headers = {}
+async def call_api(method: str, path: str, *, params: dict | None = None, payload: dict | None = None, write: bool = False,
+                   extra_headers: dict | None = None) -> dict:
+    headers = dict(extra_headers or {})
     pepper = os.environ.get("AHN_KEY_PEPPER", "")
     if len(pepper) >= 32:
         # Marks this loopback hop as an already rate-limited MCP request; the
@@ -69,12 +72,35 @@ mcp = MCPServer(
 )
 
 
+def outer_request_headers(ctx: Context | None) -> dict:
+    """Headers of the caller's own request that the central API needs for its anonymous lookup count.
+
+    The adapter calls the API over loopback, where the caller's address is gone. It passes the address on under
+    a header the API honours only on this authenticated hop (and the test mark, so a test lookup stays out of the
+    count). Both are used for the count only; neither reaches the answer.
+    """
+    try:
+        outer = ctx.request_context.request if ctx is not None else None
+        headers = outer.headers if outer is not None else {}
+    except (AttributeError, ValueError):
+        return {}
+    forwarded = {}
+    address = headers.get("cf-connecting-ip", "").strip()
+    if address:
+        forwarded[ORIGIN_HEADER] = address
+    if headers.get(TEST_HEADER, "").strip() == "1":
+        forwarded[TEST_HEADER] = "1"
+    return forwarded
+
+
 @mcp.tool(
-    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup is counted anonymously, and the service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site.",
+    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup, with the optional codes you send, is counted anonymously per host and hour and never changes the answer. Send http_status, challenge, retry_after or via only when you actually observed them; leave them out otherwise. The service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site.",
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
-async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "") -> CheckResponse:
+async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "",
+                         http_status: int | None = None, challenge: str = "", retry_after: str = "", via: str = "",
+                         ctx: Context | None = None) -> CheckResponse:
     try:
         valid_host(site_host)
     except ValueError:
@@ -85,6 +111,8 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
         raise ToolError("invalid_task_step")
     if failure_stage and failure_stage not in FailureStage._value2member_map_:
         raise ToolError("failure_stage must be one of: " + ", ".join(item.value for item in FailureStage))
+    # The four signal codes are never a reason to refuse a lookup: a value outside its list is dropped.
+    codes = lenient_codes(None if http_status is None else str(http_status), challenge, retry_after, via)
     params = {"site_host": site_host}
     if error_class:
         params["error_class"] = error_class
@@ -92,7 +120,8 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
         params["task_step"] = task_step
     if failure_stage:
         params["failure_stage"] = failure_stage
-    return CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params))
+    params.update({name: value for name, value in codes.items() if value is not None})
+    return CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
 
 
 async def report_observation(observation: ObservationIn) -> Receipt:
@@ -110,7 +139,7 @@ async def update_outcome(observation_id: str, outcome: OutcomeIn) -> Receipt:
 if os.environ.get("AHN_PUBLIC_MODE") != "1" or os.environ.get("AHN_REPORTING_ENABLED") == "1":
     mcp.tool(
         description="Submit one de-identified firsthand observation under your own operating authority and platform rules. Public reports enter private review and are not site-status claims. Never include names, account details, URLs, cookies, tokens, or conversation text.",
-        annotations=ToolAnnotations(title="Report an authorized observation", read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True),
+        annotations=ToolAnnotations(title="Report an authorized observation", read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True),
         structured_output=True,
     )(report_observation)
 if os.environ.get("AHN_PUBLIC_MODE") != "1":

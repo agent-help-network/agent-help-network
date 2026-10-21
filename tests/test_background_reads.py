@@ -464,7 +464,7 @@ def test_mcp_json_leaves_retry_after_out_unless_a_read_is_queued(monkeypatch):
 
     from ahn import mcp_adapter
 
-    async def fake_api(method, path, *, params=None, payload=None, write=False):
+    async def fake_api(method, path, *, params=None, payload=None, write=False, extra_headers=None):
         return fake_api.answer
 
     monkeypatch.setattr(mcp_adapter, "call_api", fake_api)

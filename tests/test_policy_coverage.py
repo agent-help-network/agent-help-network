@@ -154,6 +154,11 @@ LOOKUP_FIELDS = {
     "error_class": Phrase("error_class", "error_class"),      # optional code from a fixed list
     "task_step": Phrase("task_step", "task_step"),            # optional code from a fixed list
     "failure_stage": Phrase("failure_stage", "failure_stage"),  # optional code from a fixed list
+    # Lookup signal codes (D47): optional codes from fixed lists, counted per hostname and hour.
+    "http_status": Phrase("http_status", "http_status"),
+    "challenge": Phrase("challenge", "challenge"),
+    "retry_after": Phrase("retry_after", "retry_after"),
+    "via": Phrase("via", "via"),
     "window_hours": Exempt("REST only: a whole number 1-168 that narrows the observation window, not data about anyone"),
 }
 
@@ -329,6 +334,14 @@ TABLES = {
     "queried_hosts": Pruned(  # hostnames that were looked up
         Phrase("removed after {days} days without a lookup", "{days}일 동안 조회가 없으면 삭제"),
         Phrase("removed after {days} days without a lookup", "{days}일 동안 조회가 없으면 삭제")),
+    # Lookup signals (migration 027, ahn/lookup_signals.py, D47): codes counted per hostname and hour, and host- and
+    # day-specific keyed IP digests. Deleted by prune_analytics after a fixed period; stated in sections 02 and 06.
+    "lookup_signals_hourly": Pruned(Phrase("Hourly per-host counts of lookup codes: {days} days", "호스트별 시간 단위 조회 코드 집계: {days}일"),
+                                    Phrase("for {days} days, together with a keyed digest", "{days}일 집계하며")),
+    "lookup_sources_daily": Pruned(Phrase(
+        "Keyed IP digests specific to one hostname and one UTC day, with the client's last lookup time (to the minute) and the recommendation it was given: {days} days",
+        "호스트명과 날짜(UTC)에만 해당하도록 비밀키로 변환한 IP 값과 그 클라이언트의 마지막 조회 시각(분 단위)·그때 준 권고: {days}일"),
+        Phrase("kept for {days} days to count separate clients", "{days}일 보관합니다")),
     # Signal history for curated hosts (migration 024, ahn/signal_history.py): host facts, no request or client data.
     "robots_read_events": Pruned(Phrase(
         "History of robots.txt reads for curated public hostnames (time, host read, status, label, classification, operator, declared network location, and whether the read's window was held and why): {days} days",
@@ -904,3 +917,24 @@ def test_seed_read_retry_in_the_policy_matches_the_code():
     assert_phrases("seed read retry", {lang: policy_text(lang) for lang in LANGS}, wanted)
     for lang, stale in (("en", "a transport failure there is also retried after one hour"), ("ko", "여기서도 전송 실패는 1시간 뒤")):
         assert stale not in policy_text(lang)
+
+
+def test_lookup_signal_retention_and_exclusions_match_the_code():
+    from ahn import lookup_signals
+    periods = periods_in_prune_analytics()
+    assert periods["lookup_signals_hourly"] == lookup_signals.HOURLY_RETENTION_DAYS == 35
+    assert periods["lookup_sources_daily"] == lookup_signals.SOURCES_RETENTION_DAYS == 2
+    wording = {
+        "en": ("Lookups from the operator's own network and requests marked as tests are left out of these counts",
+               "the hourly counts hold no IP address", "never become reports",
+               "the lookup-code counts described under Data we collect are not shown publicly or in answers at present",
+               "only when at least three separate clients contributed"),
+        "ko": ("운영자 자신의 네트워크에서 온 조회와 시험으로 표시된 요청은 이 집계에서 뺍니다", "시간 단위 집계에는 IP 주소가 없습니다",
+               "제보가 되지 않고", "조회 코드 집계는 현재 공개 화면이나 답변에 나오지 않으며", "서로 다른 클라이언트 세 곳 이상이 있을 때만"),
+    }
+    for lang, phrases in wording.items():
+        text = policy_text(lang)
+        for phrase in phrases:
+            assert phrase in text or phrase[0].upper() + phrase[1:] in text, f"the {lang} policy lacks {phrase!r}"
+    # The policy promises the shadow-mode behaviour: no response field shows the codes yet.
+    assert "lookup_signals" not in CheckResponse.model_fields

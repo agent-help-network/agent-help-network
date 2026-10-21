@@ -66,6 +66,27 @@ class FailureStage(str, Enum):
     unknown = "unknown"
 
 
+class Challenge(str, Enum):
+    """Whether the site's response carried a bot-challenge header (never a guess from the page body)."""
+    header = "header"
+    none = "none"
+
+
+class RetryAfter(str, Enum):
+    """Range of a Retry-After value in seconds; an HTTP-date form is sent as none."""
+    none = "none"
+    lt_60 = "lt_60"
+    s60_3600 = "60_3600"
+    gt_3600 = "gt_3600"
+
+
+class Via(str, Enum):
+    """What made the failed request: a plain HTTP fetch or a browser."""
+    http_fetch = "http_fetch"
+    browser = "browser"
+    unknown = "unknown"
+
+
 class AgentFamily(str, Enum):
     dots = "dots"
     muse = "muse"

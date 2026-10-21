@@ -7,9 +7,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from . import background_reads, gov_registry, status_scope
+from . import background_reads, gov_registry, lookup_signals, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
+from .lookup_signals import LookupSignal
 from .models import ObservationIn, OutcomeIn
 from .official_paths import official_paths
 from .provenance import operator_id
@@ -272,6 +273,25 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
     return registered, mapped_source, discovery_due
 
 
+def _record_signal(conn, settings: Settings, host: str, error_class: str | None, failure_stage: str | None,
+                   signal: LookupSignal, action: str, *, public: bool, registered: bool, now: datetime) -> None:
+    """Count the lookup's optional codes per host and hour inside a savepoint; never raises (D47).
+
+    Same gate as lookup_metrics (eligible apex host, inside the lookup register in public mode, metrics
+    switch on), minus example hosts. Database writes only; nothing here reaches the answer.
+    """
+    if not (settings.collect_lookup_metrics and aggregate_eligible_host(host) and (not public or registered)):
+        return
+    if host in lookup_signals.EXAMPLE_HOSTS:
+        return
+    try:
+        with conn.transaction():
+            lookup_signals.record(conn, settings.key_pepper, host, error_class, failure_stage, signal, action, now)
+    except Exception:
+        # Shadow bookkeeping: a failure (for example a migration not applied yet) must not touch the lookup.
+        LOG.warning("lookup_signal_unavailable")
+
+
 def _queue_reads(conn, jobs: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Queue background reads inside a savepoint; never raises. Returns the jobs now in the queue."""
     if not jobs:
@@ -313,12 +333,15 @@ def _provider_scope(row: dict) -> dict:
 
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
-          window_hours: int = 24, failure_stage: str | None = None):
+          window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None):
     """Answer a lookup from the database alone.
 
     Nothing on this path contacts the target host or a status provider: reads that are missing or
     out of date are queued (ahn/background_reads.py) and the cached value is returned as it is,
     marked ``pending`` or ``stale``.
+
+    ``signal`` carries the optional lookup codes and the caller's source (D47). It is only written down,
+    in a savepoint after the answer is built; it never changes the answer.
     """
     test_query = settings.test_mode and site_host.endswith(".test")
     public = settings.public_mode and not test_query
@@ -450,66 +473,70 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         queued = _queue_reads(conn, jobs)
         if ("access_profile", host) in queued:
             retry_after = _retry_after(conn, host)
-    if queued:
-        background_reads.wake()
-    if access_profile is None and profile_due:
-        # First lookup of this host: nothing is cached yet. retry_after_seconds only when a read is queued.
-        access_profile = pending_profile(host, retry_after)
-    elif access_profile is not None and retry_after is not None and access_profile["freshness"] == "pending":
-        # Only failed attempts so far, and the retry is due: a read is queued again.
-        access_profile = {**access_profile, "retry_after_seconds": retry_after}
-    if access_profile is not None:
-        access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
-    recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
-    stale = bool(rows) and not recent
-    selected = recent if recent else (rows[:20] if stale else [])
-    failures = sum(row["outcome"] in {"blocked", "error"} for row in selected)
-    successes = sum(row["outcome"] == "passed" for row in selected)
-    sources = len({row["reporter_id"] for row in selected})
-    if stale:
-        level, code, summary = "stale_reports", "OLDER_REPORTS_STATUS_UNKNOWN", "Older reports exist, but current site status is unknown."
-    elif not recent:
-        level, code, summary = "no_reports", "NO_MATCHING_REPORTS_STATUS_UNKNOWN", "No matching reports in the 7-day data horizon. The site's current status is unknown."
-    elif failures and successes and max(row["observed_at"] for row in recent if row["outcome"] == "passed") > min(row["observed_at"] for row in recent if row["outcome"] in {"blocked", "error"}):
-        level, code, summary = "later_success_observed", "LATER_SUCCESS_NOT_GENERAL_RECOVERY", "A later successful attempt was reported. This does not establish general recovery."
-    elif sources == 1:
-        level, code, summary = "single_observation", "ONE_SOURCE_UNCONFIRMED", "One source reported attempts. This is unconfirmed by another source."
-    else:
-        level, code, summary = "multiple_observations", "MULTIPLE_SOURCES_INDEPENDENCE_UNKNOWN", "Multiple sources reported attempts. Their independence is not verified."
-    observations = []
-    for row in selected[:20]:
-        observed_at = row["observed_at"]
-        if not test_query:
-            observed_at = observed_at.replace(minute=0, second=0, microsecond=0)
-        observations.append({
-            "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
-            "attempt_actor": row["attempt_actor"], "attempt_env": row["attempt_env"],
-            "outcome": row["outcome"], "error_class": row["error_class"],
-            "task_step": row["task_step"], "synthetic": test_query,
-        })
-    official_page = OFFICIAL_STATUS_PAGES.get(host) if settings.public_mode and not test_query and provider_status is None else None
-    result = {
-        "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
-        "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,
-        "current_site_status": "unknown", "evidence_level": level,
-        "summary_code": code, "summary": summary, "failures": failures,
-        "successes": successes, "reporting_sources": sources, "observations": observations,
-        "provider_status": provider_status,
-        "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
-        "provider_discovery_attempted_at": provider_discovery_attempted_at,
-        "official_status_page": {"source_name": official_page[0], "source_url": official_page[1]} if official_page else None,
-        "lookup_activity": lookup_activity,
-        "access_profile": access_profile,
-        "official_paths": official,
-        "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
-                                         provider_regional=provider_regional, now=now),
-        "failure_stage": failure_stage,
-        "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
-                                   profile_not_read=profile_not_read, host_facts=host_facts,
-                                   provider_partial=provider_partial, now=now),
-    }
-    if host_facts is not None:
-        result["host_facts"] = host_facts
+        conn.commit()  # the queued rows are visible before the worker is woken
+        if queued:
+            background_reads.wake()
+        if access_profile is None and profile_due:
+            # First lookup of this host: nothing is cached yet. retry_after_seconds only when a read is queued.
+            access_profile = pending_profile(host, retry_after)
+        elif access_profile is not None and retry_after is not None and access_profile["freshness"] == "pending":
+            # Only failed attempts so far, and the retry is due: a read is queued again.
+            access_profile = {**access_profile, "retry_after_seconds": retry_after}
+        if access_profile is not None:
+            access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
+        recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
+        stale = bool(rows) and not recent
+        selected = recent if recent else (rows[:20] if stale else [])
+        failures = sum(row["outcome"] in {"blocked", "error"} for row in selected)
+        successes = sum(row["outcome"] == "passed" for row in selected)
+        sources = len({row["reporter_id"] for row in selected})
+        if stale:
+            level, code, summary = "stale_reports", "OLDER_REPORTS_STATUS_UNKNOWN", "Older reports exist, but current site status is unknown."
+        elif not recent:
+            level, code, summary = "no_reports", "NO_MATCHING_REPORTS_STATUS_UNKNOWN", "No matching reports in the 7-day data horizon. The site's current status is unknown."
+        elif failures and successes and max(row["observed_at"] for row in recent if row["outcome"] == "passed") > min(row["observed_at"] for row in recent if row["outcome"] in {"blocked", "error"}):
+            level, code, summary = "later_success_observed", "LATER_SUCCESS_NOT_GENERAL_RECOVERY", "A later successful attempt was reported. This does not establish general recovery."
+        elif sources == 1:
+            level, code, summary = "single_observation", "ONE_SOURCE_UNCONFIRMED", "One source reported attempts. This is unconfirmed by another source."
+        else:
+            level, code, summary = "multiple_observations", "MULTIPLE_SOURCES_INDEPENDENCE_UNKNOWN", "Multiple sources reported attempts. Their independence is not verified."
+        observations = []
+        for row in selected[:20]:
+            observed_at = row["observed_at"]
+            if not test_query:
+                observed_at = observed_at.replace(minute=0, second=0, microsecond=0)
+            observations.append({
+                "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+                "attempt_actor": row["attempt_actor"], "attempt_env": row["attempt_env"],
+                "outcome": row["outcome"], "error_class": row["error_class"],
+                "task_step": row["task_step"], "synthetic": test_query,
+            })
+        official_page = OFFICIAL_STATUS_PAGES.get(host) if settings.public_mode and not test_query and provider_status is None else None
+        result = {
+            "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
+            "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,
+            "current_site_status": "unknown", "evidence_level": level,
+            "summary_code": code, "summary": summary, "failures": failures,
+            "successes": successes, "reporting_sources": sources, "observations": observations,
+            "provider_status": provider_status,
+            "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
+            "provider_discovery_attempted_at": provider_discovery_attempted_at,
+            "official_status_page": {"source_name": official_page[0], "source_url": official_page[1]} if official_page else None,
+            "lookup_activity": lookup_activity,
+            "access_profile": access_profile,
+            "official_paths": official,
+            "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
+                                             provider_regional=provider_regional, now=now),
+            "failure_stage": failure_stage,
+            "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
+                                       profile_not_read=profile_not_read, host_facts=host_facts,
+                                       provider_partial=provider_partial, now=now),
+        }
+        if host_facts is not None:
+            result["host_facts"] = host_facts
+        if signal is not None:
+            _record_signal(conn, settings, host, error_class, failure_stage, signal, result["recommendation"]["action"],
+                           public=public, registered=registered, now=now)
     return result
 
 

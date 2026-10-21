@@ -17,7 +17,7 @@ This is the English version of the [Korean API contract](api-contract.md); both 
 
 ## `GET /v1/incidents/check`
 
-Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`.
+Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`, and the lookup signal codes `http_status`, `challenge`, `retry_after`, `via` ([below](#lookup-signal-codes)).
 
 Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs except `window_hours` (it always uses the default 24 hours) and returns the same structure.
 
@@ -391,7 +391,24 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 
 ### `failure_stage`
 
-The optional `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) is **what the caller observed**, and only shapes the checks. The service does not verify where a response came from or why access was denied. The value is echoed back in the response but is never stored as evidence for reports, provider status, or per-host lookup counts. An invalid `error_class` or `failure_stage` on the REST lookup returns `400` with only `{"error": "invalid_request", "field": ..., "allowed_values": [...]}` and never reflects the input. The MCP tool accepts the same optional values.
+The optional `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) is **what the caller observed**, and only shapes the checks. The service does not verify where a response came from or why access was denied. The value is echoed back in the response. It is never evidence for reports, provider status, or the `recommendation`; it is only counted in the hourly lookup signal counts described in the next section. An invalid `error_class` or `failure_stage` on the REST lookup returns `400` with only `{"error": "invalid_request", "field": ..., "allowed_values": [...]}` and never reflects the input. The MCP tool accepts the same optional values.
+
+### Lookup signal codes
+
+Four more optional codes describe the failed step as the caller saw it. Each comes from a fixed list; send only what you already know and leave the rest out. They are accepted on `GET /v1/incidents/check` and on the MCP `check_incident` tool under the same names (the tool takes `http_status` as an integer).
+
+| Parameter | Values | Meaning |
+|---|---|---|
+| `http_status` | `401`, `402`, `403`, `407`, `408`, `429`, `451`, or any `500`-`599` | The HTTP status the target returned. Other statuses (404, 422, ...) are not access problems and are refused. Take it from the response itself, not from a guess in an error message. |
+| `challenge` | `header`, `none` | `header` when the target's response carried a bot-challenge header such as `cf-mitigated: challenge`; `none` when it did not. Never decided from the page body. |
+| `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | The `Retry-After` value of a 429 or 503 in seconds: under 60, 60 to 3600, over 3600. `none` when the header is absent or is a date. |
+| `via` | `http_fetch`, `browser`, `unknown` | What made the failed request: a plain HTTP fetch or a browser. |
+
+A value outside its list is **ignored, not refused**: the lookup is answered normally and counted as if that code had not been sent, because a typo in an optional signal should not cost the caller its answer. (`error_class` and `failure_stage` keep their `400`.) A code that is left out is counted as unknown (`unspecified`), never as `none`: send `challenge=none` or `retry_after=none` only when you looked at the response headers and saw no such header.
+
+**What the service does with them (D47, shadow mode).** A lookup is counted per public hostname and UTC hour together with `error_class`, `failure_stage`, these codes (`http_status` folded to its class, all `5xx` as `5xx`), the kind of client software (`plugin`, `ahn_client`, `mcp`, `web`, `rest_other`, from the User-Agent and the MCP hop, so only a hint), and the `recommendation.action` the lookup was answered with. Counts are kept 35 days. To count separate clients without keeping an address, a keyed digest of the IP address that is specific to the hostname and the UTC day is kept 2 days with the time of the client's last lookup (to the minute) and its recommendation; a lookup of the same host 10 to 60 minutes after an earlier one (both inclusive, both lookups blocked ones) is counted as a re-lookup after that recommendation. No digest or exact count is ever returned. Lookups from the operator's own network, lookups marked `X-AHN-Test: 1`, documentation example hosts, and hosts that are not eligible apex hosts are not counted. For an MCP call, the adapter passes the caller's address and test mark on its authenticated loopback hop for this count only.
+
+**Nothing here changes an answer.** `recommendation`, `next_checks`, `evidence_level`, `observations` and every other field are the same with or without these codes. The codes are not reports and are never merged into `observations` or `evidence_level` (D11). No response field shows them yet; if one is added later it will appear as an optional layer with coarse bands, only when at least three separate clients contributed.
 
 ## `POST /v1/observations`
 
@@ -440,7 +457,7 @@ Two packages in this repository call only `GET /v1/incidents/check` and never su
 
 `/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident` and `report_observation`.
 
-`check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
+`check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction; plus, in shadow mode, an hourly per-host count of its optional lookup signal codes, see [Lookup signal codes](#lookup-signal-codes)), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
 
 ## Background reads (stale-while-revalidate)
 

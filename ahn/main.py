@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
+from . import lookup_signals
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
@@ -24,7 +25,7 @@ from .rate_limit import RequestLimiter
 from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
-from .traffic import attribute_request, client_type, daily_client_digest
+from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
 from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
@@ -98,6 +99,16 @@ LANG = {
 }
 
 
+# Optional fixed-list codes of a lookup (error_class and failure_stage also on the incident list). A rejected value
+# is answered with the allowed values only, never an echo of what was sent.
+CHECK_CODE_FIELDS = {"error_class": ErrorClass, "failure_stage": FailureStage}
+
+
+def invalid_code(field: str) -> JSONResponse:
+    return JSONResponse({"error": "invalid_request", "field": field,
+                         "allowed_values": [item.value for item in CHECK_CODE_FIELDS[field]]}, status_code=400)
+
+
 def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     settings = settings or Settings.from_env()
     lang_text = {code: dict(values) for code, values in LANG.items()}
@@ -146,8 +157,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             "저장된 제보의 자동 삭제 일정은 아직 없습니다.",
             f"제보는 접수 {days}일 뒤 삭제되며, 철회한 제보는 즉시 모든 조회에서 빠지고 30일 뒤 삭제됩니다.")
     if settings.public_mode:
-        lang_text["en"]["collect_text"] = "Reports use structured public hostnames, task categories, timestamps, attempt context, and outcomes. Never submit passwords, cookies, names, account identifiers, personal URLs, or conversation text. Our app stores daily page and lookup counts, bounded referral and campaign categories, and coarse client-software hints. When the hosting edge supplies a client IP, we store only a keyed, day-specific digest and daily request count for 14 days; no raw IP, cookie, full Referrer URL, or User-Agent is stored in these analytics tables. Eligible public root hostnames are kept in a lookup register with first and latest lookup times, and are removed after 30 days without a lookup unless the host has a connected official status feed. Hosting infrastructure may process IP addresses and User-Agent headers for delivery and security. These categories and digests do not identify a person or prove an independent agent."
-        lang_text["ko"]["collect_text"] = "제보에는 공개 호스트명, 일반 작업 단계, 문제·결과 유형, 관찰 시각, 시도 주체·환경만 포함합니다. 비밀번호·쿠키·이름·계정 식별자·개인 URL·대화 전문은 받지 않습니다. 앱은 일별 페이지·호스트 조회 수와 제한된 유입·캠페인 분류, 대략적인 클라이언트 프로그램 분류를 저장합니다. 호스팅 경계에서 IP가 전달되면 원문 대신 비밀키로 날짜별 변환한 값과 일별 요청 수만 14일 보관합니다. 이 통계 표에는 IP 원문·쿠키·전체 유입 URL·User-Agent 원문을 저장하지 않습니다. 공유 가능한 공개 루트 호스트명은 첫·최근 조회 시각과 함께 조회 목록에 두며, 30일 동안 조회가 없으면 삭제합니다(공식 상태 피드가 연결된 호스트는 예외). 호스팅 인프라는 전송·보안을 위해 IP와 User-Agent를 처리할 수 있습니다. 이 분류나 변환값으로 사람 또는 독립 에이전트를 증명할 수 없습니다."
+        lang_text["en"]["collect_text"] = "Reports use structured public hostnames, task categories, timestamps, attempt context, and outcomes. Never submit passwords, cookies, names, account identifiers, personal URLs, or conversation text. Our app stores daily page and lookup counts, bounded referral and campaign categories, and coarse client-software hints. When the hosting edge supplies a client IP, we store only a keyed, day-specific digest and daily request count for 14 days; no raw IP, cookie, full Referrer URL, or User-Agent is stored in these analytics tables. Eligible public root hostnames are kept in a lookup register with first and latest lookup times, and are removed after 30 days without a lookup unless the host has a connected official status feed. Hosting infrastructure may process IP addresses and User-Agent headers for delivery and security. These categories and digests do not identify a person or prove an independent agent. Optional lookup codes (HTTP status class, challenge header, Retry-After range, fetch or browser) are also counted per public hostname and hour for 35 days, together with a keyed digest of the IP address that is specific to that hostname and that UTC day, kept for 2 days to count separate clients."
+        lang_text["ko"]["collect_text"] = "제보에는 공개 호스트명, 일반 작업 단계, 문제·결과 유형, 관찰 시각, 시도 주체·환경만 포함합니다. 비밀번호·쿠키·이름·계정 식별자·개인 URL·대화 전문은 받지 않습니다. 앱은 일별 페이지·호스트 조회 수와 제한된 유입·캠페인 분류, 대략적인 클라이언트 프로그램 분류를 저장합니다. 호스팅 경계에서 IP가 전달되면 원문 대신 비밀키로 날짜별 변환한 값과 일별 요청 수만 14일 보관합니다. 이 통계 표에는 IP 원문·쿠키·전체 유입 URL·User-Agent 원문을 저장하지 않습니다. 공유 가능한 공개 루트 호스트명은 첫·최근 조회 시각과 함께 조회 목록에 두며, 30일 동안 조회가 없으면 삭제합니다(공식 상태 피드가 연결된 호스트는 예외). 호스팅 인프라는 전송·보안을 위해 IP와 User-Agent를 처리할 수 있습니다. 이 분류나 변환값으로 사람 또는 독립 에이전트를 증명할 수 없습니다. 조회의 선택 코드(HTTP 상태 구간, 봇 확인 헤더, Retry-After 구간, 단순 요청·브라우저)도 공개 호스트명·시간별로 35일 집계하며, 서로 다른 클라이언트를 세기 위해 그 호스트명과 날짜(UTC)에만 해당하는 비밀키 변환 IP 값을 2일 보관합니다."
         lang_text["en"]["collect_text"] += " Successful MCP check tool calls are also counted daily by evidence and provider-signal category for 90 days, without a hostname or client identity in that tool-call table. Requests from an owner-allowlisted network are marked as an aggregate owner-network category; this does not identify a person or prove a test. Hosts on our public seed list are also read about once a week for their declared robots.txt and llms.txt policy even if nobody looked them up; the parsed result is stored the same way."
         lang_text["ko"]["collect_text"] += " 성공한 MCP 조회 도구 실행은 호스트명이나 클라이언트 식별자 없이 근거·업체 신호 범주별 일일 합계로 90일 보관합니다. 운영자 허용 네트워크의 요청은 집계상 운영자 네트워크 범주로 표시하지만 사람이나 시험 여부를 증명하지는 않습니다. 공개 시드 목록의 호스트는 아무도 조회하지 않았더라도 선언된 robots.txt·llms.txt 정책을 주 1회 정도 읽어 해석 결과를 같은 방식으로 저장합니다."
     app = FastAPI(title="Agent Help Network", version="0.1.0", description="Structured observations, not website status or root-cause diagnosis", lifespan=lifespan)
@@ -211,12 +222,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         # FastAPI's default response can echo rejected input, including a personal URL.
         if request.url.path in {"/v1/incidents/check", "/v1/incidents"}:
             for issue in exc.errors():
-                if tuple(issue.get("loc", ())) == ("query", "error_class"):
-                    return JSONResponse({"error": "invalid_request", "field": "error_class",
-                                         "allowed_values": [item.value for item in ErrorClass]}, status_code=400)
-                if tuple(issue.get("loc", ())) == ("query", "failure_stage"):
-                    return JSONResponse({"error": "invalid_request", "field": "failure_stage",
-                                         "allowed_values": [item.value for item in FailureStage]}, status_code=400)
+                loc = tuple(issue.get("loc", ()))
+                if len(loc) == 2 and loc[0] == "query" and loc[1] in CHECK_CODE_FIELDS:
+                    return invalid_code(loc[1])
         return JSONResponse({"error": "invalid_request"}, status_code=400)
 
     @app.exception_handler(psycopg.Error)
@@ -419,9 +427,32 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         from .bundle import add_routes as add_bundle_routes
         add_bundle_routes(app, settings)
 
+    def lookup_signal(request: Request, *, kind: str | None = None, http_status: str | None = None,
+                      challenge: str | None = None, retry_after: str | None = None,
+                      via: str | None = None) -> lookup_signals.LookupSignal | None:
+        """The counted-lookup record for this request, or None when it must not be counted (D47).
+
+        Left out: a request marked X-AHN-Test: 1, and one from the operator's allowed network. For a call that
+        came through the MCP adapter the address is the one the adapter passed on its authenticated loopback hop;
+        a request that is not such a hop cannot use that header.
+        """
+        if request.headers.get(lookup_signals.TEST_HEADER, "").strip() == "1":
+            return None
+        hop = internal_mcp_hop(request)
+        address = lookup_signals.clean_address(request.headers.get(lookup_signals.ORIGIN_HEADER if hop else "cf-connecting-ip", ""))
+        if address and is_operator_address(address, settings.owner_allowed_ips):
+            return None
+        return lookup_signals.LookupSignal(
+            client_kind=kind or lookup_signals.client_kind_of(client_type(request, settings.key_pepper)), source_address=address,
+            **lookup_signals.lenient_codes(http_status, challenge, retry_after, via))
+
     @app.get("/v1/incidents/check", response_model=CheckResponse)
-    def check_incident(site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
+    def check_incident(request: Request, site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
                        window_hours: int = Query(24, ge=1, le=168), failure_stage: FailureStage | None = None,
+                       http_status: str | None = Query(None, description="Optional signal code: 401, 402, 403, 407, 408, 429, 451 or 500-599. A value outside the list is ignored."),
+                       challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
+                       retry_after: str | None = Query(None, description="Optional signal code: none, lt_60, 60_3600 or gt_3600. A value outside the list is ignored."),
+                       via: str | None = Query(None, description="Optional signal code: http_fetch, browser or unknown. A value outside the list is ignored."),
                        mcp_call: str | None = Header(default=None, alias="X-AHN-MCP-Call", include_in_schema=False)):
         site_host = normalize_host_input(site_host)
         try:
@@ -431,7 +462,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if task_step is not None and not STEP.fullmatch(task_step):
             raise ServiceError("invalid_task_step", 400)
         result = check(settings, site_host, error_class.value if error_class else None, task_step, window_hours,
-                       failure_stage.value if failure_stage else None)
+                       failure_stage.value if failure_stage else None,
+                       lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via))
         if is_mcp_metric_request(mcp_call, settings.key_pepper):
             try:
                 with connect(settings) as conn:
@@ -545,7 +577,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             else:
                 if not error:
                     signals = check(settings, site_host, selected_class.value if selected_class else None,
-                                    window_hours=168, failure_stage=selected_stage.value if selected_stage else None)
+                                    window_hours=168, failure_stage=selected_stage.value if selected_stage else None,
+                                    signal=lookup_signal(request, kind="web"))
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,

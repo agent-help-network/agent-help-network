@@ -149,3 +149,13 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM robots_read_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"signal_history_prune failed={type(exc).__name__}")
+    # Lookup signals (migration 027, ahn/lookup_signals.py, D47): hourly counts per host 35 days, the host- and
+    # day-specific source digests 2 days (today and yesterday). The literals match lookup_signals.HOURLY_RETENTION_DAYS
+    # and SOURCES_RETENTION_DAYS; tests/test_lookup_signals.py and the policy-coverage test check that.
+    # Own transaction for the same reason as above.
+    try:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("DELETE FROM lookup_signals_hourly WHERE hour < now() - interval '35 days'")
+            conn.execute("DELETE FROM lookup_sources_daily WHERE day < CURRENT_DATE - 1")
+    except psycopg.Error as exc:
+        print(f"lookup_signals_prune failed={type(exc).__name__}")

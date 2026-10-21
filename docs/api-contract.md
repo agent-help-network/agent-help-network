@@ -17,7 +17,7 @@
 
 ## `GET /v1/incidents/check`
 
-필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`, `failure_stage`. MCP `check_incident` 는 `window_hours` 를 받지 않고(항상 기본 24시간) 나머지 입력과 응답 구조는 같다. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다. 아래 예시는 관찰 층까지만 보인 것이며, 실제 응답은 영어 계약의 전체 예시와 같은 최상위 키(`provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, `recommendation`, `failure_stage`, `next_checks`)를 모두 가진다. 로컬 시험 모드에서는 공개 전용 층이 `null` 이다.
+필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`, `failure_stage`, 조회 신호 코드 `http_status`, `challenge`, `retry_after`, `via`([아래](#조회-신호-코드)). MCP `check_incident` 는 `window_hours` 를 받지 않고(항상 기본 24시간) 나머지 입력과 응답 구조는 같다. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다. 아래 예시는 관찰 층까지만 보인 것이며, 실제 응답은 영어 계약의 전체 예시와 같은 최상위 키(`provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, `recommendation`, `failure_stage`, `next_checks`)를 모두 가진다. 로컬 시험 모드에서는 공개 전용 층이 `null` 이다.
 
 **`www.` 와 루트 호스트.** `site_host` 가 공개 집계에 적합한 공개 루트 호스트 앞에 `www.` 라벨 하나만 붙은 이름(`www.nytimes.com`, `www.bbc.co.uk`)이면, 호스트 단위 층은 루트 호스트를 조회한 것과 똑같이 루트 호스트 기준으로 답한다: `provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, 그리고 이들로 정하는 `recommendation` 과 `next_checks`. 등록·집계·읽기 대상은 루트 호스트이며 `www.` 이름으로는 아무것도 저장하지 않는다. 관찰 층은 합치지 않는다: `observations`, `evidence_level`, 각 집계 수, 사건과 사건 페이지는 정확한 `site_host` 를 키로 유지하고, 응답의 `site_host` 는 조회한 호스트 그대로다. 제보는 한 호스트에서 직접 겪은 사건이고, `www.` 앞단은 루트와 다른 경계(edge) 뒤에 있을 수 있으며, 저장된 사건의 키를 바꾸면 공개된 사건 페이지가 바뀌므로, 사이트 전체를 설명하는 선언·공식 층만 공유한다. 공개 제보의 자동 검토도 `www.<루트>` 제보를 루트 호스트처럼 공개 대상으로 보고, 15분 집중·24시간 공개 창에서는 두 이름을 한 호스트로 센다. 제보는 정확한 호스트로 저장·공개된다([운영 절차](public-intake-operations.md)). 앞의 `www.` 라벨 하나만, 그리고 그 호스트 자체가 적합한 루트 호스트가 아니고 남은 이름이 적합한 루트 호스트일 때만 뗀다: `www.co.uk`(`co.uk` 아래의 루트 호스트), `www.user123.example.org`, `www2.example.com`, `www.www.example.com` 등 다른 모든 서브도메인은 그대로다. `valid_host` 규칙은 바뀌지 않으며 `www.` 이름도 이전처럼 받아 답한다.
 
@@ -118,9 +118,26 @@
 
 `next_checks`는 `code`와 영어 `text`로 된 짧은 점검 목록이다. 사람 확인·로그인, 선택적으로 전달된 실패 단계, 선언 정책 층(`access_profile`)과 공식 경로 층(`official_paths`), 신선한 업체 발표의 신호, 제보 존재 여부로 정해지며 작업의 실제 결과나 원인을 추론하지 않는다. 사람용 화면은 같은 코드를 한국어로 표시한다. 목록은 사이트 우회 권한이나 자동 장애 판정이 아니다. 기존 `current_site_status: unknown` 의미는 유지한다.
 
-선택적 `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`)는 **조회자가 확인한 상황**을 점검 안내에 반영한다. 대상 응답의 출처와 접근 거부의 원인은 서비스가 검증하지 않는다. 값은 조회 응답에 되돌려 주지만 제보·업체 상태·호스트별 조회 집계의 근거로 저장하지 않는다. 잘못된 `error_class` 또는 `failure_stage`를 REST 조회에 전달하면 `400 invalid_request`와 안전한 `field`·`allowed_values`만 돌려주며 원래 입력은 반사하지 않는다. MCP 도구는 같은 선택값을 받는다.
+선택적 `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`)는 **조회자가 확인한 상황**을 점검 안내에 반영한다. 대상 응답의 출처와 접근 거부의 원인은 서비스가 검증하지 않는다. 값은 조회 응답에 되돌려 주지만 제보·업체 상태·`recommendation` 의 근거가 되지 않는다. 다음 절의 시간 단위 조회 신호 집계에만 센다. 잘못된 `error_class` 또는 `failure_stage`를 REST 조회에 전달하면 `400 invalid_request`와 안전한 `field`·`allowed_values`만 돌려주며 원래 입력은 반사하지 않는다. MCP 도구는 같은 선택값을 받는다.
 
-MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들지 않고 대상 사이트나 호출자의 데이터를 바꾸지 않는다. 조회는 익명으로 집계되고(호스트 등록·일별 호스트 조회 수, 조회 자체의 짧은 트랜잭션), 서비스가 캐시를 채우려고 호스트의 공개 `robots.txt`·`llms.txt`·상태 피드를 읽을 수 있으며 이 읽기는 조회가 기다리는 동안이 아니라 뒤에서 한다. 주석은 `readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`(공개 웹을 설명함)다. 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
+### 조회 신호 코드
+
+조회자가 본 실패한 단계를 설명하는 선택 코드 넷이 더 있다. 모두 정해진 목록의 값이고, 이미 아는 것만 보내고 나머지는 비운다. `GET /v1/incidents/check` 와 MCP `check_incident` 도구가 같은 이름으로 받는다(도구에서 `http_status` 는 정수).
+
+| 파라미터 | 값 | 뜻 |
+|---|---|---|
+| `http_status` | `401`, `402`, `403`, `407`, `408`, `429`, `451`, 또는 `500`~`599` 아무 값 | 대상이 돌려준 HTTP 상태. 다른 상태(404, 422 등)는 접근 문제가 아니므로 거부한다. 응답 자체에서 읽은 값을 쓰고 오류 문장에서 짐작하지 않는다. |
+| `challenge` | `header`, `none` | 대상 응답에 `cf-mitigated: challenge` 같은 봇 확인 헤더가 있었으면 `header`, 없었으면 `none`. 페이지 본문으로 판단하지 않는다. |
+| `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | 429·503 의 `Retry-After` 초 값: 60 미만, 60~3600, 3600 초과. 헤더가 없거나 날짜 형식이면 `none`. |
+| `via` | `http_fetch`, `browser`, `unknown` | 실패한 요청을 낸 것이 단순 HTTP 요청인지 브라우저인지. |
+
+목록 밖의 값은 **거부하지 않고 무시한다**: 조회는 정상 응답하고 그 코드는 보내지 않은 것으로 센다. 선택 신호의 오타 때문에 조회 답을 잃으면 안 되기 때문이다(`error_class`·`failure_stage` 는 그대로 `400`). 빠뜨린 코드는 `none` 이 아니라 모름(`unspecified`)으로 센다. 응답 헤더를 실제로 보고 해당 헤더가 없을 때만 `challenge=none`·`retry_after=none` 을 보낸다.
+
+**서비스가 이 코드로 하는 일(D47, 그림자 모드).** 조회는 공개 호스트명·UTC 시간별로 `error_class`, `failure_stage`, 이 코드들(`http_status` 는 구간으로 접어 모든 `5xx` 를 `5xx` 로), 보낸 클라이언트 프로그램의 종류(`plugin`, `ahn_client`, `mcp`, `web`, `rest_other` — User-Agent 와 MCP 연결에서 정하므로 참고용), 그 조회에 준 `recommendation.action` 과 함께 센다. 집계는 35일 보관한다. 주소를 보관하지 않고 서로 다른 클라이언트를 세기 위해, 호스트명과 UTC 날짜에만 해당하는 비밀키 IP 변환값을 클라이언트의 마지막 조회 시각(분 단위)과 그때 준 권고와 함께 2일 보관한다. 같은 호스트를 앞선 조회의 10분 이상 60분 이하(양 끝 포함) 뒤에 다시 조회하고 두 조회가 모두 막힌 조회였다면 그 권고 뒤의 재조회로 센다. 변환값이나 정확한 수는 응답에 나가지 않는다. 운영자 자신의 네트워크에서 온 조회, `X-AHN-Test: 1` 로 표시된 조회, 문서용 예시 호스트, 공개 루트 호스트가 아닌 호스트는 세지 않는다. MCP 호출은 어댑터가 호출자의 주소와 시험 표시를 인증된 내부 연결로 넘겨 이 집계에만 쓴다.
+
+**어떤 응답도 달라지지 않는다.** 이 코드가 있든 없든 `recommendation`, `next_checks`, `evidence_level`, `observations` 와 다른 모든 필드는 같다. 이 코드는 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않는다(D11). 아직 응답 어디에도 나오지 않는다. 나중에 더하면 선택 층으로, 대략적인 구간만, 서로 다른 클라이언트 세 곳 이상일 때만 나온다.
+
+MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들지 않고 대상 사이트나 호출자의 데이터를 바꾸지 않는다. 조회는 익명으로 집계되고(호스트 등록·일별 호스트 조회 수, 조회 자체의 짧은 트랜잭션. 그림자 모드로 선택 조회 신호 코드의 시간별 호스트 집계도 있다. [조회 신호 코드](#조회-신호-코드) 참고), 서비스가 캐시를 채우려고 호스트의 공개 `robots.txt`·`llms.txt`·상태 피드를 읽을 수 있으며 이 읽기는 조회가 기다리는 동안이 아니라 뒤에서 한다. 주석은 `readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`(공개 웹을 설명함)다. 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
 
 ### 업체 상태 출처 표의 정리 (2026-10-19)
 
