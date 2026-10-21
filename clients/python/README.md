@@ -43,7 +43,7 @@ All four follow the same rules:
 - They use only the extension point the framework's own documentation gives for a failed tool call.
 - The original error is not hidden or changed (LangChain's optional `convert_exceptions=True` is the one stated exception), nothing is retried, and no workaround is tried. A failure that is not a block or an outage (404, 422, a typo in an address), a call without an http(s) URL, an excluded host, a failed lookup or one slower than the time limit (2 seconds) adds nothing, and the run goes on exactly as it would have.
 - Only the hostname and two enum codes are sent (see [What it sends](#what-it-sends)). The error text, URL path and query stay on your machine.
-- The hostname comes from an http(s) URL in the call's arguments, or from the request the exception carries (httpx, requests, aiohttp, urllib); an exception's message is not searched for URLs, and tool-argument validation errors and errors with nothing web-like in them (a `PermissionError`, "Task blocked on mutex") are not looked up. Cluster-internal names (`.svc`, `.consul`, `.cluster`), address-embedding names (`10-0-0-1.sslip.io`), internationalized names that IDNA 2003 and 2008 read differently (`faß.de`) and URLs with a backslash are never looked up.
+- The hostname comes from an http(s) URL in the call's arguments, or from the request the exception carries (httpx, requests, aiohttp, urllib). **The text of an error is never searched for URLs**, so an exception that only names a URL in its message, with no URL argument and no request, is not looked up (a message also links to help pages such as `errors.pydantic.dev` or `docs.mistral.ai`). The Claude Agent SDK hook is the exception: it reads its payloads by the Claude Code plugin's rules, which include the URL of a failed WebFetch. Tool-argument validation errors and errors with nothing web-like in them (a `PermissionError`, "Task blocked on mutex") are not looked up. Cluster-internal names (`.svc`, `.consul`, `.cluster`), address-embedding names (`10-0-0-1.sslip.io`), internationalized names that IDNA 2003 and 2008 read differently (`faß.de`) and URLs with a backslash are never looked up.
 - A tool has to fail for the adapter to see it. A tool that returns the text of a 403 page as an ordinary result is not a failure to the framework; make it raise (`response.raise_for_status()`) or report an error.
 - The same host is answered from the in-memory cache for 10 minutes, and each failing call gets the line again.
 
@@ -51,10 +51,9 @@ All four follow the same rules:
 
 ```python
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolRetryMiddleware
 from ahn_client.langchain import ahn_tool_failure_middleware   # pip install "ahn-client[langchain]"
 
-agent = create_agent(model, tools=[fetch_page], middleware=[ahn_tool_failure_middleware(), ToolRetryMiddleware()])
+agent = create_agent(model, tools=[fetch_page], middleware=[ahn_tool_failure_middleware()])
 ```
 
 Implements the documented [`wrap_tool_call` / `awrap_tool_call`](https://docs.langchain.com/oss/python/langchain/middleware/custom) hooks.
@@ -62,7 +61,8 @@ Implements the documented [`wrap_tool_call` / `awrap_tool_call`](https://docs.la
 - A tool call that comes back as a `ToolMessage` with `status="error"` (a `ToolNode` with `handle_tool_errors`, `ToolRetryMiddleware` after its last attempt, or a tool that returns one) gets the line appended; the original content stays in front.
 - A tool that **raises** is left alone: the exception is re-raised unchanged, so the run behaves exactly as it does without the middleware whether or not Agent Help Network answers. An exception cannot carry text to the model.
 - `ahn_tool_failure_middleware(convert_exceptions=True)` also handles raised blocks and outages, always the same way and whatever the lookup returned: the exception becomes a `ToolMessage(status="error")` whose content is `Error: <exception class> (<error class>)` and the line when there is one. The exception's own text, URL, path and query are not put in the message. The run then goes on instead of stopping, which is why it is off by default.
-- **List it before `ToolRetryMiddleware`** (the first middleware listed is the outermost). Retries then run first and this middleware sees the final failure once. After it, with `convert_exceptions=True`, the first exception would become a message and the retries would never run.
+- **If you already use `ToolRetryMiddleware`, list this middleware before it** (the first middleware listed is the outermost): `middleware=[ahn_tool_failure_middleware(), ToolRetryMiddleware()]`. Retries then run first and this middleware sees the final failure once. After it, with `convert_exceptions=True`, the first exception would become a message and the retries would never run.
+- Not our behaviour, but worth knowing: `ToolRetryMiddleware`'s default failure message (`on_failure="continue"`) puts the exception's own text, including a URL with its query, into the message the model reads. This adapter only appends its line to it; use `on_failure="error"` or a function of your own there if the text should not reach the model.
 
 ### CrewAI: `ToolFailureDetectedEvent`
 

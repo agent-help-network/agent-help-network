@@ -18,7 +18,7 @@ import re
 import threading
 from typing import Any, Callable, Mapping, Optional, Tuple
 
-from ._classify import CONNECT_NAMES, URL_IN_TEXT, _chain, blank_host, classify, without_urls
+from ._classify import CONNECT_NAMES, _chain, blank_host, classify, without_urls
 from ._client import check
 from ._hosts import normalize_host
 from ._result import Result
@@ -28,13 +28,9 @@ DEFAULT_TIMEOUT = 2.0  # seconds for the whole lookup, DNS included; a miss cost
 URL_FIELDS = ("url", "uri", "href", "link", "page_url", "pageUrl", "target_url", "targetUrl", "website_url", "websiteUrl")
 HTTP_URL = ("http://", "https://")
 MAX_ARG_VALUES = 32
-MAX_TEXT = 20_000
+MAX_TEXT = 20_000  # how much of an error text is read for wording
 WORKER_NAME = "ahn-adapter-lookup"
 
-# Hosts that error texts link to for help, not the host the call was about.
-HELP_HOSTS = frozenset({"errors.pydantic.dev", "docs.pydantic.dev", "platform.openai.com", "docs.langchain.com",
-                        "python.langchain.com", "docs.crewai.com", "docs.anthropic.com", "docs.claude.com", "code.claude.com",
-                        "support.anthropic.com", "openai.github.io"})
 # Failures of the tool's own arguments (a framework validating them before the tool runs): never a web failure.
 VALIDATION_CLASSES = frozenset({"toolinvocationerror", "validationerror"})
 VALIDATION_TEXT = re.compile(r"validation errors? for|error invoking tool|errors\.pydantic\.dev|field required", re.I)
@@ -46,7 +42,15 @@ WEB_EVIDENCE = re.compile(
     r"|rate[ -]?limit|service unavailable|bad gateway|gateway time-?out|access denied|captcha|verify (?:that )?you are"
     r"|are you a robot|challenge|just a moment|checking your browser|net::ERR_|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT"
     r"|getaddrinfo|connection (?:refused|reset|aborted)|could not resolve|name or service not known|timed? ?out|robots\.txt"
-    r"|unable to fetch|blocked by (?:the )?(?:site|server|robots|network|firewall|waf|cloudflare)|certificate|\bssl\b",
+    r"|unable to fetch|blocked by (?:the )?(?:site|server|robots|network|firewall|waf|cloudflare)|certificate|\bssl\b"
+    # Wording of block pages and login walls that has no status code in it. These phrases are web context by themselves; the
+    # loose words they contain (blocked, denied, log in) are not.
+    r"|cloudflare|\bray id\b|attention required|security system|perimeterx|datadome|akamai|imperva|incapsula|distil networks"
+    r"|(?:you have|you['\u2019]ve|your request has) been (?:blocked|denied)|request (?:has been )?blocked|requests? (?:was|were) blocked"
+    r"|access to this (?:page|site|website|resource|content) (?:has been |is )?(?:denied|blocked|restricted)|access (?:has been )?restricted"
+    r"|unusual traffic|automated (?:access|requests?|traffic|queries)|bot (?:detection|protection|traffic)"
+    r"|(?:log|sign)[ -]?in (?:is )?required|(?:log|sign)[ -]?in to (?:view|continue|access|see|read|download)"
+    r"|you must (?:be )?(?:logged|signed)[ -]?in|you must (?:log|sign)[ -]?in|please (?:log|sign)[ -]?in|authentication required",
     re.I)
 HTTP_ATTRIBUTES = ("response", "request", "request_info", "status", "status_code")
 
@@ -90,14 +94,22 @@ def host_from_args(args: Any) -> Optional[str]:
     return None
 
 
+def _attribute(holder: Any, name: str) -> Any:
+    """``getattr(holder, name, None)`` that also survives a property that raises: httpx's ``.request`` raises RuntimeError
+    ("The .request property has not been set.") on an error built without a request, and a getattr default does not catch that."""
+    try:
+        return getattr(holder, name, None)
+    except Exception:
+        return None
+
+
 def _url_attribute_hosts(error: BaseException):
     """Hostnames of the request that failed, from the attributes httpx, requests, aiohttp and urllib set on their errors."""
     for holder in _chain(error):
-        response = getattr(holder, "response", None)
-        candidates = [getattr(holder, "request", None), response, getattr(response, "request", None),
-                      getattr(holder, "request_info", None)]
-        urls = [getattr(candidate, "url", None) for candidate in candidates]
-        urls.append(getattr(holder, "url", None))  # urllib.error.HTTPError
+        response = _attribute(holder, "response")
+        candidates = [_attribute(holder, "request"), response, _attribute(response, "request"), _attribute(holder, "request_info")]
+        urls = [_attribute(candidate, "url") for candidate in candidates]
+        urls.append(_attribute(holder, "url"))  # urllib.error.HTTPError
         for url in urls:
             if url is not None:
                 host = _http_url_host(str(url))
@@ -108,17 +120,13 @@ def _url_attribute_hosts(error: BaseException):
 def host_from_error(error: Any) -> Optional[str]:
     """The hostname the error is about, or None.
 
-    For an exception: the URL of its request (``.request``, ``.response``, ``.request_info``, ``.url``), and nothing from its
-    message, because a message also links to help pages (errors.pydantic.dev, platform.openai.com) and to other hosts. For
-    plain text, such as a tool's error message: the first http(s) URL in it that is not a known help page.
+    Only an exception that carries its request tells: the URL of ``.request``, ``.response``, ``.request_info`` or ``.url``.
+    The text of an error is never searched for URLs: a message also links to help pages (errors.pydantic.dev,
+    docs.mistral.ai, platform.openai.com) and to other hosts, and no list of those can be complete. An error without a
+    request or a URL argument is not looked up.
     """
     if isinstance(error, BaseException):
         return next(_url_attribute_hosts(error), None)
-    text = error.decode("utf-8", errors="replace") if isinstance(error, bytes) else error if isinstance(error, str) else ""
-    for match in URL_IN_TEXT.finditer(text[:MAX_TEXT]):
-        host = _http_url_host(match.group(0).rstrip(".,;:!?"))
-        if host and host not in HELP_HOSTS:
-            return host
     return None
 
 
@@ -135,7 +143,7 @@ def _web_evidence(error: Any, host: str) -> bool:
         chain = _chain(error)
         if any(type(item).__name__.lower() in CONNECT_NAMES for item in chain):
             return True
-        if any(getattr(item, name, None) is not None for item in chain for name in HTTP_ATTRIBUTES):
+        if any(_attribute(item, name) is not None for item in chain for name in HTTP_ATTRIBUTES):
             return True
         text = " ".join([type(item).__name__ for item in chain] + [str(item) for item in chain])
     else:

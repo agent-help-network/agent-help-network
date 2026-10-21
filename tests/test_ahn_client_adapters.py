@@ -160,19 +160,19 @@ def test_host_from_args(args, expected):
     assert _adapter.host_from_args(args) == expected
 
 
-def test_host_from_error_reads_the_request_of_an_exception_and_the_text_of_a_message():
+def test_host_from_error_reads_only_the_request_an_exception_carries():
     assert _adapter.host_from_error(HTTPStatusError("boom", request_url="https://api.example.com/v1?key=1")) == "api.example.com"
     assert _adapter.host_from_error(forbidden("https://www.example.net/a?b=c")) == "example.net"
     # requests puts the URL on the response, aiohttp on request_info, urllib on the error itself.
     assert _adapter.host_from_error(AttributeError_(response=SimpleNamespace(url="https://r.example.com/x"))) == "r.example.com"
     assert _adapter.host_from_error(AttributeError_(request_info=SimpleNamespace(url="https://a.example.com/x"))) == "a.example.com"
     assert _adapter.host_from_error(AttributeError_(url="https://u.example.com/x")) == "u.example.com"
-    # Plain text (a tool's error message): the first URL that is not a help page.
-    assert _adapter.host_from_error("GET https://example.org/page failed: 502") == "example.org"
-    assert _adapter.host_from_error(b"GET https://example.org/page failed: 502") == "example.org"
-    assert _adapter.host_from_error("see https://errors.pydantic.dev/2.11/v/missing then https://example.org/x") == "example.org"
-    assert _adapter.host_from_error("see https://platform.openai.com/docs/errors") is None
-    # An exception's message is not read: it links to help pages and to other hosts, and says nothing of the request.
+    # The text of an error is never searched for URLs, whether it is an exception's message or a plain string: it links to help
+    # pages (errors.pydantic.dev, docs.mistral.ai, platform.openai.com) and to other hosts.
+    for text in ("GET https://example.org/page failed: 502", b"GET https://example.org/page failed: 502",
+                 "see https://errors.pydantic.dev/2.11/v/missing then https://example.org/x", "see https://docs.mistral.ai/api/",
+                 "see https://platform.openai.com/docs/errors"):
+        assert _adapter.host_from_error(text) is None
     assert _adapter.host_from_error(RuntimeError("Timeout navigating to https://example.org/page")) is None
     assert _adapter.host_from_error(HTTPStatusError("Client error '403 Forbidden' for url 'https://example.org/'")) is None
     assert _adapter.host_from_error(RuntimeError("no address here")) is None
@@ -899,9 +899,11 @@ def test_crewai_note_for_event(transport):
     ahn.clear_cache()
     assert ahn_crewai.note_for_event(tool_failure_event(tool_args='{"url": "https://example.org/a"}'))
     assert sent(calls)[-1][0] == "example.org"
+    # A URL only in the message is not searched for: no URL argument, no lookup.
     ahn.clear_cache()
-    assert ahn_crewai.note_for_event(tool_failure_event("403 Forbidden for url https://example.net/a", tool_args={}))
-    assert sent(calls)[-1][0] == "example.net"
+    calls.clear()
+    assert ahn_crewai.note_for_event(tool_failure_event("403 Forbidden for url https://example.net/a", tool_args={})) is None
+    assert calls == []
 
 
 def test_crewai_events_that_are_not_blocks_get_no_lookup(transport):
@@ -1327,3 +1329,119 @@ def test_client_readme_links_are_absolute_so_they_work_on_pypi():
     assert links
     relative = [link for link in links if not link.startswith(("https://", "http://", "#"))]
     assert relative == [], relative
+
+
+# --- block pages and login walls are web failures on their own wording (a regression against 0.3.0 before the review) -----
+
+BLOCK_PAGE_TEXTS = [
+    ("Sorry, you have been blocked. You are unable to access example.com. Cloudflare Ray ID: 8a1b2c3d4e5f", "human_verification"),
+    ("Attention Required! | Cloudflare", "human_verification"),
+    ("Access to this page has been denied.", "site_access"),
+    ("Your request has been blocked by our security system", "site_access"),
+    ("Request blocked.", "site_access"),
+    ("ERROR: The request could not be satisfied. Request blocked. We can't connect to the server for this app or website at this time.",
+     "site_access"),
+    ("Login required", "login_auth"),
+    ("You must sign in to view this page", "login_auth"),
+]
+
+
+@pytest.mark.parametrize("text,expected_class", BLOCK_PAGE_TEXTS)
+def test_block_page_wording_is_a_web_failure_by_itself(text, expected_class, transport):
+    calls = transport()
+    args = {"url": "https://example.com/p"}
+    # As an exception without a request, as an exception from an HTTP library, and as a tool's error message.
+    for error in (RuntimeError(text), HTTPStatusError(text, request_url="https://example.com/p"), text):
+        target = _adapter.failure_target(error, args)
+        assert target is not None and target[:2] == ("example.com", expected_class), (text, error)
+    ahn.clear_cache()
+    assert _adapter.note_for(RuntimeError(text), args, adapter="langchain").startswith("AHN example.com:")
+    assert sent(calls)[0][1] == expected_class
+
+
+@pytest.mark.parametrize("error", [
+    PermissionError(13, "Permission denied"), PermissionError("[Errno 13] Permission denied: '/var/data/out.csv'"),
+    RuntimeError("Task blocked on mutex"), RuntimeError("Thread 4 is blocked waiting for a lock"),
+    RuntimeError("Please reset your password"), RuntimeError("Reset the counter"), RuntimeError("Request denied by policy engine"),
+    RuntimeError("The arrayid was missing"), RuntimeError("the pipe has been blocked"), KeyError("login"),
+    ValueError("could not log in to the database as root"),
+])
+def test_loose_words_alone_are_still_not_a_web_failure(error, transport):
+    calls = transport()
+    args = {"url": "https://example.com/p"}
+    assert _adapter.failure_target(error, args) is None
+    assert _adapter.failure_target(str(error), args) is None
+    assert _adapter.note_for(error, args, adapter="langchain") is None
+    assert calls == []
+
+
+# --- an error whose .request raises (httpx) ------------------------------------------------------------------
+
+class RequestlessReadTimeout(Exception):
+    """httpx.ReadTimeout built without a request: reading .request raises RuntimeError instead of returning None."""
+
+    @property
+    def request(self):
+        raise RuntimeError("The .request property has not been set.")
+
+
+def test_a_property_that_raises_does_not_break_the_attribute_reads(transport):
+    calls = transport()
+    error = RequestlessReadTimeout("The read operation timed out")
+    assert _adapter.host_from_error(error) is None
+    target = _adapter.failure_target(error, {"url": "https://example.com/p"})
+    assert target is not None and target[:2] == ("example.com", "service_error")
+    assert _adapter.note_for(error, {"url": "https://example.com/p"}, adapter="langchain").startswith("AHN example.com:")
+    assert _adapter._attribute(error, "request") is None
+    assert calls and sent(calls)[0][:2] == ("example.com", "service_error")
+
+
+def test_langchain_requestless_timeout_is_handled_when_converting_and_reraised_when_not(lc, transport):
+    transport()
+    error = RequestlessReadTimeout("The read operation timed out")
+    converted = ahn_langchain.handle_tool_call(lc.request, raising(error), convert_exceptions=True)
+    assert converted.status == "error" and converted.content.startswith("Error: RequestlessReadTimeout (service_error)\nAHN example.com:")
+    converted = asyncio.run(ahn_langchain.ahandle_tool_call(lc.request, async_raising(error), convert_exceptions=True))
+    assert converted.status == "error"
+    with pytest.raises(RequestlessReadTimeout) as caught:
+        ahn_langchain.handle_tool_call(lc.request, raising(error))
+    assert caught.value is error
+
+
+def test_langchain_when_reading_the_error_fails_the_original_exception_goes_on(lc, transport, monkeypatch):
+    transport()
+
+    def broken(error, args):
+        raise RuntimeError("The .request property has not been set.")
+
+    monkeypatch.setattr(ahn_langchain, "failure_target", broken)
+    error = forbidden()
+    with pytest.raises(HTTPStatusError) as caught:
+        ahn_langchain.handle_tool_call(lc.request, raising(error), convert_exceptions=True)
+    assert caught.value is error
+    with pytest.raises(HTTPStatusError) as caught:
+        asyncio.run(ahn_langchain.ahandle_tool_call(lc.request, async_raising(error), convert_exceptions=True))
+    assert caught.value is error
+
+
+def test_a_real_httpx_read_timeout_without_a_request(lc, transport):
+    httpx = pytest.importorskip("httpx")
+    transport()
+    error = httpx.ReadTimeout("The read operation timed out")
+    with pytest.raises(RuntimeError):
+        error.request  # noqa: B018 - the premise: httpx raises here instead of returning None
+    converted = ahn_langchain.handle_tool_call(lc.request, raising(error), convert_exceptions=True)
+    assert converted.content.startswith("Error: ReadTimeout (service_error)\nAHN example.com:")
+    assert asyncio.run(_adapter.anote_for(error, {"url": "https://example.com/p"}, adapter="crewai"))
+    request = httpx.Request("GET", "https://api.example.net/v1/x?token=abc")
+    with_request = httpx.ReadTimeout("The read operation timed out", request=request)
+    assert _adapter.failure_target(with_request, None)[:2] == ("api.example.net", "service_error")
+
+
+def test_a_url_only_in_the_message_is_not_looked_up(transport):
+    calls = transport()
+    for error in (RuntimeError("403 Forbidden for https://docs.mistral.ai/api/"), "403 Forbidden for https://docs.mistral.ai/api/",
+                  ToolInvocationError("403 https://errors.pydantic.dev/2.11/v/missing")):
+        assert _adapter.note_for(error, {"query": "no url argument"}, adapter="langchain") is None
+        assert _adapter.note_for(error, None, adapter="langchain") is None
+    assert calls == []

@@ -66,6 +66,14 @@ def _control_flow(error: BaseException) -> bool:
     return any(cls.__name__ in CONTROL_FLOW for cls in type(error).__mro__)
 
 
+def _target(error: BaseException, args: Any) -> Any:
+    """``failure_target`` that never raises: whatever is wrong with reading the error, the tool's own exception goes on."""
+    try:
+        return failure_target(error, args)
+    except Exception:
+        return None
+
+
 def _call(request: Any) -> dict:
     call = getattr(request, "tool_call", None)
     return call if isinstance(call, dict) else {}
@@ -117,7 +125,7 @@ def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = F
     except Exception as error:
         if not convert_exceptions or _control_flow(error):
             raise
-        target = failure_target(error, args)
+        target = _target(error, args)
         if target is None:
             raise
         note = note_for(error, args, adapter=ADAPTER, timeout=timeout)
@@ -145,7 +153,7 @@ async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: b
     except Exception as error:
         if not convert_exceptions or _control_flow(error):
             raise
-        target = failure_target(error, args)
+        target = _target(error, args)
         if target is None:
             raise
         note = await anote_for(error, args, adapter=ADAPTER, timeout=timeout)
