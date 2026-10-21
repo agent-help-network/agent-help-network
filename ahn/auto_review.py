@@ -169,6 +169,12 @@ def main() -> None:
             print(f"gov_registry registry={result['registry']} outcome={result['outcome']} rows={result['rows']} reason={result['reason']}")
     except Exception as exc:  # e.g. migration 022 not applied yet: nothing else in the cron depends on this step
         print(f"gov_registry failed={type(exc).__name__}")
+    # The offline bundle, about once a day, only while AHN_PUBLIC_BUNDLE=1 (ahn/bundle.py).
+    from .bundle import refresh_if_due
+    try:
+        print("bundle " + " ".join(f"{key}={value}" for key, value in refresh_if_due(database_url).items()))
+    except Exception as exc:  # a failed build keeps the previous file and must not fail the review cron
+        print(f"bundle failed={type(exc).__name__}")
 
 
 if __name__ == "__main__":

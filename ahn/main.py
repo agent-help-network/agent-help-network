@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
@@ -30,6 +31,8 @@ from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
+# The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
+POLICY_UPDATED = date(2026, 10, 20)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
@@ -149,6 +152,13 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     app = FastAPI(title="Agent Help Network", version="0.1.0", description="Structured observations, not website status or root-cause diagnosis", lifespan=lifespan)
     app.state.settings = settings
     request_limiter = RequestLimiter() if settings.public_mode else None
+    llms_body = LLMS_TXT
+    policy_updated = POLICY_UPDATED
+    if settings.public_bundle:  # the bundle is described only while it is served
+        from .bundle import LLMS_SECTION
+        assert "\n## Pages" in llms_body
+        llms_body = llms_body.replace("\n## Pages", "\n" + LLMS_SECTION + "## Pages", 1)
+        policy_updated = max(POLICY_UPDATED, settings.public_bundle_since or POLICY_UPDATED)
     report_limiter = RequestLimiter(per_client=3, total=20) if settings.public_mode and settings.reporting_enabled else None
     health_lock = Lock()
     health_cache = {"checked_at": 0.0, "ok": False}
@@ -170,7 +180,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         @app.get("/llms.txt", include_in_schema=False)
         def llms_txt():
             # Our own llms.txt: the same courtesy we read from other hosts.
-            return Response(LLMS_TXT + "\n", media_type="text/plain; charset=utf-8")
+            return Response(llms_body + "\n", media_type="text/plain; charset=utf-8")
 
         @app.get("/robots.txt", include_in_schema=False)
         def robots():
@@ -257,7 +267,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS}:
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -307,7 +317,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
@@ -369,6 +379,10 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
         body = "".join(host + "\n" for host in hosts)
         return Response(body, media_type="text/plain; charset=utf-8", headers=OWNER_HEADERS)
+
+    if settings.public_bundle:  # off by default: the paths then do not exist (404)
+        from .bundle import add_routes as add_bundle_routes
+        add_bundle_routes(app, settings)
 
     @app.get("/v1/incidents/check", response_model=CheckResponse)
     def check_incident(site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,

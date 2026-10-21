@@ -44,6 +44,13 @@ services:
         value: agenthelpnetwork.com
       - key: AHN_VANTAGE
         value: '{"kind":"datacenter","region":"US","asn":null,"declared":true}'
+      # Offline data bundle (ahn/bundle.py): unset or anything but 1 keeps /v1/bundle/* at 404. Set 1 here and on the
+      # review cron together, only after the owner approves publishing.
+      - key: AHN_PUBLIC_BUNDLE
+        sync: false
+      # Required with AHN_PUBLIC_BUNDLE=1: the date (YYYY-MM-DD) the privacy policy shows as last updated.
+      - key: AHN_PUBLIC_BUNDLE_SINCE
+        sync: false
 
   - type: cron
     name: agent-help-network-review
@@ -57,6 +64,13 @@ services:
         fromDatabase:
           name: agent-help-network-db
           property: connectionString
+      # 1 rebuilds the offline bundle about once a day (see the web service); unset deletes the stored file.
+      # Optional: AHN_EXPORT_SIGNING_KEY signs it.
+      - key: AHN_PUBLIC_BUNDLE
+        sync: false
+      # The licensor named in the bundle's CC BY 4.0 notice; the build refuses to run without it.
+      - key: AHN_OPERATOR_NAME
+        sync: false
       # Provenance stamped on stored reads and reports (ahn/provenance.py); these are the defaults.
       - key: AHN_OPERATOR_ID
         value: agenthelpnetwork.com

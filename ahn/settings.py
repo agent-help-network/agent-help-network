@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from ipaddress import ip_address
 from dataclasses import dataclass, field
 
@@ -36,6 +37,10 @@ class Settings:
     operator_name: str = ""
     # 0 keeps reports without an automatic deletion date (the policy page says so).
     report_retention_days: int = 0
+    # AHN_PUBLIC_BUNDLE=1 serves the offline data bundle (ahn/bundle.py); off, its paths do not exist.
+    public_bundle: bool = False
+    # AHN_PUBLIC_BUNDLE_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date.
+    public_bundle_since: date | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -62,4 +67,12 @@ class Settings:
         operator_name = " ".join(os.environ.get("AHN_OPERATOR_NAME", "").split())
         if len(operator_name) > 80 or not operator_name.isprintable():
             raise RuntimeError("AHN_OPERATOR_NAME must be at most 80 printable characters")
-        return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env())
+        public_bundle = os.environ.get("AHN_PUBLIC_BUNDLE", "").strip() == "1"
+        public_bundle_since = None
+        if public_bundle:
+            try:
+                public_bundle_since = date.fromisoformat(os.environ.get("AHN_PUBLIC_BUNDLE_SINCE", "").strip())
+            except ValueError:
+                raise RuntimeError("AHN_PUBLIC_BUNDLE=1 needs AHN_PUBLIC_BUNDLE_SINCE=YYYY-MM-DD, "
+                                   "the date the privacy policy shows as last updated") from None
+        return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since)
