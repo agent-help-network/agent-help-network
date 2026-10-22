@@ -21,14 +21,14 @@ def test_discovery_requires_statuspage_delegation(monkeypatch):
     assert status_refresh._statuspage_target("example.org") is None
 
 
-def test_discovery_never_connects_to_private_ip(monkeypatch):
+def test_discovery_never_connects_to_private_ip(monkeypatch, allow_all_gate):
     monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
     monkeypatch.setattr(status_refresh.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, ("127.0.0.1", 443))])
     monkeypatch.setattr(status_refresh.urllib3, "HTTPSConnectionPool", lambda *_args, **_kwargs: pytest.fail("private address was contacted"))
-    assert status_refresh.discover_source("example.org") is None
+    assert status_refresh.discover_source("example.org", gate=allow_all_gate) is None
 
 
-def test_discovery_rejects_mismatched_page_identity(monkeypatch):
+def test_discovery_rejects_mismatched_page_identity(monkeypatch, allow_all_gate):
     monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
     monkeypatch.setattr(status_refresh.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))])
     class Response:
@@ -45,4 +45,4 @@ def test_discovery_rejects_mismatched_page_identity(monkeypatch):
         def close(self):
             pass
     monkeypatch.setattr(status_refresh.urllib3, "HTTPSConnectionPool", Pool)
-    assert status_refresh.discover_source("example.org") is None
+    assert status_refresh.discover_source("example.org", gate=allow_all_gate) is None

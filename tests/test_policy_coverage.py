@@ -390,6 +390,10 @@ TABLES = {
     "gov_registry_versions": Replaced(
         Phrase("the current copy of each public government domain list we download", "내려받는 공개 정부 도메인 목록마다 현재 사본"),
         Phrase("is replaced when its publisher posts a new version", "게시자가 새 판을 내면 교체")),
+    # Status-feed hosts' robots.txt decisions (migration 029, ahn/feed_robots.py, D50): one row per host, rewritten by each read.
+    "feed_robots": Replaced(
+        Phrase("whether its robots.txt allows each feed path we would request", "그 호스트의 robots.txt 가 우리가 요청할 피드 경로를 허용하는지"),
+        Phrase("this record is replaced on each read", "이 기록은 읽을 때마다 교체됩니다")),
     "observations": ReportRows(),
     "report_submissions": ReportRows(),  # idempotency key and request hash of a report; goes with its observation
     # Not request-derived: nothing for the policy to describe.
@@ -606,6 +610,37 @@ def test_scheduled_status_feed_reads_in_the_policy_match_the_code():
     assert_phrases("scheduled status feed reads", {lang: section(lang, "05") for lang in LANGS}, wanted)
     for lang, old in (("en", "These reads run in the background after a lookup"), ("ko", "이 읽기는 조회가 기다리는 동안이 아니라")):
         assert old not in section(lang, "05"), f"the {lang} policy still says every read follows a lookup"
+
+
+def test_feed_robots_decisions_in_the_policy_match_the_code():
+    # D50: the status host's own robots.txt is read before any feed request; what is stored and for how long.
+    from datetime import timedelta as _td
+
+    from ahn import feed_robots, status_refresh
+    assert feed_robots.DECIDED_TTL == _td(hours=24) and feed_robots.RULE_CHARS == 80
+    assert feed_robots.STALE_OK_MAX == _td(hours=48) and feed_robots.ERROR_TTL == _td(hours=1)
+    assert feed_robots.ERROR_TTL < feed_robots.DECIDED_TTL and status_refresh.SCOPE_GAP_SECONDS >= 1.0
+    reads = {"robots_first": Phrase(
+        "Before any feed is read, we read the status host's own /robots.txt (a successful read at most once a day for each host, a read that fails "
+        "tried again after an hour, a second or more before the feed request) and request a feed path only if that file allows it for AgentHelpNetwork",
+        "피드를 읽기 전에 먼저 그 상태 호스트 자신의 /robots.txt 를 읽고(성공한 읽기는 호스트마다 하루 한 번 이하, 읽지 못하면 한 시간 뒤 다시, "
+        "피드 요청보다 1초 이상 앞서), 그 파일이 AgentHelpNetwork 에게 허용하는 피드 경로만 요청합니다"),
+        "error_is_no": Phrase("if the file cannot be read because of a server error or a timeout, we treat the host as disallowing everything until it can be read, "
+                              "except that a file we read successfully less than 48 hours earlier keeps deciding in the meantime",
+                              "서버 오류나 시간 초과로 그 파일을 읽지 못하면 읽을 수 있을 때까지 그 호스트가 전부 금지한 것으로 봅니다. "
+                              "다만 48시간 안에 읽는 데 성공한 파일은 읽지 못하는 동안에도 계속 그 판정을 따릅니다"),
+        "blocked_not_read": Phrase("A feed whose robots.txt disallows it is not read at all, and for that host we show a link to the official status page instead of a reading",
+                                   "robots.txt 가 금지한 피드는 읽지 않으며, 그 호스트에는 읽은 값 대신 공식 상태 페이지 링크를 보여 줍니다")}
+    assert_phrases("feed robots reads", {lang: section(lang, "05") for lang in LANGS}, reads)
+    kept = {"kept": Phrase(
+        f"the rule line that decided it (at most {feed_robots.RULE_CHARS} characters), the parser version, a hash of the file and the time it was read",
+        f"그것을 정한 규칙 줄(최대 {feed_robots.RULE_CHARS}자), 해석기 버전, 파일 해시, 읽은 시각도 두며"),
+        "ended": Phrase("It also keeps how the read ended (found, missing, unavailable or failed, with a short label such as http_503 or, for a redirect "
+                        "we do not follow, the host it pointed to), which group of the file decided (the one naming AgentHelpNetwork or the * group), "
+                        "and, when a later read failed while an earlier successful one kept deciding, when and why",
+                        "읽기가 어떻게 끝났는지(읽음·없음·사용 불가·실패와 http_503 같은 짧은 라벨, 따르지 않은 리다이렉트는 가리킨 호스트), "
+                        "판정한 그룹(AgentHelpNetwork 를 지명한 그룹인지 * 그룹인지), 앞서 성공한 읽기가 판정을 이어 가는 동안 뒤의 읽기가 실패했다면 그 시각과 이유도 함께 둡니다")}
+    assert_phrases("feed robots storage", {lang: section(lang, "06") for lang in LANGS}, kept)
 
 
 def test_stored_provenance_is_described_in_the_policy():

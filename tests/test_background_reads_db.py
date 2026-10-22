@@ -50,7 +50,7 @@ def db(monkeypatch):
         conn.execute("INSERT INTO reporters (id,key_hash,label) VALUES (%s,repeat('0',64),'public-unverified')", (PUBLIC_REPORTER_ID,))
         conn.execute("UPDATE service_flags SET enabled=true WHERE name IN ('public_intake','public_publication')")
     monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
-    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None, **_kw: None)
     monkeypatch.setattr(service, "cached_profile", cached_profile)
     return settings
 
@@ -138,7 +138,7 @@ def test_a_transport_failure_is_a_finished_job_and_keeps_the_hourly_retry(db, mo
 
 def test_a_job_that_raises_backs_off_and_is_dropped_after_five_attempts(db, monkeypatch):
     monkeypatch.setattr(background_reads, "read_profile_file", Reader(fail=True))
-    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None, **_kw: None)
     with connect(db) as conn:
         background_reads.enqueue(conn, [("access_profile", "broken-example.org")])
     for attempt in range(1, 5):

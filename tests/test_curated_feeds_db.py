@@ -50,7 +50,7 @@ def db():
 @pytest.fixture(autouse=True)
 def unpaced(monkeypatch):
     monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
-    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None, **_kw: None)
     monkeypatch.setattr(status_refresh, "_sleep", lambda _seconds: None)
 
 
@@ -230,6 +230,10 @@ def test_one_run_is_bounded_by_its_limit_and_its_time_budget(db, small, monkeypa
     feeds = Feeds()
     assert batch(db, feeds, limit=1) == {"checked": 1, "updated": 1, "failed": 0, "remaining": 2}
     age(db, 61)
+    # Every feed has a stored statement now (a feed without one is a read that only decides, and stops at half the time, D50).
+    with connect(db) as conn:
+        conn.execute("INSERT INTO status_cache (site_host,indicator,fetched_at) SELECT site_host,'none',now() - interval '2 hours' "
+                     "FROM status_sources WHERE site_host NOT IN (SELECT site_host FROM status_cache)")
     # A fake clock that moves 40 s with each paced read: reads start at 0 s and 40 s; at 80 s the 60 s budget is spent.
     clock = [0.0]
     monkeypatch.setattr(status_refresh, "_clock", lambda: clock[0])

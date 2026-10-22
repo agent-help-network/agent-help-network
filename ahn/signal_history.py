@@ -591,6 +591,8 @@ def _covered(intervals: list[tuple[datetime, datetime]], at: datetime) -> bool:
 
 def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
     """Owner-only numbers for the 3-7 day observation before any public page (design 4.1). Read-only."""
+    from . import feed_robots
+
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=days)
     since_day = since.date()
@@ -708,7 +710,9 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
     return {
         "generated_at": _iso(now), "days": days, "stage_thresholds": _thresholds_view(thresholds_from_env()),
         "coverage": {"registered_feeds": len(feed_hosts), "registered_feeds_curated": len(feed_hosts & curated),
-                     "target_hosts": len(curated), "recording_hosts": int(reads["hosts"])},
+                     "target_hosts": len(curated), "recording_hosts": int(reads["hosts"]),
+                     # D50: registered feed addresses by what their host's robots.txt says about the feed path.
+                     "feed_robots": feed_robots.counts(conn)},
         "infra_feeds": _infra_feeds(conn, feed_hosts, now),
         "candidates_now": len(listed), "candidates": listed[:CANDIDATE_LIST_MAX], "truncated": len(listed) > CANDIDATE_LIST_MAX,
         "candidate_sources": {"ahn_check": sum(1 for c in listed if c["ahn_check"]), "provider": sum(1 for c in listed if c["provider"])},
