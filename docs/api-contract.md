@@ -368,6 +368,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
+- 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
 
 ### 링크 (`links`)

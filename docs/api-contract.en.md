@@ -399,6 +399,7 @@ Every lookup answer also carries `summary_line` and `next_action` (D51). Both ar
 - `stop_if_you_are` is present only when `recommendation.reasons` contains `robots_blocks_some_agents`: the agent tokens from this service's token table whose vendor is explicitly disallowed at the site root. If your requests identify as one of them, treat it as a declared block and stop retrying pages. Send `agent_vendor` for an answer for your own agent.
 - `lookup_host` is present only with `lookup_apex_host`: the site's main domain, whose declared policy covers the site.
 - `url` is taken only from the curated official paths and verified status sources described above, and must be an `https` URL of at most 200 characters; otherwise it is `null`.
+- If the three keys cannot be produced, they are left out and the rest of the answer is unchanged. The OpenAPI schema always lists `summary_line`, `next_action` and `links` as optional properties, whether or not they are present.
 - `do` never says more or less than `recommendation.action`. The four values that split `unknown` all mean that no verdict exists; they only say what can be done now.
 
 ### Links

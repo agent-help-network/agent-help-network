@@ -285,6 +285,19 @@ def test_stop_if_you_are_lists_only_table_tokens_and_only_for_the_some_agents_re
             assert extra["stop_if_you_are"] == blocked_governing_tokens(case["access_profile"])
 
 
+def test_a_regional_wait_is_w3_and_the_token_table_fits_the_list_cap():
+    result = answer(provider_status=provider("major"), regional=True)
+    assert select_row(result["recommendation"], None, result["provider_status"], "example.com") == ("W3", True)
+    assert guide(result)["summary_line"] == ROWS["W3"][1]
+    assert len(ALL_TOKENS) <= response_guide.MAX_STOP_TOKENS == 16
+
+
+def test_an_invalid_api_docs_url_is_not_replaced_by_the_portal():
+    bad = {"name": "x", "api_docs": "http://developer.example.com/", "developer_portal": "https://portal.example.com/", "note": None}
+    result = answer(official=bad, access_profile=robots("User-agent: *\nAllow: /\n"))
+    assert guide(result)["next_action"]["do"] == "use_official_path" and guide(result)["next_action"]["url"] is None
+
+
 def test_the_token_list_and_the_verdict_read_the_same_vendor_states():
     import random
     rng = random.Random(51)
@@ -562,6 +575,27 @@ def test_a_service_answer_has_the_pending_first_lookup_shape(monkeypatch):
     on = lookup(monkeypatch, "example.com", profile=None, due=True, official=None)
     assert on["recommendation"]["reasons"] == ["profile_pending"] or on["recommendation"]["reasons"] == ["robots_unknown"]
     assert on["next_action"]["do"] in ("retry_lookup_once", "no_clear_action")
+
+
+def test_a_failing_guide_leaves_the_three_keys_out_and_the_lookup_record_still_runs(monkeypatch, caplog):
+    recorded = []
+    monkeypatch.setattr(service, "_record_signal", lambda *a, **k: recorded.append(a))
+
+    def boom(_result):
+        raise RuntimeError("simulated")
+    from ahn.lookup_signals import LookupSignal
+    signal = LookupSignal(client_kind="other", source_address=None)
+    spec = dict(profile=robots("User-agent: *\nAllow: /\n"), official=OFFICIAL, signal=signal)
+    good = lookup(monkeypatch, "example.com", on=True, **copy.deepcopy(spec))
+    recorded.clear()
+    monkeypatch.setattr(response_guide, "guide", boom)
+    with caplog.at_level("WARNING", logger="ahn.service"):
+        broken = lookup(monkeypatch, "example.com", on=True, **copy.deepcopy(spec))
+    assert not set(NEW_KEYS) & set(broken) and "response_guide_unavailable" in caplog.text
+    strip = lambda d: {k: v for k, v in d.items() if k not in NEW_KEYS and k != "generated_at"}  # noqa: E731
+    assert strip(broken) == strip(good)
+    assert len(recorded) == 1  # the D47 record ran
+    CheckResponse(**broken)
 
 
 def test_a_test_mode_host_gets_the_unknown_row_and_stays_synthetic(monkeypatch):

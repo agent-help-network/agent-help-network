@@ -93,6 +93,21 @@ def test_the_switch_off_answer_has_none_of_the_new_keys_and_the_rest_is_the_same
     assert datetime.fromisoformat(off.json()["generated_at"].replace("Z", "+00:00")).tzinfo is timezone.utc
 
 
+def test_a_failing_guide_still_answers_over_rest_and_the_web_search_page(monkeypatch):
+    settings = prepare(monkeypatch, guide=True)
+    with TestClient(create_app(settings)) as client:
+        before = client.get("/v1/incidents/check", params={"site_host": "plain-example.org"}).json()
+
+        def boom(_result):
+            raise RuntimeError("simulated")
+        monkeypatch.setattr("ahn.response_guide.guide", boom)
+        rest = client.get("/v1/incidents/check", params={"site_host": "plain-example.org"})
+        assert rest.status_code == 200 and not set(NEW_KEYS) & set(rest.json())
+        assert stripped(rest.json()) == stripped(before)
+        page = client.get("/en/search", params={"site_host": "plain-example.org"})
+        assert page.status_code == 200
+
+
 def test_the_openapi_schema_lists_the_new_keys_as_optional(monkeypatch):
     settings = prepare(monkeypatch, guide=True)
     with TestClient(create_app(settings)) as client:

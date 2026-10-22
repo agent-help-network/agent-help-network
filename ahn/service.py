@@ -545,8 +545,12 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         if host_facts is not None:
             result["host_facts"] = host_facts
         if settings.response_guide:
-            # D51: computed from the finished answer, after everything above; it changes none of it.
-            result.update(response_guide.guide(result))
+            # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
+            # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
+            try:
+                result.update(response_guide.guide(result))
+            except Exception:
+                LOG.warning("response_guide_unavailable")
         if signal is not None:
             _record_signal(conn, settings, host, error_class, failure_stage, signal, result["recommendation"]["action"],
                            public=public, registered=registered, now=now)
