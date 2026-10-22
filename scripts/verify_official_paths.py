@@ -201,6 +201,7 @@ PUBLISHER_GITHUB_ORGS: dict[str, set[str]] = {
     "figma.com": {"figma"},  # developers.figma.com/docs/rest-api links github.com/figma/rest-api-spec as the OpenAPI specification
     "netlify.com": {"netlify"},  # docs.netlify.com get-started-with-api links github.com/netlify/open-api as the OpenAPI specification
     "plaid.com": {"plaid"},  # plaid.com/docs/api links github.com/plaid/plaid-openapi as the OpenAPI specification
+    "ngrok.com": {"ngrok"},  # ngrok.com/docs/llms.txt lists raw.githubusercontent.com/ngrok/ngrok-openapi as the OpenAPI specification
 }
 TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 NOT_FOUND = re.compile(r"\b(404|not found|page not found|does not exist|no longer available)\b", re.IGNORECASE)

@@ -57,7 +57,8 @@ def test_no_table_key_is_a_known_public_suffix_and_police_uk_is_covered():
     assert "police.uk" in PUBLIC_SUFFIXES_2
     assert "data.police.uk" in OFFICIAL_PATHS and VERIFIER.registrable("data.police.uk") == "data.police.uk"
     assert official_paths("police.uk") is None
-    assert official_paths("api.data.police.uk") == OFFICIAL_PATHS["data.police.uk"]
+    # The access bundle (when current) is an addition; the four table fields stay identical.
+    assert {k: v for k, v in official_paths("api.data.police.uk").items() if k != "access"} == OFFICIAL_PATHS["data.police.uk"]
 
 
 def test_every_entry_has_a_name_and_some_content():
