@@ -1572,8 +1572,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "verified_at": "2026-10-21",
     },
     "googleapis.com": {
-        "auth": [{"method": "oauth2", "source_url": "https://docs.cloud.google.com/mcp/authenticate-mcp"},
-                 {"method": "api_key", "source_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers"}],
+        "auth": [{"method": "oauth2", "source_url": "https://docs.cloud.google.com/mcp/authenticate-mcp"}],
         "key_signup_url": "https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers",
         "official_mcp": [{"endpoint": f"https://{_n}.googleapis.com/mcp", "doc_url": "https://docs.cloud.google.com/mcp/supported-products"}
                          for _n in ("bigquery", "compute", "container", "firestore", "sqladmin", "monitoring", "logging",
@@ -1810,7 +1809,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "auth": [{"method": "api_key", "source_url": "https://ipinfo.io/developers"}],
         "key_signup_url": "https://ipinfo.io/developers",
         "free_tier": {"source_url": "https://ipinfo.io/developers",
-                      "quote": "IPinfo Lite is our free tier API service available to all users."},
+                      "quote": "IPinfo Lite is our free tier API service available to all users. The API returns country and ASN information without any API request quota restrictions."},
         "rate_limits_url": "https://ipinfo.io/developers",
         "terms": {"url": "https://ipinfo.io/terms-of-service",
                   "quote": "You are solely responsible for any activity using your Credentials, whether or not you authorized that activity."},
@@ -1819,8 +1818,6 @@ OFFICIAL_ACCESS: dict[str, dict] = {
     "openweathermap.org": {
         "auth": [{"method": "api_key", "source_url": "https://openweathermap.org/appid"}],
         "key_signup_url": "https://openweathermap.org/appid",
-        "free_tier": {"source_url": "https://openweathermap.org/faq",
-                      "quote": "1,000 API calls per day are included for free."},
         "verified_at": "2026-10-21",
     },
     "intercom.com": {
