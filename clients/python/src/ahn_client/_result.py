@@ -46,8 +46,8 @@ def _retry_after(profile: Optional[Dict[str, Any]]) -> Optional[int]:
 
 
 def _summary(host: str, data: Dict[str, Any], url: str) -> str:
-    """The line the Claude Code plugin prints, at most MAX_SUMMARY characters, from validated fields only. For the
-    three D48 robots codes (NEXT_CHECK_NOTES) a short sentence follows the link, which the plugin's line does not have."""
+    """A line like the Claude Code plugin's, at most MAX_SUMMARY characters, from validated fields only. It differs from the
+    plugin's in one way: for the three D48 robots codes (NEXT_CHECK_NOTES) a short sentence follows the link."""
     rec = _dict(data.get("recommendation")) or {}
     profile = _dict(data.get("access_profile"))
     official = _dict(data.get("official_paths")) or {}
@@ -97,9 +97,15 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
                 "Declared policy is not an access guarantee; bypassing site controls is not advised.")
 
     text = ""
-    # The note goes first to the sacrifice list's end: the agent list, path and link are shortened before it is dropped.
-    for options in ((6, True, True, True), (3, True, True, True), (0, True, True, True), (0, False, True, True), (0, False, False, True),
-                    (6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False)):
+    # Order of sacrifice. Without a note: agent names, then path, then link (as the plugin does). With a note, the note
+    # is dropped before anything the reader needs to apply it: at least 3 blocked-agent names and the link stay, and the
+    # path goes before the names shrink below 3. Only when that is not enough are the names given up, then the link.
+    if note:
+        order = ((6, True, True, True), (3, True, True, True), (6, True, True, False), (3, True, True, False),
+                 (6, False, True, False), (3, False, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False))
+    else:
+        order = ((6, True, True, False), (3, True, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False))
+    for options in order:
         text = render(*options)
         if len(text) <= MAX_SUMMARY:
             return text
@@ -177,5 +183,6 @@ class Result:
         return tuple(item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item))
 
     def summary(self) -> str:
-        """One line, at most 700 characters, built only from validated fields."""
+        """One line, at most 700 characters, built only from validated fields. Like the plugin's line, plus a short sentence
+        for the next_checks codes in ``NEXT_CHECK_NOTES``."""
         return _summary(self.host, self.raw, self.url)

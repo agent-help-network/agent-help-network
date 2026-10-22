@@ -413,6 +413,47 @@ def test_the_hook_sends_no_vendor_but_anthropic_for_webfetch(vendor):
     assert "agent_vendor" not in hook.lookup_url("example.com", "site_access", None, {"agent_vendor": "anthropic"})
 
 
+def test_the_line_says_which_vendor_the_answer_is_for(monkeypatch, capsys, captured):
+    mark = "Answer for agent_vendor=anthropic (WebFetch). Full JSON:"
+    _, out, _ = run_main(monkeypatch, capsys, payload("PostToolUse", url="https://example.com/a", response={"code": 403, "codeText": "x"}))
+    context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert mark in context and len(context) <= 700
+    captured.clear()
+    raw = payload(tool="mcp__playwright__browser_navigate", fields={"url": "https://example.org/a"}, error="403 Forbidden https://example.org/a")
+    _, out, _ = run_main(monkeypatch, capsys, raw)
+    assert "agent_vendor" not in json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_the_vendor_mark_keeps_the_line_within_the_limit_or_gives_way():
+    host = ".".join(["a" * 60] * 4) + ".com"
+    many = answer()
+    many["access_profile"]["robots"]["agents_blocked"] = [f"Agent{index}-User" for index in range(22)]
+    many["official_paths"]["api_docs"] = "https://developer.example.com/" + "x" * 79
+    url = hook.lookup_url(host, "site_access", "before_target_response", None, "anthropic")
+    line = hook.summary(host, many, url, "", "anthropic")
+    assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
+    short = hook.summary("example.com", many, hook.lookup_url("example.com", "site_access", None, None, "anthropic"), "", "anthropic")
+    assert "Answer for agent_vendor=anthropic (WebFetch). Full JSON:" in short and len(short) <= 700
+    assert "agent_vendor" not in hook.summary("example.com", many, "https://x", "", None)
+    assert "agent_vendor" not in hook.summary("example.com", many, "https://x", "", "openai")
+
+
+def test_a_lookup_without_a_vendor_does_not_hide_one_with_a_vendor(monkeypatch, capsys, captured):
+    browser = payload(tool="mcp__playwright__browser_navigate", fields={"url": "https://example.com/a"}, error="403 Forbidden https://example.com/a")
+    fetch = payload(url="https://example.com/a", error="Request failed with status code 403")
+    for raw, expected in ((browser, 1), (fetch, 2), (fetch, 2), (browser, 2)):  # the repeats of either kind are suppressed
+        run_main(monkeypatch, capsys, raw)
+        assert len(captured) == expected
+    assert "agent_vendor" not in captured[0][0].full_url and "agent_vendor=anthropic" in captured[1][0].full_url
+
+
+def test_the_vendor_is_part_of_the_cache_key_and_plain_keys_are_unchanged():
+    assert hook.recently_seen("example.com") is False
+    assert hook.recently_seen("example.com", vendor="anthropic") is False
+    assert hook.recently_seen("example.com", vendor="anthropic") is True
+    assert hook.recently_seen("example.com") is True
+
+
 def test_vendor_for_names_only_claude_codes_own_webfetch():
     assert hook.vendor_for("WebFetch") == "anthropic"
     for tool in ("webfetch", "WebFetch ", "mcp__x__WebFetch", "Bash", "", None, 3):

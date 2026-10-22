@@ -450,6 +450,14 @@ def test_a_wrong_vendor_raises_before_anything_is_sent(transport, vendor):
     assert calls == []
 
 
+def test_a_wrong_vendor_raises_even_when_the_client_is_disabled(monkeypatch, transport):
+    calls = transport()
+    monkeypatch.setenv("AHN_CLIENT_DISABLE", "1")
+    with pytest.raises(ValueError):
+        ahn.check("example.com", "site_access", agent_vendor="nope")
+    assert ahn.check("example.com", "site_access", agent_vendor="anthropic") is None and calls == []
+
+
 def test_a_wrong_vendor_raises_even_for_a_host_that_is_never_looked_up(transport):
     transport()
     with pytest.raises(ValueError):
@@ -515,19 +523,78 @@ def test_the_alias_note_comes_with_a_following_wildcard_code(transport):
     assert "Next: robots_names_vendor_alias, robots_wildcard_disallow." in line and NEW_CODES["robots_names_vendor_alias"] in line
 
 
-def test_summary_keeps_its_limit_with_the_longest_inputs(transport):
-    blocked = [f"Agent{index}-User" for index in range(22)]
-    body = {**ANSWER, "official_paths": {"api_docs": "https://developer.example.com/" + "x" * 79},
-            "access_profile": {**ANSWER["access_profile"], "robots": {"agents_blocked": blocked, "agents_allowed": [], "rules": []}},
-            "next_checks": [{"code": "robots_blocks_some_agents", "text": "..."}, {"code": "robots_wildcard_disallow", "text": "..."}]}
-    transport(body=body)
-    line = ahn.check("example.com", "site_access", "before_target_response", agent_vendor="anthropic").summary()
-    assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
-    assert "Note: robots.txt blocks some agents" in line
-    ahn.clear_cache()
-    host = ".".join(["a" * 60] * 3) + ".com"  # a host this long leaves no room for the note: it is dropped, the limit holds
-    line = ahn.check(host, "site_access", "before_target_response", agent_vendor="anthropic").summary()
-    assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
+def _answer_for_summary(tokens, path_length, codes):
+    return {"recommendation": {"action": "use_official_path", "confidence": "high"},
+            "access_profile": {"robots_status": "ok", "llms_txt_status": "absent",
+                               "robots": {"agents_blocked": [f"Agent{index}-User" for index in range(tokens)]}},
+            "official_paths": {"api_docs": "https://developer.example.com/" + "x" * path_length},
+            "evidence_level": "no_reports", "next_checks": [{"code": code, "text": "..."} for code in codes]}
+
+
+def _features(line):
+    import re
+    return {"names": len(re.findall(r"Agent\d+-User", line)), "note": "Note:" in line,
+            "path": "developer.example.com" in line, "link": "Full JSON: https://" in line}
+
+
+SUMMARY_HOSTS = ("example.com", "h" * 44 + ".com", ".".join(["a" * 60] * 3) + ".com")
+
+
+@pytest.mark.parametrize("codes", [("robots_blocks_some_agents", "robots_wildcard_disallow"), ("response_observed", "robots_blocks_some_agents"),
+                                   ("robots_names_vendor_alias",), ("response_observed", "robots_blocks_not_your_agent")])
+@pytest.mark.parametrize("tokens", [6, 18])
+def test_the_note_is_dropped_before_the_names_the_path_and_the_link(codes, tokens):
+    # The reader needs at least 3 blocked-agent names and the link to apply a note; the note is the first thing to go.
+    for host in SUMMARY_HOSTS:
+        url = ("https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host
+               + "&error_class=site_access&failure_stage=before_target_response&agent_vendor=anthropic")
+        for path_length in range(0, 80):
+            line = ahn._result._summary(host, _answer_for_summary(tokens, path_length, codes), url)
+            found = _features(line)
+            assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
+            if found["note"]:
+                assert found["names"] >= 3 and found["link"] and found["path"]  # the note never costs a name, the path or the link
+            if len(host) < 60:
+                assert found["names"] >= 3 and found["link"]  # a host that leaves room keeps 3 names and the link
+
+
+def test_a_note_fits_with_a_short_path_and_a_normal_host():
+    for tokens in (6, 18):
+        line = ahn._result._summary("example.com", _answer_for_summary(tokens, 10, ("response_observed", "robots_blocks_some_agents")),
+                                    "https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&agent_vendor=anthropic")
+        assert _features(line) == {"names": 6, "note": True, "path": True, "link": True}
+
+
+def test_each_step_of_the_sacrifice_order_is_reached_in_turn():
+    codes = ("response_observed", "robots_blocks_some_agents")
+
+    def state(host, path_length):
+        url = "https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host + "&agent_vendor=anthropic"
+        line = ahn._result._summary(host, _answer_for_summary(6, path_length, codes), url)
+        assert len(line) <= 700 and "…" not in line  # intact: never cut off
+        return tuple(_features(line).values())  # names, note, path, link
+
+    assert state("example.com", 0) == (6, True, True, True)      # room for everything
+    assert state("example.com", 30) == (3, True, True, True)     # the 6 names do not fit next to the note: 3 names
+    assert state("example.com", 79) == (6, False, True, True)    # the note goes, the 6 names come back
+    assert state("h" * 60 + ".com", 79) == (3, False, True, True)    # then the names shrink, to 3
+    assert state("h" * 80 + ".com", 79) == (6, False, False, True)  # a long host: the path goes, the 6 names return
+    assert state("h" * 110 + ".com", 79) == (3, False, False, True)
+    assert state("h" * 125 + ".com", 79) == (0, False, False, True)  # only then the names go ...
+    assert state("h" * 145 + ".com", 79) == (0, False, False, False)  # ... and last the link
+
+
+def test_the_path_is_given_up_before_the_names_when_there_is_a_note():
+    # A host this long leaves no room for the note and the path: with a note the path goes, the 6 names and the link stay.
+    host = "h" * 56 + ".com"
+    url = "https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host + "&error_class=site_access&failure_stage=before_target_response&agent_vendor=anthropic"
+    line = ahn._result._summary(host, _answer_for_summary(6, 79, ("robots_blocks_some_agents",)), url)
+    assert _features(line) == {"names": 6, "note": False, "path": False, "link": True}
+    line = ahn._result._summary(host, _answer_for_summary(18, 79, ("robots_blocks_some_agents",)), url)
+    assert _features(line) == {"names": 6, "note": False, "path": False, "link": True}
+    # Without a note the plugin's order holds: the agent names shrink before the path goes.
+    line = ahn._result._summary(host, _answer_for_summary(6, 79, ("response_observed",)), url)
+    assert _features(line)["path"] and _features(line)["link"] and _features(line)["names"] < 6
 
 
 def test_the_note_is_not_added_for_other_codes_so_the_line_still_matches_the_plugin(transport):

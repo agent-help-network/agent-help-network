@@ -547,8 +547,10 @@ def cache_path(env=None, windows: bool | None = None) -> str | None:
     return os.path.join(directory, CACHE_FILE) if directory else None
 
 
-def recently_seen(host: str, now: float | None = None, env=None) -> bool:
-    """True when host was looked up within the TTL; otherwise records it. Cache errors never stop a lookup."""
+def recently_seen(host: str, now: float | None = None, env=None, vendor: str | None = None) -> bool:
+    """True when host (looked up for this vendor, or for none) was looked up within the TTL; otherwise records it. The
+    answer depends on the vendor, so a lookup without one does not hide a lookup with one. Cache errors never stop a lookup."""
+    key = host + "#" + vendor if vendor else host
     now = time.time() if now is None else now
     path = cache_path(env)
     if not path:
@@ -565,9 +567,9 @@ def recently_seen(host: str, now: float | None = None, env=None) -> bool:
     entries = {key: stamp for key, stamp in entries.items()
                if isinstance(key, str) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
                and -1e12 < stamp < 1e12 and 0 <= now - stamp < CACHE_TTL_SECONDS}
-    if host in entries:
+    if key in entries:
         return True
-    entries[host] = now
+    entries[key] = now
     if len(entries) > CACHE_MAX_ENTRIES:
         entries = dict(sorted(entries.items(), key=lambda item: item[1])[-CACHE_MAX_ENTRIES:])
     directory = os.path.dirname(path)
@@ -714,7 +716,7 @@ def blocked_agents(robots: dict) -> tuple[list[str], int]:
     return declared, len(tokens) - len(declared)
 
 
-def summary(host: str, data: dict, url: str, note: str = "") -> str:
+def summary(host: str, data: dict, url: str, note: str = "", vendor: str | None = None) -> str:
     """The additionalContext line, at most MAX_CONTEXT characters, built only from contract enums and validated values."""
     if not isinstance(data, dict):
         raise ValueError("unexpected response")
@@ -752,7 +754,10 @@ def summary(host: str, data: dict, url: str, note: str = "") -> str:
         if len(codes) == 2:
             break
 
-    def render(agent_limit: int | None, show_path: bool, show_url: bool) -> str:
+    # The answer was decided for this vendor (D48); say so, so a reader knows it is not the vendor-neutral one.
+    mark = f"Answer for agent_vendor={vendor} (WebFetch). " if vendor == AGENT_VENDOR_WEBFETCH else ""
+
+    def render(agent_limit: int | None, show_path: bool, show_url: bool, show_mark: bool = True) -> str:
         if blocked is None:
             agents = "unknown"
         elif not blocked:
@@ -771,9 +776,10 @@ def summary(host: str, data: dict, url: str, note: str = "") -> str:
                 f"Declared policy: {policy}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_enum(data.get('evidence_level'), EVIDENCE_LEVELS)}. Next: {', '.join(codes) or 'none'}. "
-                f"Full JSON: {full}. {CLOSING}")
+                f"{mark if show_mark else ''}Full JSON: {full}. {CLOSING}")
 
-    for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False)):
+    for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False),
+                    (6, True, True, False), (3, True, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False)):
         text = render(*options)
         if len(text) <= MAX_CONTEXT:
             return text
@@ -793,14 +799,14 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     if skip_host(name, env.get("AHN_HOOK_SKIP_HOSTS", "")):
         return None, "skipped host"
     host = apex(name)
-    if recently_seen(host, env=env):
-        return None, f"{host} looked up within 10 minutes"
     tool = payload.get("tool_name") if isinstance(payload, dict) else None
     vendor = vendor_for(tool)
+    if recently_seen(host, env=env, vendor=vendor):
+        return None, f"{host} looked up within 10 minutes"
     # The agent_vendor stays in the "Full JSON" link: it is not counted, and the link then gives the answer shown in the line.
     url = lookup_url(host, error_class, stage, vendor=vendor)
     # The signals ride on the request only. The "Full JSON" link in the line stays without them, so following it counts nothing twice.
-    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload), vendor)), url, retry_note(payload, name) if error_class == "service_error" else "")
+    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload), vendor)), url, retry_note(payload, name) if error_class == "service_error" else "", vendor)
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 

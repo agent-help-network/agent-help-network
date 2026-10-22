@@ -100,7 +100,8 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
     for agenthelpnetwork.com itself, for hosts listed in ``AHN_CLIENT_SKIP_HOSTS``, when
     ``AHN_CLIENT_DISABLE=1``, or when ``error_class`` / ``failure_stage`` is not one of
     the service's values. Network errors, timeouts and unreadable answers also give None;
-    this function does not raise. Answers are cached in memory for 10 minutes per host,
+    this function does not raise, with one exception: a wrong ``agent_vendor`` raises ``ValueError`` (see below),
+    also when ``AHN_CLIENT_DISABLE=1`` is set or the host is never looked up. Answers are cached in memory for 10 minutes per host,
     error class, stage and ``agent_vendor`` (a failed lookup for 1 minute, and an answer whose declared policy is
     still being read only for its ``retry_after_seconds``).
 
