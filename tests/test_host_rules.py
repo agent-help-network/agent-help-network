@@ -306,7 +306,12 @@ def test_wildcard_only_root_block_is_neither_a_declared_block_nor_permission():
     real = {"robots_status": "ok", "robots": parsed, "llms_txt_status": "absent", "freshness": "fresh"}
     assert parsed["agents_blocked"] == [] and recommendation("site_access", None, real, None)["action"] == "unknown"
     assert [c["code"] for c in next_checks("site_access", None, "no_reports", None, real, None)][1] == "robots_wildcard_disallow"
-    # An explicit per-agent block still wins over the wildcard reason.
+    # An explicit per-agent block still wins over the wildcard reason for the blocked vendor (D48). Without a vendor
+    # only some vendors are named, so the answer says so and keeps the wildcard reason for the others.
     parsed_explicit = parse_robots("User-agent: *\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n")
     explicit = {"robots_status": "ok", "robots": parsed_explicit, "llms_txt_status": "absent", "freshness": "fresh"}
-    assert recommendation("site_access", None, explicit, None)["reasons"] == ["robots_blocks_agents"]
+    assert recommendation("site_access", None, explicit, None, agent_vendor="openai")["reasons"] == ["robots_blocks_agents"]
+    assert recommendation("site_access", None, explicit, None, agent_vendor="anthropic")["reasons"] == ["robots_wildcard_disallow"]
+    assert recommendation("site_access", None, explicit, None) == {"action": "unknown", "confidence": "low",
+                                                                   "reasons": ["robots_blocks_some_agents", "robots_wildcard_disallow"]}
+    assert recommendation("site_access", None, explicit, None, vendor_aware=False)["reasons"] == ["robots_blocks_agents"]

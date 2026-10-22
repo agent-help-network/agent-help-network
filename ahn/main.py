@@ -26,7 +26,7 @@ from .service import ServiceError, check, public_incident, public_incidents, sub
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
-from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO
+from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO, accepted_vendor
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
 
@@ -460,6 +460,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                        challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
                        retry_after: str | None = Query(None, description="Optional signal code: none, lt_60, 60_3600 or gt_3600. A value outside the list is ignored."),
                        via: str | None = Query(None, description="Optional signal code: http_fetch, browser or unknown. A value outside the list is ignored."),
+                       agent_vendor: str | None = Query(None, description="Optional: the vendor whose documented robots.txt token your own web requests send (openai, anthropic, google, perplexity, meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other). The recommendation then reads that vendor's tokens. Leave it out when unsure. A value outside the list is ignored. Not stored."),
                        mcp_call: str | None = Header(default=None, alias="X-AHN-MCP-Call", include_in_schema=False)):
         site_host = normalize_host_input(site_host)
         try:
@@ -470,7 +471,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             raise ServiceError("invalid_task_step", 400)
         result = check(settings, site_host, error_class.value if error_class else None, task_step, window_hours,
                        failure_stage.value if failure_stage else None,
-                       lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via))
+                       lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via),
+                       agent_vendor=accepted_vendor(agent_vendor))
         if is_mcp_metric_request(mcp_call, settings.key_pepper):
             try:
                 with connect(settings) as conn:

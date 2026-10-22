@@ -159,6 +159,8 @@ LOOKUP_FIELDS = {
     "challenge": Phrase("challenge", "challenge"),
     "retry_after": Phrase("retry_after", "retry_after"),
     "via": Phrase("via", "via"),
+    # D48: chooses the recommendation only; neither counted nor stored (the policy sentence says so).
+    "agent_vendor": Phrase("agent_vendor", "agent_vendor"),
     "window_hours": Exempt("REST only: a whole number 1-168 that narrows the observation window, not data about anyone"),
 }
 

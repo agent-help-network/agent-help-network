@@ -284,7 +284,8 @@ def test_disagreement_adds_an_informational_check_and_the_recommendation_keeps_t
     # The check also rides along with another robots code, here a declared block.
     blocked = parse_robots("User-agent: GPTBot\nContent-Signal: ai-train=no\n\nUser-agent: ChatGPT-User\nDisallow: /\n")
     assert blocked["agents_blocked"] == ["ChatGPT-User"] and blocked["grouping_differs_by_parser"] == ["GPTBot"]
-    assert _codes(_profile(blocked))[1:3] == ["robots_blocks_agents", "robots_grouping_differs_by_parser"]
+    # (D48: one vendor's token is blocked, so without agent_vendor the robots code is robots_blocks_some_agents.)
+    assert _codes(_profile(blocked))[1:3] == ["robots_blocks_some_agents", "robots_grouping_differs_by_parser"]
 
 
 def test_no_check_when_the_readings_agree_or_the_profile_predates_the_field():

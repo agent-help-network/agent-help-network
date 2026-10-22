@@ -1,4 +1,4 @@
-from ahn.access_profile import AGENT_SOURCES, AGENT_USER_AGENTS, LLMS_CAP, ROBOTS_CAP, UNCONFIRMED_AGENT_TOKENS, build_profile, parse_robots
+from ahn.access_profile import AGENT_SOURCES, AGENT_USER_AGENTS, AGENT_VENDOR, AGENT_VENDORS, GOVERNING_TOKENS, LLMS_CAP, ROBOTS_CAP, UNCONFIRMED_AGENT_TOKENS, build_profile, parse_robots
 from ahn.official_paths import OFFICIAL_PATHS, official_paths
 from ahn.triage import AGENT_KINDS_FOR_BLOCK, declared_block, recommendation
 
@@ -87,9 +87,19 @@ def test_every_added_or_reclassified_token_is_named_by_its_own_group():
         assert _rule(parsed, token)["kind"] == kind and _rule(parsed, token)["explicit_group"] is True
         assert token in parsed["agents_blocked"]
         profile = {"robots_status": "ok", "robots": parsed}
-        blocks = kind in AGENT_KINDS_FOR_BLOCK
-        assert (token in declared_block(profile)) == blocks
-        assert (recommendation("site_access", None, profile, None)["action"] == "stop_declared_block") == blocks
+        assert (token in declared_block(profile)) == (kind in AGENT_KINDS_FOR_BLOCK)
+        # D48: a block stops only the vendor whose governing token it names; without a vendor the answer is the
+        # agreement of all vendors, so one blocked vendor gives unknown, and a non-governing token gives proceed.
+        vendor = AGENT_VENDOR[token]
+        # A governing token named by this group, itself or by prefix (a group named Diffbot also names Diffbot-User).
+        governs = any(_rule(parsed, other)["explicit_group"] and not _rule(parsed, other)["root_allowed"]
+                      for other in GOVERNING_TOKENS.get(vendor, ()))
+        if vendor in AGENT_VENDORS:
+            own = recommendation("site_access", None, profile, None, agent_vendor=vendor)["action"]
+            assert (own == "stop_declared_block") == governs
+        assert recommendation("site_access", None, profile, None)["action"] == ("unknown" if governs else "proceed")
+        assert recommendation("site_access", None, profile, None, vendor_aware=False)["action"] == (
+            "stop_declared_block" if kind in AGENT_KINDS_FOR_BLOCK else "proceed")
 
 
 def test_training_only_blocks_stay_non_blocking_including_the_new_training_token():

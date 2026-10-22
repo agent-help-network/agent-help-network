@@ -17,7 +17,8 @@ from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
-from .models import Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
+from .models import AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
+from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
 
@@ -106,7 +107,7 @@ def outer_request_headers(ctx: Context | None) -> dict:
 
 
 @mcp.tool(
-    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup, with the optional codes you send, is counted anonymously per host and hour and never changes the answer. Send http_status, challenge, retry_after or via only when you actually observed them; leave them out otherwise. The service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site.",
+    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup, with the optional codes you send, is counted anonymously per host and hour and never changes the answer. Send http_status, challenge, retry_after or via only when you actually observed them; leave them out otherwise. The service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site. Send agent_vendor only when you know which vendor's documented robots.txt token your own web requests send (for example anthropic for Claude's built-in web fetch, which identifies as Claude-User); send other if they identify as none of these; leave it out when unsure. It changes which robots.txt groups the recommendation reads and is not stored.",
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
@@ -115,6 +116,7 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
                          challenge: Annotated[Any, WithJsonSchema(_enum_schema(Challenge))] = None,
                          retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,
                          via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
+                         agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor))] = None,
                          ctx: Context | None = None) -> CheckResponse:
     try:
         valid_host(site_host)
@@ -136,6 +138,10 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     if failure_stage:
         params["failure_stage"] = failure_stage
     params.update({name: value for name, value in codes.items() if value is not None})
+    # D48: like the signal codes, a value outside the list is dropped (the lookup then answers for an unknown vendor).
+    vendor = accepted_vendor(agent_vendor)
+    if vendor is not None:
+        params["agent_vendor"] = vendor
     return CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
 
 

@@ -112,7 +112,8 @@ PAYLOAD_KEYS = {
     "status_source": frozenset({"site_host", "source_name", "status_page_url", "api_url", "feed_kind"}),
 }
 ROBOTS_KEYS = frozenset({"rules", "wildcard_root_allowed", "sitemap", "sitemaps", "wildcard_crawl_delay",
-                         "wildcard_disallow_paths", "agents_blocked", "agents_allowed", "grouping_differs_by_parser"})
+                         "wildcard_disallow_paths", "agents_blocked", "agents_allowed", "grouping_differs_by_parser",
+                         "vendor_aliases_blocked"})
 RULE_KEYS = frozenset({"agent", "kind", "explicit_group", "root_allowed", "disallow_count", "crawl_delay", "disallow_paths"})
 # The stored content_use (migration 021): access_profile.parse_content_use() plus the hash of the robots.txt it came from.
 CONTENT_USE_KEYS = frozenset({"vocab", "formats", "signals", "usage", "path_specific_samples", "named_groups",

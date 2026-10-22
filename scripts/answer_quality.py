@@ -12,12 +12,17 @@ recommendation.action is stop_declared_block, wait_provider_incident or hand_off
 no error_class, like the first lookup of an agent that has not classified its failure yet, so hand_off_to_human
 and wait_provider_incident show up only when the data alone calls for them.
 
+--vendor-pass VENDOR (D48) adds a second live pass that sends agent_vendor=VENDOR for the same hosts (same pacing,
+so twice the requests). It is stored beside the first pass as live_vendor, with the hosts whose action differs between
+the two answers; the change against the previous run still compares the first pass only.
+
 A run writes <out-dir>/<date>.json (set version, metrics, one row per host, change against the previous run in
 that folder). Results are not committed to the public repository (work/ is ignored); the weekly job passes the
 operator's internal folder as --out-dir. Stdout gets the summary (metrics and changes, no rows).
 
     python scripts/answer_quality.py                       # offline + live, writes work/answer-quality/<date>.json
     python scripts/answer_quality.py --offline-only        # no network
+    python scripts/answer_quality.py --vendor-pass anthropic  # also score each host as the Claude Code plugin asks
     python scripts/answer_quality.py --out-dir D:\\results --base-url https://agenthelpnetwork.com
 """
 
@@ -43,7 +48,7 @@ from ahn.official_paths import official_paths  # noqa: E402
 from ahn.profile_warm import load_seed_hosts  # noqa: E402
 from ahn.service import aggregate_eligible_host, policy_host  # noqa: E402
 from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES  # noqa: E402
-from ahn.triage import profile_pending  # noqa: E402
+from ahn.triage import accepted_vendor, profile_pending  # noqa: E402
 
 SCHEMA_VERSION = 1
 DEFAULT_SET = ROOT / "ahn" / "quality" / "failure_hosts_v1.txt"
@@ -177,8 +182,9 @@ def default_fetch(url: str, headers: dict, timeout: float) -> tuple[int, str]:
         return error.code, error.read(10_000).decode("utf-8", "replace")
 
 
-def live_check(host: str, base_url: str, fetch: Fetch) -> dict:
-    url = f"{base_url.rstrip('/')}/v1/incidents/check?{urllib.parse.urlencode({'site_host': host})}"
+def live_check(host: str, base_url: str, fetch: Fetch, agent_vendor: str | None = None) -> dict:
+    query = {"site_host": host, **({"agent_vendor": agent_vendor} if agent_vendor else {})}
+    url = f"{base_url.rstrip('/')}/v1/incidents/check?{urllib.parse.urlencode(query)}"
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     try:
         status, text = fetch(url, headers, TIMEOUT)
@@ -197,7 +203,7 @@ def live_check(host: str, base_url: str, fetch: Fetch) -> dict:
 
 def run_live(hosts: list[str], base_url: str, *, fetch: Fetch = default_fetch,
              sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-             min_interval: float = MIN_INTERVAL) -> dict[str, dict]:
+             min_interval: float = MIN_INTERVAL, agent_vendor: str | None = None) -> dict[str, dict]:
     """One lookup per host, never faster than one per min_interval seconds."""
     results: dict[str, dict] = {}
     last_start: float | None = None
@@ -207,7 +213,7 @@ def run_live(hosts: list[str], base_url: str, *, fetch: Fetch = default_fetch,
             if wait > 0:
                 sleep(wait)
         last_start = clock()
-        results[host] = live_check(host, base_url, fetch)
+        results[host] = live_check(host, base_url, fetch, agent_vendor)
     return results
 
 
@@ -319,7 +325,8 @@ def by_source(rows: list[dict], live: bool) -> dict:
 
 def build_result(set_path: Path | str, *, run_date: str, base_url: str, live: bool, fetch: Fetch = default_fetch,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-                 previous: dict | None = None, today: date | None = None, min_interval: float = MIN_INTERVAL) -> dict:
+                 previous: dict | None = None, today: date | None = None, min_interval: float = MIN_INTERVAL,
+                 vendor_pass: str | None = None) -> dict:
     members = load_set(set_path)
     seeds = frozenset(load_seed_hosts())
     rows = [{"host": host, "source": source, "offline": offline_row(host, seeds, today)} for host, source in members]
@@ -336,6 +343,18 @@ def build_result(set_path: Path | str, *, run_date: str, base_url: str, live: bo
         for row in rows:
             row["live"] = answers[row["host"]]
         result["live"] = {"base_url": base_url, "user_agent": USER_AGENT, "metrics": live_metrics(answers)}
+        if vendor_pass:
+            # D48: the same hosts as a caller that names its fetcher's vendor. Kept apart from "live" so the change
+            # against the previous run keeps comparing like with like.
+            with_vendor = run_live([r["host"] for r in rows], base_url, fetch=fetch, sleep=sleep, clock=clock,
+                                   min_interval=min_interval, agent_vendor=vendor_pass)
+            differs = []
+            for row in rows:
+                row["live_vendor"] = with_vendor[row["host"]]
+                plain, named = row["live"], row["live_vendor"]
+                if plain.get("ok") and named.get("ok") and plain["action"] != named["action"]:
+                    differs.append({"host": row["host"], "without": plain["action"], "with": named["action"]})
+            result["live_vendor"] = {"agent_vendor": vendor_pass, "metrics": live_metrics(with_vendor), "action_differs": differs}
     result["by_source"] = by_source(rows, live)
     result["changes"] = compare(result, previous)
     return result
@@ -354,14 +373,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--offline-only", action="store_true", help="coverage only; no request is made")
     parser.add_argument("--date", default=None, help="run date YYYY-MM-DD (default: today, UTC)")
     parser.add_argument("--no-save", action="store_true", help="print only; do not write the result file")
+    parser.add_argument("--vendor-pass", default=None, metavar="VENDOR",
+                        help="also score every host with agent_vendor=VENDOR (a second live pass, D48)")
     args = parser.parse_args(argv)
+    if args.vendor_pass is not None and accepted_vendor(args.vendor_pass) is None:
+        parser.error("--vendor-pass must be one of the agent_vendor values (see docs/api-contract.en.md)")
 
     run_date = args.date or datetime.now(timezone.utc).date().isoformat()
     date.fromisoformat(run_date)
     out_dir = Path(args.out_dir)
     previous = previous_result(out_dir, run_date)
     result = build_result(args.set_path, run_date=run_date, base_url=args.base_url, live=not args.offline_only, previous=previous,
-                          fetch=default_fetch, sleep=time.sleep, clock=time.monotonic)
+                          fetch=default_fetch, sleep=time.sleep, clock=time.monotonic, vendor_pass=args.vendor_pass)
     if not args.no_save:
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / f"{run_date}.json"

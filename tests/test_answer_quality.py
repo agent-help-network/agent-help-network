@@ -359,3 +359,38 @@ def test_main_offline_only_and_no_save(tmp_path, capsys):
     assert aq.main(["--set", str(small_set(tmp_path)), "--out-dir", str(out), "--offline-only", "--no-save", "--date", "2026-10-22"]) == 0
     assert not out.exists()
     assert json.loads(capsys.readouterr().out)["offline"]["metrics"]["hosts"] == 2
+
+
+# --------------------------------------------------------------------------- D48: a second pass with agent_vendor
+
+def test_vendor_pass_scores_the_same_hosts_again_with_the_vendor_and_lists_the_action_changes(tmp_path):
+    calls: list[str] = []
+
+    def fetch(url, headers, timeout):
+        calls.append(url)
+        query = parse_qs(urlsplit(url).query)
+        vendor = query.get("agent_vendor", [None])[0]
+        action = {"github.com": "use_official_path", "quora.com": "proceed" if vendor == "anthropic" else "unknown"}[query["site_host"][0]]
+        return 200, json.dumps(answer(action, official=OFFICIAL if action == "use_official_path" else None))
+
+    clock = FakeClock()
+    result = aq.build_result(small_set(tmp_path), run_date="2026-10-22", base_url="https://x", live=True,
+                             fetch=fetch, sleep=clock.sleep, clock=clock.clock, vendor_pass="anthropic")
+    assert calls == ["https://x/v1/incidents/check?site_host=github.com", "https://x/v1/incidents/check?site_host=quora.com",
+                     "https://x/v1/incidents/check?site_host=github.com&agent_vendor=anthropic",
+                     "https://x/v1/incidents/check?site_host=quora.com&agent_vendor=anthropic"]
+    assert result["live_vendor"]["agent_vendor"] == "anthropic"
+    assert result["live_vendor"]["action_differs"] == [{"host": "quora.com", "without": "unknown", "with": "proceed"}]
+    assert result["live"]["metrics"]["actions"] == {"unknown": 1, "use_official_path": 1}
+    assert result["live_vendor"]["metrics"]["actions"] == {"proceed": 1, "use_official_path": 1}
+    assert all("live_vendor" in row for row in result["hosts"]) and "agent_vendor" not in json.dumps(result["live"])
+    # Without the option nothing changes: one pass, no vendor in any request.
+    plain = aq.build_result(small_set(tmp_path), run_date="2026-10-22", base_url="https://x", live=True,
+                            fetch=fetch, sleep=clock.sleep, clock=clock.clock)
+    assert "live_vendor" not in plain and len(calls) == 6 and "agent_vendor" not in calls[-1]
+
+
+def test_vendor_pass_accepts_only_listed_vendors(capsys):
+    with pytest.raises(SystemExit):
+        aq.main(["--offline-only", "--no-save", "--vendor-pass", "Anthropic"])
+    assert "--vendor-pass" in capsys.readouterr().err

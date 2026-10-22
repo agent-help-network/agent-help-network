@@ -44,7 +44,7 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.0 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.1 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -139,7 +139,7 @@ The hook never reports observations. It makes no POST requests and never calls `
 
 ### Next codes the line can carry
 
-The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3; `provider_incident_stale` was added after 0.2.4 and is accepted from version 0.2.5. An older hook drops a code it does not know from the line.
+The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3; `provider_incident_stale` was added after 0.2.4 and is accepted from version 0.2.5; `robots_blocks_some_agents`, `robots_blocks_not_your_agent` and `robots_names_vendor_alias` came with the vendor-aware robots rule (D48) and are accepted from version 0.3.1. An older hook drops a code it does not know from the line.
 
 | Code | Meaning |
 | :- | :- |

@@ -27,8 +27,9 @@ from psycopg.types.json import Jsonb
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 
-# Only user_agent and search_crawler tokens can make a declared block (triage.AGENT_KINDS_FOR_BLOCK); a training_crawler
-# token is reported but never blocks. Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
+# A declared block is judged on a vendor's governing tokens (D48, GOVERNING_TOKENS below): its user_agent tokens, or its
+# search_crawler tokens when it documents no user_agent token. A training_crawler token is reported but never blocks.
+# Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
 AGENT_USER_AGENTS: tuple[tuple[str, str], ...] = (
     ("ChatGPT-User", "user_agent"), ("Claude-User", "user_agent"), ("Perplexity-User", "user_agent"),
     ("Meta-ExternalFetcher", "user_agent"), ("MistralAI-User", "user_agent"), ("Google-Agent", "user_agent"),
@@ -68,6 +69,48 @@ AGENT_SOURCES: dict[str, str] = {
     "CCBot": "https://commoncrawl.org/ccbot",
 }
 UNCONFIRMED_AGENT_TOKENS = frozenset({"anthropic-ai", "Bytespider", "cohere-ai"})
+# D48: the vendor of each token, from the same vendor pages (AGENT_SOURCES). AGENT_VENDORS are the vendors a caller can
+# name with agent_vendor (ahn/models.py AgentVendor adds "other"); the vendors outside it run training crawlers only.
+AGENT_VENDORS: tuple[str, ...] = ("openai", "anthropic", "google", "perplexity", "meta", "mistral", "amazon", "microsoft",
+                                  "apple", "duckduckgo", "diffbot", "exa")
+AGENT_VENDOR: dict[str, str] = {
+    "ChatGPT-User": "openai", "OAI-SearchBot": "openai", "GPTBot": "openai",
+    "Claude-User": "anthropic", "Claude-SearchBot": "anthropic", "ClaudeBot": "anthropic", "anthropic-ai": "anthropic",
+    "Perplexity-User": "perplexity", "PerplexityBot": "perplexity",
+    "Meta-ExternalFetcher": "meta", "Meta-WebIndexer": "meta", "Meta-ExternalAgent": "meta",
+    "MistralAI-User": "mistral", "MistralAI-Index": "mistral", "MistralAI-Training": "mistral",
+    "Google-Agent": "google", "Google-GeminiNotebook": "google", "Googlebot": "google", "Google-Extended": "google",
+    "Amzn-User": "amazon", "Amazonbot": "amazon", "Amzn-SearchBot": "amazon",
+    "Bingbot": "microsoft", "Applebot": "apple", "Applebot-Extended": "apple",
+    "DuckAssistBot": "duckduckgo", "DuckDuckBot": "duckduckgo", "Diffbot-User": "diffbot", "Diffbot": "diffbot",
+    "ExaSearchBot": "exa", "CCBot": "commoncrawl", "Bytespider": "bytedance", "cohere-ai": "cohere",
+}
+
+
+def _governing(vendor: str) -> tuple[str, ...]:
+    tokens = [(token, kind) for token, kind in AGENT_USER_AGENTS if AGENT_VENDOR[token] == vendor]
+    user = tuple(token for token, kind in tokens if kind == "user_agent")
+    return user or tuple(token for token, kind in tokens if kind == "search_crawler")
+
+
+# A vendor's governing tokens: the tokens the recommendation reads for that vendor. Its user-directed fetchers when it
+# documents any; otherwise (microsoft, apple, exa) its search crawler. A vendor that later documents a user_agent token
+# switches to it as soon as the token is added to AGENT_USER_AGENTS.
+GOVERNING_TOKENS: dict[str, tuple[str, ...]] = {vendor: _governing(vendor) for vendor in AGENT_VENDORS}
+# Retired or variant names that sites use for a vendor's agent but no vendor page documents (seen in the 2026-10-22 read
+# of 161 robots.txt files). They are not tokens: never in rules or agents_blocked, never a declared block. A group that
+# names one and disallows the root keeps that vendor's answer from "proceed" (robots_names_vendor_alias). Only names for
+# user-directed or agentic fetchers belong here, never ad or enterprise crawlers (mediapartners-google, oai-adsbot,
+# amazon-kendra, googleother, facebookexternalhit, ...): those would stop a vendor's agent over a crawler it does not run
+# as the agent. Matched exactly, after lowercasing and dash folding.
+VENDOR_ALIASES: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"claude-web"}),
+    "openai": frozenset({"openai"}),
+    "perplexity": frozenset({"perplexity-ai", "perplexityuser"}),
+    "google": frozenset({"googleagent-mariner", "googleagent-shopping", "gemini-deep-research", "google-notebooklm"}),
+    "microsoft": frozenset({"copilot", "copilotnative", "copilotsapphire"}),
+}
+_ALIAS_NAMES = frozenset().union(*VENDOR_ALIASES.values())
 USER_AGENT = "AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)"
 ROBOTS_CAP = 262_144
 LLMS_CAP = 4_096
@@ -236,6 +279,10 @@ def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     wildcard_root_allowed = _root_allowed(wildcard_rules)
     wildcard_delay = next((g["crawl_delay"] for g in wildcard if g["crawl_delay"] is not None), None)
     rules, blocked, allowed = [], [], []
+    # D48: alias names (VENDOR_ALIASES) whose own groups disallow the root. Exact names only, no prefix matching.
+    aliases_blocked = sorted(name for name in _ALIAS_NAMES
+                             if (named := [group for group in groups if name in group["agents"]])
+                             and not _root_allowed([rule for group in named for rule in group["rules"]]))
     for token, kind in AGENT_USER_AGENTS:
         lowered = token.lower()
         matched = [group for group in groups if any(_applies(agent, lowered) for agent in group["agents"])]
@@ -253,7 +300,7 @@ def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     return {
         "rules": rules, "wildcard_root_allowed": wildcard_root_allowed, "sitemap": bool(sitemaps),
         "sitemaps": sitemaps, "wildcard_crawl_delay": wildcard_delay, "wildcard_disallow_paths": _disallow_samples(wildcard_rules),
-        "agents_blocked": blocked, "agents_allowed": allowed,
+        "agents_blocked": blocked, "agents_allowed": allowed, "vendor_aliases_blocked": aliases_blocked,
     }
 
 

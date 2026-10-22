@@ -336,7 +336,8 @@ def _provider_scope(row: dict) -> dict:
 
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
-          window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None):
+          window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
+          agent_vendor: str | None = None):
     """Answer a lookup from the database alone.
 
     Nothing on this path contacts the target host or a status provider: reads that are missing or
@@ -345,6 +346,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``signal`` carries the optional lookup codes and the caller's source (D47). It is only written down,
     in a savepoint after the answer is built; it never changes the answer.
+
+    ``agent_vendor`` (D48) is an accepted value (triage.accepted_vendor) or None. It only chooses the recommendation
+    and is never stored; AHN_VENDOR_AWARE_BLOCK=0 ignores it.
     """
     test_query = settings.test_mode and site_host.endswith(".test")
     public = settings.public_mode and not test_query
@@ -529,11 +533,13 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "access_profile": access_profile,
             "official_paths": official,
             "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
-                                             provider_regional=provider_regional, now=now),
+                                             provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
+                                             vendor_aware=settings.vendor_aware_block),
             "failure_stage": failure_stage,
             "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                        profile_not_read=profile_not_read, host_facts=host_facts,
-                                       provider_partial=provider_partial, now=now),
+                                       provider_partial=provider_partial, now=now, agent_vendor=agent_vendor,
+                                       vendor_aware=settings.vendor_aware_block),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
