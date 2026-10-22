@@ -179,6 +179,11 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     health_cache = {"checked_at": 0.0, "ok": False}
     app.mount("/static", OffloadingStaticFiles(directory=str(ROOT / "static")), name="static")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon_ico():
+        # Browsers ask for /favicon.ico even when the page declares an icon; the icon is SVG-only.
+        return RedirectResponse("/static/favicon.svg", status_code=301)
+
     if settings.public_mode:
         card_body, card_etag = server_card.load_card()
         @app.get("/.well-known/mcp-registry-auth", include_in_schema=False)
