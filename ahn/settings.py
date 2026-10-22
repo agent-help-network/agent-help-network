@@ -46,6 +46,9 @@ class Settings:
     # AHN_VENDOR_AWARE_BLOCK=0 turns off the vendor-aware robots rule (D48): agent_vendor is accepted and ignored, and
     # the rule before D48 applies. On by default.
     vendor_aware_block: bool = True
+    # AHN_RESPONSE_GUIDE=0 leaves summary_line, next_action and links out of a lookup answer (D51), so the answer is the
+    # one before D51, and the MCP result is one JSON block again. On by default.
+    response_guide: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,4 +85,5 @@ class Settings:
                                    "the date the privacy policy shows as last updated") from None
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
-                   vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0")
+                   vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0",
+                   response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0")

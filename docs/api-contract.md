@@ -88,6 +88,10 @@
 
 `/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`와 `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
+
+`AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
+
 ## 공개 접수 계약
 
 - `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
@@ -340,6 +344,35 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 그래서 선언 차단 답(`stop_declared_block`, 또는 `use_official_path` high)은 호출자 자신의 토큰, 벤더가 없으면 모든 벤더의 토큰이 막혀야 나온다. 2026-10-22 표본(robots.txt 판독 161곳)에서 어느 벤더에게도, 벤더 모름에게도 전보다 엄격해진 호스트는 없었다.
 
 **이전 규칙**은 `AHN_VENDOR_AWARE_BLOCK=0` 일 때, D48 이전에 읽은 프로필(`robots.vendor_aliases_blocked` 없음)일 때, 그리고 답에 필요한 판정 토큰(벤더가 없으면 모든 벤더의 것, 있으면 그 벤더의 것)이 캐시된 프로필의 `rules` 에 없을 때 그대로 적용된다. 없는 토큰을 허용으로 읽지 않는다. 이전 규칙에서 **차단 선언**(robots 차단)은 `robots_status` 가 `ok` 이고 `user_agent` 또는 `search_crawler` 토큰 하나 이상을 이름으로 지목한 그룹이 루트를 금지하는 경우다. 학습 크롤러의 금지는 `agents_blocked` 에 나오지만 차단 선언으로 세지 않는다. **와일드카드 단독 금지**(robots 주의)는 `robots_status` 가 `ok` 이고 차단 선언이 없으며, 어떤 그룹도 지목하지 않은 `user_agent` 또는 `search_crawler` 토큰 하나 이상이 루트를 금지하는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)을 물려받는 경우다. 다른 토큰을 지목한 그룹(허용된 검색 크롤러, 금지된 학습 크롤러)이 있어도 성립한다. 차단 선언은 아니지만 "에이전트를 허용함"으로도 보고하지 않는다. 자동화를 청하지 않은 것으로 보고 공식 경로를 우선하며 허락으로 읽지 않는다.
+
+### 한 줄 요약과 다음 행동 (`summary_line`·`next_action`, D51)
+
+모든 조회 답에는 `summary_line` 과 `next_action` 이 함께 온다. 둘 다 답이 정해진 뒤 `recommendation`·`access_profile`·`official_paths`·`provider_status` 로부터 계산만 하며, 판정인 `recommendation` 과 `next_checks` 는 바꾸지 않는다.
+
+- `summary_line` 은 `ahn/response_guide.py` 의 고정 템플릿 표에서 고른 영어 문장 하나(인쇄 가능한 ASCII 200자 이하)다. 채워 넣는 값은 정수 초 하나뿐이다. 호스트명, 에이전트 토큰, URL, 사이트나 업체에서 온 텍스트는 들어가지 않는다. 같은 입력은 늘 같은 문장이다.
+- `next_action` 은 `do`, `url`, `retry_after_seconds` 를 항상 가진다.
+
+| `do` | 언제 | `url` | `retry_after_seconds` |
+| --- | --- | --- | --- |
+| `wait_for_provider` | `recommendation.action` 이 `wait_provider_incident` | 업체 상태 페이지 | 900(업체 발표를 다시 읽을 수 있는 가장 이른 때) |
+| `hand_off_to_human` | `hand_off_to_human` | `null` | `null` |
+| `use_official_path` | `use_official_path` | `official_paths.api_docs`, 없으면 `developer_portal` | 프로필이 `pending` 이면 그 `retry_after_seconds`, 아니면 `null` |
+| `stop_automation` | `stop_declared_block` | `null` | `null` |
+| `proceed` | `proceed` | `null` | `null` |
+| `retry_lookup_once` | `unknown` 이고 `profile_pending`(첫 읽기가 대기 중) | `null` | `access_profile.retry_after_seconds` |
+| `stop_if_listed` | `unknown` 이고 `robots_blocks_some_agents` | `null` | `null` |
+| `lookup_apex_host` | `unknown` 이고 `profile_not_read` | `null` | `null` |
+| `no_clear_action` | 그 밖의 `unknown`(앞선 읽기가 실패한 `pending` 프로필 포함) | `null` | 읽기가 대기 중이면 `access_profile.retry_after_seconds`, 아니면 `null` |
+
+- `retry_after_seconds` 는 같은 조회를 **한 번** 다시 할 때다. 폴링 간격이 아니다. 다시 조회했는데 또 `retry_lookup_once` 가 오면 `no_clear_action` 으로 읽는다.
+- `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
+- `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
+- `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
+- `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
+
+### 링크 (`links`)
+
+`links` 는 서비스의 공개 피드백 장소를 알려 준다. `feedback`(저장소 GitHub Discussions 의 "Field reports" 분류: 답이 틀렸거나 다음 행동에 안 맞았을 때 알려 주는 곳)과 `changelog`(`docs/feedback-changelog.md`: 피드백 뒤 바꾼 것). 값은 모든 조회에서 같고 바뀔 수 있다. 정해지지 않은 링크는 `null` 이 아니라 키를 생략하고, 둘 다 없으면 `links` 자체를 생략한다. 호출자에 관한 정보는 담지 않는다.
 
 ### 공식 경로 표의 정리와 검증 (2026-10-18)
 

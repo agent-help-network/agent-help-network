@@ -451,9 +451,30 @@ class NextCheck(StrictModel):
     text: str
 
 
+class NextAction(StrictModel):
+    """D51: what to do now, computed from the recommendation (never a second verdict)."""
+    do: Literal["wait_for_provider", "hand_off_to_human", "use_official_path", "stop_automation", "proceed", "retry_lookup_once",
+                "stop_if_listed", "lookup_apex_host", "no_clear_action"]
+    url: str | None = Field(default=None, max_length=200)
+    # When to repeat the same lookup once; not a polling interval.
+    retry_after_seconds: int | None = Field(default=None, ge=0, le=3600)
+    stop_if_you_are: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
+        default=None, min_length=1, max_length=16, exclude_if=_omit_none)
+    lookup_host: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class Links(StrictModel):
+    feedback: str | None = Field(default=None, exclude_if=_omit_none)
+    changelog: str | None = Field(default=None, exclude_if=_omit_none)
+
+
 class CheckResponse(StrictModel):
     site_host: str
     generated_at: datetime
+    # D51: present unless AHN_RESPONSE_GUIDE=0; left out (never null) otherwise.
+    summary_line: str | None = Field(default=None, min_length=1, max_length=200, pattern=r"^[ -~]+$", exclude_if=_omit_none)
+    next_action: NextAction | None = Field(default=None, exclude_if=_omit_none)
+    links: Links | None = Field(default=None, exclude_if=_omit_none)
     synthetic: bool
     window_hours: int = Field(ge=1, le=168)
     data_horizon_hours: Literal[168]

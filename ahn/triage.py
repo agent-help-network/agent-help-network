@@ -224,6 +224,22 @@ def robots_verdict(access_profile: dict, agent_vendor: str | None = None, *, ven
     return "clear", ["robots_blocks_not_your_agent" if others_blocked else "robots_allows_agents"]
 
 
+def blocked_governing_tokens(access_profile: dict) -> list[str]:
+    """The agent tokens (from this service's token table, never a name from the site's own groups) of every vendor whose
+    robots state is an explicit block at the root, in vendor-table order without repeats (D51, next_action.stop_if_you_are).
+
+    Reads the same per-vendor states as robots_verdict, so the list and the ``robots_blocks_some_agents`` reason cannot
+    disagree. Empty when a vendor state cannot be read (the rule before D48 applies then)."""
+    states = [(vendor, vendor_state(access_profile, vendor)) for vendor in AGENT_VENDORS]
+    if any(state is None for _, state in states):
+        return []
+    tokens: list[str] = []
+    for vendor, state in states:
+        if state == EXPLICIT:
+            tokens.extend(token for token in GOVERNING_TOKENS[vendor] if token not in tokens)
+    return tokens
+
+
 def profile_pending(access_profile: dict | None) -> bool:
     """A read of robots.txt and llms.txt is queued and no definitive answer exists yet."""
     return bool(access_profile and access_profile.get("freshness") == "pending"
