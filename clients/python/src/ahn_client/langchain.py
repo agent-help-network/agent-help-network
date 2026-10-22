@@ -33,7 +33,7 @@ Nothing else is touched: a failure that is not a block or an outage (404, 422, a
 an unreachable service, a slow lookup (``timeout``, 2 s) and a missing URL all leave the call exactly as the tool produced it.
 A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so nothing is added; raise
 from the tool (``response.raise_for_status()``) or return ``ToolMessage(..., status="error")`` to opt in. Only the
-hostname and two enum codes leave the machine.
+hostname and enum codes leave the machine.
 """
 
 from __future__ import annotations

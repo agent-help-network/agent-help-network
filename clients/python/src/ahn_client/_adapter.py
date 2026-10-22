@@ -3,7 +3,7 @@
 An adapter hands this module the exception or message of a failed tool call and the tool's
 arguments. The hostname is read from the arguments (an http(s) URL) or from the error's request,
 the error is classified with ``classify`` (a 404 or a bad request is not looked up), and ``check``
-asks Agent Help Network. Only the hostname and two enum codes leave the machine.
+asks Agent Help Network. Only the hostname and enum codes leave the machine.
 
 Nothing here raises (``KeyboardInterrupt`` and other non-``Exception`` signals are not swallowed).
 A lookup that fails or is slow gives None, after at most ``timeout`` seconds; the adapter then

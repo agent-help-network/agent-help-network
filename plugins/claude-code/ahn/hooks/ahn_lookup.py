@@ -294,7 +294,7 @@ def challenge_cue(tool_response: dict, host: str) -> bool:
     """True when a response header or the page text says the refusal is a bot challenge or CAPTCHA."""
     headers = tool_response.get("headers")
     # Cloudflare's documented marker of a challenge response.
-    if isinstance(headers, dict) and challenge_header(headers):
+    if isinstance(headers, dict) and challenge_code(headers) == "header":
         return True
     for field in BODY_FIELDS:
         value = tool_response.get(field)
@@ -332,7 +332,7 @@ def status_class(code: int, tool_response: dict, host: str) -> str | None:
     return None
 
 
-def retry_note(payload: dict) -> str:
+def retry_note(payload: dict, host: str | None = None) -> str:
     """A short clause when a 429 or 503 came with a Retry-After of whole seconds, else "". Only that integer is kept."""
     seconds, code = None, 429
     if payload.get("hook_event_name") == "PostToolUse":
@@ -344,7 +344,9 @@ def retry_note(payload: dict) -> str:
                     seconds = int(str(value).strip())
     else:
         text = payload.get("error")
-        if isinstance(text, str) and re.search(r"\b(?:429|503)\b|too many requests|service unavailable", text, re.I):
+        # URLs and the site's own name are blanked first: a number in a path or query is not a status or a number of seconds.
+        text = without_urls(text, host) if isinstance(text, str) else None
+        if text and re.search(r"\b(?:429|503)\b|too many requests|service unavailable", text, re.I):
             code = 503 if re.search(r"\b503\b|service unavailable", text, re.I) else 429
             match = RETRY_AFTER_TEXT.search(text)
             seconds = int(match.group(1)) if match else None
@@ -365,42 +367,101 @@ BROWSER_TOOL = re.compile(r"browser|chrome|playwright|puppeteer|selenium|webdriv
 FETCH_TOOL = re.compile(r"fetch", re.I)
 
 
-def challenge_header(headers: dict) -> bool:
-    """True when a header says the answer is a bot challenge: Cloudflare's documented cf-mitigated: challenge."""
-    return any(isinstance(key, str) and key.lower() == "cf-mitigated" and isinstance(value, str) and "challenge" in value.lower()
-               for key, value in headers.items())
+def _header_text(value):
+    """A header value as text: str, utf-8 bytes or a whole number; None for anything else (never str() of an object)."""
+    try:
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        if isinstance(value, str):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+    except Exception:
+        pass
+    return None
 
 
-def retry_after_band(headers: dict) -> str:
-    """none (no header, an HTTP date or anything else), lt_60, 60_3600 or gt_3600 for a Retry-After of whole seconds."""
-    for key, value in headers.items():
-        if isinstance(key, str) and key.lower() == "retry-after":
-            value = str(value).strip()
-            if not RETRY_AFTER_SECONDS.fullmatch(value):
+def header_entries(headers):
+    """(lowercase name, readable texts, any unreadable value) per header. A list value is read element by element,
+    bytes names and values are decoded; an entry whose name cannot be read is skipped."""
+    entries = []
+    for key, value in list(headers.items())[:200]:
+        if isinstance(key, bytes):
+            try:
+                key = key.decode("ascii")
+            except UnicodeError:
+                continue
+        if not isinstance(key, str):
+            continue
+        items = list(value) if isinstance(value, (list, tuple)) else [value]
+        texts = [_header_text(item) for item in items]
+        entries.append((key.lower(), [text for text in texts if text is not None], any(text is None for text in texts)))
+    return entries
+
+
+def challenge_code(headers):
+    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge", "none" when
+    headers were read without it, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
+    entries = header_entries(headers)
+    if not entries:
+        return None
+    unreadable = False
+    for name, texts, bad in entries:
+        if name == "cf-mitigated":
+            if any("challenge" in text.lower() for text in texts):
+                return "header"
+            unreadable = unreadable or bad
+    return None if unreadable else "none"
+
+
+def retry_after_code(headers):
+    """none (no header, an HTTP date or anything else), lt_60, 60_3600 or gt_3600 for a Retry-After of whole seconds;
+    None when there is nothing to go by (no headers, or the Retry-After value unreadable)."""
+    entries = header_entries(headers)
+    if not entries:
+        return None
+    for name, texts, bad in entries:
+        if name == "retry-after":
+            if not texts:
+                return None
+            text = texts[0].strip()
+            if not RETRY_AFTER_SECONDS.fullmatch(text):
                 return "none"
-            seconds = int(value)
+            seconds = int(text)
             return "lt_60" if seconds < 60 else "60_3600" if seconds <= 3600 else "gt_3600"
     return "none"
 
 
 def via_for(tool: str) -> str | None:
-    """http_fetch for WebFetch and MCP fetch tools, browser for MCP browser tools, None when the tool name says neither."""
+    """http_fetch for WebFetch and for an MCP server named like a fetch server, browser for one named like a browser
+    server, None otherwise. Like the hook matcher, only the server part of mcp__<server>__<tool> is read: a tool called
+    fetch_issue on a GitHub server is not a web fetch."""
     if tool == "WebFetch":
         return "http_fetch"
     if tool.startswith("mcp__"):
-        if BROWSER_TOOL.search(tool):
+        body = tool[5:]
+        server = body.rsplit("__", 1)[0] if "__" in body else body
+        if BROWSER_TOOL.search(server):
             return "browser"
-        if FETCH_TOOL.search(tool):
+        if FETCH_TOOL.search(server):
             return "http_fetch"
     return None
 
 
 def signals(payload: dict) -> dict:
+    """_signals(payload), or {} if reading it fails: a code that cannot be read must never cost the lookup."""
+    try:
+        return _signals(payload)
+    except Exception:
+        return {}
+
+
+def _signals(payload: dict) -> dict:
     """The optional lookup codes this payload already holds, as {parameter: value}; empty when it holds none.
 
     http_status: the code of a PostToolUse result (never one read out of an error text).
-    challenge, retry_after: only when the result carries a headers object; "none" then means the header was not there.
-    retry_after: only for 429 and 503. via: from the tool's name.
+    challenge, retry_after: only when the result carries readable headers (an empty headers object is "not seen", not
+    "no header"); "none" then means the header was not there. retry_after: only for 429 and 503. via: from the tool's name.
     """
     found = {}
     if not isinstance(payload, dict):
@@ -413,9 +474,13 @@ def signals(payload: dict) -> dict:
             found["http_status"] = code
             headers = response.get("headers")
             if isinstance(headers, dict):
-                found["challenge"] = "header" if challenge_header(headers) else "none"
+                challenge = challenge_code(headers)
+                if challenge:
+                    found["challenge"] = challenge
                 if code in (429, 503):
-                    found["retry_after"] = retry_after_band(headers)
+                    band = retry_after_code(headers)
+                    if band:
+                        found["retry_after"] = band
     via = via_for(tool)
     if via:
         found["via"] = via
@@ -716,7 +781,7 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
         return None, f"{host} looked up within 10 minutes"
     url = lookup_url(host, error_class, stage)
     # The signals ride on the request only. The "Full JSON" link in the line stays without them, so following it counts nothing twice.
-    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload))), url, retry_note(payload) if error_class == "service_error" else "")
+    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload))), url, retry_note(payload, name) if error_class == "service_error" else "")
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 

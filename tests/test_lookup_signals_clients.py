@@ -124,13 +124,14 @@ def run_hook(payload):
 # (status, response headers or None for "no headers object", expected codes)
 TABLE = [
     (401, None, {"http_status": 401, "via": "http_fetch"}),
-    (402, {}, {"http_status": 402, "challenge": "none", "via": "http_fetch"}),
-    (403, {}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (402, {}, {"http_status": 402, "via": "http_fetch"}),  # an empty headers object is "not seen", not "no header"
+    (403, {"server": "x"}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (403, {}, {"http_status": 403, "via": "http_fetch"}),
     (403, {"cf-mitigated": "challenge"}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
     (403, {"CF-Mitigated": "Challenge"}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
     (403, {"cf-mitigated": "other"}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
     (407, None, {"http_status": 407, "via": "http_fetch"}),
-    (408, {}, {"http_status": 408, "challenge": "none", "via": "http_fetch"}),
+    (408, {}, {"http_status": 408, "via": "http_fetch"}),
     (451, {"cf-mitigated": "challenge"}, {"http_status": 451, "challenge": "header", "via": "http_fetch"}),
     (429, {"Retry-After": "30"}, {"http_status": 429, "challenge": "none", "retry_after": "lt_60", "via": "http_fetch"}),
     (429, {"retry-after": "59"}, {"http_status": 429, "challenge": "none", "retry_after": "lt_60", "via": "http_fetch"}),
@@ -144,14 +145,27 @@ TABLE = [
     (429, {"Retry-After": "-5"}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
     (429, {"Retry-After": "12345678901"}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
     (429, {"Retry-After": ""}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
-    (429, {}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
+    (429, {}, {"http_status": 429, "via": "http_fetch"}),
+    (429, {"x": "y"}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
+    (429, {"Retry-After": ["30", "99999"]}, {"http_status": 429, "challenge": "none", "retry_after": "lt_60", "via": "http_fetch"}),
+    (429, {b"Retry-After": b"7200"}, {"http_status": 429, "challenge": "none", "retry_after": "gt_3600", "via": "http_fetch"}),
+    (429, {"Retry-After": b"\xff\xfe"}, {"http_status": 429, "challenge": "none", "via": "http_fetch"}),
+    (429, {"Retry-After": object()}, {"http_status": 429, "challenge": "none", "via": "http_fetch"}),
+    (429, {"Retry-After": None}, {"http_status": 429, "challenge": "none", "via": "http_fetch"}),
+    (403, {b"CF-Mitigated": b"challenge"}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
+    (403, {"cf-mitigated": ["other", "challenge"]}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
+    (403, {"cf-mitigated": ["other"]}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (403, {"cf-mitigated": object()}, {"http_status": 403, "via": "http_fetch"}),
+    (403, {"cf-mitigated": 5}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (403, {b"\xff": "x"}, {"http_status": 403, "via": "http_fetch"}),
+    (403, {7: "x"}, {"http_status": 403, "via": "http_fetch"}),
     (429, None, {"http_status": 429, "via": "http_fetch"}),
     (503, {"Retry-After": "120"}, {"http_status": 503, "challenge": "none", "retry_after": "60_3600", "via": "http_fetch"}),
     (503, {"Retry-After": "7200", "cf-mitigated": "challenge"},
      {"http_status": 503, "challenge": "header", "retry_after": "gt_3600", "via": "http_fetch"}),
-    (503, {}, {"http_status": 503, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
+    (503, {}, {"http_status": 503, "via": "http_fetch"}),
     (500, {"Retry-After": "30"}, {"http_status": 500, "challenge": "none", "via": "http_fetch"}),
-    (502, {}, {"http_status": 502, "challenge": "none", "via": "http_fetch"}),
+    (502, {}, {"http_status": 502, "via": "http_fetch"}),
     (504, None, {"http_status": 504, "via": "http_fetch"}),
     (599, None, {"http_status": 599, "via": "http_fetch"}),
     # Not looked up at all (the hook sends nothing), and no status code is reported for them.
@@ -202,6 +216,9 @@ def test_headers_that_are_not_an_object_add_no_header_codes(headers):
     ("mcp__chrome-devtools__navigate_page", "browser"),
     ("mcp__browser-fetch__fetch", "browser"),
     ("mcp__github__get_file", None),
+    ("mcp__github__fetch_issue", None),
+    ("mcp__memory__browser_history", None),
+    ("mcp__fetch", "http_fetch"),
     ("Bash", None),
     ("WebFetchX", None),
     ("", None),
@@ -223,7 +240,15 @@ def test_odd_payloads_give_no_codes_and_no_error(payload):
 
 # --- the hook: what goes on the wire -------------------------------------------------------------------
 
-@pytest.mark.parametrize("status,headers,expected", [row for row in TABLE if row[0] not in (400, 404)])
+def serializable(value):
+    try:
+        json.dumps(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+@pytest.mark.parametrize("status,headers,expected", [row for row in TABLE if row[0] not in (400, 404) and serializable(row[1])])
 def test_the_request_carries_the_codes_and_nothing_else(hook_requests, status, headers, expected):
     output, _ = run_hook(post_tool_use(status, headers))
     (request,) = hook_requests
@@ -323,14 +348,17 @@ def test_the_enum_lists_are_the_hooks():
                                    "7.5", "1e3", "+5", "-1", "٣٠", "Wed, 21 Oct 2026 07:28:00 GMT", "30; x=1", 30, None, 3.5])
 def test_retry_after_bands_agree(value):
     headers = {"Retry-After": value}
-    assert hook.retry_after_band(headers) == _signals.retry_after_band(headers)
-    assert hook.retry_after_band(headers) in BANDS
+    assert hook.retry_after_code(headers) == _signals.retry_after_code(headers)
+    assert hook.retry_after_code(headers) in BANDS | {None}
 
 
 @pytest.mark.parametrize("headers", [{"cf-mitigated": "challenge"}, {"CF-MITIGATED": "CHALLENGE"}, {"cf-mitigated": "other"},
-                                     {"cf-mitigated": 1}, {1: "challenge"}, {}, {"x-cf-mitigated": "challenge"}])
+                                     {"cf-mitigated": 1}, {1: "challenge"}, {}, {"x-cf-mitigated": "challenge"},
+                                     {"cf-mitigated": ["challenge"]}, {b"cf-mitigated": b"challenge"}, {"cf-mitigated": object()},
+                                     {"cf-mitigated": [object(), "challenge"]}])
 def test_challenge_headers_agree(headers):
-    assert hook.challenge_header(headers) == _signals.challenge_header(headers)
+    assert hook.challenge_code(headers) == _signals.challenge_code(headers)
+    assert hook.header_entries(headers) == _signals.header_entries(headers)
 
 
 @pytest.mark.parametrize("signals", [
@@ -547,3 +575,112 @@ def test_versions_and_the_documents_name_the_codes():
     # Nothing is promised that does not exist yet.
     for text in (plugin_readme, client_readme):
         assert "AHN_HOOK_FEEDBACK" not in text and "feedback token" not in text
+
+
+# --- review round: Full JSON link, guards, text path, mutants --------------------------------------------
+
+FULL_JSON = ("Full JSON: https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=service_error"
+             "&failure_stage=response_observed.")
+
+
+def test_the_client_result_link_has_no_codes_and_the_cache_reuses_it(client_requests):
+    first = ahn.check("example.com", "service_error", "response_observed", http_status=429, challenge="none",
+                      retry_after="lt_60", via="http_fetch")
+    assert "http_status=429" in client_requests[0].full_url
+    assert first.url == "https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=service_error&failure_stage=response_observed"
+    assert FULL_JSON in first.summary()
+    for name in ("http_status", "challenge", "retry_after", "via="):
+        assert name not in first.summary() and name not in first.url
+    second = ahn.check("example.com", "service_error", "response_observed", http_status=503, via="browser")
+    assert second is first and len(client_requests) == 1  # the key is host, class and stage: the codes do not split the cache
+
+
+def test_the_adapter_and_sdk_lines_have_no_codes_in_their_link(client_requests):
+    error = http_error(429, {"x": "y"})
+    note = _adapter.note_for(error, {"url": "https://example.com/x"}, adapter="langchain")
+    assert "retry_after=" in client_requests[0].full_url
+    assert FULL_JSON in note and "http_status" not in note and "via=" not in note
+    ahn.clear_cache()
+    client_requests.clear()
+    result = asyncio.run(ahn_claude.make_hook()(post_tool_use(429, {"x": "y"}), None, None))
+    line = result["hookSpecificOutput"]["additionalContext"]
+    assert "http_status=429" in client_requests[0].full_url
+    assert FULL_JSON in line and "http_status" not in line
+    assert "challenge=" not in line and "via=" not in line and len(line) <= 700
+
+
+def test_the_hook_and_client_lines_are_the_same_for_the_same_answer(hook_requests, client_requests):
+    output, _ = run_hook(post_tool_use(429, {"x": "y"}))
+    line = output["hookSpecificOutput"]["additionalContext"]
+    result = asyncio.run(ahn_claude.make_hook()(post_tool_use(429, {"x": "y"}), None, None))
+    assert result["hookSpecificOutput"]["additionalContext"].split("Full JSON:")[1] == line.split("Full JSON:")[1]
+
+
+class LowerRaises(str):
+    def lower(self):
+        raise RuntimeError("no lower")
+
+    def strip(self, *args):
+        raise RuntimeError("no strip")
+
+
+def test_a_header_value_that_raises_costs_no_lookup_and_no_exception(hook_requests, client_requests):
+    bad = {"Retry-After": LowerRaises("30"), "cf-mitigated": LowerRaises("challenge")}
+    error = http_error(429, bad)
+    assert ahn.signals(error) == {}
+    assert _adapter.failure_signals(error) == {}
+    assert hook.signals(post_tool_use(429, bad)) == {} and _claude_code.signals(post_tool_use(429, bad)) == {}
+    assert ahn.check("example.com", "service_error") is not None
+
+
+def test_an_async_adapter_sends_the_codes(client_requests):
+    error = http_error(503, {"Retry-After": "5000"})
+    note = asyncio.run(_adapter.anote_for(error, {"url": "https://example.com/x"}, adapter="openai-agents"))
+    assert note and note.startswith("AHN example.com:")
+    query = query_of(client_requests[0])
+    assert query["http_status"] == "503" and query["retry_after"] == "gt_3600" and query["via"] == "http_fetch"
+
+
+def test_a_failing_signal_reader_costs_the_adapter_nothing(client_requests, monkeypatch):
+    def broken(error, **kwargs):
+        raise RuntimeError("signals broke")
+
+    monkeypatch.setattr(_adapter, "signals", broken)
+    error = http_error(429, {"Retry-After": "5"})
+    assert _adapter.failure_signals(error) == {}
+    note = _adapter.note_for(error, {"url": "https://example.com/x"}, adapter="langchain")
+    assert note and set(query_of(client_requests[0])) <= {"site_host", "error_class", "failure_stage"}
+    ahn.clear_cache()
+    client_requests.clear()
+    assert asyncio.run(_adapter.anote_for(error, {"url": "https://example.com/x"}, adapter="langchain"))
+    assert set(query_of(client_requests[0])) <= {"site_host", "error_class", "failure_stage"}
+
+
+@pytest.mark.parametrize("error", [
+    Exception("playwright browser timed out at https://example.com"),
+    TimeoutError("selenium chrome headless timed out"),
+    "browser playwright timeout",
+])
+def test_via_is_never_decided_from_a_message(error):
+    assert ahn.signals(error) == {}
+    assert "via" not in hook.signals(failure_event(error if isinstance(error, str) else str(error), tool="Bash"))
+
+
+@pytest.mark.parametrize("error,expected", [
+    ("Request to https://example.com/api/429?retry_after=99 failed: 503 Retry-After: 45", "HTTP 503, the site asks to retry after 45 s."),
+    ("failed https://example.com/err/503 Retry-After: 30", ""),
+    ("GET https://example.com/429/retry-after-30 returned an error", ""),
+    ("503.example.com is down, retry-after 9", ""),
+    ("429 Too Many Requests, retry after 12", "HTTP 429, the site asks to retry after 12 s."),
+])
+def test_the_text_retry_note_ignores_numbers_in_urls_and_the_host_name(error, expected):
+    assert hook.retry_note(failure_event(error), "503.example.com" if "503.example.com is" in error else "example.com") == expected
+
+
+def test_a_failing_hook_signal_reader_still_looks_up(hook_requests, monkeypatch):
+    def broken(payload):
+        raise RuntimeError("broke")
+
+    monkeypatch.setattr(hook, "_signals", broken)
+    run_hook(post_tool_use(429, {"x": "y"}))
+    assert query_of(hook_requests[0]) == {"site_host": "example.com", "error_class": "service_error", "failure_stage": "response_observed"}

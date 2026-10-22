@@ -22,7 +22,7 @@ What it does, for ``kind == "tool_exception"`` when the failure is a block or an
   lookup slower than ``timeout`` (2 s) return exactly what ``base`` returns (or None).
 
 The URL is read from the tool's arguments (``run_context.tool_arguments``) or from the exception's request. Only the
-hostname and two enum codes leave the machine.
+hostname and enum codes leave the machine.
 
 This formatter applies only to function tools that use the SDK's implicit default failure handler. A tool that sets its
 own ``failure_error_function``, tools made by ``Agent.as_tool()`` and local MCP tools keep their own policies; for a tool that

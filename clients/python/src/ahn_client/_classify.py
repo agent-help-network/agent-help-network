@@ -150,14 +150,19 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
     503: ``none``, ``lt_60``, ``60_3600`` or ``gt_3600`` seconds; an HTTP date counts as ``none``) and ``via``
     (``http_fetch`` for httpx, requests, aiohttp and urllib errors, ``browser`` for Playwright, Selenium and similar
     ones; pass ``via="browser"`` or ``"http_fetch"`` yourself when you know). A key whose value is not known is left
-    out. The result is empty for text, for an exception without a status, and for a status outside that list. No
-    header value, URL or message text is read into the result.
+    out. ``http_status`` and the header codes are empty for text, for an exception without a status and for a status
+    outside that list (``via`` can still be there, from the exception's module or from your argument). An empty
+    headers object counts as not seen, so ``challenge`` and ``retry_after`` are left out. No header value, URL or
+    message text is read into the result, and this function never raises (it gives ``{}`` instead).
     """
-    found: Dict[str, Any] = {}
-    if isinstance(exc, BaseException):
-        headers = header_pairs(_attr(exc, "response"))
-        found = from_headers(_status(exc), headers if headers is not None else header_pairs(exc))
-        via = via or via_for_exception(_chain(exc))
-    if via:
-        found["via"] = via
-    return valid_signals(found)
+    try:
+        found: Dict[str, Any] = {}
+        if isinstance(exc, BaseException):
+            headers = header_pairs(_attr(exc, "response"))
+            found = from_headers(_status(exc), headers if headers is not None else header_pairs(exc))
+            via = via or via_for_exception(_chain(exc))
+        if via:
+            found["via"] = via
+        return valid_signals(found)
+    except Exception:
+        return {}

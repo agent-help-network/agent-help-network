@@ -66,9 +66,11 @@ User-Agent: ahn-claude-code-plugin/0.2
   | Parameter | Values | Added when | How the hook decides |
   | :- | :- | :- | :- |
   | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the result is a `WebFetch` answer (`PostToolUse`) | `tool_response.code`. A status mentioned in an error text is never sent |
-  | `challenge` | `header`, `none` | the result carries a `headers` object | `header` when a `cf-mitigated` header contains `challenge`, else `none`. The page text is not used for this code |
+  | `challenge` | `header`, `none` | the result carries a non-empty `headers` object | `header` when a `cf-mitigated` header (a list value is read element by element, bytes are decoded) contains `challenge`, else `none`. The page text is not used for this code |
   | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | a 429 or 503 whose result carries a `headers` object | the `Retry-After` seconds as a band (under 60, 60 to 3600, over 3600); a date, a missing or an unreadable header is `none` |
-  | `via` | `http_fetch`, `browser` | the tool's name says it | `WebFetch` and MCP tools with `fetch` in the name: `http_fetch`; MCP tools with `browser`, `chrome`, `playwright`, `puppeteer`, `selenium`, `webdriver`, `devtools`, `firefox`, `camoufox` or `stagehand` in the name: `browser`; any other tool: left out |
+  | `via` | `http_fetch`, `browser` | the tool's name says it | `WebFetch` and MCP tools whose server name has `fetch` in it: `http_fetch`; MCP tools whose server name has `browser`, `chrome`, `playwright`, `puppeteer`, `selenium`, `webdriver`, `devtools`, `firefox`, `camoufox` or `stagehand` in it: `browser`; any other tool: left out |
+
+  Claude Code's `WebFetch` result today has no `headers` (it carries `code`, `codeText`, `bytes` and similar), so what the plugin actually sends for a WebFetch is `http_status` and `via`; `challenge` and `retry_after` are sent only for a tool whose result does carry headers. An empty or unreadable `headers` object counts as not seen and adds neither. For an MCP tool the name of the server (`mcp__<server>__<tool>`) is what `via` reads, so a `fetch_issue` tool on a GitHub server is not a fetch.
 
   These codes are counted per hostname and hour next to the error class. They never become a report and do not change the recommendation. The hook still sends nothing from the request or the page: no URL path or query, no page text, no header value (a header is only tested for the marker above or reduced to the band), no `Retry-After` seconds, no tool name.
 - Nothing else leaves your machine: no URL paths or queries, no page content, no error text, no conversation text, no credentials, cookies or account names, no session or user identifiers.

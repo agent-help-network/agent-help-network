@@ -14,7 +14,7 @@ import re
 import urllib.parse
 from typing import Any, Dict, Optional, Tuple
 
-from ._signals import HTTP_STATUSES, challenge_header, retry_after_band
+from ._signals import HTTP_STATUSES, challenge_code, retry_after_code
 
 HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 URL_IN_TEXT = re.compile(r"https?://[^\s'\"<>()\[\]{}`]+", re.IGNORECASE)
@@ -131,7 +131,7 @@ def http_status(tool_response) -> Optional[int]:
 
 def challenge_cue(tool_response: dict, host: str) -> bool:
     headers = tool_response.get("headers")
-    if isinstance(headers, dict) and challenge_header(headers):
+    if isinstance(headers, dict) and challenge_code(headers) == "header":
         return True
     for field in BODY_FIELDS:
         value = tool_response.get(field)
@@ -183,23 +183,34 @@ def failure(payload) -> Optional[Tuple[str, str, Optional[str]]]:
 
 
 def via_for(tool: str) -> Optional[str]:
-    """http_fetch for WebFetch and MCP fetch tools, browser for MCP browser tools, None when the tool name says neither."""
+    """http_fetch for WebFetch and for an MCP server named like a fetch server, browser for one named like a browser
+    server, None otherwise (only the server part of mcp__<server>__<tool> is read, as in the hook)."""
     if tool == "WebFetch":
         return "http_fetch"
     if tool.startswith("mcp__"):
-        if BROWSER_TOOL.search(tool):
+        body = tool[5:]
+        server = body.rsplit("__", 1)[0] if "__" in body else body
+        if BROWSER_TOOL.search(server):
             return "browser"
-        if FETCH_TOOL.search(tool):
+        if FETCH_TOOL.search(server):
             return "http_fetch"
     return None
 
 
 def signals(payload) -> Dict[str, Any]:
+    """_signals(payload), or {} if reading it fails: a code that cannot be read must never cost the lookup."""
+    try:
+        return _signals(payload)
+    except Exception:
+        return {}
+
+
+def _signals(payload) -> Dict[str, Any]:
     """The optional lookup codes (http_status, challenge, retry_after, via) the payload already holds; empty when none.
 
     http_status comes only from a PostToolUse result, never from an error text. challenge and retry_after are
-    set only when the result carries a headers object ("none" then means the header was not there); retry_after
-    only for 429 and 503. via comes from the tool's name.
+    set only when the result carries readable headers ("none" then means the header was not there; an empty headers
+    object is "not seen"); retry_after only for 429 and 503. via comes from the tool's name.
     """
     found: Dict[str, Any] = {}
     if not isinstance(payload, dict):
@@ -212,9 +223,13 @@ def signals(payload) -> Dict[str, Any]:
             found["http_status"] = code
             headers = response.get("headers")
             if isinstance(headers, dict):
-                found["challenge"] = "header" if challenge_header(headers) else "none"
+                challenge = challenge_code(headers)
+                if challenge:
+                    found["challenge"] = challenge
                 if code in (429, 503):
-                    found["retry_after"] = retry_after_band(headers)
+                    band = retry_after_code(headers)
+                    if band:
+                        found["retry_after"] = band
     via = via_for(tool)
     if via:
         found["via"] = via

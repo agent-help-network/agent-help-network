@@ -1,4 +1,4 @@
-"""The lookup call: one GET with a hostname and two enum codes, never an exception."""
+"""The lookup call: one GET with a hostname and enum codes, never an exception."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from ._signals import valid_signals
 __all__ = ["check", "clear_cache", "lookup_url"]
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
-# The framework adapters name themselves in the User-Agent: "ahn-client/0.3.0 (+langchain; +https://agenthelpnetwork.com)".
+# The framework adapters name themselves in the User-Agent: "ahn-client/0.4.0 (+langchain; +https://agenthelpnetwork.com)".
 ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 CACHE_TTL_SECONDS = 600
 FAILURE_TTL_SECONDS = 60
@@ -68,8 +68,10 @@ def user_agent(adapter: Optional[str] = None) -> str:
 
 def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], timeout: float,
            adapter: Optional[str] = None, signals: Optional[Dict[str, object]] = None) -> Optional[Result]:
-    url = lookup_url(host, error_class, failure_stage, signals)
-    request = urllib.request.Request(url, headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
+    # The signal codes ride on the request only. The URL the Result keeps (the "Full JSON" link an agent sees) has none,
+    # so following it counts nothing twice and the line is the plugin's.
+    url = lookup_url(host, error_class, failure_stage)
+    request = urllib.request.Request(lookup_url(host, error_class, failure_stage, signals), headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
     try:
         with _urlopen(request, timeout) as response:
             if getattr(response, "status", 200) != 200:

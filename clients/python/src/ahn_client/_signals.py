@@ -12,7 +12,7 @@ ahn_lookup.py; tests/test_ahn_client_adapters.py runs both on the same input and
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 HTTP_STATUSES = frozenset({401, 402, 403, 407, 408, 429, 451}) | frozenset(range(500, 600))
 CHALLENGES = ("header", "none")
@@ -37,20 +37,67 @@ def valid_signals(found: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     return {name: found[name] for name, ok in checks if name in found and ok(found[name])}
 
 
-def challenge_header(headers: Mapping[Any, Any]) -> bool:
-    """True when a header says the answer is a bot challenge: Cloudflare's documented ``cf-mitigated: challenge``."""
-    return any(isinstance(key, str) and key.lower() == "cf-mitigated" and isinstance(value, str) and "challenge" in value.lower()
-               for key, value in headers.items())
+def _header_text(value):
+    """A header value as text: str, utf-8 bytes or a whole number; None for anything else (never str() of an object)."""
+    try:
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        if isinstance(value, str):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+    except Exception:
+        pass
+    return None
 
 
-def retry_after_band(headers: Mapping[Any, Any]) -> str:
-    """none (no header, an HTTP date or anything else), lt_60, 60_3600 or gt_3600 for a Retry-After of whole seconds."""
-    for key, value in headers.items():
-        if isinstance(key, str) and key.lower() == "retry-after":
-            value = str(value).strip()
-            if not RETRY_AFTER_SECONDS.fullmatch(value):
+def header_entries(headers: Mapping[Any, Any]) -> List[Tuple[str, List[str], bool]]:
+    """(lowercase name, readable texts, any unreadable value) per header. A list value is read element by element,
+    bytes names and values are decoded; an entry whose name cannot be read is skipped."""
+    entries = []
+    for key, value in list(headers.items())[:200]:
+        if isinstance(key, bytes):
+            try:
+                key = key.decode("ascii")
+            except UnicodeError:
+                continue
+        if not isinstance(key, str):
+            continue
+        items = list(value) if isinstance(value, (list, tuple)) else [value]
+        texts = [_header_text(item) for item in items]
+        entries.append((key.lower(), [text for text in texts if text is not None], any(text is None for text in texts)))
+    return entries
+
+
+def challenge_code(headers: Mapping[Any, Any]) -> Optional[str]:
+    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge", "none" when
+    headers were read without it, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
+    entries = header_entries(headers)
+    if not entries:
+        return None
+    unreadable = False
+    for name, texts, bad in entries:
+        if name == "cf-mitigated":
+            if any("challenge" in text.lower() for text in texts):
+                return "header"
+            unreadable = unreadable or bad
+    return None if unreadable else "none"
+
+
+def retry_after_code(headers: Mapping[Any, Any]) -> Optional[str]:
+    """none (no header, an HTTP date or anything else), lt_60, 60_3600 or gt_3600 for a Retry-After of whole seconds;
+    None when there is nothing to go by (no headers, or the Retry-After value unreadable)."""
+    entries = header_entries(headers)
+    if not entries:
+        return None
+    for name, texts, bad in entries:
+        if name == "retry-after":
+            if not texts:
+                return None
+            text = texts[0].strip()
+            if not RETRY_AFTER_SECONDS.fullmatch(text):
                 return "none"
-            seconds = int(value)
+            seconds = int(text)
             return "lt_60" if seconds < 60 else "60_3600" if seconds <= 3600 else "gt_3600"
     return "none"
 
@@ -74,9 +121,13 @@ def from_headers(status: Optional[int], headers: Optional[Mapping[Any, Any]]) ->
         return found
     found["http_status"] = status
     if headers is not None:
-        found["challenge"] = "header" if challenge_header(headers) else "none"
+        challenge = challenge_code(headers)
+        if challenge:
+            found["challenge"] = challenge
         if status in (429, 503):
-            found["retry_after"] = retry_after_band(headers)
+            band = retry_after_code(headers)
+            if band:
+                found["retry_after"] = band
     return found
 
 
