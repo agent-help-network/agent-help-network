@@ -20,7 +20,6 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 
 from . import traffic
-from .db import connect
 from .lookup_signals import EXAMPLE_HOSTS, source_digest
 
 LOG = logging.getLogger(__name__)
@@ -95,16 +94,17 @@ def _count_drop() -> None:
         _dropped += 1
 
 
-def write(settings, row: tuple | None, *, lock_timeout_ms: int = 200) -> bool:
-    """Add one prepared row to the daily counts on its own short connection; never raises.
+def write(conn, row: tuple | None, *, lock_timeout_ms: int = 200) -> bool:
+    """Add one prepared row to the daily counts in a savepoint on the caller's connection; never raises.
 
-    Run after the lookup's own transaction has committed, so the hot daily row is locked for one statement only and
-    never for the length of a lookup. A failure is counted in ``dropped_since_start`` (attempts are measured too).
+    The statements are exactly: set the lock timeout, one upsert, reset the timeout. The caller commits right after, so
+    the hot daily row is locked for that one statement only. A failure (lock timeout, database error) is rolled back to
+    the savepoint, logged and counted in ``dropped_since_start``; only failures are counted, not successful writes.
     """
     if row is None:
         return False
     try:
-        with connect(settings) as conn:
+        with conn.transaction():
             conn.execute(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'")
             conn.execute(
                 """INSERT INTO lookup_outcome_daily (day,client_category,adapter,mcp_host,action,profile_state,lookups,sources)
@@ -112,6 +112,7 @@ def write(settings, row: tuple | None, *, lock_timeout_ms: int = 200) -> bool:
                    ON CONFLICT (day,client_category,adapter,mcp_host,action,profile_state)
                    DO UPDATE SET lookups=lookup_outcome_daily.lookups+1, sources=lookup_outcome_daily.sources+EXCLUDED.sources""",
                 row)
+            conn.execute("SET LOCAL lock_timeout = DEFAULT")
         return True
     except Exception:
         _count_drop()

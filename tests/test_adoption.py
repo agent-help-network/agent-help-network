@@ -241,9 +241,10 @@ def test_nothing_in_the_answer_reads_the_adoption_labels():
     from ahn import service
     check_source = inspect.getsource(service.check)
     assert check_source.index('"recommendation"') < check_source.index("_record_signal(")
-    # The only mention is the write after the commit, with the row _record_signal returned; nothing is read back.
-    assert check_source.count("adoption") == 1 and "adoption.write(settings, count_row)" in check_source
+    # The only mention is the write of the row _record_signal returned, then a commit; nothing is read back.
+    assert check_source.count("adoption") == 1 and "adoption.write(conn, count_row)" in check_source
     assert check_source.index("adoption.write(") > check_source.index("_record_signal(")
+    assert check_source.index("conn.commit()", check_source.index("adoption.write(")) > 0   # committed right after
     assert "lookup_outcome_daily" not in check_source
 
 

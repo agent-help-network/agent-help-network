@@ -122,7 +122,8 @@ _CATEGORY_OF_TYPE = {
 
 # MCP host families, from the User-Agent of the caller's own request to /mcp (the adapter forwards only this label, never
 # the header). Tokens are matched in this order; a host that matches none is "other_mcp", and a call with no User-Agent
-# at all is "unknown_mcp" (so an unlisted host and a missing header are not counted as the same thing). Hints, like every kind here.
+# at all, or no label on the hop (no label, a value off the list, or a request with the right token that is not the
+# loopback hop), is "unknown_mcp" (so an unlisted host and a missing header are not counted as the same thing). Hints, like every kind here.
 MCP_HOSTS = ("claude", "chatgpt", "cursor", "vscode", "other_mcp", "unknown_mcp")
 MCP_HOST_UNKNOWN = "unknown_mcp"  # no User-Agent (or no label on the hop) to read a family from
 MCP_HOST_NONE = "none"

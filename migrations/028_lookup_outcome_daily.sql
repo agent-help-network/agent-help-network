@@ -3,7 +3,7 @@
 -- One new table, no change to an existing one: creating it takes no lock on a table that is in use.
 -- Retention is enforced by platform_metrics.prune_analytics: 90 days.
 -- Rollback: DROP TABLE lookup_outcome_daily; DELETE FROM schema_migrations WHERE version=28;
--- The application keeps working with the table missing: the write is a savepoint that logs and carries on.
+-- The application keeps working with the table missing: the write is a savepoint that is rolled back, logged and counted in dropped_since_start, and the lookup carries on.
 -- Size is bounded by the fixed lists, not by what clients send: 8 client categories x 6 adapter labels x 7 MCP host
 -- labels x 7 actions x 4 profile states is the theoretical ceiling per day (a few dozen rows in practice).
 

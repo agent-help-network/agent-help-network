@@ -290,18 +290,84 @@ def test_a_held_lock_on_the_daily_table_neither_blocks_nor_hides_the_lookup(db, 
     assert adoption.dropped_since_start() == before + 1
 
 
-def test_the_adoption_row_is_written_after_the_lookup_commits(db, client, monkeypatch):
-    # The write runs on its own connection once the lookup's transaction is over: nothing of the lookup is still open then.
+class _Logged:
+    """A connection proxy that records every statement and the savepoint boundaries, and passes them on."""
+
+    def __init__(self, conn):
+        self.conn, self.log = conn, []
+
+    def execute(self, sql, params=None):
+        self.log.append(" ".join(sql.split()))
+        return self.conn.execute(sql, params)
+
+    def transaction(self):
+        self.log.append("<savepoint>")
+        return self.conn.transaction()
+
+
+ROW = (datetime.now(timezone.utc).date(), "browser", "none", "none", "proceed", "ready", 1)
+
+
+def table_is_unlocked(settings) -> bool:
+    """True when nothing holds a lock on the daily table: an ACCESS EXCLUSIVE lock without waiting is granted."""
+    with connect(settings) as other:
+        try:
+            other.execute("SET LOCAL lock_timeout = '100ms'")
+            other.execute("LOCK TABLE lookup_outcome_daily IN ACCESS EXCLUSIVE MODE NOWAIT")
+            return True
+        except Exception:
+            return False
+
+
+def test_the_write_is_one_upsert_between_the_timeout_statements_and_nothing_else(db):
+    with connect(db) as conn:
+        proxy = _Logged(conn)
+        assert adoption.write(proxy, ROW) is True
+        assert len(proxy.log) == 4 and proxy.log[0] == "<savepoint>"
+        assert proxy.log[1].startswith("SET LOCAL lock_timeout = '200ms'")
+        assert proxy.log[2].startswith("INSERT INTO lookup_outcome_daily") and proxy.log[2].count("lookup_outcome_daily") == 3
+        assert proxy.log[3] == "SET LOCAL lock_timeout = DEFAULT"
+        conn.commit()
+    assert table_is_unlocked(db)
+
+
+def test_no_lock_on_the_daily_table_is_held_before_the_write_or_after_the_lookup(db, client, monkeypatch):
+    # Before the write nothing of this lookup holds the table (so the lock is taken by the upsert alone); after the
+    # lookup returns nothing holds it. A statement ahead of the upsert that touched the table would fail the first check.
     seen = []
     real = adoption.write
-    def spy(settings, row, **kw):
-        with connect(settings) as other:
-            seen.append(other.execute("SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() "
-                                      "AND state LIKE 'idle in transaction%%' AND pid<>pg_backend_pid()").fetchone()["n"])
-        return real(settings, row, **kw)
+    def spy(conn, row, **kw):
+        seen.append(table_is_unlocked(db))
+        return real(conn, row, **kw)
     monkeypatch.setattr(adoption, "write", spy)
     assert lookup(client, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
-    assert seen == [0]
+    assert seen == [True]
+    assert table_is_unlocked(db)
+    assert sum(r["lookups"] for r in stored(db)) == 1
+
+
+def test_a_lock_wait_ends_inside_a_second(db, client):
+    import time
+    assert lookup(client, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+    holder = connect(db)
+    try:
+        holder.execute("LOCK TABLE lookup_outcome_daily IN ACCESS EXCLUSIVE MODE")
+        started = time.monotonic()
+        assert lookup(client, ip=OTHER_IP, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+        assert time.monotonic() - started < 1.5     # lock_timeout is 200 ms; a count never holds a lookup for seconds
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_a_failed_source_read_is_counted_as_a_drop_and_the_lookup_is_answered(db, client, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("source table unavailable")
+    monkeypatch.setattr(adoption, "_source_exists", boom)
+    before = adoption.dropped_since_start()
+    assert lookup(client, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+    assert adoption.dropped_since_start() == before + 1
+    assert stored(db) == []
 
 
 def test_the_owner_json_shows_the_drop_counter(db):

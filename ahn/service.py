@@ -284,8 +284,8 @@ def _record_signal(conn, settings: Settings, host: str, error_class: str | None,
 
     The answered lookup also goes into the daily adoption counts (D49, ahn/adoption.py) under the metrics switch alone:
     it holds no host, so it does not need the host gate. Here it is only prepared (a read, run first because it asks
-    whether this source already has a digest row today); the caller writes the returned row after its transaction has
-    committed (adoption.write), so the one hot daily row is never locked for the length of a lookup.
+    whether this source already has a digest row today); the caller writes the returned row (adoption.write) as the
+    last statement before a commit, so the one hot daily row is never locked for longer than that statement.
     """
     if not settings.collect_lookup_metrics:
         return None
@@ -581,7 +581,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             count_row = _record_signal(conn, settings, host, error_class, failure_stage, signal,
                                           result["recommendation"]["action"], public=public, registered=registered,
                                           now=now, result=result)
-    adoption.write(settings, count_row)  # after the commit: its own connection, one short statement
+            # Its own short transaction on this connection: one upsert, committed at once, so the daily row's lock is not
+            # held for the rest of the request.
+            adoption.write(conn, count_row)
+            conn.commit()
     return result
 
 
