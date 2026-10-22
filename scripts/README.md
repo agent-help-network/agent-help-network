@@ -122,6 +122,7 @@ Measures what a first lookup of a host answers, on a frozen set of 100 hosts whe
 ```
 python scripts/answer_quality.py --offline-only --no-save     # coverage from the code tables only, no network
 python scripts/answer_quality.py --out-dir <folder>           # offline + live, writes <folder>/<date>.json
+python scripts/answer_quality.py --vendor-pass anthropic      # and a second live pass with agent_vendor=anthropic (D48)
 ```
 
 - **Offline coverage:** the share of set hosts with a seed entry, an official path (`api_docs` or `developer_portal`), a status
@@ -131,6 +132,11 @@ python scripts/answer_quality.py --out-dir <folder>           # offline + live, 
   path or its `recommendation.action` is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`. Also reported:
   the share still `profile_pending` and the share with no data (action `unknown`, no official path, no status). A failed
   lookup is counted as an error and is left out of the percentages; it is never retried.
+- **Vendor pass (D48):** `--vendor-pass <agent_vendor>` asks every host a second time with that `agent_vendor` (same pacing,
+  twice the requests) and stores it as `live_vendor` with the hosts whose action differs from the first pass. The change
+  against the previous run compares the first pass only. Since D48 a lookup without `agent_vendor` answers a host that
+  blocks only some vendors with `unknown` instead of `stop_declared_block`, so a run across that change can list such hosts
+  as no longer actionable.
 - **Result:** the JSON file has the metrics, one row per host and the change against the newest earlier file in the folder
   (metric deltas, hosts that lost coverage or stopped being actionable, hosts that improved). Stdout prints the same without
   the rows. The default folder, `work/`, is ignored by git; results are not committed.

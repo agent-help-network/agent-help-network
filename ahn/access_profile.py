@@ -27,8 +27,9 @@ from psycopg.types.json import Jsonb
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 
-# Only user_agent and search_crawler tokens can make a declared block (triage.AGENT_KINDS_FOR_BLOCK); a training_crawler
-# token is reported but never blocks. Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
+# A declared block is judged on a vendor's governing tokens (D48, GOVERNING_TOKENS below): its user_agent tokens, or its
+# search_crawler tokens when it documents no user_agent token. A training_crawler token is reported but never blocks.
+# Spellings and kinds follow each vendor's own documentation, see AGENT_SOURCES.
 AGENT_USER_AGENTS: tuple[tuple[str, str], ...] = (
     ("ChatGPT-User", "user_agent"), ("Claude-User", "user_agent"), ("Perplexity-User", "user_agent"),
     ("Meta-ExternalFetcher", "user_agent"), ("MistralAI-User", "user_agent"), ("Google-Agent", "user_agent"),
@@ -68,6 +69,48 @@ AGENT_SOURCES: dict[str, str] = {
     "CCBot": "https://commoncrawl.org/ccbot",
 }
 UNCONFIRMED_AGENT_TOKENS = frozenset({"anthropic-ai", "Bytespider", "cohere-ai"})
+# D48: the vendor of each token, from the same vendor pages (AGENT_SOURCES). AGENT_VENDORS are the vendors a caller can
+# name with agent_vendor (ahn/models.py AgentVendor adds "other"); the vendors outside it run training crawlers only.
+AGENT_VENDORS: tuple[str, ...] = ("openai", "anthropic", "google", "perplexity", "meta", "mistral", "amazon", "microsoft",
+                                  "apple", "duckduckgo", "diffbot", "exa")
+AGENT_VENDOR: dict[str, str] = {
+    "ChatGPT-User": "openai", "OAI-SearchBot": "openai", "GPTBot": "openai",
+    "Claude-User": "anthropic", "Claude-SearchBot": "anthropic", "ClaudeBot": "anthropic", "anthropic-ai": "anthropic",
+    "Perplexity-User": "perplexity", "PerplexityBot": "perplexity",
+    "Meta-ExternalFetcher": "meta", "Meta-WebIndexer": "meta", "Meta-ExternalAgent": "meta",
+    "MistralAI-User": "mistral", "MistralAI-Index": "mistral", "MistralAI-Training": "mistral",
+    "Google-Agent": "google", "Google-GeminiNotebook": "google", "Googlebot": "google", "Google-Extended": "google",
+    "Amzn-User": "amazon", "Amazonbot": "amazon", "Amzn-SearchBot": "amazon",
+    "Bingbot": "microsoft", "Applebot": "apple", "Applebot-Extended": "apple",
+    "DuckAssistBot": "duckduckgo", "DuckDuckBot": "duckduckgo", "Diffbot-User": "diffbot", "Diffbot": "diffbot",
+    "ExaSearchBot": "exa", "CCBot": "commoncrawl", "Bytespider": "bytedance", "cohere-ai": "cohere",
+}
+
+
+def _governing(vendor: str) -> tuple[str, ...]:
+    tokens = [(token, kind) for token, kind in AGENT_USER_AGENTS if AGENT_VENDOR[token] == vendor]
+    user = tuple(token for token, kind in tokens if kind == "user_agent")
+    return user or tuple(token for token, kind in tokens if kind == "search_crawler")
+
+
+# A vendor's governing tokens: the tokens the recommendation reads for that vendor. Its user-directed fetchers when it
+# documents any; otherwise (microsoft, apple, exa) its search crawler. A vendor that later documents a user_agent token
+# switches to it as soon as the token is added to AGENT_USER_AGENTS.
+GOVERNING_TOKENS: dict[str, tuple[str, ...]] = {vendor: _governing(vendor) for vendor in AGENT_VENDORS}
+# Retired or variant names that sites use for a vendor's agent but no vendor page documents (seen in the 2026-10-22 read
+# of 161 robots.txt files). They are not tokens: never in rules or agents_blocked, never a declared block. A group that
+# names one and disallows the root keeps that vendor's answer from "proceed" (robots_names_vendor_alias). Only names for
+# user-directed or agentic fetchers belong here, never ad or enterprise crawlers (mediapartners-google, oai-adsbot,
+# amazon-kendra, googleother, facebookexternalhit, ...): those would stop a vendor's agent over a crawler it does not run
+# as the agent. Matched exactly, after lowercasing and dash folding.
+VENDOR_ALIASES: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"claude-web"}),
+    "openai": frozenset({"openai"}),
+    "perplexity": frozenset({"perplexity-ai", "perplexityuser"}),
+    "google": frozenset({"googleagent-mariner", "googleagent-shopping", "gemini-deep-research", "google-notebooklm"}),
+    "microsoft": frozenset({"copilot", "copilotnative", "copilotsapphire"}),
+}
+_ALIAS_NAMES = frozenset().union(*VENDOR_ALIASES.values())
 USER_AGENT = "AgentHelpNetwork/0.2 (+https://agenthelpnetwork.com/en/policy)"
 ROBOTS_CAP = 262_144
 LLMS_CAP = 4_096
@@ -106,13 +149,46 @@ def robots_text(text: str | bytes) -> str:
 # stricter way would report working sites as closed, so the answer uses this reading, and parse_robots reports where
 # google_style=True (strict RFC 9309 and robots.cc) would answer differently. A blank line alone, with no other record
 # before it (agent / blank / agent), still joins the agent lines as RFC 9309 says.
+# Unicode dashes a hand-edited robots.txt can carry in a user-agent name (U+2010 hyphen to U+2015 horizontal bar, U+2212
+# minus, U+FE63 small hyphen-minus, U+FF0D fullwidth hyphen-minus), read as "-": `perplexity\u2011user` names
+# Perplexity-User. It only ever makes a name match more tokens, never fewer.
+_PRODUCT = re.compile(r"[a-z0-9_-]+")
+# At most this many comma-separated names are read from one User-agent line; the rest of the line is dropped. Real files
+# list a handful; the cap keeps a hostile line ("a,a,a,...") from naming hundreds of thousands of agents.
+MAX_AGENTS_PER_LINE = 64
+
+
+def _product_name(item: str) -> str:
+    """One name as this service reads it: first word, cut at "/", dashes folded, lowercased, then its leading run of
+    [a-z0-9_-]; "*" stays "*"; "" when nothing is left."""
+    words = item.split("/", 1)[0].split()
+    name = words[0].translate(_DASHES).lower() if words else ""
+    if name == "*":
+        return "*"
+    match = _PRODUCT.match(name)
+    return match.group() if match else ""
+
+
+def _google_name(value: str) -> str:
+    """The one name Google's robots.cc reads from a whole User-agent value (robots.cc lines 623-627 and
+    ExtractUserAgent): the wildcard only for "*" alone or "*" followed by whitespace; otherwise the leading run of name
+    characters, so "*," and "*, Claude-User" name nobody and "Claude-User, ChatGPT-User" names claude-user."""
+    if value == "*" or (value.startswith("*") and value[1:2].isspace()):
+        return "*"
+    match = _PRODUCT.match(value.translate(_DASHES).lower())
+    return match.group() if match else ""
+_DASHES = str.maketrans({char: "-" for char in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"})
+
+
 def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list[dict], list[str]]:
     """The file's groups and sitemaps; the one group split every reader of robots.txt uses. Never raises.
 
     ``google_style=True`` drops the blank-line exception above and groups exactly as RFC 9309 and Google's robots.cc.
     Returns ``(groups, sitemaps)``. ``groups`` is a list in file order; each group is a dict:
       ``agents``: list[str], the product tokens its user-agent lines name, lowercased (first word of the value, cut at
-                  ``/``). A line with no such word (empty value, ``/bot``) adds no name but still belongs to the group.
+                  ``/``, dashes folded, then its leading run of ``[a-z0-9_-]``, or ``*``), one per comma-separated
+                  item of the value (only the first item with ``google_style=True``, as Google reads it). A line with
+                  no such word (empty value, ``/bot``, ``(compatible``) adds no name but still belongs to the group.
       ``rules``: list[tuple[str, str]], ``("allow" | "disallow", value)`` in file order.
       ``crawl_delay``: float | None, the last Crawl-delay in the group that parses as 0-3600 seconds.
       ``other``: list[tuple[str, str]], ``(key, value)`` of every other line inside the group in file order, the key
@@ -122,6 +198,7 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
     """
     groups: list[dict] = []
     current: dict | None = None
+    names: set[str] = set()  # the names the current group already has (each is kept once)
     in_agent_lines = False  # from a user-agent line until the next allow/disallow line
     other_record = False    # a non-rule record came after this group's agent lines, before any rule
     break_pending = False   # ... and a blank line followed it: the next user-agent line opens a new group
@@ -139,10 +216,20 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
             if current is None or not in_agent_lines or break_pending:
                 current = {"agents": [], "rules": [], "crawl_delay": None, "other": []}
                 groups.append(current)
+                names = set()
                 other_record = break_pending = False
-            words = value.split("/", 1)[0].split()
-            if words:
-                current["agents"].append(words[0].lower())
+            # Each name is the leading run of name characters of its product token, dashes folded, as Google's
+            # robots.cc reads it ("Claude-User/1.0" names claude-user). A comma-separated list ("Claude-User,
+            # ChatGPT-User") names every listed agent: the host plainly means them all, and reading only the first
+            # would answer the others "allowed". Google reads the whole value as one name (_google_name); that is
+            # google_style, and parse_robots reports any difference in grouping_differs_by_parser. At most
+            # MAX_AGENTS_PER_LINE items of a line are read, and a group keeps each name once.
+            items = [_google_name(value)] if google_style else [
+                _product_name(item) for item in value.split(",", MAX_AGENTS_PER_LINE)[:MAX_AGENTS_PER_LINE]]
+            for product in items:
+                if product and product not in names:
+                    names.add(product)
+                    current["agents"].append(product)
             in_agent_lines = True
             continue
         if key in ("allow", "disallow"):
@@ -230,6 +317,10 @@ def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     wildcard_root_allowed = _root_allowed(wildcard_rules)
     wildcard_delay = next((g["crawl_delay"] for g in wildcard if g["crawl_delay"] is not None), None)
     rules, blocked, allowed = [], [], []
+    # D48: alias names (VENDOR_ALIASES) whose own groups disallow the root. Exact names only, no prefix matching.
+    aliases_blocked = sorted(name for name in _ALIAS_NAMES
+                             if (named := [group for group in groups if name in group["agents"]])
+                             and not _root_allowed([rule for group in named for rule in group["rules"]]))
     for token, kind in AGENT_USER_AGENTS:
         lowered = token.lower()
         matched = [group for group in groups if any(_applies(agent, lowered) for agent in group["agents"])]
@@ -247,7 +338,7 @@ def _summarize(groups: list[dict], sitemaps: list[str]) -> dict:
     return {
         "rules": rules, "wildcard_root_allowed": wildcard_root_allowed, "sitemap": bool(sitemaps),
         "sitemaps": sitemaps, "wildcard_crawl_delay": wildcard_delay, "wildcard_disallow_paths": _disallow_samples(wildcard_rules),
-        "agents_blocked": blocked, "agents_allowed": allowed,
+        "agents_blocked": blocked, "agents_allowed": allowed, "vendor_aliases_blocked": aliases_blocked,
     }
 
 

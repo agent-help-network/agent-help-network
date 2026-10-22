@@ -3,8 +3,9 @@ group's user-agent lines and other lines leave the grouping alone, except that a
 ends them too (where parsers disagree, see split_groups); and no input makes the parser raise."""
 
 import random
+import re
 
-from ahn.access_profile import AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, _summarize, parse_robots, split_groups
+from ahn.access_profile import _DASHES, AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, _summarize, parse_robots, split_groups
 from ahn.models import RobotsSummary
 from ahn.triage import next_checks, recommendation
 
@@ -173,7 +174,8 @@ def test_bytes_bom_and_line_endings_match_the_text_form():
 _KEYS = ["User-agent", "user-agent", "USER-AGENT", "User agent", "useragent", "Allow", "allow", "Disallow", "DISALLOW",
          "Sitemap", "Crawl-delay", "Content-Signal", "Content-Usage", "Host", "Noindex", "Unknown-Key", "", " ", "#", "User-agent#"]
 _AGENTS = [token for token, _kind in AGENT_USER_AGENTS] + ["*", "* ", "/bot", "/", "", " ", "Claude", "GPT", "Go", "*bot",
-                                                           "gptbot/1.1", "Mozilla/5.0 (X)", "chatgpt-user,claude-user", "ü-bot"]
+                                                           "gptbot/1.1", "Mozilla/5.0 (X)", "chatgpt-user,claude-user", "ü-bot",
+                                                           "*,", "*, claude-user", "claude-user, *"]
 _VALUES = ["/", "", "/*", "/$", "/private", "/*.pdf$", "*", "$", "https://example.com/s.xml", "10", "-1", "nan", "inf",
            "1e400", "ai-input=no", "/ /", "# not a comment value", ":", "::", "\x00", "\u2028", "\x0c"]
 
@@ -226,8 +228,15 @@ def _reference_root(text: str, token: str) -> tuple[bool, bool]:
         if key in ("user-agent", "useragent"):
             if seen_separator:
                 seen_specific = seen_global = seen_separator = False
-            words = value.split("/", 1)[0].split()
-            agent = words[0].lower() if words else ""
+            # robots.cc reads the product token's leading run of name characters (dashes folded as the service does),
+            # and of a comma-separated list only the first item (the service's default reading takes every item; the
+            # random-file test below checks that difference through grouping_differs_by_parser).
+            # robots.cc 623-627: the wildcard only for "*" alone or "*" and whitespace, so "*," names nobody.
+            if value == "*" or (value.startswith("*") and value[1:2].isspace()):
+                agent = "*"
+            else:
+                run = re.match(r"[a-z0-9_-]+", value.translate(_DASHES).lower())
+                agent = run.group() if run else ""
             if agent == "*":
                 seen_global = True
             elif _applies(agent, token.lower()):
@@ -284,7 +293,8 @@ def test_disagreement_adds_an_informational_check_and_the_recommendation_keeps_t
     # The check also rides along with another robots code, here a declared block.
     blocked = parse_robots("User-agent: GPTBot\nContent-Signal: ai-train=no\n\nUser-agent: ChatGPT-User\nDisallow: /\n")
     assert blocked["agents_blocked"] == ["ChatGPT-User"] and blocked["grouping_differs_by_parser"] == ["GPTBot"]
-    assert _codes(_profile(blocked))[1:3] == ["robots_blocks_agents", "robots_grouping_differs_by_parser"]
+    # (D48: one vendor's token is blocked, so without agent_vendor the robots code is robots_blocks_some_agents.)
+    assert _codes(_profile(blocked))[1:3] == ["robots_blocks_some_agents", "robots_grouping_differs_by_parser"]
 
 
 def test_no_check_when_the_readings_agree_or_the_profile_predates_the_field():
@@ -296,3 +306,61 @@ def test_no_check_when_the_readings_agree_or_the_profile_predates_the_field():
     assert "robots_grouping_differs_by_parser" not in _codes(_profile(older_row))
     unread = {"robots_status": "absent", "robots": None, "llms_txt_status": "absent", "freshness": "fresh"}
     assert "robots_grouping_differs_by_parser" not in _codes(unread)
+
+
+# --- Unicode dashes in user-agent names (D48) ---------------------------------------------------------------------
+
+def test_unicode_dash_in_a_group_name_reads_as_a_hyphen():
+    # chatgpt.com's robots.txt names "perplexity\u2011user" (U+2011 non-breaking hyphen); it must name Perplexity-User.
+    for dash in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d":
+        text = f"User-agent: Perplexity{dash}User\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
+        for google_style in (False, True):
+            groups, _ = split_groups(text, google_style=google_style)
+            assert groups[0]["agents"] == ["perplexity-user"]
+        parsed = parse_robots(text)
+        assert _rule(parsed, "Perplexity-User")["explicit_group"] is True and parsed["agents_blocked"] == ["Perplexity-User"]
+        assert parsed["grouping_differs_by_parser"] == []
+
+
+def test_a_wildcard_followed_by_a_comma_is_read_as_google_reads_it():
+    # robots.cc 623-627: "*" alone or "*" and whitespace is the wildcard; ExtractUserAgent gives "" for "*,", so that
+    # line names nobody under Google's reading. The service's default reading splits the list and keeps "*".
+    for value, ours, google in (("*,", ["*"], []), ("*, Claude-User", ["*", "claude-user"], []),
+                                ("Claude-User, *", ["claude-user", "*"], ["claude-user"]), ("* Claude-User", ["*"], ["*"]),
+                                ("*", ["*"], ["*"]), ("*bot", [], [])):
+        text = f"User-agent: {value}\nDisallow: /\n"
+        assert split_groups(text)[0][0]["agents"] == ours, value
+        assert split_groups(text, google_style=True)[0][0]["agents"] == google, value
+    differs = parse_robots("User-agent: *,\nDisallow: /\n")["grouping_differs_by_parser"]
+    assert "*" in differs and parse_robots("User-agent: *\nDisallow: /\n")["grouping_differs_by_parser"] == []
+
+
+def test_a_user_agent_line_reads_at_most_the_cap_and_each_name_once():
+    from ahn.access_profile import MAX_AGENTS_PER_LINE
+    assert MAX_AGENTS_PER_LINE == 64
+    names = [f"bot{i}" for i in range(MAX_AGENTS_PER_LINE + 10)]
+    groups, _ = split_groups("User-agent: " + ", ".join(names) + "\nDisallow: /\n")
+    assert groups[0]["agents"] == names[:MAX_AGENTS_PER_LINE]  # the rest of the line is dropped
+    # A token after the cap is not named by that line, so it falls back to the * group (here allowed).
+    late = ", ".join(names[:MAX_AGENTS_PER_LINE] + ["Claude-User"])
+    parsed = parse_robots(f"User-agent: {late}\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+    assert parsed["agents_blocked"] == [] and _rule(parsed, "Claude-User")["explicit_group"] is False
+    # Repeated names, in one line or across the lines of a group, are kept once.
+    groups, _ = split_groups("User-agent: a1, a1, A1\nUser-agent: a1\nUser-agent: b2\nDisallow: /\n")
+    assert groups[0]["agents"] == ["a1", "b2"]
+    # A hostile line stays small and fast.
+    import time
+    start = time.perf_counter()
+    groups, _ = split_groups("User-agent: " + "a," * 131_000 + "\nDisallow: /\n")
+    assert groups[0]["agents"] == ["a"] and time.perf_counter() - start < 0.5
+
+
+def test_other_non_ascii_characters_are_not_read_as_dashes():
+    # Only the dashes above become "-". Any other character ends the name, as in Google's robots.cc, which reads only
+    # the leading run of name characters; "claude_user" keeps its underscore and names no listed token.
+    for name in ("claude\u00b7user", "claude\u2027user", "claude\u30fcuser"):
+        groups, _ = split_groups(f"User-agent: {name}\nDisallow: /\n")
+        assert groups[0]["agents"] == ["claude"]
+    groups, _ = split_groups("User-agent: claude_user\nDisallow: /\n")
+    assert groups[0]["agents"] == ["claude_user"]
+    assert parse_robots("User-agent: claude_user\nDisallow: /\n")["agents_blocked"] == []

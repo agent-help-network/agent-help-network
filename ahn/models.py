@@ -93,6 +93,24 @@ class AgentFamily(str, Enum):
     other = "other"
 
 
+class AgentVendor(str, Enum):
+    """D48 lookup parameter: the vendor whose documented robots.txt token the caller's own web requests send
+    (access_profile.AGENT_VENDORS, plus other). Not the model vendor, and unrelated to the report field agent_family."""
+    openai = "openai"
+    anthropic = "anthropic"
+    google = "google"
+    perplexity = "perplexity"
+    meta = "meta"
+    mistral = "mistral"
+    amazon = "amazon"
+    microsoft = "microsoft"
+    apple = "apple"
+    duckduckgo = "duckduckgo"
+    diffbot = "diffbot"
+    exa = "exa"
+    other = "other"
+
+
 class AttemptActor(str, Enum):
     agent = "agent"
     human = "human"
@@ -260,6 +278,9 @@ class RobotsSummary(StrictModel):
     agents_allowed: list[str] = Field(default_factory=list)
     # "*" and agent tokens whose root decision differs under Google-style grouping (strict RFC 9309); informational.
     grouping_differs_by_parser: list[str] = Field(default_factory=list)
+    # D48: names from access_profile.VENDOR_ALIASES whose own groups disallow the root. Absent from profiles read before
+    # D48; such a profile gets the previous robots rule until it is read again.
+    vendor_aliases_blocked: list[str] | None = Field(default=None, exclude_if=_omit_none)
 
 
 UseValue = Literal["yes", "no", "unset"]
@@ -421,10 +442,12 @@ class Recommendation(StrictModel):
     action: Literal["proceed", "use_official_path", "hand_off_to_human", "wait_provider_incident", "stop_declared_block", "unknown"]
     confidence: Literal["low", "medium", "high"]
     reasons: list[str] = Field(default_factory=list)
+    # D48: the agent_vendor the robots part of this answer was decided for; present only when one was accepted.
+    agent_vendor: AgentVendor | None = Field(default=None, exclude_if=_omit_none)
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_components_only", "provider_incident_stale", "provider_scope_partial", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_components_only", "provider_incident_stale", "provider_scope_partial", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
     text: str
 
 

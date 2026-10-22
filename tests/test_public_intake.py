@@ -305,9 +305,10 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     assert profile["robots"]["agents_blocked"] == ["ChatGPT-User", "GPTBot"] and profile["robots"]["sitemap"] is True
     assert profile["robots"]["wildcard_root_allowed"] is True
     assert "not an access guarantee" in profile["note"]
-    assert first["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"]}
+    # D48: only OpenAI's user-directed token is blocked, so a lookup that names no vendor gets the conditional answer.
+    assert first["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["robots_blocks_some_agents"]}
     codes = [item["code"] for item in first["next_checks"]]
-    assert codes[:2] == ["locate_failure_stage", "robots_blocks_agents"] and "reports_unknown" in codes
+    assert codes[:2] == ["locate_failure_stage", "robots_blocks_some_agents"] and "reports_unknown" in codes
     assert first["evidence_level"] == "no_reports"
     # Second lookup within a day reuses the cache: no new reads.
     second = client.get("/v1/incidents/check", params={"site_host": "newsite.org", "error_class": "human_verification"}).json()
@@ -364,8 +365,8 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     assert www["site_host"] == "www.aliasexample.org" and apex["site_host"] == "aliasexample.org"
     assert www["access_profile"] is not None and www["access_profile"] == apex["access_profile"]
     assert www["access_profile"]["read_host"] == "aliasexample.org" and www["access_profile"]["robots"]["agents_blocked"] == ["ChatGPT-User"]
-    assert www["recommendation"] == apex["recommendation"] == {"action": "use_official_path", "confidence": "high",
-                                                                "reasons": ["robots_blocks_agents", "official_path_available"]}
+    assert www["recommendation"] == apex["recommendation"] == {"action": "use_official_path", "confidence": "medium",
+                                                                "reasons": ["robots_blocks_some_agents", "official_path_available"]}
     for key in ("official_paths", "next_checks", "lookup_activity", "provider_source_state", "official_status_page"):
         assert www[key] == apex[key], key
     assert "profile_not_read" not in [item["code"] for item in www["next_checks"]]
@@ -396,6 +397,59 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     assert detail["access_profile"]["read_host"] == "aliasexample.org"
     assert [item["site_host"] for item in client.get("/v1/incidents", params={"site_host": "www.aliasexample.org"}).json()["incidents"]] == ["www.aliasexample.org"]
     assert client.get("/v1/incidents", params={"site_host": "aliasexample.org"}).json()["incidents"] == []
+
+
+def test_agent_vendor_chooses_the_robots_answer_end_to_end_and_is_never_stored(public_client, monkeypatch):
+    """D48 through the REST endpoint: the vendor's own answer, the lenient check, the echo, a profile cached before
+    D48, the switch, and no column for the parameter anywhere in the lookup signal tables."""
+    settings, client = public_client
+    robots = b"User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: Amazonbot\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
+    read_profiles_with(monkeypatch, lambda host, path, *, cap_bytes, **_kw: ("ok", robots, "http_200") if path == "/robots.txt" else ("absent", None, "http_404"))
+    client.get("/v1/incidents/check", params={"site_host": "vendorsite.org"})
+    run_queue(settings)
+
+    def ask(**params):
+        response = client.get("/v1/incidents/check", params={"site_host": "vendorsite.org", **params})
+        assert response.status_code == 200, response.text
+        CheckResponse(**response.json())
+        return response.json()
+
+    plain = ask()
+    assert plain["access_profile"]["robots"]["vendor_aliases_blocked"] == []
+    assert plain["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["robots_blocks_some_agents"]}
+    openai = ask(agent_vendor="openai")
+    assert openai["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"],
+                                        "agent_vendor": "openai"}
+    assert [c["code"] for c in openai["next_checks"]][1] == "robots_blocks_agents"
+    # Amazonbot is Amazon's search crawler, not its user-directed fetcher (Amzn-User): not Amazon's agent's block.
+    amazon = ask(agent_vendor="amazon")
+    assert amazon["recommendation"] == {"action": "proceed", "confidence": "low", "reasons": ["robots_blocks_not_your_agent"],
+                                        "agent_vendor": "amazon"}
+    assert ask(agent_vendor="other")["recommendation"]["action"] == "proceed"
+    # Outside the list: answered as if not sent, never a 400, and nothing echoed.
+    for wrong in ("Anthropic", "openai ", "7", "", "agent_family"):
+        assert ask(agent_vendor=wrong)["recommendation"] == plain["recommendation"], wrong
+    # The parameter changes only the recommendation and the robots check; the declared layer is the same.
+    assert openai["access_profile"] == plain["access_profile"]
+    # A profile cached before D48 (no vendor_aliases_blocked) keeps the previous rule until it is read again.
+    with connect(settings) as conn:
+        conn.execute("UPDATE host_access_profile SET robots = robots - 'vendor_aliases_blocked' WHERE site_host='vendorsite.org'")
+    old = ask(agent_vendor="amazon")
+    assert "vendor_aliases_blocked" not in old["access_profile"]["robots"]
+    assert old["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"],
+                                     "agent_vendor": "amazon"}
+    assert ask()["recommendation"]["action"] == "stop_declared_block"
+    # AHN_VENDOR_AWARE_BLOCK=0: accepted and ignored, no echo, the previous rule.
+    off = Settings(settings.database_url, settings.key_pepper, public_mode=True, reporting_enabled=True,
+                   collect_lookup_metrics=True, vendor_aware_block=False)
+    with TestClient(create_app(off)) as legacy:
+        body = legacy.get("/v1/incidents/check", params={"site_host": "vendorsite.org", "agent_vendor": "amazon"}).json()
+    assert body["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"]}
+    # Never stored: no lookup signal column carries it (D47 tables unchanged).
+    with connect(settings) as conn:
+        columns = {row["column_name"] for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name LIKE 'lookup_%'")}
+    assert columns and not any("vendor" in name for name in columns)
 
 
 def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the_day(public_client):
