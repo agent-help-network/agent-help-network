@@ -72,10 +72,24 @@ def pending(retry=120, *, failed=False) -> dict:
 
 # --- the input space ------------------------------------------------------------------------------------------------
 
+def atom_providers():
+    """D52: a reading taken from a page's Atom history: no indicator, an open-incident count only when there is one."""
+    for incidents, blind, maintenances in itertools.product((0, 1), (False, True), (None, 0)):
+        status = {"source_name": "S", "source_url": STATUS_URL, "indicator": None, "freshness": "fresh", "source_kind": "history_atom"}
+        if incidents:
+            status.update(active_incidents=1, incident_updated_at=NOW - timedelta(hours=3))
+        if blind:
+            status["window_blind"] = True
+        if maintenances is not None:
+            status["active_maintenances"] = maintenances
+        yield status
+
+
 def providers():
     yield None
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "major", "freshness": "stale", "basis": "incident"}
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "none", "freshness": "fresh"}
+    yield from atom_providers()
     for indicator in ("minor", "major", "critical", "maintenance"):
         for basis in ("incident", "components_only", "maintenance"):
             for impact in ("minor", "critical"):
@@ -135,6 +149,19 @@ TEMPLATES = [re.compile(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,
 
 def from_table(text: str) -> bool:
     return any(template.fullmatch(text) for template in TEMPLATES)
+
+
+def test_a_reading_from_the_atom_history_never_changes_the_recommendation_or_its_reasons():
+    # D52: information only. Whatever the feed lists, the answer is the one for a host with no provider status at all.
+    for case in main_space():
+        if case["provider_status"] is not None or case["regional"]:
+            continue
+        for atom in atom_providers():
+            with_atom = answer(**{**case, "provider_status": atom}, checks=True)
+            without = answer(**case, checks=True)
+            assert with_atom["recommendation"] == without["recommendation"], (atom, case)
+            assert with_atom["next_checks"] == without["next_checks"], (atom, case)
+            assert guide(copy.deepcopy(with_atom)) == guide(copy.deepcopy(without)), (atom, case)
 
 
 # --- T2: every answer the triage can give is on a row of the table, and every row is used --------------------------

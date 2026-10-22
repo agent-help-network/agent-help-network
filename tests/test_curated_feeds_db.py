@@ -183,7 +183,7 @@ def test_lookup_registered_discovered_feeds_keep_being_read(db, small, monkeypat
         conn.execute("INSERT INTO queried_hosts (site_host) VALUES ('example.org')")
     read = []
     monkeypatch.setattr(status_refresh, "_read_discovered_statuspage",
-                        lambda host, *_args: (read.append(host), (None, "none", None))[1])
+                        lambda host, *_args, **_kw: (read.append(host), (None, "none", None))[1])
     assert batch(db, Feeds()) == {"checked": 1, "updated": 1, "failed": 0, "remaining": 0}
     assert read == ["example.org"]  # a discovered page nobody looked up is not read
 

@@ -235,6 +235,11 @@ class ProviderStatus(StrictModel):
     source_updated_at: datetime | None
     freshness: Literal["pending", "fresh", "stale"]
     error_detail: str | None = None
+    # "history_atom" (D52): the reading comes from the page's public Atom history, not its status API. indicator is then
+    # always null, and no open incident listed means unknown, not healthy. window_blind (only ever true) says the feed
+    # may be missing a recent or an older open incident.
+    source_kind: Literal["history_atom"] | None = Field(default=None, exclude_if=_omit_none)
+    window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
     # Scope of an Atlassian Statuspage feed (ahn/status_scope.py, D43). Each is left out when it was not read.
     active_incidents: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     max_incident_impact: Literal["none", "minor", "major", "critical"] | None = Field(default=None, exclude_if=_omit_none)

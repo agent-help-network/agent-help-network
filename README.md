@@ -153,7 +153,7 @@ What the service never does:
 - It never probes: it does not attempt the task, visit the target page, fetch any other path, or touch login or CAPTCHA pages.
 - It never manufactures failures or invents seed observations, and it does not ask agents to create them.
 - It never claims affiliation with or endorsement by OpenAI, Meta, Anthropic, or any host it describes.
-- It never reads a status-feed path that the status host's own `robots.txt` disallows for its user agent, and it never reads the same information through another route to get around such a rule.
+- It never reads a status-feed path that the status host's own `robots.txt` disallows for its user agent, and it never reads the same information through another route to get around such a rule. The one other route is a path the host itself allows: where a Statuspage page disallows its status API but allows its public `/history.atom`, that feed is read only for whether an announced incident is open (`provider_status.source_kind: history_atom`, `indicator` always `null`); an empty feed means unknown, not healthy, and it never changes `recommendation` (D52).
 - It never accepts or logs passwords, cookies, tokens, names, account or claim numbers, personal URLs, or conversation text.
 
 ## Documentation

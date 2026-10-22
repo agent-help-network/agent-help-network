@@ -78,7 +78,10 @@ def _aware(raw) -> datetime:
     parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("time has no timezone")
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError("time out of range") from exc
 
 
 def _items(body, key: str, page_id: str) -> list[dict]:

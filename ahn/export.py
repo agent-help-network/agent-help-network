@@ -263,6 +263,7 @@ def _rows(conn, kind: str, since: datetime | None):
                FROM status_cache c JOIN status_sources s ON s.site_host=c.site_host
                WHERE s.enabled=true AND c.fetched_at IS NOT NULL AND c.fetched_at >= %s
                  AND (c.last_error_at IS NULL OR c.last_error_at <= c.fetched_at)
+                 AND c.feed_source IS NULL  -- a reading from a page's Atom history (D52) is not a status API reading: left out
                ORDER BY c.fetched_at,c.site_host""",
             (since,),
         )

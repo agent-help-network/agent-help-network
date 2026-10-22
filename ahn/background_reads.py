@@ -108,6 +108,8 @@ def feed_backoff(failures: int | None, error_detail: str | None, indicator: str 
     (shorter than the FEED_STALE_HOURS after which the answer reads as stale and stops advising a wait), and a feed
     whose last successful statement was active (``indicator``) keeps its FEED_RETRY_MINUTES interval."""
     exponent = min(max(1, failures or 1) - 1, 16)
+    if error_detail == "feed_disabled":  # the page owner switched its Atom feed off (D52): a state, not a fault; ask a day later
+        return FEED_BACKOFF_MAX
     if error_detail in FEED_REFUSALS:
         return min(FEED_BACKOFF_MAX, timedelta(minutes=FEED_REFUSED_BACKOFF_MINUTES * 2 ** exponent))
     if indicator in FEED_ACTIVE_INDICATORS:
@@ -325,7 +327,8 @@ def _store_discovered(settings, site_host: str, found, digest: dict) -> None:
                reader_version=EXCLUDED.reader_version,body_sha256=EXCLUDED.body_sha256,
                active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
                active_maintenances=NULL,affected=NULL,affected_regional=NULL,
-               scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,failures=NULL""",
+               scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,failures=NULL,
+               feed_source=NULL,window_blind=NULL""",
             (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), access_profile.USER_AGENT,
              digest.get("body_sha256")),
         )
