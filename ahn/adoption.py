@@ -15,10 +15,15 @@ same with or without this record. The metric names (M1, M2, M3) are those of the
 
 from __future__ import annotations
 
+import logging
+import threading
 from datetime import date, datetime, timedelta, timezone
 
 from . import traffic
+from .db import connect
 from .lookup_signals import EXAMPLE_HOSTS, source_digest
+
+LOG = logging.getLogger(__name__)
 
 # Retention, enforced by platform_metrics.prune_analytics and stated in the privacy policy.
 RETENTION_DAYS = 90
@@ -60,25 +65,68 @@ def _source_exists(conn, pepper: str, day: date, host: str, address: str) -> boo
                         (day, host, source_digest(pepper, day, host, address))).fetchone() is not None
 
 
-def record(conn, pepper: str, host: str, signal, result: dict, now: datetime, *, count_source: bool) -> bool:
-    """Count one answered lookup. Returns False when it is not counted (a test host).
+def prepare(conn, pepper: str, host: str, signal, result: dict, now: datetime, *, count_source: bool) -> tuple | None:
+    """The row to count for one answered lookup, or None when it is not counted (a test host).
 
-    ``count_source`` says that lookup_signals will keep a source digest for this lookup, so a lookup whose digest is not
-    there yet is the first of its source for that host and day. Run it before lookup_signals.record, inside the
-    caller's savepoint; it raises on a database error and the caller decides what a failure means.
+    This only reads (no lock): ``count_source`` says that lookup_signals will keep a source digest for this lookup, so a
+    lookup whose digest is not there yet is the first of its source for that host and day. Run it before
+    lookup_signals.record, inside the caller's savepoint. The write itself is ``write``, after the lookup's commit.
     """
     if is_test_host(host):
-        return False
+        return None
     day = now.date()  # `now` is UTC
     new_source = bool(count_source and signal.source_address and not _source_exists(conn, pepper, day, host, signal.source_address))
-    conn.execute(
-        """INSERT INTO lookup_outcome_daily (day,client_category,adapter,mcp_host,action,profile_state,lookups,sources)
-           VALUES (%s,%s,%s,%s,%s,%s,1,%s)
-           ON CONFLICT (day,client_category,adapter,mcp_host,action,profile_state)
-           DO UPDATE SET lookups=lookup_outcome_daily.lookups+1, sources=lookup_outcome_daily.sources+EXCLUDED.sources""",
-        (day, signal.category or "unknown", signal.adapter or traffic.ADAPTER_NONE, signal.mcp_host or traffic.MCP_HOST_NONE,
-         action_of(result), profile_state(result.get("access_profile")), 1 if new_source else 0))
-    return True
+    return (day, signal.category or "unknown", signal.adapter or traffic.ADAPTER_NONE, signal.mcp_host or traffic.MCP_HOST_NONE,
+            action_of(result), profile_state(result.get("access_profile")), 1 if new_source else 0)
+
+
+_dropped = 0
+_dropped_lock = threading.Lock()
+
+
+def dropped_since_start() -> int:
+    """Lookups whose count could not be written since this process started (lock timeout, database error)."""
+    return _dropped
+
+
+def _count_drop() -> None:
+    global _dropped
+    with _dropped_lock:
+        _dropped += 1
+
+
+def write(settings, row: tuple | None, *, lock_timeout_ms: int = 200) -> bool:
+    """Add one prepared row to the daily counts on its own short connection; never raises.
+
+    Run after the lookup's own transaction has committed, so the hot daily row is locked for one statement only and
+    never for the length of a lookup. A failure is counted in ``dropped_since_start`` (attempts are measured too).
+    """
+    if row is None:
+        return False
+    try:
+        with connect(settings) as conn:
+            conn.execute(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'")
+            conn.execute(
+                """INSERT INTO lookup_outcome_daily (day,client_category,adapter,mcp_host,action,profile_state,lookups,sources)
+                   VALUES (%s,%s,%s,%s,%s,%s,1,%s)
+                   ON CONFLICT (day,client_category,adapter,mcp_host,action,profile_state)
+                   DO UPDATE SET lookups=lookup_outcome_daily.lookups+1, sources=lookup_outcome_daily.sources+EXCLUDED.sources""",
+                row)
+        return True
+    except Exception:
+        _count_drop()
+        LOG.warning("lookup_adoption_unavailable")
+        return False
+
+
+def parse_days(raw: str | None) -> int | None:
+    """Default (7) when absent; None when it is not a plain integer from 1 to RETENTION_DAYS (90)."""
+    if raw is None:
+        return 7
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    days = int(raw)
+    return days if 1 <= days <= RETENTION_DAYS else None
 
 
 def _share(part: int, whole: int) -> float | None:
@@ -122,7 +170,7 @@ def summary(conn, days: int = 7, today: date | None = None) -> dict:
     unknown_answered = sum(int(r["lookups"]) for r in counted if r["action"] == "unknown" and r["profile_state"] != "pending")
     automatic = sum(by_category[name] for name in AUTOMATIC)
     return {
-        "days": days, "from": start.isoformat(), "to": today.isoformat(),
+        "days": days, "dropped_since_start": dropped_since_start(), "from": start.isoformat(), "to": today.isoformat(),
         "m1": m1, "m1_by_category": by_category, "m1_by_adapter": by_adapter, "m1_by_mcp_host": by_mcp_host,
         "automatic_share": _share(automatic, m1),
         "m1_by_day": [{"day": day, **values} for day, values in daily.items()],

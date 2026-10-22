@@ -121,8 +121,10 @@ _CATEGORY_OF_TYPE = {
 }
 
 # MCP host families, from the User-Agent of the caller's own request to /mcp (the adapter forwards only this label, never
-# the header). Tokens are matched in this order; a host that matches none is "other_mcp". Hints, like every kind here.
-MCP_HOSTS = ("claude", "chatgpt", "cursor", "vscode", "other_mcp")
+# the header). Tokens are matched in this order; a host that matches none is "other_mcp", and a call with no User-Agent
+# at all is "unknown_mcp" (so an unlisted host and a missing header are not counted as the same thing). Hints, like every kind here.
+MCP_HOSTS = ("claude", "chatgpt", "cursor", "vscode", "other_mcp", "unknown_mcp")
+MCP_HOST_UNKNOWN = "unknown_mcp"  # no User-Agent (or no label on the hop) to read a family from
 MCP_HOST_NONE = "none"
 _MCP_HOST_TOKENS = (
     ("claude", ("claude", "anthropic")),
@@ -148,6 +150,8 @@ def client_category(kind: str) -> str:
 def mcp_host_kind(user_agent: str) -> str:
     """Coarse MCP host family from a User-Agent value (first 512 characters, case-insensitive)."""
     ua = (user_agent or "").lower()[:512]
+    if not ua.strip():
+        return MCP_HOST_UNKNOWN
     for name, tokens in _MCP_HOST_TOKENS:
         if any(token in ua for token in tokens):
             return name

@@ -103,16 +103,25 @@ def test_mcp_hop_counts_as_mcp_host_with_the_forwarded_family(db):
     client = hop_client(db)
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": CALLER_IP, "X-AHN-Origin-Client": "claude"}))
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "cursor"}))
-    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP}))                                  # no label: other_mcp
-    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "made up"}))  # not on the list
+    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP}))                                  # no label: unknown_mcp
+    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "made up"}))  # not on the list: unknown_mcp
+    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "other_mcp"}))  # a host the list does not name
     assert {(r["client_category"], r["mcp_host"]): r["lookups"] for r in stored(db)} == {
-        ("mcp_host", "claude"): 1, ("mcp_host", "cursor"): 1, ("mcp_host", "other_mcp"): 2}
+        ("mcp_host", "claude"): 1, ("mcp_host", "cursor"): 1, ("mcp_host", "unknown_mcp"): 2, ("mcp_host", "other_mcp"): 1}
 
 
 def test_a_caller_cannot_choose_its_own_mcp_host_label(db, client):
     # Outside the authenticated hop the header is not read at all: a plain request stays what its User-Agent says.
     lookup(client, headers={"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude"})
     assert [(r["client_category"], r["mcp_host"]) for r in stored(db)] == [("browser", "none")]
+
+
+def test_a_valid_hop_token_from_a_non_loopback_address_cannot_set_the_label(db):
+    # The token is right but the request is not the adapter's loopback hop: Origin-Client and Origin-IP are both ignored.
+    client = TestClient(create_app(db), client=("198.51.100.99", 50000))
+    lookup(client, headers=hop_headers(**{"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude", "X-AHN-Origin-IP": OTHER_IP}))
+    # (the token still marks the call as an MCP one for the category, but the label it asks for is not taken)
+    assert [(r["client_category"], r["mcp_host"]) for r in stored(db)] == [("mcp_host", "unknown_mcp")]
 
 
 def test_the_web_search_page_is_stored_as_web(db, client):
@@ -261,6 +270,46 @@ def test_summary_reads_what_the_lookups_wrote(db, client):
     assert out["m2_sources_upper_bound"] == 2 and out["m3"]["by_profile_state"]["none"] == 2
 
 
+# --- concurrency: the count never holds the lookup, and a count that cannot be written is itself counted ------------
+
+def test_a_held_lock_on_the_daily_table_neither_blocks_nor_hides_the_lookup(db, client):
+    assert lookup(client, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+    before = adoption.dropped_since_start()
+    holder = connect(db)
+    try:
+        holder.execute("LOCK TABLE lookup_outcome_daily IN ACCESS EXCLUSIVE MODE")  # connection A, transaction left open
+        response = lookup(client, ip=OTHER_IP, headers={"User-Agent": "Mozilla/5.0"})
+        assert response.status_code == 200                                         # the answer is unaffected
+        assert adoption.dropped_since_start() == before + 1                        # B could not count: the attempt is counted
+    finally:
+        holder.rollback()
+        holder.close()
+    assert sum(r["lookups"] for r in stored(db)) == 1
+    assert lookup(client, ip=OTHER_IP, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+    assert sum(r["lookups"] for r in stored(db)) == 2
+    assert adoption.dropped_since_start() == before + 1
+
+
+def test_the_adoption_row_is_written_after_the_lookup_commits(db, client, monkeypatch):
+    # The write runs on its own connection once the lookup's transaction is over: nothing of the lookup is still open then.
+    seen = []
+    real = adoption.write
+    def spy(settings, row, **kw):
+        with connect(settings) as other:
+            seen.append(other.execute("SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() "
+                                      "AND state LIKE 'idle in transaction%%' AND pid<>pg_backend_pid()").fetchone()["n"])
+        return real(settings, row, **kw)
+    monkeypatch.setattr(adoption, "write", spy)
+    assert lookup(client, headers={"User-Agent": "Mozilla/5.0"}).status_code == 200
+    assert seen == [0]
+
+
+def test_the_owner_json_shows_the_drop_counter(db):
+    owner = replace(db, owner_allowed_ips=(OPERATOR_IP,))
+    body = TestClient(create_app(owner)).get("/owner/adoption.json", headers={"CF-Connecting-IP": OPERATOR_IP}).json()
+    assert body["dropped_since_start"] == adoption.dropped_since_start()
+
+
 # --- the owner view ------------------------------------------------------------------------------
 
 def test_owner_adoption_json_uses_the_owner_gate_and_validates_days(db):
@@ -276,7 +325,11 @@ def test_owner_adoption_json_uses_the_owner_gate_and_validates_days(db):
         assert body["days"] == 7 and body["m1"] == 1 and body["m1_by_category"]["browser"] == 1
         assert set(body["m1_by_category"]) == {"plugin", "ahn_client", "mcp_host", "agent_or_script", "browser", "unknown"}
         assert client.get("/owner/adoption.json?days=14", headers=token).json()["days"] == 14
-        assert client.get("/owner/adoption.json?days=31", headers=token).status_code == 422
+        assert client.get("/owner/adoption.json?days=31", headers=token).json()["days"] == 31
+        assert client.get("/owner/adoption.json?days=90", headers=token).json()["days"] == 90
+        too_long = client.get("/owner/adoption.json?days=91", headers=token)
+        assert too_long.status_code == 422 and too_long.json()["max"] == 90
+        assert client.get("/owner/adoption.json?days=0", headers=token).status_code == 422
         page = client.get("/owner", headers=token)
         assert page.status_code == 200 and 'id="adoption"' in page.text and "M1" in page.text
 

@@ -276,25 +276,27 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
 
 def _record_signal(conn, settings: Settings, host: str, error_class: str | None, failure_stage: str | None,
                    signal: LookupSignal, action: str, *, public: bool, registered: bool, now: datetime,
-                   result: dict | None = None) -> None:
+                   result: dict | None = None) -> tuple | None:
     """Count the lookup's optional codes per host and hour inside a savepoint; never raises (D47).
 
     Same gate as lookup_metrics (eligible apex host, inside the lookup register in public mode, metrics
     switch on), minus example hosts. Database writes only; nothing here reaches the answer.
 
     The answered lookup also goes into the daily adoption counts (D49, ahn/adoption.py) under the metrics switch alone:
-    it holds no host, so it does not need the host gate. It runs first, because it asks whether this source already
-    has a digest row today.
+    it holds no host, so it does not need the host gate. Here it is only prepared (a read, run first because it asks
+    whether this source already has a digest row today); the caller writes the returned row after its transaction has
+    committed (adoption.write), so the one hot daily row is never locked for the length of a lookup.
     """
     if not settings.collect_lookup_metrics:
-        return
+        return None
     gated = aggregate_eligible_host(host) and (not public or registered)
+    pending = None
     if result is not None:
-        _record_adoption(conn, settings, host, signal, result, now, count_source=bool(gated))
+        pending = _prepare_adoption(conn, settings, host, signal, result, now, count_source=bool(gated))
     if not gated:
-        return
+        return pending
     if host in lookup_signals.EXAMPLE_HOSTS:
-        return
+        return pending
     try:
         with conn.transaction():
             # Never wait on a table lock for the sake of a count: give up after 200 ms (the setting ends with the savepoint).
@@ -304,18 +306,19 @@ def _record_signal(conn, settings: Settings, host: str, error_class: str | None,
     except Exception:
         # Shadow bookkeeping: a failure (for example a migration not applied yet) must not touch the lookup.
         LOG.warning("lookup_signal_unavailable")
+    return pending
 
 
-def _record_adoption(conn, settings: Settings, host: str, signal: LookupSignal, result: dict, now: datetime, *,
-                     count_source: bool) -> None:
-    """Add the answered lookup to the daily adoption counts inside a savepoint; never raises (D49)."""
+def _prepare_adoption(conn, settings: Settings, host: str, signal: LookupSignal, result: dict, now: datetime, *,
+                      count_source: bool) -> tuple | None:
+    """The adoption row for this answered lookup (a lock-free read in a savepoint); never raises (D49)."""
     try:
         with conn.transaction():
-            conn.execute("SET LOCAL lock_timeout = '200ms'")
-            adoption.record(conn, settings.key_pepper, host, signal, result, now, count_source=count_source)
-            conn.execute("SET LOCAL lock_timeout = DEFAULT")
+            return adoption.prepare(conn, settings.key_pepper, host, signal, result, now, count_source=count_source)
     except Exception:
+        adoption._count_drop()
         LOG.warning("lookup_adoption_unavailable")
+        return None
 
 
 def _queue_reads(conn, jobs: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -414,6 +417,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     # the rest of the lookup), the reads the answer needs, and the queue inserts. Database round trips only.
     retry_after = None
     queued: list[tuple[str, str]] = []
+    count_row = None
     with connect(settings) as conn:
         if (public and (eligible or host in SOURCES)) or (not settings.public_mode and settings.collect_lookup_metrics and eligible):
             registered, mapped_source, discovery_due = _record_lookup(conn, settings, host, error_class, public=public)
@@ -574,8 +578,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if signal is not None:
-            _record_signal(conn, settings, host, error_class, failure_stage, signal, result["recommendation"]["action"],
-                           public=public, registered=registered, now=now, result=result)
+            count_row = _record_signal(conn, settings, host, error_class, failure_stage, signal,
+                                          result["recommendation"]["action"], public=public, registered=registered,
+                                          now=now, result=result)
+    adoption.write(settings, count_row)  # after the commit: its own connection, one short statement
     return result
 
 

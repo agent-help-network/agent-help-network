@@ -17,8 +17,9 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
-from . import lookup_signals
+from . import adoption, lookup_signals
 from . import server_card
+from .adoption import parse_days as parse_adoption_days
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
@@ -35,7 +36,7 @@ ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 10, 21)
+POLICY_UPDATED = date(2026, 10, 22)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -403,7 +404,6 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     def owner_adoption(days: int) -> dict | None:
         """Adoption numbers for the owner (ahn/adoption.py); None when the table is not there yet."""
         try:
-            from . import adoption
             with connect(settings) as conn:
                 return adoption.summary(conn, days)
         except Exception:
@@ -440,9 +440,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if denied is not None:
             return denied
         raw = request.query_params.get("days")
-        days = ADOPTION_DEFAULT_DAYS if raw is None else parse_days(raw)
+        days = ADOPTION_DEFAULT_DAYS if raw is None else parse_adoption_days(raw)
         if days is None:
-            return JSONResponse({"error": "invalid_days", "min": 1, "max": OWNER_HOSTS_MAX_DAYS, "default": ADOPTION_DEFAULT_DAYS},
+            return JSONResponse({"error": "invalid_days", "min": 1, "max": adoption.RETENTION_DAYS, "default": ADOPTION_DEFAULT_DAYS},
                                 status_code=422, headers=OWNER_HEADERS)
         adoption_summary = owner_adoption(days)
         if adoption_summary is None:
@@ -492,7 +492,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         mcp_host = traffic.MCP_HOST_NONE
         if category == "mcp_host":
             sent = request.headers.get(lookup_signals.ORIGIN_CLIENT_HEADER, "") if hop else ""
-            mcp_host = sent if sent in traffic.MCP_HOSTS else "other_mcp"
+            mcp_host = sent if sent in traffic.MCP_HOSTS else traffic.MCP_HOST_UNKNOWN
         return lookup_signals.LookupSignal(
             client_kind=kind or lookup_signals.client_kind_of(hint), source_address=address,
             category=category, adapter=traffic.adapter_label(request.headers.get("user-agent", "")), mcp_host=mcp_host,

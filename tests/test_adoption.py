@@ -37,7 +37,7 @@ def test_every_client_type_hint_has_a_category():
     ("Claude-User/1.0", "claude"), ("Anthropic-MCP-Client", "claude"), ("claude-code/2.0.1", "claude"),
     ("openai-mcp/1.0.0", "chatgpt"), ("ChatGPT-User/1.0", "chatgpt"),
     ("Cursor/0.50", "cursor"), ("Visual Studio Code/1.99", "vscode"), ("vscode-copilot", "vscode"),
-    ("python-httpx/0.27", "other_mcp"), ("node", "other_mcp"), ("", "other_mcp"), (None, "other_mcp"),
+    ("python-httpx/0.27", "other_mcp"), ("node", "other_mcp"), ("", "unknown_mcp"), (None, "unknown_mcp"), ("   ", "unknown_mcp"),
     ("Claude-User; cursor", "claude"),  # first match in the fixed order, so the label is stable
 ])
 def test_mcp_host_family_from_the_user_agent(agent, expected):
@@ -82,8 +82,9 @@ def test_mcp_adapter_forwards_a_label_not_the_user_agent():
     forwarded = mcp_adapter.outer_request_headers(ctx({"user-agent": "Claude-User/1.0 secret-build-123", "cf-connecting-ip": "198.51.100.7"}))
     assert forwarded == {"x-ahn-origin-ip": "198.51.100.7", "x-ahn-origin-client": "claude"}
     assert "secret-build" not in repr(forwarded)
-    # An unlisted host sends no label: the API reads a missing label as other_mcp.
-    assert "x-ahn-origin-client" not in mcp_adapter.outer_request_headers(ctx({"user-agent": "python-httpx/0.27"}))
+    # An unlisted host is labelled other_mcp; no User-Agent (or no context) sends no label, which the API reads as unknown_mcp.
+    assert mcp_adapter.outer_request_headers(ctx({"user-agent": "python-httpx/0.27"}))["x-ahn-origin-client"] == "other_mcp"
+    assert "x-ahn-origin-client" not in mcp_adapter.outer_request_headers(ctx({"user-agent": ""}))
     assert "x-ahn-origin-client" not in mcp_adapter.outer_request_headers(ctx({}))
 
 
@@ -150,7 +151,7 @@ def test_m1_counts_the_six_categories_and_leaves_crawlers_and_web_out():
     assert out["m1"] == 2 + 3 + 1 + 4 + 5 + 6 + 7
     assert out["m1_by_category"] == {"plugin": 2, "ahn_client": 4, "mcp_host": 4, "agent_or_script": 5, "browser": 6, "unknown": 7}
     assert out["m1_by_adapter"]["langchain"] == 3 and sum(out["m1_by_adapter"].values()) == 3   # a plain ahn-client row has no adapter
-    assert out["m1_by_mcp_host"] == {"claude": 4, "chatgpt": 0, "cursor": 0, "vscode": 0, "other_mcp": 0}
+    assert out["m1_by_mcp_host"] == {"claude": 4, "chatgpt": 0, "cursor": 0, "vscode": 0, "other_mcp": 0, "unknown_mcp": 0}
     assert out["left_out"] == {"crawler": 100, "web": 50}
     assert out["automatic_share"] == round((2 + 4 + 4) / 28, 3)
     assert out["m2_sources_upper_bound"] == 2 + 1 + 1 + 3 + 6   # crawler and web rows add nothing, whatever they hold
@@ -240,4 +241,14 @@ def test_nothing_in_the_answer_reads_the_adoption_labels():
     from ahn import service
     check_source = inspect.getsource(service.check)
     assert check_source.index('"recommendation"') < check_source.index("_record_signal(")
-    assert "adoption" not in check_source and "lookup_outcome_daily" not in check_source   # only _record_signal touches it
+    # The only mention is the write after the commit, with the row _record_signal returned; nothing is read back.
+    assert check_source.count("adoption") == 1 and "adoption.write(settings, count_row)" in check_source
+    assert check_source.index("adoption.write(") > check_source.index("_record_signal(")
+    assert "lookup_outcome_daily" not in check_source
+
+
+@pytest.mark.parametrize("raw, expected", [(None, 7), ("1", 1), ("7", 7), ("30", 30), ("31", 31), ("90", 90),
+                                           ("0", None), ("91", None), ("-1", None), ("abc", None), ("", None), ("9٠", None)])
+def test_days_parser_takes_one_to_the_retention_limit(raw, expected):
+    assert adoption.RETENTION_DAYS == 90
+    assert adoption.parse_days(raw) == expected

@@ -105,9 +105,9 @@ def outer_request_headers(ctx: Context | None) -> dict:
     if headers.get(TEST_HEADER, "").strip() == "1":
         forwarded[TEST_HEADER] = "1"
     from .lookup_signals import ORIGIN_CLIENT_HEADER
-    from .traffic import mcp_host_kind
+    from .traffic import MCP_HOST_UNKNOWN, mcp_host_kind
     family = mcp_host_kind(headers.get("user-agent", ""))
-    if family != "other_mcp":  # an absent label already means other_mcp; the label is fixed, never the header itself
+    if family != MCP_HOST_UNKNOWN:  # an absent label already means unknown_mcp; the label is fixed, never the header itself
         forwarded[ORIGIN_CLIENT_HEADER] = family
     return forwarded
 
