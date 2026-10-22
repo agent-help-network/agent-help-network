@@ -37,6 +37,7 @@ LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 POLICY_UPDATED = date(2026, 10, 21)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
+AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 write_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 LANG = {
@@ -184,6 +185,12 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         @app.get("/.well-known/openai-apps-challenge", include_in_schema=False)
         def openai_apps_challenge():
             return Response(OPENAI_APPS_CHALLENGE + "\n", media_type="text/plain; charset=utf-8")
+
+        @app.get("/.well-known/agentboard-verify/{handle}", include_in_schema=False)
+        def agentboard_verify(handle: str):
+            if handle != AGENTBOARD_VERIFY_HANDLE:
+                return Response(status_code=404)
+            return Response(AGENTBOARD_VERIFY_HANDLE + "\n", media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=300"})
 
         @app.get("/agent-instructions.txt", include_in_schema=False)
         def agent_instructions():
