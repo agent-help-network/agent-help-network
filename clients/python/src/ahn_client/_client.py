@@ -1,4 +1,4 @@
-"""The lookup call: one GET with a hostname and two enum codes, never an exception."""
+"""The lookup call: one GET with a hostname and enum codes, never an exception."""
 
 from __future__ import annotations
 
@@ -13,11 +13,12 @@ from typing import Dict, Optional, Tuple
 from ._classify import ERROR_CLASSES, FAILURE_STAGES
 from ._hosts import eligible_host
 from ._result import Result
+from ._signals import valid_signals
 
 __all__ = ["check", "clear_cache", "lookup_url"]
 
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
-# The framework adapters name themselves in the User-Agent: "ahn-client/0.3.0 (+langchain; +https://agenthelpnetwork.com)".
+# The framework adapters name themselves in the User-Agent: "ahn-client/0.4.0 (+langchain; +https://agenthelpnetwork.com)".
 ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 CACHE_TTL_SECONDS = 600
 FAILURE_TTL_SECONDS = 60
@@ -46,12 +47,14 @@ def clear_cache() -> None:
         _cache.clear()
 
 
-def lookup_url(host: str, error_class: Optional[str], failure_stage: Optional[str]) -> str:
+def lookup_url(host: str, error_class: Optional[str], failure_stage: Optional[str],
+               signals: Optional[Dict[str, object]] = None) -> str:
     query = {"site_host": host}
     if error_class:
         query["error_class"] = error_class
     if failure_stage:
         query["failure_stage"] = failure_stage
+    query.update({name: str(value) for name, value in valid_signals(signals).items()})
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
@@ -64,9 +67,11 @@ def user_agent(adapter: Optional[str] = None) -> str:
 
 
 def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], timeout: float,
-           adapter: Optional[str] = None) -> Optional[Result]:
+           adapter: Optional[str] = None, signals: Optional[Dict[str, object]] = None) -> Optional[Result]:
+    # The signal codes ride on the request only. The URL the Result keeps (the "Full JSON" link an agent sees) has none,
+    # so following it counts nothing twice and the line is the plugin's.
     url = lookup_url(host, error_class, failure_stage)
-    request = urllib.request.Request(url, headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
+    request = urllib.request.Request(lookup_url(host, error_class, failure_stage, signals), headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
     try:
         with _urlopen(request, timeout) as response:
             if getattr(response, "status", 200) != 200:
@@ -80,10 +85,12 @@ def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], 
 
 
 def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optional[str] = None, *,
-          timeout: float = 4.0, adapter: Optional[str] = None) -> Optional[Result]:
+          timeout: float = 4.0, adapter: Optional[str] = None, http_status: Optional[int] = None,
+          challenge: Optional[str] = None, retry_after: Optional[str] = None,
+          via: Optional[str] = None) -> Optional[Result]:
     """Ask Agent Help Network about the host of ``host_or_url``; None when there is no answer.
 
-    Only the bare hostname, ``error_class`` and ``failure_stage`` are sent: scheme,
+    Only the bare hostname, ``error_class``, ``failure_stage`` and the four optional codes below are sent: scheme,
     credentials, port, path, query and fragment are dropped first. Nothing is requested
     (None comes back) for local, private, special-use, IP-literal, single-label hosts,
     for agenthelpnetwork.com itself, for hosts listed in ``AHN_CLIENT_SKIP_HOSTS``, when
@@ -95,6 +102,12 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
 
     ``adapter`` is for integrations: a short lowercase label such as ``"langchain"`` that is
     added to the User-Agent so the service can count client kinds. It changes nothing else.
+
+    ``http_status`` (401, 402, 403, 407, 408, 429, 451 or 500-599), ``challenge`` (``header`` or ``none``),
+    ``retry_after`` (``none``, ``lt_60``, ``60_3600`` or ``gt_3600``) and ``via`` (``http_fetch``, ``browser`` or
+    ``unknown``) describe the site's answer; leave out what you do not know. ``ahn.signals(exc)`` fills them from
+    an exception. A value outside these lists is dropped (the lookup still happens without it). They are counted
+    per hostname and hour with the rest of the lookup and never become a report.
     """
     try:
         if error_class is not None and error_class not in ERROR_CLASSES:
@@ -105,12 +118,13 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
         if host is None:
             return None
         key = (host, error_class, failure_stage)
+        extra = valid_signals({"http_status": http_status, "challenge": challenge, "retry_after": retry_after, "via": via})
         now = time.monotonic()
         with _lock:
             hit = _cache.get(key)
             if hit and hit[0] > now:
                 return hit[1]
-        result = _fetch(host, error_class, failure_stage, timeout, adapter)
+        result = _fetch(host, error_class, failure_stage, timeout, adapter, extra)
         now = time.monotonic()
         with _lock:
             for stale in [k for k, (expires, _) in _cache.items() if expires <= now]:

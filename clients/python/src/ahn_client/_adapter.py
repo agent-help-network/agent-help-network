@@ -3,7 +3,7 @@
 An adapter hands this module the exception or message of a failed tool call and the tool's
 arguments. The hostname is read from the arguments (an http(s) URL) or from the error's request,
 the error is classified with ``classify`` (a 404 or a bad request is not looked up), and ``check``
-asks Agent Help Network. Only the hostname and two enum codes leave the machine.
+asks Agent Help Network. Only the hostname and enum codes leave the machine.
 
 Nothing here raises (``KeyboardInterrupt`` and other non-``Exception`` signals are not swallowed).
 A lookup that fails or is slow gives None, after at most ``timeout`` seconds; the adapter then
@@ -16,9 +16,9 @@ import asyncio
 import json
 import re
 import threading
-from typing import Any, Callable, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
-from ._classify import CONNECT_NAMES, _chain, blank_host, classify, without_urls
+from ._classify import CONNECT_NAMES, _chain, blank_host, classify, signals, without_urls
 from ._client import check
 from ._hosts import normalize_host
 from ._result import Result
@@ -167,8 +167,16 @@ def failure_target(error: Any, args: Any = None) -> Optional[Tuple[str, str, Opt
     return host, error_class, stage
 
 
+def failure_signals(error: Any) -> Dict[str, Any]:
+    """The optional lookup codes (``http_status``, ``challenge``, ``retry_after``, ``via``) the error already holds; empty when none."""
+    try:
+        return signals(error) if isinstance(error, BaseException) else {}
+    except Exception:
+        return {}
+
+
 def _spawn(host: str, error_class: str, stage: Optional[str], adapter: str, timeout: float,
-           done: Callable[[Optional[Result]], None]) -> bool:
+           done: Callable[[Optional[Result]], None], extra: Optional[Dict[str, Any]] = None) -> bool:
     """Start ``check`` in a daemon thread and call ``done(result)`` from it. False when none was started.
 
     A second lookup for the same host, class and stage while one still runs is not started, so a stuck network never
@@ -183,7 +191,7 @@ def _spawn(host: str, error_class: str, stage: Optional[str], adapter: str, time
     def work() -> None:
         result = None
         try:
-            result = check(host, error_class, stage, timeout=timeout, adapter=adapter)
+            result = check(host, error_class, stage, timeout=timeout, adapter=adapter, **(extra or {}))
         except Exception:
             pass
         finally:
@@ -203,7 +211,7 @@ def _spawn(host: str, error_class: str, stage: Optional[str], adapter: str, time
 
 
 def bounded_check(host: str, error_class: str, stage: Optional[str], adapter: str,
-                  timeout: float = DEFAULT_TIMEOUT) -> Optional[Result]:
+                  timeout: float = DEFAULT_TIMEOUT, extra: Optional[Dict[str, Any]] = None) -> Optional[Result]:
     """``check`` in a daemon thread, abandoned after ``timeout`` seconds; None when it did not finish."""
     box = {}
     finished = threading.Event()
@@ -212,13 +220,13 @@ def bounded_check(host: str, error_class: str, stage: Optional[str], adapter: st
         box["result"] = result
         finished.set()
 
-    if not _spawn(host, error_class, stage, adapter, timeout, done):
+    if not _spawn(host, error_class, stage, adapter, timeout, done, extra):
         return None
     return box.get("result") if finished.wait(timeout) else None
 
 
 async def abounded_check(host: str, error_class: str, stage: Optional[str], adapter: str,
-                         timeout: float = DEFAULT_TIMEOUT) -> Optional[Result]:
+                         timeout: float = DEFAULT_TIMEOUT, extra: Optional[Dict[str, Any]] = None) -> Optional[Result]:
     """``bounded_check`` for async code: the event loop is never blocked and ``timeout`` holds exactly (no executor queue)."""
     loop = asyncio.get_running_loop()
     future = loop.create_future()
@@ -233,7 +241,7 @@ async def abounded_check(host: str, error_class: str, stage: Optional[str], adap
         except RuntimeError:  # the loop is closed: nobody is waiting
             pass
 
-    if not _spawn(host, error_class, stage, adapter, timeout, done):
+    if not _spawn(host, error_class, stage, adapter, timeout, done, extra):
         return None
     try:
         return await asyncio.wait_for(future, timeout)
@@ -247,7 +255,7 @@ def note_for(error: Any, args: Any = None, *, adapter: str, timeout: float = DEF
         target = failure_target(error, args)
         if target is None:
             return None
-        result = bounded_check(*target, adapter, timeout)
+        result = bounded_check(*target, adapter, timeout, failure_signals(error) or None)
         return result.summary() if result else None
     except Exception:
         return None
@@ -259,7 +267,7 @@ async def anote_for(error: Any, args: Any = None, *, adapter: str, timeout: floa
         target = failure_target(error, args)
         if target is None:
             return None
-        result = await abounded_check(*target, adapter, timeout)
+        result = await abounded_check(*target, adapter, timeout, failure_signals(error) or None)
         return result.summary() if result else None
     except Exception:
         return None

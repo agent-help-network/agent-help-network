@@ -10,14 +10,14 @@ Muse, dots or any site it describes. This client only reads; it never reports.
     except Exception as exc:
         error_class, stage = ahn.classify(exc)
         if error_class:  # None: a 404 or a bad request, not a block or an outage
-            answer = ahn.check(url, error_class, stage)
+            answer = ahn.check(url, error_class, stage, **ahn.signals(exc))
             if answer:
                 print(answer.summary())
 """
 
-from ._classify import classify
+from ._classify import classify, signals
 from ._client import check, clear_cache
 from ._result import Result
 
-__version__ = "0.3.0"
-__all__ = ["check", "classify", "clear_cache", "Result", "__version__"]
+__version__ = "0.4.0"
+__all__ = ["check", "classify", "clear_cache", "signals", "Result", "__version__"]

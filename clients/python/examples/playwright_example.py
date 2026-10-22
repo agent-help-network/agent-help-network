@@ -39,7 +39,7 @@ def main(url):
         except PlaywrightError as exc:  # TimeoutError is a subclass of Error
             error_class, stage = ahn.classify(exc)
             # error_class is None for a 404 or a bad request: not a block, so nothing is looked up
-            answer = ahn.check(url, error_class, stage) if error_class else None  # sends the hostname and two codes, no path
+            answer = ahn.check(url, error_class, stage, **ahn.signals(exc, via="browser")) if error_class else None  # sends the hostname and enum codes, no path
             if answer:
                 print(answer.summary())
             step = decide(answer)

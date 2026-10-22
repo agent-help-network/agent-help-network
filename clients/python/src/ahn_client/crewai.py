@@ -23,7 +23,7 @@ Two things CrewAI's design decides, and this module does not work around:
 
 A lookup that fails or takes longer than ``timeout`` (2 s) adds nothing and never raises into CrewAI.
 Event handlers run on CrewAI's own worker threads, so the wait does not block the crew. Only the hostname
-and two enum codes leave the machine.
+and enum codes leave the machine.
 """
 
 from __future__ import annotations
