@@ -28,11 +28,14 @@ FEED_LIMIT = 25               # the number of entries a Statuspage history feed 
 MIN_WINDOW = timedelta(days=7)  # a feed whose past entries reach back less than this cannot show an older open incident
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _DTD = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)", re.IGNORECASE)
-_STATUS = re.compile(r"<strong>\s*([A-Za-z][A-Za-z ]{0,20}?)\s*</strong>")
+# One update of an entry body, as Statuspage renders it: <small>time</small><br><strong>Status</strong> - text. Only this
+# structure counts, so a bold word inside an update's text, or a <strong> with attributes, is never taken for a status.
+_STATUS = re.compile(r"<small>[^<]{0,80}</small>\s*<br\s*/?>\s*(?:<strong>([^<]{1,40})</strong>)?")
 _CLOSED = frozenset({"resolved", "postmortem", "completed"})
 _INCIDENT_OPEN = frozenset({"investigating", "identified", "monitoring"})
 _MAINTENANCE_OPEN = frozenset({"in progress", "verifying"})
 _SCHEDULED = frozenset({"scheduled"})
+_KNOWN = _CLOSED | _INCIDENT_OPEN | _MAINTENANCE_OPEN | _SCHEDULED
 
 
 class AtomError(ValueError):
@@ -47,11 +50,14 @@ class AtomReading:
     future_entries: int                    # entries dated after the read (scheduled maintenance)
     entries: int
     window_blind: bool                     # a new or old open incident may be missing from the feed
+    unreadable: int = 0                    # entries (not dated in the future) whose status could not be read: counted as nothing
 
     def active_maintenances(self) -> int | None:
         """The maintenance count only when the feed can be trusted for it: with entries dated in the future, or a window
         too short, an open maintenance may have been pushed out of the feed (Cloudflare's reads 0 of its 2)."""
-        return None if self.future_entries or self.window_blind else self.open_maintenances
+        if self.future_entries or self.window_blind or self.unreadable or not self.entries:
+            return None
+        return self.open_maintenances
 
 
 def _time(raw) -> datetime | None:
@@ -59,16 +65,19 @@ def _time(raw) -> datetime | None:
         return None
     try:
         value = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-    except ValueError:
+        return value.astimezone(timezone.utc) if value.tzinfo else None
+    except (ValueError, OverflowError):  # 0001-01-01T00:00:00+01:00 cannot be moved to UTC
         return None
-    return value.astimezone(timezone.utc) if value.tzinfo else None
 
 
 def _status_word(html: str | None) -> str | None:
     """The newest real status of an entry: the first <strong> word in the body (updates are newest first) that is not
-    a plain "Update", lowercased; None when the body has none."""
+    exactly "update", lowercased with spaces collapsed and trailing punctuation dropped; None when the body has none. A word
+    that is not one of the known states (another language, anything odd) is returned as it is: the caller counts nothing."""
     for match in _STATUS.finditer(html or ""):
-        word = " ".join(match.group(1).lower().split())
+        if match.group(1) is None:
+            return "?"  # an update head whose status is not a plain <strong>word</strong>: the entry is unreadable, and no older update is consulted
+        word = " ".join(match.group(1).lower().split()).rstrip(" .:;,!")
         if word != "update":
             return word
     return None
@@ -88,7 +97,7 @@ def parse_history(body: bytes, now: datetime) -> AtomReading:
     if root.tag != _ATOM + "feed":
         raise AtomError("invalid_body")
     entries = root.findall(_ATOM + "entry")[:MAX_ENTRIES]
-    incidents = maintenances = future = 0
+    incidents = maintenances = future = unreadable = 0
     updated: list[datetime | None] = []
     past: list[datetime] = []
     for entry in entries:
@@ -104,9 +113,10 @@ def parse_history(body: bytes, now: datetime) -> AtomReading:
             updated.append(_time(entry.findtext(_ATOM + "updated")))
         elif word in _MAINTENANCE_OPEN:
             maintenances += 1
-        # closed, scheduled, unparsed: counted as nothing. A word this module does not know is never an open incident.
+        elif word not in _KNOWN:
+            unreadable += 1  # no status found, or one this module does not know: never an open incident
     total = len(entries)
     window = (now - min(past)) if past else timedelta(0)
     blind = bool(total and (future == total or (total >= FEED_LIMIT and window < MIN_WINDOW)))
     newest = None if (not updated or any(t is None for t in updated)) else max(updated)
-    return AtomReading(incidents, maintenances, newest, future, total, blind)
+    return AtomReading(incidents, maintenances, newest, future, total, blind, unreadable)

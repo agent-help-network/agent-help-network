@@ -342,3 +342,101 @@ def test_a_discovered_page_reads_its_atom_through_the_pinned_pool(monkeypatch):
     digest: dict = {}
     reading, updated = status_refresh._read_source(source, None, digest, history=True)
     assert Pool.paths == ["/history.atom"] and updated is None and reading.open_incidents == 1 and digest["body_sha256"]
+
+
+# --- review fixes: failed first Atom read, odd times, export, discovered 302 ----------------------------------------------
+
+@pytest.mark.parametrize("failure", ["redirect", "http_500", "invalid_body"])
+def test_a_failed_first_atom_read_still_drops_the_api_statement_and_closes_its_problem(db, world, monkeypatch, failure):
+    github = REAL_SOURCES["github.com"]
+    monkeypatch.setattr(status_refresh, "SOURCES", {"github.com": github})
+    monkeypatch.setattr(service, "SOURCES", {"github.com": github})
+    sync_curated_sources(db)
+    world.robots = Robots(ATOM_CLOSED)  # the API is open: read as before
+    batch(db, world)
+    with connect(db) as conn:
+        signal_history._apply_provider_events(conn, datetime.now(timezone.utc), 1000)
+    assert q(db, "SELECT indicator FROM status_cache WHERE site_host='github.com'") == [{"indicator": "major"}]
+    world.robots.body = DEFAULT  # now only the Atom is open, and it cannot be read
+    if failure == "redirect":
+        world.atom_status = 302
+    elif failure == "http_500":
+        world.atom_status = 500
+    elif failure == "invalid_body":
+        world.atom = b"<html>no</html>"
+    age(db, timedelta(hours=27))
+    world.now += timedelta(hours=27)
+    batch(db, world)
+    stored = q(db, "SELECT indicator,fetched_at,feed_source,active_incidents,last_error_detail FROM status_cache WHERE site_host='github.com'")[0]
+    assert stored["indicator"] == "unknown" and stored["fetched_at"] is None and stored["feed_source"] is None and stored["active_incidents"] is None
+    assert stored["last_error_detail"] is not None and stored["last_error_detail"] != "robots_disallowed"  # the failed Atom read is recorded
+    ended = q(db, "SELECT ended_reason FROM outage_episodes WHERE signal='P' AND site_host='github.com'")
+    assert [e["ended_reason"] for e in ended] == ["robots_disallowed"]
+
+
+OTHER = Source("Other Status", "https://other.example/", "https://other.example/api/v2/status.json")
+
+
+def two_pages(db, world, monkeypatch, body):
+    table = {"page.test": PAGE, "other.test": OTHER}
+    monkeypatch.setattr(status_refresh, "SOURCES", dict(table))
+    monkeypatch.setattr(service, "SOURCES", dict(table))
+    sync_curated_sources(db)
+    world.robots = Robots(body)
+    plain = world.feeds
+
+    def by_host(request):
+        if request.url.host == "page.example":
+            return plain(request)
+        return httpx.Response(200, content=quiet(), headers={"content-type": "application/atom+xml"}) if request.url.path == "/history.atom" \
+            else httpx.Response(200, json={"page": {"updated_at": "2026-10-22T11:00:00Z"}, "status": {"indicator": "none"}})
+    world.feeds = by_host
+
+
+@pytest.mark.parametrize("edge", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_an_odd_time_in_an_atom_feed_is_no_time_and_the_batch_reads_on(db, world, monkeypatch, edge):
+    two_pages(db, world, monkeypatch, DEFAULT)
+    world.atom = atom((["Investigating"], NOW - timedelta(hours=1), NOW)).replace(f"{NOW:%Y-%m-%dT%H:%M:%SZ}</updated>".encode(), f"{edge}</updated>".encode())
+    result = batch(db, world)
+    assert result["failed"] == 0 and result["updated"] == 2
+    assert row(db)["active_incidents"] == 1 and row(db)["incident_updated_at"] is None  # the incident is read; its time is unknown
+    assert q(db, "SELECT feed_source FROM status_cache WHERE site_host='other.test'") == [{"feed_source": "history_atom"}]
+
+
+@pytest.mark.parametrize("edge", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_an_odd_time_in_a_status_json_fails_that_feed_and_the_batch_reads_the_next(db, world, monkeypatch, edge):
+    two_pages(db, world, monkeypatch, ATOM_CLOSED)
+    world.api = {"page": {"id": "p", "updated_at": edge}, "status": {"indicator": "none"}}
+    result = batch(db, world)
+    assert result["failed"] == 1 and result["updated"] == 1
+    assert row(db)["last_error_detail"] == "invalid_body" and row(db)["failures"] == 1
+
+
+def test_a_reading_from_the_atom_is_not_exported_as_a_status_record(db, world, tmp_path):
+    from ahn import export
+    batch(db, world)
+    assert row(db)["feed_source"] == "history_atom"
+    with connect(db) as conn:
+        assert list(export._rows(conn, "status", None)) == []
+        conn.execute("UPDATE status_cache SET feed_source=NULL")
+        assert len(list(export._rows(conn, "status", None))) == 1  # the same row as an API reading is exported
+
+
+def test_a_discovered_page_whose_atom_redirects_is_disabled_not_failing(monkeypatch):
+    class Redirecting(Pool):
+        def request(self, _method, path, **_kw):
+            class Response:
+                status = 302
+
+                def release_conn(self):
+                    pass
+            return Response()
+
+    monkeypatch.setattr(status_refresh, "_statuspage_target", lambda host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
+    monkeypatch.setattr(status_refresh, "_resolve", lambda host, timeout: {"93.184.216.34"})
+    monkeypatch.setattr(status_refresh.urllib3, "HTTPSConnectionPool", Redirecting)
+    source = Source("Example Status", "https://status.example.org/", "https://status.example.org/api/v2/status.json", "discovered_statuspage")
+    with pytest.raises(status_refresh.FeedFailure) as caught:
+        status_refresh._read_source(source, None, {}, history=True)
+    assert caught.value.label == "feed_disabled"
+    assert background_reads.feed_backoff(1, "feed_disabled") == background_reads.FEED_BACKOFF_MAX

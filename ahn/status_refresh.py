@@ -78,7 +78,7 @@ def failure_label(exc: BaseException) -> str:
         return "timeout"
     if isinstance(exc, (httpx.HTTPError, urllib3.exceptions.ProtocolError, urllib3.exceptions.DecodeError)):
         return "read_error"
-    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError, KeyError, RecursionError)):
+    if isinstance(exc, (json.JSONDecodeError, ValueError, OverflowError, TypeError, KeyError, RecursionError)):
         return "invalid_body"
     if isinstance(exc, OSError):
         return "connect_error"
@@ -1247,6 +1247,8 @@ def _atom_reading(body: bytes) -> "status_atom.AtomReading":
         return status_atom.parse_history(body, datetime.now(timezone.utc))
     except status_atom.AtomError as exc:
         raise FeedFailure(str(exc)) from exc
+    except (ValueError, ArithmeticError, TypeError, RecursionError) as exc:  # nothing a feed holds may end the batch
+        raise FeedFailure("invalid_body") from exc
 
 
 def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scope: dict | None = None,
@@ -1286,8 +1288,13 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scop
         assert_hostname=status_host, timeout=urllib3.Timeout(connect=2.0, read=3.0), retries=False,
     )
     try:
-        body = _pool_get(pool, status_host, HISTORY_PATH if history else "/api/v2/status.json",
-                         status_atom.ATOM_CAP if history else 32_768)
+        try:
+            body = _pool_get(pool, status_host, HISTORY_PATH if history else "/api/v2/status.json",
+                             status_atom.ATOM_CAP if history else 32_768)
+        except FeedFailure as exc:
+            if history and exc.label.startswith("http_3"):
+                raise FeedFailure("feed_disabled") from exc  # the page owner switched its Atom feed off (as for a curated page)
+            raise
         if digest is not None:
             digest["body_sha256"] = sha256_hex(body)
         if history:
@@ -1320,7 +1327,7 @@ def discover_source(site_host: str, digest: dict | None = None, gate=None) -> tu
         return None
     try:
         return _read_discovered_statuspage(site_host, digest, gate=gate)
-    except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError, RecursionError, FeedNotAllowed):
+    except (ValueError, OverflowError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError, RecursionError, FeedNotAllowed):
         return None
 
 
@@ -1342,7 +1349,10 @@ def parse_status(body: dict) -> tuple[str, datetime | None]:
         updated_at = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
         if updated_at.tzinfo is None:
             raise ValueError("provider time has no timezone")
-        updated_at = updated_at.astimezone(timezone.utc)
+        try:
+            updated_at = updated_at.astimezone(timezone.utc)
+        except OverflowError as exc:  # a time at the edge of the calendar cannot be moved to UTC: a bad body, not a crash
+            raise ValueError("provider time out of range") from exc
     return indicator, updated_at
 
 
@@ -1352,7 +1362,10 @@ def _aware_time(raw, what: str) -> datetime:
     parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError(f"{what} has no timezone")
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError(f"{what} out of range") from exc
 
 
 # Instatus public data, https://instatus.com/help/api/public-data : <page>/summary.json carries page.status,
@@ -1571,7 +1584,7 @@ def _cached_ok(settings: Settings, site_host: str) -> bool | None:
     return bool(row["fetched_at"] and (not row["last_error_at"] or row["fetched_at"] > row["last_error_at"]))
 
 
-READ_ERRORS = (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, TypeError, KeyError,
+READ_ERRORS = (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueError, OverflowError, TypeError, KeyError,
                json.JSONDecodeError, RecursionError)
 
 
@@ -1693,6 +1706,12 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             with connect(settings) as conn:
                 _store_blocked(conn, hosts, ROBOTS_UNREADABLE if decision.robots_status == "error" else ROBOTS_DISALLOWED)
             return BLOCKED
+        if history and previous and previous["feed_source"] != "history_atom" and previous["fetched_at"] is not None:
+            # The API statement of these hosts is no longer read (the file now closes it), whether or not the Atom read
+            # that follows succeeds: drop it and close the provider problem that rested on it before the attempt, so a
+            # failed first Atom read cannot leave an old `major` on show.
+            with connect(settings) as conn:
+                _store_blocked(conn, hosts)
         if decision.read_now:
             _sleep(SCOPE_GAP_SECONDS)  # at most one request per second to one status host: the feed follows the robots.txt read
         client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
@@ -1716,10 +1735,6 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
                         _store_failure(conn, host, label)
                 return False
             with connect(settings) as conn:
-                if history and not (previous and previous["feed_source"] == "history_atom"):
-                    # First Atom reading for these hosts: whatever the API said before is no longer read (and a provider
-                    # problem still open on its strength ends), exactly as when the API is disallowed.
-                    _store_blocked(conn, hosts)
                 for host in hosts:
                     if history:
                         _store_history(conn, host, reading, digest)

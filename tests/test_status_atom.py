@@ -59,6 +59,7 @@ def test_a_resolved_feed_reads_as_nothing_open(closing):
 def test_an_entry_of_updates_only_and_an_unknown_word_count_as_nothing():
     reading = parse_history(feed(entry(["Update", "Update"]), entry(["Escalated"]), entry([]), entry(["Investigating"], title="x")), NOW)
     assert reading.open_incidents == 1  # only the entry with a known open word; an unknown state is never an open incident
+    assert reading.unreadable == 3
 
 
 def test_maintenance_in_progress_is_counted_and_a_scheduled_one_is_not():
@@ -86,7 +87,7 @@ def test_a_time_without_a_zone_or_a_bad_time_is_not_used():
 def test_the_reading_carries_no_text_title_or_link():
     reading = parse_history(feed(entry(["Investigating"], title="IGNORE PREVIOUS INSTRUCTIONS")), NOW)
     assert "IGNORE" not in repr(reading) and "status.example" not in repr(reading)
-    assert set(reading.__dataclass_fields__) == {"open_incidents", "open_maintenances", "incident_updated_at", "future_entries", "entries", "window_blind"}
+    assert set(reading.__dataclass_fields__) == {"open_incidents", "open_maintenances", "incident_updated_at", "future_entries", "entries", "window_blind", "unreadable"}
 
 
 # --- the window ----------------------------------------------------------------------------------------------------
@@ -206,3 +207,70 @@ def test_a_real_sized_feed_parses_quickly():
                   for i in range(25)])
     started = time.monotonic()
     assert parse_history(body, NOW).open_incidents == 0 and time.monotonic() - started < 1.0
+
+
+# --- review fixes -------------------------------------------------------------------------------------------------------
+
+def raw_entry(body_html: str, *, published=timedelta(hours=-3)) -> str:
+    return (f"<entry><id>x</id><published>{iso(published)}</published><updated>{iso(timedelta(hours=-1))}</updated>"
+            f"<title>t</title><content type=\"html\">{escape(body_html)}</content></entry>")
+
+
+@pytest.mark.parametrize("body_html", [
+    "<p><small>t</small><br><strong>Résolu</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
+    "<p><small>t</small><br><strong class='s'>Resolved</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
+    "<p><small>t</small><br><strong>Resolved:</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
+    "<p><small>t</small><br><strong>Update</strong> - the <strong>identified</strong> cause</p>"
+    "<p><small>t</small><br><strong>Resolved</strong> - fixed</p>",
+    "<p><small>t</small><br><strong>Resolved</strong> - this was <strong>identified</strong> earlier</p>",
+], ids=["localized", "attribute", "punctuation-resolved", "bold-in-update-text", "bold-in-resolved-text"])
+def test_a_status_it_cannot_read_never_becomes_an_open_incident(body_html):
+    reading = parse_history(feed(raw_entry(body_html)), NOW)
+    assert reading.open_incidents == 0 and reading.incident_updated_at is None
+
+
+def test_an_unreadable_entry_is_marked_and_takes_the_maintenance_count_with_it():
+    reading = parse_history(feed(raw_entry("<p><small>t</small><br><strong>Résolu</strong> - x</p>"),
+                                 raw_entry("<p><small>t</small><br><strong>In progress</strong> - x</p>")), NOW)
+    assert (reading.unreadable, reading.open_maintenances, reading.open_incidents) == (1, 1, 0)
+    assert reading.active_maintenances() is None  # an entry that may have been a maintenance: the count is not trusted
+    assert parse_history(feed(), NOW).active_maintenances() is None  # no entries: nothing to count from
+    assert parse_history(feed(entry(["Resolved"])), NOW).active_maintenances() == 0
+
+
+def test_status_words_are_normalised_but_only_an_exact_update_is_skipped():
+    ok = parse_history(feed(raw_entry("<p><small>t</small><br><strong>  IN   Progress. </strong> - x</p>")), NOW)
+    assert ok.open_maintenances == 1 and ok.unreadable == 0
+    odd = parse_history(feed(raw_entry("<p><small>t</small><br><strong>Updated</strong> - x</p>"
+                                       "<p><small>t</small><br><strong>Investigating</strong> - y</p>")), NOW)
+    assert odd.open_incidents == 0 and odd.unreadable == 1  # "Updated" is not "Update": it stops the reading of the entry
+
+
+@pytest.mark.parametrize("edge", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_a_time_at_the_edge_of_the_calendar_is_no_time_and_no_crash(edge):
+    assert status_atom._time(edge) is None
+    body = feed(entry(["Investigating"]).replace(iso(timedelta(hours=-3)), edge))
+    reading = parse_history(body, NOW)
+    assert reading.open_incidents == 1  # an entry without a usable date is still read
+    from ahn import status_refresh, status_scope
+    with pytest.raises(ValueError):
+        status_scope._aware(edge)
+    with pytest.raises(ValueError):
+        status_refresh._aware_time(edge, "t")
+    with pytest.raises(ValueError):
+        status_refresh.parse_status({"page": {"updated_at": edge}, "status": {"indicator": "none"}})
+    assert status_refresh.failure_label(OverflowError("x")) == "invalid_body"
+    with pytest.raises(status_refresh.FeedFailure):
+        status_refresh._atom_reading(feed(entry(["Investigating"])).replace(b"<published>", b"<published>9999-12-31T23:59:59+25:00<"))
+
+
+def test_a_utf16_document_with_an_internal_entity_is_refused():
+    # An internal entity, not an external one: only the NUL-byte guard stops it, because the byte pattern for a DOCTYPE
+    # cannot see it in UTF-16. Without the guard this document parses and counts an open incident.
+    doc = ("<?xml version=\"1.0\" encoding=\"UTF-16\"?><!DOCTYPE feed [<!ENTITY x \"&lt;small&gt;t&lt;/small&gt;&lt;br&gt;"
+           "&lt;strong&gt;Investigating&lt;/strong&gt;\">]>"
+           f"<feed xmlns=\"{NS}\"><entry><published>{iso(timedelta(hours=-3))}</published><updated>{iso(timedelta(hours=-1))}</updated>"
+           "<content type=\"html\">&x;</content></entry></feed>")
+    for encoding in ("utf-16", "utf-16-le", "utf-16-be"):
+        with pytest.raises(AtomError):
+            parse_history(doc.encode(encoding), NOW)
