@@ -143,7 +143,7 @@ The `Next:` part of the line shows up to two `next_checks` codes, as the service
 
 | Code | Meaning |
 | :- | :- |
-| `robots_grouping_differs_by_parser` | Information only. Parsers disagree on this `robots.txt`: Google-style parsers merge groups that the service keeps apart and usually read it more strictly. The recommendation keeps the groups apart |
+| `robots_grouping_differs_by_parser` | Information only. Parsers disagree on this `robots.txt`: Google-style parsers merge groups that the service keeps apart and usually read it more strictly, or read only the first name of a comma-separated User-agent line, which the service splits into every listed name. The recommendation uses the service's reading |
 | `robots_blocks_some_agents` | The host's `robots.txt` disallows the root for some agent tokens only, and the lookup did not say which agent is asking. If your own requests identify as a token in the line's `blocked agents` list (for Claude Code's `WebFetch`, `Claude-User`), treat it as a declared block: stop retrying pages and prefer the official path. Otherwise the block is not about you |
 | `robots_blocks_not_your_agent` | Some agent tokens are disallowed, but not the ones the answer was decided on (the asking agent's vendor, or every vendor). Those blocks do not decide the answer; keep requests modest. Not an access guarantee |
 | `robots_names_vendor_alias` | A group that disallows the root names the asking vendor's agent under an undocumented name (for example `claude-web`). Not read as a declared block on its token, and not as permission either: prefer the official path and tell the user |

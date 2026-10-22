@@ -356,18 +356,28 @@ def test_an_alias_never_beats_an_explicit_allow_of_the_vendors_own_token():
     assert legacy(prof) == robots_verdict(prof)[0] == robots_verdict(prof, "anthropic")[0] == "clear"
 
 
-def test_a_comma_separated_user_agent_line_names_its_first_agent_as_googles_parser_does():
+def test_a_comma_separated_user_agent_line_names_every_listed_agent():
+    # The host plainly means every listed agent. Google's parser reads only the first name; that reading is kept for
+    # google_style and reported through grouping_differs_by_parser, and the recommendation does not use it.
     text = "User-agent: Claude-User, ChatGPT-User\nDisallow: /\n\nUser-agent: Amazonbot\nDisallow: /\n"
     groups, _ = split_groups(text)
-    assert groups[0]["agents"] == ["claude-user"] and groups[1]["agents"] == ["amazonbot"]
+    assert groups[0]["agents"] == ["claude-user", "chatgpt-user"] and groups[1]["agents"] == ["amazonbot"]
+    assert split_groups(text, google_style=True)[0][0]["agents"] == ["claude-user"]
     prof = profile(text)
-    assert prof["robots"]["agents_blocked"] == ["Claude-User", "Amazonbot"]
-    assert recommendation("site_access", None, prof, None, agent_vendor="anthropic")["action"] == "stop_declared_block"
+    assert prof["robots"]["agents_blocked"] == ["ChatGPT-User", "Claude-User", "Amazonbot"]
+    assert prof["robots"]["grouping_differs_by_parser"] == ["ChatGPT-User"]
+    for vendor in ("anthropic", "openai"):
+        assert recommendation("site_access", None, prof, None, agent_vendor=vendor)["action"] == "stop_declared_block", vendor
+    assert recommendation("site_access", None, prof, None, agent_vendor="google")["reasons"] == ["robots_blocks_not_your_agent"]
+    # Without a vendor: some vendors blocked, so the agreement rule gives unknown, and the parser note follows.
     assert recommendation("site_access", None, prof, None)["reasons"] == ["robots_blocks_some_agents"]
-    for value, name in (("Claude-User;", "claude-user"), ("ClaudeBot (compatible)", "claudebot"), ("(compatible", None),
-                        ("Claude-User/1.0", "claude-user"), ("*", "*"), ("*,", None), ("Claude_User2", "claude_user2")):
+    assert codes("site_access", None, "no_reports", None, prof, None)[1:3] == ["robots_blocks_some_agents", "robots_grouping_differs_by_parser"]
+    for value, names in (("Claude-User;", ["claude-user"]), ("ClaudeBot (compatible)", ["claudebot"]), ("(compatible", []),
+                         ("Claude-User/1.0", ["claude-user"]), ("*", ["*"]), ("*,", ["*"]), ("Claude_User2", ["claude_user2"]),
+                         ("Claude-User/1.0, ChatGPT-User/2.0", ["claude-user", "chatgpt-user"]),
+                         ("Amazonbot,Claude-User ,, Perplexity\u2011User", ["amazonbot", "claude-user", "perplexity-user"])):
         groups, _ = split_groups(f"User-agent: {value}\nDisallow: /\n")
-        assert groups[0]["agents"] == ([name] if name else []), value
+        assert groups[0]["agents"] == names, value
 
 
 # --- 9. aliases and 10. prefix matching ------------------------------------------------------------------------------

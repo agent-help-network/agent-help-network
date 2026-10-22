@@ -162,8 +162,9 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
     ``google_style=True`` drops the blank-line exception above and groups exactly as RFC 9309 and Google's robots.cc.
     Returns ``(groups, sitemaps)``. ``groups`` is a list in file order; each group is a dict:
       ``agents``: list[str], the product tokens its user-agent lines name, lowercased (first word of the value, cut at
-                  ``/``, dashes folded, then its leading run of ``[a-z0-9_-]``, or ``*``). A line with no such word
-                  (empty value, ``/bot``, ``(compatible``) adds no name but still belongs to the group.
+                  ``/``, dashes folded, then its leading run of ``[a-z0-9_-]``, or ``*``), one per comma-separated
+                  item of the value (only the first item with ``google_style=True``, as Google reads it). A line with
+                  no such word (empty value, ``/bot``, ``(compatible``) adds no name but still belongs to the group.
       ``rules``: list[tuple[str, str]], ``("allow" | "disallow", value)`` in file order.
       ``crawl_delay``: float | None, the last Crawl-delay in the group that parses as 0-3600 seconds.
       ``other``: list[tuple[str, str]], ``(key, value)`` of every other line inside the group in file order, the key
@@ -191,14 +192,18 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
                 current = {"agents": [], "rules": [], "crawl_delay": None, "other": []}
                 groups.append(current)
                 other_record = break_pending = False
-            words = value.split("/", 1)[0].split()
-            name = words[0].translate(_DASHES).lower() if words else ""
-            # Google's robots.cc reads only the product token's leading run of name characters, so a list such as
-            # "Claude-User, ChatGPT-User" names claude-user (never "claude-user,", which would match nothing).
-            match = _PRODUCT.match(name)
-            product = "*" if name == "*" else (match.group() if match else "")
-            if product:
-                current["agents"].append(product)
+            # Each name is the leading run of name characters of its product token, dashes folded, as Google's
+            # robots.cc reads it ("Claude-User/1.0" names claude-user). A comma-separated list ("Claude-User,
+            # ChatGPT-User") names every listed agent: the host plainly means them all, and reading only the first
+            # would answer the others "allowed". Google reads only the first; google_style=True does too, so
+            # parse_robots reports the difference in grouping_differs_by_parser.
+            for piece in (value.split(",")[:1] if google_style else value.split(",")):
+                words = piece.split("/", 1)[0].split()
+                name = words[0].translate(_DASHES).lower() if words else ""
+                match = _PRODUCT.match(name)
+                product = "*" if name == "*" else (match.group() if match else "")
+                if product:
+                    current["agents"].append(product)
             in_agent_lines = True
             continue
         if key in ("allow", "disallow"):

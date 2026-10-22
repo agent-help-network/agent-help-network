@@ -227,15 +227,18 @@ def _reference_root(text: str, token: str) -> tuple[bool, bool]:
         if key in ("user-agent", "useragent"):
             if seen_separator:
                 seen_specific = seen_global = seen_separator = False
-            words = value.split("/", 1)[0].split()
-            # robots.cc reads the product token's leading run of name characters (dashes folded as the service does).
-            name = words[0].translate(_DASHES).lower() if words else ""
-            run = re.match(r"[a-z0-9_-]+", name)
-            agent = "*" if name == "*" else (run.group() if run else "")
-            if agent == "*":
-                seen_global = True
-            elif _applies(agent, token.lower()):
-                seen_specific = ever_specific = True
+            # robots.cc reads the product token's leading run of name characters (dashes folded as the service does),
+            # and of a comma-separated list only the first item (the service's default reading takes every item; the
+            # random-file test below checks that difference through grouping_differs_by_parser).
+            for piece in value.split(",")[:1]:
+                words = piece.split("/", 1)[0].split()
+                name = words[0].translate(_DASHES).lower() if words else ""
+                run = re.match(r"[a-z0-9_-]+", name)
+                agent = "*" if name == "*" else (run.group() if run else "")
+                if agent == "*":
+                    seen_global = True
+                elif _applies(agent, token.lower()):
+                    seen_specific = ever_specific = True
         elif key in ("allow", "disallow") and (seen_specific or seen_global):
             seen_separator = True
             if seen_specific:

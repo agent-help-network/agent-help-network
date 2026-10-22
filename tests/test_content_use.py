@@ -88,6 +88,11 @@ def test_census_shapes_wildcard_and_named_groups():
     assert named_only["ai_input_no_agents"] == ["ChatGPT-User", "Claude-User"]
 
 
+def test_a_comma_separated_user_agent_line_names_every_listed_agent_for_content_use_too():
+    parsed = parse_content_use("User-agent: Claude-User, ChatGPT-User, good-bot\nContent-Signal: ai-input=no\n")
+    assert parsed["named_groups"][0]["agents"] == ["ChatGPT-User", "Claude-User"] and parsed["named_groups"][0]["other_agents"] == 1
+
+
 def test_agent_names_are_kept_only_from_the_token_table():
     parsed = parse_content_use("User-agent: <b>x</b>\nUser-agent: " + "a" * 60 + "\nUser-agent: good-bot\nUser-agent: perplexity-user\n"
                                "Content-Signal: ai-train=no\n")
