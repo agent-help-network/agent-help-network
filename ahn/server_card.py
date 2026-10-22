@@ -14,7 +14,7 @@ from pathlib import Path
 
 SERVER_JSON = Path(__file__).resolve().parent.parent / "server.json"
 CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
-CARD_FIELDS = ("name", "version", "description", "title", "websiteUrl", "repository", "remotes")
+CARD_FIELDS = ("name", "version", "description", "title", "websiteUrl", "repository", "icons", "remotes")
 CACHE_CONTROL = "public, max-age=3600"
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",

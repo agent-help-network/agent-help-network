@@ -12,7 +12,8 @@
   <link rel="alternate" hreflang="en" href="https://agenthelpnetwork.com/en{{ alternate_suffix }}">
   <link rel="alternate" hreflang="ko" href="https://agenthelpnetwork.com/ko{{ alternate_suffix }}">
   {% endif %}
-  <link rel="stylesheet" href="/static/site.css?v=14">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/site.css?v=15">
 </head>
 <body>
   {% set other = 'ko' if lang == 'en' else 'en' %}
@@ -21,7 +22,7 @@
   <a class="skip" href="#main">{{ 'Skip to content' if lang == 'en' else '본문으로 이동' }}</a>
   <header class="site-header">
     <div class="header-inner">
-      <a class="brand" href="/{{ lang }}/"><span class="brand-mark" aria-hidden="true">✳</span><span>{{ t.brand }}</span></a>
+      <a class="brand" href="/{{ lang }}/"><img class="brand-logo" src="/static/logo.svg" width="30" height="30" alt="Agent Help Network"><span>{{ t.brand }}</span></a>
       <nav aria-label="{{ 'Main navigation' if lang == 'en' else '주 메뉴' }}">
         <a href="/{{ lang }}/agents" {% if page == 'agents' %}aria-current="page"{% endif %}>{{ t.nav_agents }}</a>
         <a href="/{{ lang }}/connect" {% if page == 'connect' %}aria-current="page"{% endif %}>{{ t.nav_connect }}</a>

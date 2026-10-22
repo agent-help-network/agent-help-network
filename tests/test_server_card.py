@@ -76,3 +76,12 @@ def test_card_is_not_served_by_the_local_build():
 def test_card_builder_copies_only_known_fields():
     card = server_card.build_card({**MANIFEST, "packages": [{"x": 1}], "unknown": 1})
     assert set(card) <= SCHEMA_MEMBERS
+
+
+def test_icons_point_to_the_served_https_logo():
+    card = _client().get(PATH).json()
+    assert card["icons"] == MANIFEST["icons"]
+    for icon in card["icons"]:
+        assert icon["src"].startswith("https://agenthelpnetwork.com/static/") and len(icon["src"]) <= 255
+        assert icon["mimeType"] == "image/svg+xml" and icon["sizes"] == ["any"]
+        assert _client().get(icon["src"].removeprefix("https://agenthelpnetwork.com")).status_code == 200
