@@ -3,8 +3,9 @@ group's user-agent lines and other lines leave the grouping alone, except that a
 ends them too (where parsers disagree, see split_groups); and no input makes the parser raise."""
 
 import random
+import re
 
-from ahn.access_profile import AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, _summarize, parse_robots, split_groups
+from ahn.access_profile import _DASHES, AGENT_USER_AGENTS, MAX_SITEMAPS, _applies, _root_allowed, _summarize, parse_robots, split_groups
 from ahn.models import RobotsSummary
 from ahn.triage import next_checks, recommendation
 
@@ -227,7 +228,10 @@ def _reference_root(text: str, token: str) -> tuple[bool, bool]:
             if seen_separator:
                 seen_specific = seen_global = seen_separator = False
             words = value.split("/", 1)[0].split()
-            agent = words[0].lower() if words else ""
+            # robots.cc reads the product token's leading run of name characters (dashes folded as the service does).
+            name = words[0].translate(_DASHES).lower() if words else ""
+            run = re.match(r"[a-z0-9_-]+", name)
+            agent = "*" if name == "*" else (run.group() if run else "")
             if agent == "*":
                 seen_global = True
             elif _applies(agent, token.lower()):
@@ -313,8 +317,12 @@ def test_unicode_dash_in_a_group_name_reads_as_a_hyphen():
         assert parsed["grouping_differs_by_parser"] == []
 
 
-def test_other_non_ascii_characters_in_a_group_name_are_kept():
-    for name in ("claude\u00b7user", "claude\u2027user", "claude_user", "claude\u30fcuser"):
+def test_other_non_ascii_characters_are_not_read_as_dashes():
+    # Only the dashes above become "-". Any other character ends the name, as in Google's robots.cc, which reads only
+    # the leading run of name characters; "claude_user" keeps its underscore and names no listed token.
+    for name in ("claude\u00b7user", "claude\u2027user", "claude\u30fcuser"):
         groups, _ = split_groups(f"User-agent: {name}\nDisallow: /\n")
-        assert groups[0]["agents"] == [name.lower()]
-        assert parse_robots(f"User-agent: {name}\nDisallow: /\n")["agents_blocked"] == []
+        assert groups[0]["agents"] == ["claude"]
+    groups, _ = split_groups("User-agent: claude_user\nDisallow: /\n")
+    assert groups[0]["agents"] == ["claude_user"]
+    assert parse_robots("User-agent: claude_user\nDisallow: /\n")["agents_blocked"] == []

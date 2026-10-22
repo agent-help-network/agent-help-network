@@ -152,6 +152,7 @@ def robots_text(text: str | bytes) -> str:
 # Unicode dashes a hand-edited robots.txt can carry in a user-agent name (U+2010 hyphen to U+2015 horizontal bar, U+2212
 # minus, U+FE63 small hyphen-minus, U+FF0D fullwidth hyphen-minus), read as "-": `perplexity\u2011user` names
 # Perplexity-User. It only ever makes a name match more tokens, never fewer.
+_PRODUCT = re.compile(r"[a-z0-9_-]+")
 _DASHES = str.maketrans({char: "-" for char in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"})
 
 
@@ -161,7 +162,8 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
     ``google_style=True`` drops the blank-line exception above and groups exactly as RFC 9309 and Google's robots.cc.
     Returns ``(groups, sitemaps)``. ``groups`` is a list in file order; each group is a dict:
       ``agents``: list[str], the product tokens its user-agent lines name, lowercased (first word of the value, cut at
-                  ``/``). A line with no such word (empty value, ``/bot``) adds no name but still belongs to the group.
+                  ``/``, dashes folded, then its leading run of ``[a-z0-9_-]``, or ``*``). A line with no such word
+                  (empty value, ``/bot``, ``(compatible``) adds no name but still belongs to the group.
       ``rules``: list[tuple[str, str]], ``("allow" | "disallow", value)`` in file order.
       ``crawl_delay``: float | None, the last Crawl-delay in the group that parses as 0-3600 seconds.
       ``other``: list[tuple[str, str]], ``(key, value)`` of every other line inside the group in file order, the key
@@ -190,8 +192,13 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
                 groups.append(current)
                 other_record = break_pending = False
             words = value.split("/", 1)[0].split()
-            if words:
-                current["agents"].append(words[0].translate(_DASHES).lower())
+            name = words[0].translate(_DASHES).lower() if words else ""
+            # Google's robots.cc reads only the product token's leading run of name characters, so a list such as
+            # "Claude-User, ChatGPT-User" names claude-user (never "claude-user,", which would match nothing).
+            match = _PRODUCT.match(name)
+            product = "*" if name == "*" else (match.group() if match else "")
+            if product:
+                current["agents"].append(product)
             in_agent_lines = True
             continue
         if key in ("allow", "disallow"):

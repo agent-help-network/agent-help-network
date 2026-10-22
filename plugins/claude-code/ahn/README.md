@@ -144,6 +144,9 @@ The `Next:` part of the line shows up to two `next_checks` codes, as the service
 | Code | Meaning |
 | :- | :- |
 | `robots_grouping_differs_by_parser` | Information only. Parsers disagree on this `robots.txt`: Google-style parsers merge groups that the service keeps apart and usually read it more strictly. The recommendation keeps the groups apart |
+| `robots_blocks_some_agents` | The host's `robots.txt` disallows the root for some agent tokens only, and the lookup did not say which agent is asking. If your own requests identify as a token in the line's `blocked agents` list (for Claude Code's `WebFetch`, `Claude-User`), treat it as a declared block: stop retrying pages and prefer the official path. Otherwise the block is not about you |
+| `robots_blocks_not_your_agent` | Some agent tokens are disallowed, but not the ones the answer was decided on (the asking agent's vendor, or every vendor). Those blocks do not decide the answer; keep requests modest. Not an access guarantee |
+| `robots_names_vendor_alias` | A group that disallows the root names the asking vendor's agent under an undocumented name (for example `claude-web`). Not read as a declared block on its token, and not as permission either: prefer the official path and tell the user |
 | `content_use_ai_input_declared_no` | The host's `robots.txt` declares `ai-input=no` (or AIPREF `ai-use=n`) for user-directed agents. This is a content-use preference, not an access rule; follow your operator's policy and tell the user if it matters |
 | `government_registry_listed` | The domain appears in a public government domain list (U.S. `.gov`, UK `.gov.uk`). The list says who registered the domain; it does not vouch for every page or link on it |
 | `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (for example `.gov`, `.gov.uk`, `.go.kr`). That says who may register a domain, not that any page or link is vouched for |

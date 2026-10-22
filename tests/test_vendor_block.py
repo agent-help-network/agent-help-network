@@ -12,7 +12,7 @@ import pytest
 
 from ahn import mcp_adapter, triage
 from ahn.access_profile import (AGENT_USER_AGENTS, AGENT_VENDOR, AGENT_VENDORS, GOVERNING_TOKENS, VENDOR_ALIASES,
-                                ai_input_declared_no, parse_robots)
+                                ai_input_declared_no, parse_robots, split_groups)
 from ahn.lookup_signals import LookupSignal
 from ahn.models import AgentFamily, AgentVendor, CheckResponse, NextCheck, Recommendation
 from ahn.triage import (ACTIVE_INDICATORS, CHECKS, MAINTENANCE_CHECK, WAIT_DESPITE_COMPONENTS_ONLY, _wait, accepted_vendor,
@@ -73,6 +73,53 @@ def test_aliases_are_not_tokens_and_leave_ad_and_enterprise_crawlers_out():
         assert crawler not in names
 
 
+# The table of the design (token -> vendor, kind), written out, so that a changed entry in AGENT_VENDOR or
+# AGENT_USER_AGENTS fails here instead of being recomputed from the same table.
+EXPECTED_TOKENS = {
+    "ChatGPT-User": ("openai", "user_agent"), "OAI-SearchBot": ("openai", "search_crawler"), "GPTBot": ("openai", "training_crawler"),
+    "Claude-User": ("anthropic", "user_agent"), "Claude-SearchBot": ("anthropic", "search_crawler"),
+    "ClaudeBot": ("anthropic", "training_crawler"), "anthropic-ai": ("anthropic", "training_crawler"),
+    "Perplexity-User": ("perplexity", "user_agent"), "PerplexityBot": ("perplexity", "search_crawler"),
+    "Meta-ExternalFetcher": ("meta", "user_agent"), "Meta-WebIndexer": ("meta", "search_crawler"),
+    "Meta-ExternalAgent": ("meta", "training_crawler"),
+    "MistralAI-User": ("mistral", "user_agent"), "MistralAI-Index": ("mistral", "search_crawler"),
+    "MistralAI-Training": ("mistral", "training_crawler"),
+    "Google-Agent": ("google", "user_agent"), "Google-GeminiNotebook": ("google", "user_agent"),
+    "Googlebot": ("google", "search_crawler"), "Google-Extended": ("google", "training_crawler"),
+    "Amzn-User": ("amazon", "user_agent"), "Amazonbot": ("amazon", "search_crawler"), "Amzn-SearchBot": ("amazon", "search_crawler"),
+    "DuckAssistBot": ("duckduckgo", "user_agent"), "DuckDuckBot": ("duckduckgo", "search_crawler"),
+    "Diffbot-User": ("diffbot", "user_agent"), "Diffbot": ("diffbot", "search_crawler"),
+    "Bingbot": ("microsoft", "search_crawler"), "Applebot": ("apple", "search_crawler"),
+    "Applebot-Extended": ("apple", "training_crawler"), "ExaSearchBot": ("exa", "search_crawler"),
+    "CCBot": ("commoncrawl", "training_crawler"), "Bytespider": ("bytedance", "training_crawler"),
+    "cohere-ai": ("cohere", "training_crawler"),
+}
+EXPECTED_GOVERNING = {
+    "openai": ("ChatGPT-User",), "anthropic": ("Claude-User",), "google": ("Google-Agent", "Google-GeminiNotebook"),
+    "perplexity": ("Perplexity-User",), "meta": ("Meta-ExternalFetcher",), "mistral": ("MistralAI-User",),
+    "amazon": ("Amzn-User",), "microsoft": ("Bingbot",), "apple": ("Applebot",), "duckduckgo": ("DuckAssistBot",),
+    "diffbot": ("Diffbot-User",), "exa": ("ExaSearchBot",),
+}
+
+
+def test_the_vendor_table_is_the_one_written_down():
+    # A token added to AGENT_USER_AGENTS must be added here too, with its vendor: the table is reviewed, not derived.
+    assert {token: (AGENT_VENDOR[token], kind) for token, kind in AGENT_USER_AGENTS} == EXPECTED_TOKENS
+    assert GOVERNING_TOKENS == EXPECTED_GOVERNING
+    assert tuple(EXPECTED_GOVERNING) == AGENT_VENDORS
+    # The answers follow the written table: each vendor stops exactly on its own governing tokens.
+    for vendor, governing in EXPECTED_GOVERNING.items():
+        for token, (owner, kind) in EXPECTED_TOKENS.items():
+            if kind == "training_crawler":
+                continue
+            prof = profile(f"User-agent: {token}\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+            action = recommendation("site_access", None, prof, None, agent_vendor=vendor)["action"]
+            named = any(rule["explicit_group"] and not rule["root_allowed"] for rule in prof["robots"]["rules"] if rule["agent"] in governing)
+            assert (action == "stop_declared_block") == named, (vendor, token)
+            if token in governing:
+                assert named, (vendor, token)
+
+
 # --- 2. a known vendor: every state, with and without an official path ---------------------------------------------
 
 STATE_FILES = {
@@ -82,6 +129,8 @@ STATE_FILES = {
     "other_vendor_blocked": "User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
     "own_search_crawler_blocked": "User-agent: Claude-SearchBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
     "allowed": "User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n",
+    # The host names Claude-User and allows it: an old claude-web block next to it does not override that.
+    "allowed_over_alias": "User-agent: Claude-User\nAllow: /\n\nUser-agent: claude-web\nDisallow: /\n",
 }
 KNOWN_VENDOR_TABLE = {
     # case: (with official path, without official path)
@@ -96,6 +145,7 @@ KNOWN_VENDOR_TABLE = {
     "own_search_crawler_blocked": (("use_official_path", "medium", ["robots_blocks_not_your_agent", "official_path_available"]),
                                    ("proceed", "low", ["robots_blocks_not_your_agent"])),
     "allowed": (("use_official_path", "medium", ["official_path_available"]), ("proceed", "low", ["robots_allows_agents"])),
+    "allowed_over_alias": (("use_official_path", "medium", ["official_path_available"]), ("proceed", "low", ["robots_allows_agents"])),
 }
 
 
@@ -189,9 +239,9 @@ def test_cells_that_do_not_change_without_a_vendor(text, official):
 # --- 4. monotonicity, on random files ------------------------------------------------------------------------------
 
 NAMES = [token for token, _ in AGENT_USER_AGENTS] + ["*", "*", "*", "google", "diffbot", "claude", "meta", "amzn", "mistralai",
-                                                      "perplexity‑user", "claude-web", "copilot", "googleagent-mariner",
-                                                      "mediapartners-google", "SomeBot", "claude-user-beta"]
-ALIAS_NAMES = {name for group in VENDOR_ALIASES.values() for name in group}
+                                                      "perplexity\u2011user", "claude-web", "claude-web", "copilot",
+                                                      "googleagent-mariner", "openai", "mediapartners-google", "SomeBot",
+                                                      "claude-user-beta", "Claude-User, ChatGPT-User", "Amazonbot,Claude-User"]
 
 
 def random_file(rng: random.Random) -> str:
@@ -226,12 +276,17 @@ def test_monotonicity_on_random_files():
             if any(rules[t]["explicit_group"] and not rules[t]["root_allowed"] for t in GOVERNING_TOKENS[vendor]):
                 assert per_vendor[vendor] == "block", (vendor, text)
                 assert recommendation("site_access", None, prof, None, agent_vendor=vendor)["action"] == "stop_declared_block"
-        # (iv) without alias names in the file, no answer is stricter than the rule before D48.
-        if not {line.split(": ", 1)[1].lower() for line in text.splitlines() if line.startswith("User-agent: ")} & ALIAS_NAMES:
-            before = RANK[legacy(prof)]
+        # (iv) no answer is stricter than the rule before D48, except where a vendor is named only under an alias
+        # (state alias: the one place D48 is stricter on purpose). Files with alias names are included, so an alias
+        # next to a group that names and allows the vendor's own token is checked too.
+        before = RANK[legacy(prof)]
+        states = {vendor: vendor_state(prof, vendor) for vendor in AGENT_VENDORS}
+        for vendor, verdict in per_vendor.items():
+            if states[vendor] != "alias":
+                assert RANK[verdict] <= before, (vendor, text)
+        if "alias" not in states.values():
             assert RANK[unknown] <= before, text
-            assert all(RANK[v] <= before for v in per_vendor.values()), text
-            assert RANK[robots_verdict(prof, "other")[0]] <= before, text
+        assert RANK[robots_verdict(prof, "other")[0]] <= before, text
     assert seen == {"clear", "caution", "block"}  # the generator reaches every row
 
 
@@ -293,6 +348,28 @@ def test_switch_off_matches_the_previous_code_on_random_profiles():
                         _previous_next_checks(error_class, None, "no_reports", None, prof, official)
 
 
+def test_an_alias_never_beats_an_explicit_allow_of_the_vendors_own_token():
+    prof = profile(STATE_FILES["allowed_over_alias"])
+    assert prof["robots"]["vendor_aliases_blocked"] == ["claude-web"]
+    assert vendor_state(prof, "anthropic") == "allowed"
+    # Before D48 this file was "proceed"; it stays so for the vendor and for an unknown caller.
+    assert legacy(prof) == robots_verdict(prof)[0] == robots_verdict(prof, "anthropic")[0] == "clear"
+
+
+def test_a_comma_separated_user_agent_line_names_its_first_agent_as_googles_parser_does():
+    text = "User-agent: Claude-User, ChatGPT-User\nDisallow: /\n\nUser-agent: Amazonbot\nDisallow: /\n"
+    groups, _ = split_groups(text)
+    assert groups[0]["agents"] == ["claude-user"] and groups[1]["agents"] == ["amazonbot"]
+    prof = profile(text)
+    assert prof["robots"]["agents_blocked"] == ["Claude-User", "Amazonbot"]
+    assert recommendation("site_access", None, prof, None, agent_vendor="anthropic")["action"] == "stop_declared_block"
+    assert recommendation("site_access", None, prof, None)["reasons"] == ["robots_blocks_some_agents"]
+    for value, name in (("Claude-User;", "claude-user"), ("ClaudeBot (compatible)", "claudebot"), ("(compatible", None),
+                        ("Claude-User/1.0", "claude-user"), ("*", "*"), ("*,", None), ("Claude_User2", "claude_user2")):
+        groups, _ = split_groups(f"User-agent: {value}\nDisallow: /\n")
+        assert groups[0]["agents"] == ([name] if name else []), value
+
+
 # --- 9. aliases and 10. prefix matching ------------------------------------------------------------------------------
 
 def test_alias_names_only_their_own_vendor():
@@ -302,7 +379,7 @@ def test_alias_names_only_their_own_vendor():
     assert recommendation("site_access", None, prof, None, agent_vendor="openai")["reasons"] == ["robots_allows_agents"]
     # Exact names only (after lowercasing and dash folding): a longer name is not the alias, a dash variant is.
     assert parse_robots("User-agent: claude-webx\nDisallow: /\n")["vendor_aliases_blocked"] == []
-    assert parse_robots("User-agent: CLAUDE‐WEB\nDisallow: /\n")["vendor_aliases_blocked"] == ["claude-web"]
+    assert parse_robots("User-agent: CLAUDE\u2010WEB\nDisallow: /\n")["vendor_aliases_blocked"] == ["claude-web"]
     # An alias group that allows the root, or an ad crawler, says nothing.
     assert parse_robots("User-agent: claude-web\nAllow: /\n\nUser-agent: *\nDisallow: /\n")["vendor_aliases_blocked"] == []
     ads = profile("User-agent: mediapartners-google\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
@@ -324,7 +401,7 @@ def test_prefix_matching_still_names_a_vendor_family():
 
 
 def test_unicode_dash_now_names_the_vendor():
-    prof = profile("User-agent: perplexity‑user\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+    prof = profile("User-agent: perplexity\u2011user\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
     assert recommendation("site_access", None, prof, None, agent_vendor="perplexity")["action"] == "stop_declared_block"
 
 

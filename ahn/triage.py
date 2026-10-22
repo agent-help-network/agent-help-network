@@ -170,7 +170,10 @@ def vendor_state(access_profile: dict, vendor: str) -> str | None:
         return None
     if any(rule.get("explicit_group") and not rule.get("root_allowed") for rule in governing):
         return EXPLICIT
-    if set(robots.get("vendor_aliases_blocked") or ()) & VENDOR_ALIASES.get(vendor, frozenset()):
+    # An alias counts only while no group names the vendor's own token: a host that names Claude-User and allows it has
+    # said what it wants for that agent, and an old claude-web block next to it does not override that.
+    if (not any(rule.get("explicit_group") for rule in governing)
+            and set(robots.get("vendor_aliases_blocked") or ()) & VENDOR_ALIASES.get(vendor, frozenset())):
         return ALIAS
     if any(not rule.get("explicit_group") and not rule.get("root_allowed") for rule in governing):
         return WILDCARD

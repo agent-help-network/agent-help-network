@@ -91,7 +91,9 @@ def test_census_shapes_wildcard_and_named_groups():
 def test_agent_names_are_kept_only_from_the_token_table():
     parsed = parse_content_use("User-agent: <b>x</b>\nUser-agent: " + "a" * 60 + "\nUser-agent: good-bot\nUser-agent: perplexity-user\n"
                                "Content-Signal: ai-train=no\n")
-    assert parsed["named_groups"][0]["agents"] == ["Perplexity-User"] and parsed["named_groups"][0]["other_agents"] == 3
+    # "<b>x</b>" has no leading name characters, so it names no agent at all (D48 review: the product token is the
+    # leading run of [a-z0-9_-], as in Google's robots.cc); the long name and good-bot are counted, never kept.
+    assert parsed["named_groups"][0]["agents"] == ["Perplexity-User"] and parsed["named_groups"][0]["other_agents"] == 2
 
 
 def test_aipref_figure_2_path_scoped_and_named_group():
