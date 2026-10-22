@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, gov_registry, lookup_signals, status_scope
+from . import adoption, background_reads, feed_robots, gov_registry, lookup_signals, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -401,6 +401,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     registered = mapped_source = False
     now = datetime.now(timezone.utc)
     provider_status = None
+    robots_blocked_page = None  # (name, url) of a status page whose feed its own robots.txt does not allow (D50)
     provider_partial = False
     provider_regional = False
     provider_discovery_attempted_at = None
@@ -433,7 +434,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             if discovery:
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
             source = conn.execute(
-                """SELECT s.source_name,s.status_page_url,c.indicator,c.source_updated_at,
+                """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
                           c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
                           c.active_incidents,c.max_incident_impact,c.incident_updated_at,
                           c.active_maintenances,c.affected,c.affected_regional
@@ -441,6 +442,21 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                    WHERE s.site_host=%s AND s.enabled=true""",
                 (host,),
             ).fetchone()
+            if source:
+                # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
+                # decision yet only a host on the interim list (read by hand on 2026-10-22) keeps its statement on
+                # show, and the read that decides is queued; a host whose robots.txt disallows it, or could not be
+                # read, shows none and links to the official page when there is one.
+                feed_host = feed_robots.host_and_path(source["api_url"])[0]
+                feed_decision = feed_robots.feed_state(conn, source["api_url"])
+                if not feed_robots.shown(feed_decision, feed_host):
+                    if feed_decision == "undecided" and mapped_source:
+                        due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
+                        if due is None or due <= now:
+                            jobs.append(("status_feed", host))
+                    elif feed_decision in ("disallowed", "unknown"):
+                        robots_blocked_page = (source["source_name"], source["status_page_url"])  # a link, never a reading
+                    source = None
             if source:
                 fetched_at = source["fetched_at"]
                 # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
@@ -545,7 +561,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 "outcome": row["outcome"], "error_class": row["error_class"],
                 "task_step": row["task_step"], "synthetic": test_query,
             })
-        official_page = OFFICIAL_STATUS_PAGES.get(host) if settings.public_mode and not test_query and provider_status is None else None
+        official_page = ((OFFICIAL_STATUS_PAGES.get(host) or robots_blocked_page)
+                         if settings.public_mode and not test_query and provider_status is None else None)
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
             "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,

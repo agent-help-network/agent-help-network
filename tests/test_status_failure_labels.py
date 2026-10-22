@@ -98,7 +98,7 @@ def test_failure_label_survives_an_exception_whose_str_raises():
     assert failure_label(Loud()) == "invalid_body"
 
 
-def test_resolver_failures_are_dns_failed_not_no_cname(monkeypatch):
+def test_resolver_failures_are_dns_failed_not_no_cname(monkeypatch, allow_all_gate):
     import dns.exception
     import dns.resolver
 
@@ -122,7 +122,7 @@ def test_resolver_failures_are_dns_failed_not_no_cname(monkeypatch):
         with pytest.raises(FeedFailure) as caught:
             status_refresh._read_discovered_statuspage("example.org")
         assert caught.value.label == "dns_failed"
-        assert status_refresh.discover_source("example.org") is None  # discovery still swallows it
+        assert status_refresh.discover_source("example.org", gate=allow_all_gate) is None  # discovery still swallows it
     monkeypatch.setattr(status_refresh.dns.resolver, "Resolver", Missing)
     assert status_refresh._statuspage_target("example.org") is None
     with pytest.raises(FeedFailure) as caught:
@@ -130,7 +130,7 @@ def test_resolver_failures_are_dns_failed_not_no_cname(monkeypatch):
     assert caught.value.label == "no_cname"
 
 
-def test_deeply_nested_feed_body_is_invalid_body_everywhere(monkeypatch):
+def test_deeply_nested_feed_body_is_invalid_body_everywhere(monkeypatch, allow_all_gate):
     nested = b"[" * 20_000
     assert _label_from_read(lambda _r: httpx.Response(200, content=nested)) == "invalid_body"
     monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: ("abcdefghijkl.stspg-customer.com", "abcdefghijkl"))
@@ -159,7 +159,7 @@ def test_deeply_nested_feed_body_is_invalid_body_everywhere(monkeypatch):
     assert status_refresh.discover_source("example.org") is None
 
 
-def test_discovered_statuspage_failures_get_a_label(monkeypatch):
+def test_discovered_statuspage_failures_get_a_label(monkeypatch, allow_all_gate):
     monkeypatch.setattr(status_refresh, "_statuspage_target", lambda _host: None)
     with pytest.raises(FeedFailure) as caught:
         status_refresh._read_discovered_statuspage("example.org")

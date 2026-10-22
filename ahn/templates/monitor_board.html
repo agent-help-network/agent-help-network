@@ -6,6 +6,7 @@
   <h2>현황판 신호 기록 · 최근 {{ board.days }}일 (비공개)</h2>
   <div class="grid">
     <div class="card"><span>등록 피드</span><strong>{{ board.coverage.registered_feeds }}</strong><small>상태 매핑 전체와 조회로 등록된 피드, 약 1시간마다(활성이면 15분) 읽음 · 현황판 호스트 {{ board.coverage.registered_feeds_curated }}</small></div>
+    <div class="card"><span>피드 robots.txt 판정</span><strong>허용 {{ board.coverage.feed_robots.allowed }} · 금지 {{ board.coverage.feed_robots.disallowed }} · 모름 {{ board.coverage.feed_robots.unknown }}</strong><small>등록 피드 주소별로 그 호스트의 robots.txt 가 AgentHelpNetwork 에게 피드 경로를 허용하는지 · 금지·모름은 읽지 않음 · 모름은 판정 전이거나 robots.txt 를 읽지 못한 곳</small></div>
     <div class="card"><span>기록 중인 호스트</span><strong>{{ board.coverage.recording_hosts }}</strong><small>기간 안에 판독 이력이 있는 큐레이션 호스트 · 대상 {{ board.coverage.target_hosts }}</small></div>
     <div class="card"><span>현재 표시 후보</span><strong>{{ board.candidates_now }}</strong><small>업체 발표 {{ board.candidate_sources.provider }} · AHN 점검 {{ board.candidate_sources.ahn_check }} · 48시간 판독 없어 뺀 구간(stale) {{ board.stale_now }}</small></div>
     <div class="card"><span>보류한 15분 창</span><strong>{{ board.held_windows }}</strong><small>{% if board.held_now %}지금 보류 중 · {% endif %}공통 인프라 발표로 보류 안 함 {{ board.infra_explained_windows }}</small></div>

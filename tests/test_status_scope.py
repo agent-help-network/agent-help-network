@@ -152,7 +152,7 @@ def test_only_atlassian_statuspage_bodies_are_recognized(page, expected):
     assert status_scope.statuspage_page_id(page) == expected
 
 
-def test_the_discovered_reader_reads_the_lists_through_the_same_pinned_pool(monkeypatch):
+def test_the_discovered_reader_reads_the_lists_through_the_same_pinned_pool(monkeypatch, allow_all_gate):
     page = fixture("single_incident")
     page["status"]["page"]["id"] = page["unresolved"]["page"]["id"] = page["maintenances"]["page"]["id"] = "abcdefghijkl"
     bodies = {"/api/v2/status.json": page["status"], "/api/v2/incidents/unresolved.json": page["unresolved"],
@@ -190,7 +190,7 @@ def test_the_discovered_reader_reads_the_lists_through_the_same_pinned_pool(monk
     assert paths == list(bodies) and pools == ["93.184.216.34"] and scope["active_incidents"] == 1
     # The first discovery itself stays one request: the scope comes with the next refresh.
     paths.clear()
-    assert status_refresh.discover_source("example.org") is not None and paths == ["/api/v2/status.json"]
+    assert status_refresh.discover_source("example.org", gate=allow_all_gate) is not None and paths == ["/api/v2/status.json"]
     # A discovered page that reads none is one request too.
     page["status"]["status"]["indicator"] = "none"
     bodies["/api/v2/status.json"] = page["status"]

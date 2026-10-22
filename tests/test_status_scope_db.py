@@ -46,7 +46,7 @@ def lookup():
 @pytest.fixture(autouse=True)
 def unpaced(monkeypatch):
     monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
-    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None, **_kw: None)
     monkeypatch.setattr(status_refresh, "_sleep", lambda _seconds: None)  # the 1 s gap between reads of one status page
 
 

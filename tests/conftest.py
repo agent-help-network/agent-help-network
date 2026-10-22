@@ -4,16 +4,51 @@ from __future__ import annotations
 
 import pytest
 
+from ahn import feed_robots
+
 
 def _no_network(*_args, **_kwargs):
     raise RuntimeError("tests must not reach real hosts: replace this background read with a stub")
 
 
+class AllowAllGate:
+    """Stands in for feed_robots.Gate in the feed tests that read stub feeds under real mapping hosts: every path is
+    allowed, no robots.txt is read and no database is touched. tests/test_feed_robots*.py use the real gate with a
+    stub robots.txt reader."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def decide(self, host, paths):
+        from datetime import datetime, timezone
+
+        from ahn.feed_robots import Decision
+
+        return Decision(host, "absent", "http_404", datetime.now(timezone.utc),
+                        {path: {"allowed": True, "rule": None, "group": None} for path in paths})
+
+
+_REAL_FEED_STATE = feed_robots.feed_state
+
+
 @pytest.fixture(autouse=True)
-def feed_allowlist_off(monkeypatch):
-    # The interim robots allowlist (status_refresh.feed_host_allowed) is off for the existing feed tests, which read stub
-    # feeds under real mapping hosts; tests/test_feed_robots_allowlist*.py turn it on explicitly.
-    monkeypatch.setenv("AHN_FEED_ROBOTS_ALLOWLIST", "0")
+def feed_gate_allows_all(monkeypatch):
+    # The same for the lookup path, which asks the stored decision whether a feed's statement may show.
+    monkeypatch.setattr("ahn.status_refresh.make_gate", lambda _settings=None: AllowAllGate())
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "allowed")
+
+
+@pytest.fixture
+def allow_all_gate():
+    """A gate for tests that call discover_source directly (without one it looks nothing up)."""
+    return AllowAllGate()
+
+
+@pytest.fixture
+def real_feed_robots(monkeypatch):
+    """The real gate and the real stored-decision check, for the tests of the robots.txt decision itself."""
+    monkeypatch.setattr("ahn.status_refresh.make_gate", feed_robots.Gate)
+    monkeypatch.setattr(feed_robots, "feed_state", _REAL_FEED_STATE)
 
 
 @pytest.fixture(autouse=True)

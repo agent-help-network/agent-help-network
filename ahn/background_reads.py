@@ -81,8 +81,10 @@ def refresh_feed(settings, site_host):
     return status_refresh.refresh_one(settings, site_host, wait=True)
 
 
-def discover(site_host, digest=None):
-    return status_refresh.discover_source(site_host, digest=digest)
+def discover(site_host, digest=None, settings=None):
+    # The robots.txt gate needs the database (D50): without settings nothing is looked up.
+    gate = status_refresh.make_gate(settings) if settings is not None else None
+    return status_refresh.discover_source(site_host, digest=digest, gate=gate)
 
 
 def feed_refresh_after(indicator: str | None, idle: timedelta) -> timedelta:
@@ -343,7 +345,7 @@ def _run(settings, job: dict) -> None:
             conn.execute("UPDATE queried_hosts SET last_discovery_at=now() WHERE site_host=%s", (site_host,))
         _pace()
         digest: dict = {}
-        found = discover(site_host, digest)
+        found = discover(site_host, digest, settings=settings)
         if found:
             _store_discovered(settings, site_host, found, digest)
 

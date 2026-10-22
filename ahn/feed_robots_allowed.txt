@@ -1,8 +1,10 @@
 # Status-feed hosts that AgentHelpNetwork may read (interim allowlist, D49 stage 0).
 # Checked 2026-10-22: each host's own /robots.txt, parsed under RFC 9309 (longest match, Allow wins ties,
 # 4xx = unavailable = allowed), does not disallow its status feed path for AgentHelpNetwork (the * group).
-# 121 hosts. All other feed hosts, and every automatically discovered status.<host> feed, are not requested.
-# To be replaced by an automatic per-host robots.txt decision in the next change; do not extend by hand without re-checking.
+# 121 hosts. Since D50 no read consults this list: every feed is read only after the automatic per-host robots.txt
+# decision (ahn/feed_robots.py). The list now only keeps an answer on show for a host that has no stored decision yet
+# (feed_robots.shown), so the first hours after the change do not blank the statements checked by hand. Delete the file
+# and feed_robots.interim_hosts once every host here has a stored decision. Do not extend it by hand.
 calendlystatus.com
 fastmailstatus.com
 fetlifestatus.com

@@ -6,7 +6,6 @@ verified publisher endpoints, never URLs assembled from a user's hostname.
 
 from __future__ import annotations
 
-import functools
 import os
 import ipaddress
 import json
@@ -18,7 +17,6 @@ import time
 import concurrent.futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from urllib.parse import urlparse
 
 import dns.exception
@@ -30,14 +28,14 @@ from psycopg.types.json import Jsonb
 # The service's reader version recorded with every stored read (provenance), as for robots.txt reads.
 from .access_profile import USER_AGENT as READER_VERSION
 from .access_profile import _resolve, read_capped
-from . import status_scope
+from . import feed_robots, status_scope
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 from .settings import Settings
 
 
 class FeedNotAllowed(Exception):
-    """A feed whose host is not on the robots-checked allowlist: never requested, not a failed read (not a ValueError,
+    """A feed whose host's robots.txt does not allow it (D50): never requested, not a failed read (not a ValueError,
     so READ_ERRORS does not catch it and no failure is stored)."""
 
 
@@ -1108,32 +1106,81 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "verisoul.ai": ("Verisoul Status", "https://status.verisoul.ai/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
-# Interim stop (D49 stage 0): a feed is read only when its host's robots.txt was checked by hand on 2026-10-22 and
-# allows the feed path for AgentHelpNetwork (RFC 9309, longest match). Everything else, discovered feeds included, is
-# not requested until the automatic per-host robots decision lands. AHN_FEED_ROBOTS_ALLOWLIST=0 restores reading all.
-FEED_ALLOWLIST_ENV = "AHN_FEED_ROBOTS_ALLOWLIST"
-FEED_ALLOWLIST_FILE = Path(__file__).with_name("feed_robots_allowed.txt")
+# Robots.txt decision before every feed request (D50, ahn/feed_robots.py). The four places that read a feed (the
+# cron's refresh_batch, a lookup's background refresh_one, the first discovery of a status.<host> page and the two
+# Statuspage scope lists) all go through one check: `_read_and_store` (the first two and the lists, which are part
+# of a feed read) and `discover_source` (discovery) ask the gate for the host's decision before the first request.
+HISTORY_PATH = "/history.atom"  # a Statuspage page's own Atom feed: decided and stored with the other paths, not read yet
 
 
-@functools.lru_cache(maxsize=1)
-def _allowed_feed_hosts() -> frozenset[str]:
-    lines = FEED_ALLOWLIST_FILE.read_text(encoding="utf-8").splitlines()
-    return frozenset(line.strip().lower() for line in lines if line.strip() and not line.lstrip().startswith("#"))
+def feed_paths(source: "Source") -> tuple[str, ...]:
+    """Every path of this feed's host the service would request, the feed itself first. For an Atlassian-style feed
+    (api/v2/status.json) these are the two scope lists (D43) and the page's Atom history."""
+    _, feed = feed_robots.host_and_path(source.api_url)
+    paths = [feed]
+    path_only = urlparse(source.api_url).path
+    if source.kind in ("statuspage", "discovered_statuspage") and path_only.endswith(STATUS_JSON_SUFFIX):
+        base = path_only[: -len("status.json")]
+        paths += [base + p for p in status_scope.SCOPE_PATHS] + [HISTORY_PATH]
+    return tuple(paths)
 
 
-def feed_host_allowed(url_or_host: str | None) -> bool:
-    """True when a feed at this URL (or bare host) may be requested. A missing or unparsable host is not allowed."""
-    if os.environ.get(FEED_ALLOWLIST_ENV, "1").strip() == "0":
-        return True
-    value = url_or_host or ""
-    host = (urlparse(value).hostname if "/" in value else value.strip().rstrip(".")) or ""
-    return bool(host) and host.lower() in _allowed_feed_hosts()
+def make_gate(settings: Settings) -> "feed_robots.Gate":
+    """The gate a read uses; tests replace this (no test may read a real host's robots.txt)."""
+    return feed_robots.Gate(settings)
 
 
-def _unregister_blocked(conn, site_host: str) -> None:
-    """Drop a host's feed row and its cached read, so no earlier statement is answered from it."""
-    conn.execute("DELETE FROM status_cache WHERE site_host=%s", (site_host,))
-    conn.execute("DELETE FROM status_sources WHERE site_host=%s", (site_host,))
+class _Blocked:
+    """What a feed read returns when the host's robots.txt disallows the feed: not a success, not a failure."""
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "BLOCKED"
+
+
+BLOCKED = _Blocked()
+ROBOTS_DISALLOWED = "robots_disallowed"  # status_cache.last_error_detail of a feed that is not read (last_error_at stays NULL)
+
+
+ROBOTS_UNREADABLE = "robots_unreadable"  # outage_episodes.ended_reason when the host's robots.txt could not be read (not a rule)
+
+
+def _store_blocked(conn, hosts: list[str], reason: str = ROBOTS_DISALLOWED) -> None:
+    """Record that these hosts' feed is not read, and drop the earlier statement at once: nothing stored from before
+    the block is answered from. Not a failure: no failure count, no error time, so no backoff applies.
+
+    A provider problem still open for these hosts (outage_episodes, signal P) ends here: the statement it rested on is
+    gone, and an open one would keep holding shared-infrastructure windows (INFRA_HOSTS). ``reason`` is the episode's
+    ended_reason: ``robots_disallowed`` when the file says no, ``robots_unreadable`` when it could not be read.
+    In the same transaction the hosts' not yet applied provider events are marked applied (they must not open a new
+    period after this one was closed) and an ``unknown`` event is recorded after the last one, so that the first
+    problem indicator the feed reports once it is read again is a change, and a new period opens (record_provider_status
+    writes an event only when the indicator differs from the last recorded one)."""
+    conn.execute(
+        """UPDATE outage_episodes SET ended_at=now(),last_event_at=now(),ended_reason=%s
+           WHERE signal='P' AND ended_at IS NULL AND site_host=ANY(%s)""",
+        (reason, list(hosts)),
+    )
+    conn.execute("UPDATE provider_status_events SET applied_at=now() WHERE applied_at IS NULL AND site_host=ANY(%s)", (list(hosts),))
+    conn.execute(
+        """INSERT INTO provider_status_events (site_host,at,from_indicator,to_indicator,applied_at)
+           SELECT last.site_host,now(),last.to_indicator,'unknown',now()
+           FROM (SELECT DISTINCT ON (site_host) site_host,to_indicator FROM provider_status_events
+                 WHERE site_host=ANY(%s) ORDER BY site_host,at DESC,id DESC) last
+           WHERE last.to_indicator <> 'unknown'""",
+        (list(hosts),),
+    )
+    for host in hosts:
+        conn.execute(
+            """INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail,failures)
+               VALUES (%s,'unknown',NULL,NULL,%s,NULL) ON CONFLICT (site_host) DO UPDATE SET
+               indicator='unknown',source_updated_at=NULL,fetched_at=NULL,last_error_at=NULL,last_error_detail=EXCLUDED.last_error_detail,
+               failures=NULL,body_sha256=NULL,active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
+               active_maintenances=NULL,affected=NULL,affected_regional=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL""",
+            (host, ROBOTS_DISALLOWED),
+        )
 
 
 FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-operation timeouts
@@ -1193,13 +1240,15 @@ def _pool_get(pool, status_host: str, path: str, cap: int) -> bytes:
 
 
 def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scope: dict | None = None,
-                                scope_allowed=None) -> tuple[Source, str, datetime | None]:
+                                scope_allowed=None, gate=None) -> tuple[Source, str, datetime | None]:
     """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256.
 
     With scope (a feed refresh, not the first discovery), the page's unresolved incidents and active
-    maintenances are read through the same pinned pool and summarized into it (status_scope)."""
-    if not feed_host_allowed(f"status.{site_host}"):
-        raise FeedNotAllowed(site_host)
+    maintenances are read through the same pinned pool and summarized into it (status_scope).
+
+    gate is the robots.txt gate (feed_robots.Gate) of a first discovery: it is asked once the DNS delegation has
+    verified the page (DNS only so far) and before anything is requested from it. A feed refresh passes None: its
+    caller (_read_and_store) has asked the gate for this feed already."""
     target = _statuspage_target(site_host)
     if target is None:
         raise FeedFailure("no_cname")
@@ -1211,6 +1260,13 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scop
         raise FeedFailure("timeout") from None
     if not addresses or len(addresses) > 16 or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
         raise FeedFailure("not_public")
+    if gate is not None:
+        found = Source("", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage")
+        decision = gate.decide(status_host, feed_paths(found))
+        if not decision.allows(feed_paths(found)[0]):
+            raise FeedNotAllowed(status_host)
+        if decision.read_now:
+            _sleep(SCOPE_GAP_SECONDS)  # at most one request per second to one status host
     pool = urllib3.HTTPSConnectionPool(
         sorted(addresses)[0], port=443, server_hostname=status_host,
         assert_hostname=status_host, timeout=urllib3.Timeout(connect=2.0, read=3.0), retries=False,
@@ -1238,10 +1294,15 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scop
     return source, indicator, updated_at
 
 
-def discover_source(site_host: str, digest: dict | None = None) -> tuple[Source, str, datetime | None] | None:
-    """Bounded best-effort discovery; unknown hosts remain unknown. digest, if given, receives body_sha256."""
+def discover_source(site_host: str, digest: dict | None = None, gate=None) -> tuple[Source, str, datetime | None] | None:
+    """Bounded best-effort discovery; unknown hosts remain unknown. digest, if given, receives body_sha256.
+
+    gate (feed_robots.Gate) is required: without one nothing is looked up or requested. A page whose robots.txt
+    disallows its feed is not read and not registered."""
+    if gate is None:
+        return None
     try:
-        return _read_discovered_statuspage(site_host, digest)
+        return _read_discovered_statuspage(site_host, digest, gate=gate)
     except (ValueError, OSError, urllib3.exceptions.HTTPError, json.JSONDecodeError, RecursionError, FeedNotAllowed):
         return None
 
@@ -1386,17 +1447,11 @@ FEED_KINDS = {
 def register_source(conn, site_host: str, source: Source | None = None) -> bool:
     """Persist a verified mapping only when a user looks up its host."""
     source = source or SOURCES.get(site_host)
-    if source is not None and not feed_host_allowed(source.api_url):
-        _unregister_blocked(conn, site_host)
-        return False
     if source is None:
         row = conn.execute(
             "SELECT status_page_url,api_url,enabled FROM status_sources WHERE site_host=%s",
             (site_host,),
         ).fetchone()
-        if row and not feed_host_allowed(row["api_url"]):
-            _unregister_blocked(conn, site_host)
-            return False
         page_url = f"https://status.{site_host}/"
         return bool(row and row["enabled"] and row["status_page_url"] == page_url and row["api_url"] == page_url + "api/v2/status.json")
     # A feed address that changed since the row was written (a lookup can come before the cron's sync) drops the
@@ -1443,9 +1498,10 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     indicator is active (minor or above, or maintenance): two more capped reads of the same page (unresolved
     incidents, active maintenances). Their failure never fails the feed read; an indicator of none, other
     kinds and other platforms leave scope empty and make no further request. scope_allowed() is asked once before
-    the first list (the cron's time budget): when it refuses, both lists are skipped, not counted as a failure."""
-    if not feed_host_allowed(source.api_url):
-        raise FeedNotAllowed(source.api_url)
+    the first list (the cron's time budget): when it refuses, both lists are skipped, not counted as a failure.
+
+    The robots.txt decision for this feed's host (D50) is the caller's: _read_and_store asks the gate first and passes
+    scope=None when the host's robots.txt disallows a list. Nothing in here consults the gate."""
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
@@ -1541,18 +1597,18 @@ def _store_failure(conn, site_host: str, label: str) -> None:
 
 
 def _read_and_store(settings: Settings, hosts: list[str], source: Source, client: httpx.Client | None, *,
-                    min_interval: int = 15, scope_allowed=None) -> bool | None:
+                    min_interval: int = 15, scope_allowed=None, gate=None) -> bool | None | _Blocked:
     """Read one feed once and record the result for every host mapped to it (aliases share one feed).
 
     The read holds a database lock on the feed address (pg_try_advisory_xact_lock), so the cron and the web
     process never read one feed at the same time; a feed whose lock is held, or that was attempted within
-    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome.
+    ``min_interval`` seconds, is skipped (None). True or False is the read's outcome. BLOCKED means the host's
+    robots.txt disallows the feed (D50): nothing was requested from it, its earlier statement is dropped and
+    ``robots_disallowed`` is recorded; that is neither a read nor a failure and starts no backoff.
 
     The lock connection touches no table: the transaction stays open for the whole read (up to about 70 s), and
     a table it had read would keep an ACCESS SHARE lock on it that makes a later ALTER wait and, behind the
     ALTER, every lookup. The earlier attempt is read on a short connection of its own, after the lock is held."""
-    if not feed_host_allowed(source.api_url):
-        return None
     own_client = client is None
     with connect(settings) as lock_conn:
         if not lock_conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok", (source.api_url,)).fetchone()["ok"]:
@@ -1567,11 +1623,23 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             latest = max((t for t in (previous["fetched_at"], previous["last_error_at"]) if t is not None), default=None)
             if latest and latest >= now - timedelta(seconds=min_interval):
                 return None
+        # The robots.txt decision for the feed's host, before the first request to it (at most one robots.txt read per
+        # host per day; the answer lasts until then). A path the file disallows is never requested.
+        paths = feed_paths(source)
+        decision = (gate or make_gate(settings)).decide(feed_robots.host_and_path(source.api_url)[0], paths)
+        if not decision.allows(paths[0]):
+            with connect(settings) as conn:
+                _store_blocked(conn, hosts, ROBOTS_UNREADABLE if decision.robots_status == "error" else ROBOTS_DISALLOWED)
+            return BLOCKED
+        if decision.read_now:
+            _sleep(SCOPE_GAP_SECONDS)  # at most one request per second to one status host: the feed follows the robots.txt read
         client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
         try:
             digest: dict = {}
-            # While the two scope lists rest after failures, read status.json only (scope None: no list request).
-            scope: dict | None = None if status_scope.scope_paused(previous, now) else {}
+            # While the two scope lists rest after failures, or while the host's robots.txt disallows one of them,
+            # read status.json only (scope None: no list request, and not a failure).
+            lists_allowed = all(decision.allows(path) for path in paths[1:] if path != HISTORY_PATH)
+            scope: dict | None = None if status_scope.scope_paused(previous, now) or not lists_allowed else {}
             try:
                 indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed)
             except FeedNotAllowed:
@@ -1600,7 +1668,7 @@ def _discovered_source(site_host: str, row) -> Source | None:
 
 
 def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | None = None, min_interval: int = 15,
-                wait: bool = False, scope_allowed=None) -> bool:
+                wait: bool = False, scope_allowed=None, report_blocked: bool = False) -> bool:
     """Fetch one verified source now; retain prior data as stale on failure.
 
     Request-path callers leave wait=False: when another thread is already
@@ -1609,6 +1677,9 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
     first lookup still answers fresh. The cron passes wait=True. Across
     processes the feed address's database lock decides (_read_and_store):
     when another process holds it, the cached verdict is returned.
+
+    A feed whose host's robots.txt disallows it is not requested (D50) and reads as False; the cron asks with
+    ``report_blocked`` to tell that from a failure (it then gets BLOCKED, which is also falsy).
     """
     source = SOURCES.get(site_host)
     if source is None:
@@ -1618,7 +1689,7 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
                 (site_host,),
             ).fetchone()
         source = _discovered_source(site_host, row)
-    if source is None or not feed_host_allowed(source.api_url):
+    if source is None:
         return False
     lock = _SOURCE_LOCKS.setdefault(site_host, threading.Lock())
     if not lock.acquire(blocking=wait):
@@ -1628,6 +1699,8 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
         lock.acquire()
     try:
         outcome = _read_and_store(settings, [site_host], source, client, min_interval=min_interval, scope_allowed=scope_allowed)
+        if outcome is BLOCKED:
+            return BLOCKED if report_blocked else False
         return bool(_cached_ok(settings, site_host)) if outcome is None else outcome
     finally:
         lock.release()
@@ -1650,8 +1723,6 @@ def sync_curated_sources(settings: Settings) -> dict:
         existing = {row["site_host"]: row for row in conn.execute(
             "SELECT site_host,source_name,status_page_url,api_url,evidence FROM status_sources").fetchall()}
         for host, source in SOURCES.items():
-            if not feed_host_allowed(source.api_url):
-                continue
             row = existing.get(host)
             if row is None:
                 added += 1
@@ -1668,17 +1739,26 @@ def sync_curated_sources(settings: Settings) -> dict:
                    curated_by=NULL,evidence=EXCLUDED.evidence,evidence_url=NULL""",
                 (host, source.name, source.page_url, source.api_url, CURATED_EVIDENCE),
             )
-        gone = sorted(host for host, row in existing.items()
-                      if (row["evidence"] == CURATED_EVIDENCE and host not in SOURCES) or not feed_host_allowed(row["api_url"]))
+        gone = sorted(host for host, row in existing.items() if row["evidence"] == CURATED_EVIDENCE and host not in SOURCES)
         if gone:
             conn.execute("DELETE FROM status_cache WHERE site_host=ANY(%s)", (gone,))
             conn.execute("DELETE FROM status_sources WHERE site_host=ANY(%s)", (gone,))
-    return {"curated": sum(1 for source in SOURCES.values() if feed_host_allowed(source.api_url)), "added": added, "changed": changed, "removed": len(gone)}
+    return {"curated": len(SOURCES), "added": added, "changed": changed, "removed": len(gone)}
+
+
+FEED_DECISION_ONLY_MAX = 30  # feeds with no stored statement whose robots.txt must be read first, per cron run (D50)
 
 
 def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Source | None]]:
     """Feeds the cron should read now, earliest first: every enabled curated mapping (D44) and every enabled
-    mapping registered by a lookup (D22). Hosts that share one feed address are read once (aliases)."""
+    mapping registered by a lookup (D22). Hosts that share one feed address are read once (aliases). Feeds that
+    have a stored statement are listed before those without one, then by due time."""
+    ready, _decisions = _due_groups(conn, now)
+    return [(group["due"], group["hosts"], group["source"]) for group in ready]
+
+
+def _due_groups(conn, now: datetime) -> tuple[list[dict], dict]:
+    """The due feeds as dicts (due, hosts, source, cached, api_url) in reading order, and the stored robots.txt decisions."""
     from .background_reads import feed_next_due
 
     rows = conn.execute(
@@ -1691,11 +1771,10 @@ def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Sou
            ORDER BY s.site_host""",
         (CURATED_EVIDENCE,),
     ).fetchall()
+    decisions = feed_robots.load_all(conn)
     groups: dict[str, dict] = {}
     for row in rows:
         host = row["site_host"]
-        if not feed_host_allowed(row["api_url"]):
-            continue
         source = SOURCES.get(host)
         if source is not None:
             key = "feed:" + source.api_url
@@ -1703,15 +1782,24 @@ def due_feeds(conn, now: datetime) -> list[tuple[datetime | None, list[str], Sou
             key, source = "host:" + host, None  # read by refresh_one, which rebuilds and checks the source
         else:
             continue
-        due = feed_next_due(row, CRON_IDLE)
-        group = groups.setdefault(key, {"hosts": [], "source": source, "due": due})
+        feed_host, feed_path = feed_robots.host_and_path(row["api_url"])
+        decision = decisions.get(feed_host)
+        if decision is not None and feed_path in decision.decisions and not decision.allows(feed_path):
+            # Its host's robots.txt does not allow the feed: nothing to read until that decision lapses (24 hours,
+            # an hour when the file could not be read), then the read of the file itself is what is due (D50).
+            due = decision.expires_at()
+        else:
+            due = feed_next_due(row, CRON_IDLE)
+        group = groups.setdefault(key, {"hosts": [], "source": source, "due": due, "cached": False, "api_url": row["api_url"]})
         group["hosts"].append(host)
+        group["cached"] = group["cached"] or row["fetched_at"] is not None
         if due is None or (group["due"] is not None and due < group["due"]):
             group["due"] = due
-    ready = [(group["due"], group["hosts"], group["source"]) for group in groups.values()
-             if group["due"] is None or group["due"] <= now]
+    ready = [group for group in groups.values() if group["due"] is None or group["due"] <= now]
     floor = datetime.min.replace(tzinfo=timezone.utc)
-    return sorted(ready, key=lambda item: (item[0] or floor, item[1][0]))
+    # A feed with a stored statement is read before one without, whatever their due times: the 15-minute refresh of
+    # an active status must not wait behind feeds that have never been read (D50).
+    return sorted(ready, key=lambda g: (0 if g["cached"] else 1, g["due"] or floor, g["hosts"][0])), decisions
 
 
 def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, limit: int = FEED_BATCH_MAX,
@@ -1725,27 +1813,46 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
         raise ValueError(f"limit must be 1-{FEED_BATCH_MAX}")
     from .background_reads import _pace
 
-    deadline = _clock() + time_budget
+    started = _clock()
+    deadline = started + time_budget
 
     def within_budget() -> bool:
         return _clock() <= deadline
 
+    now = now or datetime.now(timezone.utc)
     with connect(settings) as conn:
-        ready = due_feeds(conn, now or datetime.now(timezone.utc))
+        ready, decisions = _due_groups(conn, now)
     result = {"checked": 0, "updated": 0, "failed": 0, "remaining": len(ready)}
     own_client = client is None
     client = client or httpx.Client(timeout=4.0, follow_redirects=False, trust_env=False)
     try:
-        for _due, hosts, source in ready[:limit]:
-            if not within_budget():
+        attempted = decision_only = 0
+        for group in ready:
+            hosts, source = group["hosts"], group["source"]
+            if attempted >= limit or not within_budget():
                 break
+            if not group["cached"]:
+                # No statement stored yet: the read that decides may be all this feed costs (a blocked host). Only so
+                # many of those per run, so the first runs after the change do not use up the budget on them while
+                # feeds that already have a statement wait; the rest stay due for the next run (D50).
+                feed_host, feed_path = feed_robots.host_and_path(group["api_url"])
+                known = decisions.get(feed_host)
+                paths = feed_paths(source) if source is not None else (feed_path,)
+                if known is None or not known.current(paths, now):
+                    if decision_only >= FEED_DECISION_ONLY_MAX or _clock() > started + time_budget / 2:
+                        continue  # at most 30 of them, and none after half the run's time
+                    decision_only += 1
+            attempted += 1
             _pace()
             if source is None:
-                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget)
+                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True)
             else:
                 ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget)
                 if ok is None:
                     continue  # read elsewhere right now (or just now): it stays due for a later run
+            if ok is BLOCKED:
+                result["remaining"] -= 1  # its host's robots.txt disallows the feed: not read, not a failure
+                continue
             result["checked"] += 1
             result["remaining"] -= 1
             result["updated" if ok else "failed"] += 1

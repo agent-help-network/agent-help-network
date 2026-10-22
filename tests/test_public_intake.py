@@ -52,7 +52,7 @@ def public_client():
 def unpaced_background_reads(monkeypatch):
     # The worker spaces external reads 0.5 s apart; the stub readers below need no spacing.
     monkeypatch.setattr(background_reads, "MIN_READ_INTERVAL", 0.0)
-    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None: None)
+    monkeypatch.setattr(background_reads, "discover", lambda _host, _digest=None, **_kw: None)
 
 
 def run_queue(settings, limit=50):
@@ -523,7 +523,7 @@ def test_failure_stage_guides_lookup_but_does_not_create_observation(public_clie
 def test_first_lookup_discovers_first_party_statuspage(public_client, monkeypatch):
     settings, client = public_client
     calls = []
-    def fake_discover(host, digest=None):
+    def fake_discover(host, digest=None, **_kw):
         calls.append(host)
         digest["body_sha256"] = "c" * 64
         return (

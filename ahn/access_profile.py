@@ -268,10 +268,29 @@ def _disallow_samples(rules: list[tuple[str, str]]) -> list[str]:
 def _path_matches(pattern: str, path: str) -> bool:
     if not pattern:
         return False
+    # `*` matches any run of characters, a trailing `$` anchors the end. Matched piece by piece (the leftmost
+    # occurrence of each piece after the previous one is always enough), so the cost is bounded by the pattern and
+    # path lengths; a regular expression backtracks without bound on a file with many `*`.
     anchored = pattern.endswith("$")
     core = pattern[:-1] if anchored else pattern
-    regex = ".*".join(re.escape(part) for part in core.split("*")) + ("$" if anchored else "")
-    return re.match(regex, path) is not None
+    parts = core.split("*")
+    if len(parts) == 1:
+        return path == core if anchored else path.startswith(core)
+    if not path.startswith(parts[0]):
+        return False
+    pos = len(parts[0])
+    for piece in parts[1:-1]:
+        if piece:
+            found = path.find(piece, pos)
+            if found < 0:
+                return False
+            pos = found + len(piece)
+    last = parts[-1]
+    if not last:
+        return True
+    if anchored:
+        return path.endswith(last) and len(path) - len(last) >= pos
+    return path.find(last, pos) >= 0
 
 
 def _root_allowed(rules: list[tuple[str, str]]) -> bool:
