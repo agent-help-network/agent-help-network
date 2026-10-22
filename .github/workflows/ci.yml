@@ -56,4 +56,6 @@ jobs:
       - if: matrix.core != ''
         run: python -m pip install "${{ matrix.core }}"
       - run: python -m pytest -q clients/langchain-ahn/tests
-      - run: python -m build clients/langchain-ahn --outdir dist && python -m twine check dist/*
+      - if: matrix.core == ''
+        # the old langchain-core pins an old packaging that twine cannot import; the build check needs only one leg
+        run: python -m build clients/langchain-ahn --outdir dist && python -m twine check dist/*
