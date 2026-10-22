@@ -10,6 +10,7 @@ copied into it). The tool never raises for a failed or slow lookup (2 seconds at
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any, Literal, Optional, Type
 
 from ahn_client._adapter import DEFAULT_TIMEOUT, abounded_check, bounded_check
@@ -83,9 +84,30 @@ def format_result(result: Result) -> str:
     return result.summary() + "\n\n" + json.dumps(data, separators=(",", ":"))
 
 
+_warned = False
+
+
+def _unexpected(error: Exception) -> str:
+    """An exception that is not a network failure (those never raise) means a bug or an incompatible ahn-client:
+    say so once, as a warning, and still give the agent a plain no-answer text so its run goes on."""
+    global _warned
+    if not _warned:
+        _warned = True
+        warnings.warn(
+            f"langchain-ahn: the lookup failed unexpectedly ({type(error).__name__}: {error}); "
+            "this may be an incompatible ahn-client version. The tool returns 'no answer' meanwhile.",
+            RuntimeWarning, stacklevel=3)
+    return NO_ANSWER
+
+
 def _target(hostname: str, error_class: Any, failure_stage: Any, http_status: Any, challenge: Any,
             retry_after: Any, via: Any) -> Any:
     """``(host, error_class, failure_stage, codes)``, or None when nothing may be sent."""
+    if not isinstance(hostname, str):
+        return None
+    hostname = hostname.strip()
+    if any(c.isspace() or ord(c) < 32 for c in hostname):
+        return None  # a hostname has no whitespace or control characters; do not let eligible_host glue the parts together
     host = eligible_host(hostname)
     if host is None:
         return None
@@ -110,10 +132,10 @@ class AHNLookupTool(BaseTool):
             if target is None:
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target
-            result = bounded_check(host, ec, stage, ADAPTER, self.timeout, codes)
+            result = bounded_check(host, ec, stage, adapter=ADAPTER, timeout=self.timeout, extra=codes)
             return format_result(result) if result else NO_ANSWER
-        except Exception:
-            return NO_ANSWER
+        except Exception as error:
+            return _unexpected(error)
 
     async def _arun(self, hostname: str, error_class: Optional[str] = None, failure_stage: Optional[str] = None,
                     http_status: Optional[int] = None, challenge: Optional[str] = None, retry_after: Optional[str] = None,
@@ -123,7 +145,7 @@ class AHNLookupTool(BaseTool):
             if target is None:
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target
-            result = await abounded_check(host, ec, stage, ADAPTER, self.timeout, codes)
+            result = await abounded_check(host, ec, stage, adapter=ADAPTER, timeout=self.timeout, extra=codes)
             return format_result(result) if result else NO_ANSWER
-        except Exception:
-            return NO_ANSWER
+        except Exception as error:
+            return _unexpected(error)

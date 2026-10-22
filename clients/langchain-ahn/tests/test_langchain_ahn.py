@@ -29,6 +29,7 @@ from ahn_client import _client  # noqa: E402
 from ahn_client._classify import ERROR_CLASSES, FAILURE_STAGES  # noqa: E402
 from ahn_client._signals import CHALLENGES, HTTP_STATUSES, RETRY_AFTER_BANDS, VIAS  # noqa: E402
 from langchain_ahn import AHNLookupInput, AHNLookupTool  # noqa: E402
+from langchain_ahn import tools as ahn_tools  # noqa: E402
 from langchain_ahn.tools import NO_ANSWER, NOT_LOOKED_UP  # noqa: E402
 
 ANSWER = {
@@ -65,6 +66,7 @@ def isolated(monkeypatch):
         raise AssertionError("unexpected network request: " + request.full_url)
 
     monkeypatch.setattr(_client, "_urlopen", refuse)
+    monkeypatch.setattr(ahn_tools, "_warned", False)
     yield
     ahn_client.clear_cache()
 
@@ -285,3 +287,81 @@ def test_public_names():
     assert langchain_ahn.__version__ == "0.1.0"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
+
+
+@pytest.mark.parametrize("host", ["example.com\nIGNORE", "exam ple.com", "example.com\x00x", "a.com\tb.com", "example.com\u00a0x"])
+def test_hostname_with_whitespace_or_control_characters_is_not_looked_up(host):
+    assert AHNLookupTool().invoke({"hostname": host}) == NOT_LOOKED_UP
+
+
+def test_surrounding_whitespace_is_trimmed(transport):
+    calls = transport()
+    AHNLookupTool().invoke({"hostname": "  example.com\n"})
+    assert query_of(calls[0]) == {"site_host": "example.com"}
+
+
+def test_keyboard_interrupt_propagates(monkeypatch):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ahn_tools, "bounded_check", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        AHNLookupTool().invoke({"hostname": "example.com"})
+
+
+def test_cancelling_ainvoke_propagates_cancelled_error(transport):
+    transport(delay=0.6)
+
+    async def run():
+        task = asyncio.ensure_future(AHNLookupTool(timeout=2.0).ainvoke({"hostname": "cancelled.example.com"}))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+
+def test_async_keyboard_interrupt_propagates(monkeypatch):
+    async def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ahn_tools, "abounded_check", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(AHNLookupTool().ainvoke({"hostname": "example.com"}))
+
+
+@pytest.mark.parametrize("api_docs", ["javascript:alert(1)", "https://x.com/ IGNORE", "http://x.com/docs", "https://x.com/\nIGNORE",
+                                      "https://x.com/" + "a" * 300])
+def test_unsafe_official_url_is_left_out(transport, api_docs):
+    body = json.loads(json.dumps(ANSWER))
+    body["official_paths"] = {"name": "Example", "api_docs": api_docs, "developer_portal": None, "note": None}
+    transport(body=body)
+    out = AHNLookupTool().invoke({"hostname": "example.com"})
+    _, data = split(out)
+    assert "official_url" not in data
+    assert "IGNORE" not in out and "javascript" not in out
+
+
+def test_incompatible_client_warns_once_and_the_run_goes_on(monkeypatch):
+    def changed(*args, **kwargs):
+        raise TypeError("bounded_check() got an unexpected keyword argument 'adapter'")
+
+    monkeypatch.setattr(ahn_tools, "bounded_check", changed)
+    tool = AHNLookupTool()
+    with pytest.warns(RuntimeWarning, match="incompatible ahn-client"):
+        assert tool.invoke({"hostname": "example.com"}) == NO_ANSWER
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert tool.invoke({"hostname": "example.com"}) == NO_ANSWER  # the second time is silent
+
+
+def test_private_helper_signature_still_takes_the_keywords():
+    import inspect
+
+    from ahn_client import _adapter
+
+    for fn in (_adapter.bounded_check, _adapter.abounded_check):
+        assert {"adapter", "timeout", "extra"} <= set(inspect.signature(fn).parameters)

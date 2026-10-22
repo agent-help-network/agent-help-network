@@ -31,7 +31,7 @@ tool = AHNLookupTool()
 print(tool.invoke({"hostname": "example.com", "error_class": "site_access", "http_status": 403}))
 ```
 
-The input is `hostname` and, optionally, `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) and four fixed codes: `http_status` (401, 402, 403, 407, 408, 429, 451 or 500-599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). The output is one summary line, a blank line, then a small JSON object (`recommendation`, `confidence`, `reasons`, `evidence_level`, `next_checks`, `official_url`, `blocked_agents`, `details_url`). Free text from a site or a status feed is never copied into it. `ainvoke` works too; the wait never blocks the event loop.
+The input is `hostname` and, optionally, `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) and four fixed codes: `http_status` (401, 402, 403, 407, 408, 429, 451 or 500-599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). The output is one summary line, a blank line, then a small JSON object (`host`, `recommendation`, `confidence`, `reasons`, `evidence_level`, `next_checks`, `official_url`, `blocked_agents`, `retry_after_seconds`, `details_url`). Free text from a site or a status feed is never copied into it. `ainvoke` works too; the wait never blocks the event loop.
 
 ### 2. Automatic: a line on a failed web tool call (LangChain v1)
 
@@ -57,12 +57,17 @@ Only a request like `GET https://agenthelpnetwork.com/v1/incidents/check?site_ho
 
 - No URL path, query string, page content, request or response body, headers, cookies or credentials.
 - No prompts, model output or tool arguments other than the hostname.
-- Nothing is sent for local, private, address-literal or single-label hosts, for `agenthelpnetwork.com` itself, for hosts in `AHN_CLIENT_SKIP_HOSTS` (comma separated), or at all when `AHN_CLIENT_DISABLE=1`.
+- Nothing is sent for private-looking names (local, address-literal or single-label names, by their spelling; there is no DNS check on your side), for a hostname that contains whitespace or control characters, for `agenthelpnetwork.com` itself, for hosts in `AHN_CLIENT_SKIP_HOSTS` (comma separated), or at all when `AHN_CLIENT_DISABLE=1`.
+
+## What the service does with a hostname
+
+The model chooses the `hostname` of `AHNLookupTool`, so it can name a host the service has not seen. When it first sees a host, the Agent Help Network **server** resolves the name through DNS and reads that site's `robots.txt` and `llms.txt` (in the background, never from your machine). If your environment restricts which hostnames may leave it, treat the tool's input as outbound data and filter it (for example with `AHN_CLIENT_SKIP_HOSTS`).
 
 ## Behavior you can rely on
 
 - The original exception of a failed tool is never changed or swallowed by this package.
 - A lookup ends within 2 seconds (`AHNLookupTool(timeout=...)`); a slow or failed lookup gives a plain "no answer" text, never an exception, and the agent's run continues as before.
+- A second call for the same host, error class and stage while the first is still running gets an immediate "no answer" (in-flight duplicates are not sent), so a stuck network never piles up threads.
 - Answers are cached in memory for 10 minutes per host, error class and stage.
 - A declared policy is not an access guarantee, and "no reports" does not mean a site works.
 
