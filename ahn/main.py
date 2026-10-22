@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from .compression import TextGZipMiddleware
 from .db import connect
 from . import lookup_signals
+from . import server_card
 from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
@@ -178,9 +179,18 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     app.mount("/static", OffloadingStaticFiles(directory=str(ROOT / "static")), name="static")
 
     if settings.public_mode:
+        card_body, card_etag = server_card.load_card()
         @app.get("/.well-known/mcp-registry-auth", include_in_schema=False)
         def mcp_registry_auth():
             return Response(MCP_REGISTRY_PROOF + "\n", media_type="text/plain; charset=utf-8")
+
+        @app.get("/.well-known/mcp/server-card.json", include_in_schema=False)
+        def mcp_server_card(request: Request):
+            # Static discovery metadata (no stored data, no external I/O), derived from server.json.
+            headers = {**server_card.CORS_HEADERS, "Cache-Control": server_card.CACHE_CONTROL, "ETag": card_etag}
+            if request.headers.get("if-none-match") == card_etag:
+                return Response(status_code=304, headers=headers)
+            return Response(card_body, media_type="application/json", headers=headers)
 
         @app.get("/.well-known/openai-apps-challenge", include_in_schema=False)
         def openai_apps_challenge():
