@@ -7,14 +7,17 @@ import logging
 import re
 from uuid import UUID
 
+from typing import Annotated, Any
+
 import httpx
+from pydantic import WithJsonSchema
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
-from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, valid_host
+from .models import Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
 from .tool_metrics import mcp_metric_token
 
 
@@ -72,6 +75,15 @@ mcp = MCPServer(
 )
 
 
+# The signal codes are advertised with their allowed values but accepted loosely (any JSON value): a wrong one is dropped
+# by lenient_codes, never refused. The schema is what the model sees; validation is deliberately wider than it.
+def _enum_schema(enum) -> dict:
+    return {"type": "string", "enum": [item.value for item in enum]}
+
+
+HTTP_STATUS_SCHEMA = {"type": "integer", "description": "HTTP status the site returned: 401, 402, 403, 407, 408, 429, 451 or 500-599. Leave out if unknown."}
+
+
 def outer_request_headers(ctx: Context | None) -> dict:
     """Headers of the caller's own request that the central API needs for its anonymous lookup count.
 
@@ -99,8 +111,10 @@ def outer_request_headers(ctx: Context | None) -> dict:
     structured_output=True,
 )
 async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "",
-                         http_status: int | float | str | None = None, challenge: str | int | float | bool | None = None,
-                         retry_after: str | int | float | bool | None = None, via: str | int | float | bool | None = None,
+                         http_status: Annotated[Any, WithJsonSchema(HTTP_STATUS_SCHEMA)] = None,
+                         challenge: Annotated[Any, WithJsonSchema(_enum_schema(Challenge))] = None,
+                         retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,
+                         via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
                          ctx: Context | None = None) -> CheckResponse:
     try:
         valid_host(site_host)

@@ -205,20 +205,20 @@ def record(conn, pepper: str, host: str, error_class: str | None, failure_stage:
     if signal.source_address:
         day = now.date()  # `now` is UTC
         digest = source_digest(pepper, day, host, signal.source_address)
-        if _new_source(conn, day, host, digest, minute, group, action):
-            new_source = True
+        # A source already seen today is found by its key (and locked); only a new one pays for the cap check.
+        previous = conn.execute(
+            "SELECT last_at,last_group,last_action FROM lookup_sources_daily WHERE day=%s AND site_host=%s AND source_digest=%s FOR UPDATE",
+            (day, host, digest)).fetchone()
+        if previous is None:
+            new_source = _new_source(conn, day, host, digest, minute, group, action)
         else:
-            previous = conn.execute(
-                "SELECT last_at,last_group,last_action FROM lookup_sources_daily WHERE day=%s AND site_host=%s AND source_digest=%s FOR UPDATE",
-                (day, host, digest)).fetchone()
-            if previous is not None:
-                new_source = previous["last_at"] < hour
-                if group != UNSPECIFIED and previous["last_group"] != UNSPECIFIED:
-                    waited = (minute - previous["last_at"]).total_seconds() / 60
-                    if RELOOKUP_MIN_MINUTES <= waited <= RELOOKUP_MAX_MINUTES:
-                        after_action = previous["last_action"]
-                conn.execute("UPDATE lookup_sources_daily SET last_at=%s,last_group=%s,last_action=%s WHERE day=%s AND site_host=%s AND source_digest=%s",
-                             (minute, group, action, day, host, digest))
+            new_source = previous["last_at"] < hour
+            if group != UNSPECIFIED and previous["last_group"] != UNSPECIFIED:
+                waited = (minute - previous["last_at"]).total_seconds() / 60
+                if RELOOKUP_MIN_MINUTES <= waited <= RELOOKUP_MAX_MINUTES:
+                    after_action = previous["last_action"]
+            conn.execute("UPDATE lookup_sources_daily SET last_at=%s,last_group=%s,last_action=%s WHERE day=%s AND site_host=%s AND source_digest=%s",
+                         (minute, group, action, day, host, digest))
     _count_lookup(conn, hour, host, (error_class or UNSPECIFIED, failure_stage or UNSPECIFIED, http_class, signal.challenge or UNSPECIFIED,
                                      signal.retry_after or UNSPECIFIED, signal.via or UNSPECIFIED, signal.client_kind, action, after_action),
                   1 if new_source else 0)

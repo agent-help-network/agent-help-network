@@ -264,3 +264,19 @@ def test_an_enormous_content_length_is_refused_not_a_server_error(client):
     """Same family as the 5000-digit http_status: a digit string past Python's int conversion limit must not become a 500."""
     response = client.post("/v1/observations", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": "9" * 5000})
     assert response.status_code < 500
+
+
+def test_mcp_schema_shows_the_allowed_values_while_validation_stays_loose():
+    tools = {t.name: t for t in asyncio.run(mcp_adapter.mcp.list_tools())}
+    props = tools["check_incident"].input_schema["properties"]
+    assert (props["challenge"]["type"], props["challenge"]["enum"]) == ("string", ["header", "none"])
+    assert (props["retry_after"]["type"], props["retry_after"]["enum"]) == ("string", ["none", "lt_60", "60_3600", "gt_3600"])
+    assert (props["via"]["type"], props["via"]["enum"]) == ("string", ["http_fetch", "browser", "unknown"])
+    assert props["http_status"]["type"] == "integer" and "500-599" in props["http_status"]["description"]
+    assert tools["check_incident"].input_schema["required"] == ["site_host"]
+
+
+@pytest.mark.parametrize("length", ["²", "4096²"])  # latin-1 superscript two: str.isdigit() is true, int() fails
+def test_non_ascii_digit_content_length_is_refused_not_a_server_error(client, length):
+    response = client.post("/v1/observations", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": length.encode("latin-1")})
+    assert response.status_code < 500

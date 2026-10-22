@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS lookup_signals_hourly_host ON lookup_signals_hourly (
 -- To tell separate clients apart without keeping an address: source_digest is a keyed digest of the IP address that
 -- is specific to this host and this UTC day, so the same address gives a different value for another host or day.
 -- last_at is cut to the minute, because the 10 to 60 minute re-lookup window cannot be told apart by hour; the hourly
--- cleanup cuts it to the hour once it is older than 61 minutes. last_group is the coarse kind of blocked lookup
+-- cleanup (every 15 minutes) cuts it to the hour once it is older than 61 minutes. last_group is the coarse kind of blocked lookup
 -- (outage, block, rate, login, or unspecified); last_action is the recommendation given. Rows are kept 2 days.
 CREATE TABLE IF NOT EXISTS lookup_sources_daily (
     day date NOT NULL,

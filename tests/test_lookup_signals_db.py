@@ -617,3 +617,42 @@ def test_queued_reads_are_committed_before_the_worker_is_woken(db, monkeypatch):
     with connect(db) as conn:
         queued = conn.execute("SELECT count(*) AS n FROM background_reads WHERE site_host=%s", (HOST,)).fetchone()["n"]
     assert queued >= 1 and seen == [queued]  # everything queued was already visible when the worker was woken
+
+
+# --- review round 3 -----------------------------------------------------------------------------
+
+def test_a_known_source_is_found_by_key_without_the_cap_count(db, monkeypatch):
+    with connect(db) as conn:
+        record(conn, 0)
+        monkeypatch.setattr(lookup_signals, "_new_source", lambda *a, **k: pytest.fail("the cap count ran for a known source"))
+        monkeypatch.setattr(lookup_signals, "SOURCES_DAY_ROW_CAP", 1)  # the table is "full": a known source still updates
+        assert record(conn, 20) == "use_official_path"
+        assert conn.execute("SELECT count(*) AS n FROM lookup_sources_daily").fetchone()["n"] == 1
+
+
+def test_the_cut_to_the_hour_runs_even_when_another_cleanup_step_fails(db, monkeypatch):
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    old = now - timedelta(minutes=70)
+    with connect(db) as conn:
+        conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                     "VALUES ((now() AT TIME ZONE 'UTC')::date,'cutme',repeat('f',64),%s,'block','unknown')", (old,))
+    def broken(*_a, **_k):
+        raise RuntimeError("an earlier cleanup step failed")
+    monkeypatch.setattr(platform_metrics, "prune_reports", broken)
+    with pytest.raises(RuntimeError):
+        platform_metrics.prune_analytics(db.database_url)
+    assert rows(db, "lookup_sources_daily")[0]["last_at"] == old.replace(minute=0)
+
+
+def test_the_cut_to_the_hour_is_utc_whatever_the_session_time_zone(db):
+    old = (datetime.now(timezone.utc) - timedelta(minutes=70)).replace(second=0, microsecond=0)
+    with connect(db) as conn:
+        conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                     "VALUES ((now() AT TIME ZONE 'UTC')::date,'tz',repeat('g',64),%s,'block','unknown')", (old,))
+        conn.execute("ALTER DATABASE ahn_test SET timezone TO 'Asia/Kolkata'")  # UTC+5:30: a local cut would land on :30 UTC
+    try:
+        platform_metrics.cut_source_minutes(db.database_url)
+    finally:
+        with connect(db) as conn:
+            conn.execute("ALTER DATABASE ahn_test RESET timezone")
+    assert rows(db, "lookup_sources_daily")[0]["last_at"] == old.replace(minute=0)

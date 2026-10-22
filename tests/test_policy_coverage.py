@@ -935,8 +935,8 @@ LOOKUP_SIGNAL_COLUMNS = {
     },
     "lookup_sources_daily": {
         "day": _LS_DIGEST, "site_host": _LS_DIGEST, "source_digest": _LS_DIGEST,
-        "last_at": Phrase("last lookup of it (kept to the minute for at most 61 minutes, then cut to the hour)",
-                          "마지막 조회 시각(61분까지만 분 단위로 두고 이후 시 단위로 낮춤)"),
+        "last_at": Phrase("last lookup of it (kept to the minute for about an hour, until the next cleanup after it is 61 minutes old, then cut to the hour)",
+                          "마지막 조회 시각(약 1시간 동안, 61분이 지난 뒤 처음 도는 정리 때까지만 분 단위로 두고 이후 시 단위로 낮춤)"),
         "last_group": Phrase("the kind of blocked lookup it was (outage, block, rate limit or sign-in)", "막힘 유형(장애·차단·속도 제한·로그인 중 하나)"),
         "last_action": _LS_ACTION,
     },
@@ -953,7 +953,9 @@ def test_every_lookup_signal_column_is_named_in_the_policy():
     assert_phrases("lookup signal columns", {lang: policy_text(lang) for lang in LANGS}, wanted)
     # The minute-precision claim: the cleanup literal and the constant agree with the policy's 61.
     from ahn import lookup_signals
-    assert lookup_signals.MINUTE_PRECISION_MINUTES == 61 and "interval '61 minutes'" in inspect.getsource(platform_metrics.prune_analytics)
+    assert lookup_signals.MINUTE_PRECISION_MINUTES == 61 and "interval '61 minutes'" in inspect.getsource(platform_metrics.cut_source_minutes)
+    for lang, claim in (("en", "A cleanup job that runs every 15 minutes deletes expired rows"), ("ko", "15분마다 도는 정리 작업")):
+        assert claim in section(lang, "06"), f"the {lang} policy does not say how often the cleanup runs"
 
 
 def test_lookup_signal_retention_and_exclusions_match_the_code():
