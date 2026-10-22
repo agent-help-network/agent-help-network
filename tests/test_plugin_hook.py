@@ -1145,3 +1145,18 @@ def test_maintenance_indicator_is_a_contract_value_and_an_unknown_one_still_fall
     assert "Provider status: maintenance/fresh." in ok
     odd = hook.summary("example.com", answer(provider_status={**shown, "indicator": "scheduled_maintenance"}), "https://x")
     assert "Provider status: unknown/fresh." in odd and "scheduled_maintenance" not in odd
+
+
+def test_directory_listing_metadata_and_readme_sections():
+    # Claude plugin directory: description, author, homepage, repository, license; README (40+ words) with trigger table and privacy links.
+    manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    entry, = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))["plugins"]
+    for key in ("description", "author", "homepage", "repository", "license", "keywords"):
+        assert manifest[key], key
+    assert manifest["author"]["email"] == "support@agenthelpnetwork.com"
+    assert manifest["license"] == entry["license"] == "Apache-2.0"
+    assert manifest["homepage"] == entry["homepage"] and manifest["repository"] == entry["repository"]
+    readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+    assert "## When a line is added" in readme and "## Privacy and data handling" in readme
+    for link in ("https://agenthelpnetwork.com/en/policy", "https://agenthelpnetwork.com/en/terms", "support@agenthelpnetwork.com"):
+        assert link in readme, link

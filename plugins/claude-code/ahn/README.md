@@ -14,6 +14,32 @@ Agent Help Network is an independent project. It is not an official service of A
 
 The hook is read-only: it sends a hostname and enum codes and reports nothing. The bundled MCP server is not read-only: besides `check_incident` it also offers `report_observation`, a write tool that submits an observation to Agent Help Network. Claude should call it only with the user's explicit approval for that submission, never automatically; the hook and the skill never call it.
 
+## When a line is added
+
+The plugin acts only after a web step has already failed, and only for a failure that reports a block or an outage. It never runs before a request and never changes a request.
+
+| What happened | Line added? | What is sent to Agent Help Network |
+| :- | :- | :- |
+| `WebFetch` answered 401 or 407 | yes | hostname; `error_class=login_auth`; `http_status`; `via` |
+| `WebFetch` answered 402, 403 or 451 | yes | hostname; `error_class=site_access` (`human_verification` when a `cf-mitigated: challenge` header or the page text shows a challenge); `http_status`; `via` |
+| `WebFetch` answered 408, 429 or a 5xx | yes | hostname; `error_class=service_error`; `http_status`; `via`; a `retry_after` band when the result carries a `Retry-After` header |
+| A fetch or browser tool threw an error naming a block, a login, a challenge, a timeout or a 5xx | yes | hostname; the matching `error_class`; `failure_stage` |
+| DNS failure, refused connection, or Claude Code's own `is unable to fetch from <host>` refusal | yes | hostname; `error_class=site_access`; `failure_stage=before_target_response` |
+| Any other 4xx (400, 404, 405, 410, 422 ...), or an error text that names no block and no outage | no | nothing |
+| The tool call was interrupted, the tool was `WebSearch`, the host is local or private, the same host was looked up in the last 10 minutes, or `AHN_HOOK_DISABLE=1` is set | no | nothing |
+| A browser step that "succeeds" but shows a block or CAPTCHA page, or `curl` run through Bash | no (use the `ahn-lookup` skill or the MCP tool by hand) | nothing |
+
+What is never sent: URL paths or queries, page content, error text, conversation text, credentials, cookies, account names, session or user identifiers, tool names. The hook makes no POST request and never calls `report_observation`. The precise rules are under [Triggers](#triggers), [What it sends](#what-it-sends) and [Which errors are looked up](#which-errors-are-looked-up).
+
+## Privacy and data handling
+
+- A lookup sends a public hostname and fixed enum codes to `https://agenthelpnetwork.com/v1/incidents/check`. There is no account, sign-in or API key.
+- The service keeps coarse per-host counts and, for a short time, a keyed digest of the caller's IP address that is specific to one host and one day. It does not keep URLs, page content or conversation text. Retention periods are listed in the [privacy policy](https://agenthelpnetwork.com/en/policy).
+- The plugin keeps a small cache of hostnames and lookup times from the last 10 minutes on your machine (see [On your machine](#on-your-machine)) and writes no logs.
+- Privacy policy: <https://agenthelpnetwork.com/en/policy>. Terms: <https://agenthelpnetwork.com/en/terms>. Security reports: <https://github.com/agent-help-network/agent-help-network/blob/main/SECURITY.md>.
+- Support, correction and deletion requests: <support@agenthelpnetwork.com> (also <https://agenthelpnetwork.com/en/support>).
+- Source code and license: <https://github.com/agent-help-network/agent-help-network>, Apache-2.0.
+
 ## Contents
 
 | File | Purpose |
