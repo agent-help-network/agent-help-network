@@ -174,7 +174,8 @@ def test_bytes_bom_and_line_endings_match_the_text_form():
 _KEYS = ["User-agent", "user-agent", "USER-AGENT", "User agent", "useragent", "Allow", "allow", "Disallow", "DISALLOW",
          "Sitemap", "Crawl-delay", "Content-Signal", "Content-Usage", "Host", "Noindex", "Unknown-Key", "", " ", "#", "User-agent#"]
 _AGENTS = [token for token, _kind in AGENT_USER_AGENTS] + ["*", "* ", "/bot", "/", "", " ", "Claude", "GPT", "Go", "*bot",
-                                                           "gptbot/1.1", "Mozilla/5.0 (X)", "chatgpt-user,claude-user", "ü-bot"]
+                                                           "gptbot/1.1", "Mozilla/5.0 (X)", "chatgpt-user,claude-user", "ü-bot",
+                                                           "*,", "*, claude-user", "claude-user, *"]
 _VALUES = ["/", "", "/*", "/$", "/private", "/*.pdf$", "*", "$", "https://example.com/s.xml", "10", "-1", "nan", "inf",
            "1e400", "ai-input=no", "/ /", "# not a comment value", ":", "::", "\x00", "\u2028", "\x0c"]
 
@@ -230,15 +231,16 @@ def _reference_root(text: str, token: str) -> tuple[bool, bool]:
             # robots.cc reads the product token's leading run of name characters (dashes folded as the service does),
             # and of a comma-separated list only the first item (the service's default reading takes every item; the
             # random-file test below checks that difference through grouping_differs_by_parser).
-            for piece in value.split(",")[:1]:
-                words = piece.split("/", 1)[0].split()
-                name = words[0].translate(_DASHES).lower() if words else ""
-                run = re.match(r"[a-z0-9_-]+", name)
-                agent = "*" if name == "*" else (run.group() if run else "")
-                if agent == "*":
-                    seen_global = True
-                elif _applies(agent, token.lower()):
-                    seen_specific = ever_specific = True
+            # robots.cc 623-627: the wildcard only for "*" alone or "*" and whitespace, so "*," names nobody.
+            if value == "*" or (value.startswith("*") and value[1:2].isspace()):
+                agent = "*"
+            else:
+                run = re.match(r"[a-z0-9_-]+", value.translate(_DASHES).lower())
+                agent = run.group() if run else ""
+            if agent == "*":
+                seen_global = True
+            elif _applies(agent, token.lower()):
+                seen_specific = ever_specific = True
         elif key in ("allow", "disallow") and (seen_specific or seen_global):
             seen_separator = True
             if seen_specific:
@@ -318,6 +320,39 @@ def test_unicode_dash_in_a_group_name_reads_as_a_hyphen():
         parsed = parse_robots(text)
         assert _rule(parsed, "Perplexity-User")["explicit_group"] is True and parsed["agents_blocked"] == ["Perplexity-User"]
         assert parsed["grouping_differs_by_parser"] == []
+
+
+def test_a_wildcard_followed_by_a_comma_is_read_as_google_reads_it():
+    # robots.cc 623-627: "*" alone or "*" and whitespace is the wildcard; ExtractUserAgent gives "" for "*,", so that
+    # line names nobody under Google's reading. The service's default reading splits the list and keeps "*".
+    for value, ours, google in (("*,", ["*"], []), ("*, Claude-User", ["*", "claude-user"], []),
+                                ("Claude-User, *", ["claude-user", "*"], ["claude-user"]), ("* Claude-User", ["*"], ["*"]),
+                                ("*", ["*"], ["*"]), ("*bot", [], [])):
+        text = f"User-agent: {value}\nDisallow: /\n"
+        assert split_groups(text)[0][0]["agents"] == ours, value
+        assert split_groups(text, google_style=True)[0][0]["agents"] == google, value
+    differs = parse_robots("User-agent: *,\nDisallow: /\n")["grouping_differs_by_parser"]
+    assert "*" in differs and parse_robots("User-agent: *\nDisallow: /\n")["grouping_differs_by_parser"] == []
+
+
+def test_a_user_agent_line_reads_at_most_the_cap_and_each_name_once():
+    from ahn.access_profile import MAX_AGENTS_PER_LINE
+    assert MAX_AGENTS_PER_LINE == 64
+    names = [f"bot{i}" for i in range(MAX_AGENTS_PER_LINE + 10)]
+    groups, _ = split_groups("User-agent: " + ", ".join(names) + "\nDisallow: /\n")
+    assert groups[0]["agents"] == names[:MAX_AGENTS_PER_LINE]  # the rest of the line is dropped
+    # A token after the cap is not named by that line, so it falls back to the * group (here allowed).
+    late = ", ".join(names[:MAX_AGENTS_PER_LINE] + ["Claude-User"])
+    parsed = parse_robots(f"User-agent: {late}\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+    assert parsed["agents_blocked"] == [] and _rule(parsed, "Claude-User")["explicit_group"] is False
+    # Repeated names, in one line or across the lines of a group, are kept once.
+    groups, _ = split_groups("User-agent: a1, a1, A1\nUser-agent: a1\nUser-agent: b2\nDisallow: /\n")
+    assert groups[0]["agents"] == ["a1", "b2"]
+    # A hostile line stays small and fast.
+    import time
+    start = time.perf_counter()
+    groups, _ = split_groups("User-agent: " + "a," * 131_000 + "\nDisallow: /\n")
+    assert groups[0]["agents"] == ["a"] and time.perf_counter() - start < 0.5
 
 
 def test_other_non_ascii_characters_are_not_read_as_dashes():

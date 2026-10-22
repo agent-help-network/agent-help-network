@@ -153,6 +153,30 @@ def robots_text(text: str | bytes) -> str:
 # minus, U+FE63 small hyphen-minus, U+FF0D fullwidth hyphen-minus), read as "-": `perplexity\u2011user` names
 # Perplexity-User. It only ever makes a name match more tokens, never fewer.
 _PRODUCT = re.compile(r"[a-z0-9_-]+")
+# At most this many comma-separated names are read from one User-agent line; the rest of the line is dropped. Real files
+# list a handful; the cap keeps a hostile line ("a,a,a,...") from naming hundreds of thousands of agents.
+MAX_AGENTS_PER_LINE = 64
+
+
+def _product_name(item: str) -> str:
+    """One name as this service reads it: first word, cut at "/", dashes folded, lowercased, then its leading run of
+    [a-z0-9_-]; "*" stays "*"; "" when nothing is left."""
+    words = item.split("/", 1)[0].split()
+    name = words[0].translate(_DASHES).lower() if words else ""
+    if name == "*":
+        return "*"
+    match = _PRODUCT.match(name)
+    return match.group() if match else ""
+
+
+def _google_name(value: str) -> str:
+    """The one name Google's robots.cc reads from a whole User-agent value (robots.cc lines 623-627 and
+    ExtractUserAgent): the wildcard only for "*" alone or "*" followed by whitespace; otherwise the leading run of name
+    characters, so "*," and "*, Claude-User" name nobody and "Claude-User, ChatGPT-User" names claude-user."""
+    if value == "*" or (value.startswith("*") and value[1:2].isspace()):
+        return "*"
+    match = _PRODUCT.match(value.translate(_DASHES).lower())
+    return match.group() if match else ""
 _DASHES = str.maketrans({char: "-" for char in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"})
 
 
@@ -174,6 +198,7 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
     """
     groups: list[dict] = []
     current: dict | None = None
+    names: set[str] = set()  # the names the current group already has (each is kept once)
     in_agent_lines = False  # from a user-agent line until the next allow/disallow line
     other_record = False    # a non-rule record came after this group's agent lines, before any rule
     break_pending = False   # ... and a blank line followed it: the next user-agent line opens a new group
@@ -191,18 +216,19 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
             if current is None or not in_agent_lines or break_pending:
                 current = {"agents": [], "rules": [], "crawl_delay": None, "other": []}
                 groups.append(current)
+                names = set()
                 other_record = break_pending = False
             # Each name is the leading run of name characters of its product token, dashes folded, as Google's
             # robots.cc reads it ("Claude-User/1.0" names claude-user). A comma-separated list ("Claude-User,
             # ChatGPT-User") names every listed agent: the host plainly means them all, and reading only the first
-            # would answer the others "allowed". Google reads only the first; google_style=True does too, so
-            # parse_robots reports the difference in grouping_differs_by_parser.
-            for piece in (value.split(",")[:1] if google_style else value.split(",")):
-                words = piece.split("/", 1)[0].split()
-                name = words[0].translate(_DASHES).lower() if words else ""
-                match = _PRODUCT.match(name)
-                product = "*" if name == "*" else (match.group() if match else "")
-                if product:
+            # would answer the others "allowed". Google reads the whole value as one name (_google_name); that is
+            # google_style, and parse_robots reports any difference in grouping_differs_by_parser. At most
+            # MAX_AGENTS_PER_LINE items of a line are read, and a group keeps each name once.
+            items = [_google_name(value)] if google_style else [
+                _product_name(item) for item in value.split(",", MAX_AGENTS_PER_LINE)[:MAX_AGENTS_PER_LINE]]
+            for product in items:
+                if product and product not in names:
+                    names.add(product)
                     current["agents"].append(product)
             in_agent_lines = True
             continue
