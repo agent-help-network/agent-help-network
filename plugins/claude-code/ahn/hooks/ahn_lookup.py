@@ -19,6 +19,11 @@ Environment:
 A lookup carries the hostname, error_class, failure_stage and, when the tool result already holds them, four more
 enum codes: http_status, challenge, retry_after and via. Nothing else is read out of the result for the request: no
 path, query, body text or header value leaves the machine.
+
+From version 0.3.2 a lookup that comes from Claude Code's own WebFetch also carries agent_vendor=anthropic (WebFetch
+identifies itself as Claude-User). Any other tool, and a WebFetch whose tool name is not exactly "WebFetch", sends no
+vendor: when the fetcher is not known, nothing is claimed. The service judges robots.txt for that vendor; the hook
+decides nothing about it.
 """
 
 from __future__ import annotations
@@ -103,6 +108,7 @@ HOST_LIKE = re.compile(r"[A-Za-z0-9.-]+")
 # Characters IDNA2003 (Python's "idna" codec) maps to a different domain than IDNA2008 (browsers) uses.
 IDNA_DEVIATIONS = frozenset("ßς‌‍")
 MAX_AGENT_TOKENS = 64
+AGENT_VENDOR_WEBFETCH = "anthropic"
 
 # Closed enums of the response contract (docs/api-contract.en.md; ahn/models.py is the machine form).
 # A value outside them is dropped, never shown.
@@ -595,11 +601,20 @@ def valid_signals(found: dict | None) -> dict:
     return {name: found[name] for name, ok in allowed if name in found and ok(found[name])}
 
 
-def lookup_url(host: str, error_class: str, stage: str | None, extra: dict | None = None) -> str:
+def vendor_for(tool) -> str | None:
+    """"anthropic" for Claude Code's own WebFetch (its requests send the Claude-User token), None for every other tool:
+    an MCP browser or fetch server, or a Bash command, may send any user agent, so no vendor is claimed for it."""
+    return AGENT_VENDOR_WEBFETCH if tool == "WebFetch" else None
+
+
+def lookup_url(host: str, error_class: str, stage: str | None, extra: dict | None = None, vendor: str | None = None) -> str:
     query = {"site_host": host, "error_class": error_class}
     if stage:
         query["failure_stage"] = stage
     query.update(valid_signals(extra))
+    # Not a signal code: the service does not count or store it, it only decides the robots part of the answer.
+    if vendor == AGENT_VENDOR_WEBFETCH:
+        query["agent_vendor"] = vendor
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
@@ -780,9 +795,12 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     host = apex(name)
     if recently_seen(host, env=env):
         return None, f"{host} looked up within 10 minutes"
-    url = lookup_url(host, error_class, stage)
+    tool = payload.get("tool_name") if isinstance(payload, dict) else None
+    vendor = vendor_for(tool)
+    # The agent_vendor stays in the "Full JSON" link: it is not counted, and the link then gives the answer shown in the line.
+    url = lookup_url(host, error_class, stage, vendor=vendor)
     # The signals ride on the request only. The "Full JSON" link in the line stays without them, so following it counts nothing twice.
-    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload))), url, retry_note(payload, name) if error_class == "service_error" else "")
+    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload), vendor)), url, retry_note(payload, name) if error_class == "service_error" else "")
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 

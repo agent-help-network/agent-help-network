@@ -41,7 +41,7 @@ ANSWER = {
     "next_checks": [{"code": "response_observed", "text": "..."}],
 }
 # Design table (parameter names and values) the server implements; a change here is a contract change.
-ALLOWED_PARAMETERS = {"site_host", "error_class", "failure_stage", "http_status", "challenge", "retry_after", "via"}
+ALLOWED_PARAMETERS = {"site_host", "error_class", "failure_stage", "http_status", "challenge", "retry_after", "via", "agent_vendor"}
 STATUSES = {401, 402, 403, 407, 408, 429, 451, *range(500, 600)}
 CHALLENGES = {"header", "none"}
 BANDS = {"none", "lt_60", "60_3600", "gt_3600"}
@@ -288,7 +288,7 @@ def test_no_path_query_text_or_header_value_is_sent(hook_requests):
 def test_a_thrown_error_sends_via_and_never_a_status(hook_requests):
     run_hook(failure_event("Request failed with status code 403 for /account/claims/12345"))
     (request,) = hook_requests
-    assert query_of(request) == {"site_host": "example.com", "error_class": "site_access", "via": "http_fetch"}
+    assert query_of(request) == {"site_host": "example.com", "error_class": "site_access", "via": "http_fetch", "agent_vendor": "anthropic"}
 
 
 def test_a_browser_tool_failure_sends_via_browser(hook_requests):
@@ -341,7 +341,7 @@ def test_the_enum_lists_are_the_hooks():
     for name in ("BROWSER_TOOL", "FETCH_TOOL"):
         assert getattr(hook, name).pattern == getattr(_claude_code, name).pattern
         assert getattr(hook, name).flags == getattr(_claude_code, name).flags
-    assert set(_signals.SIGNAL_NAMES) == ALLOWED_PARAMETERS - {"site_host", "error_class", "failure_stage"}
+    assert set(_signals.SIGNAL_NAMES) == ALLOWED_PARAMETERS - {"site_host", "error_class", "failure_stage", "agent_vendor"}
 
 
 @pytest.mark.parametrize("value", ["0", "1", "59", "60", "61", "3599", "3600", "3601", "999999", "9999999999", "99999999999", "", " 7 ",
@@ -562,16 +562,16 @@ def test_the_timeout_stays_two_seconds(monkeypatch):
 def test_versions_and_the_documents_name_the_codes():
     manifest = json.loads((ROOT / "plugins/claude-code/ahn/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.1"
-    assert ahn.__version__ == "0.4.0"
+    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.2"
+    assert ahn.__version__ == "0.5.0"
     plugin_readme = (ROOT / "plugins/claude-code/ahn/README.md").read_text(encoding="utf-8")
     client_readme = (ROOT / "clients/python/README.md").read_text(encoding="utf-8")
-    assert "version 0.3.1 |" in plugin_readme
+    assert "version 0.3.2 |" in plugin_readme
     for name in ("http_status", "challenge", "retry_after", "via"):
         assert f"`{name}`" in plugin_readme and f"`{name}`" in client_readme
     for value in ("lt_60", "60_3600", "gt_3600", "http_fetch", "browser", "header"):
         assert f"`{value}`" in plugin_readme and f"`{value}`" in client_readme
-    assert "ahn-client/0.4.0" in client_readme and "ahn-client/0.3.0" not in client_readme
+    assert "ahn-client/0.5.0" in client_readme and "ahn-client/0.4.0" not in client_readme
     # Nothing is promised that does not exist yet.
     for text in (plugin_readme, client_readme):
         assert "AHN_HOOK_FEEDBACK" not in text and "feedback token" not in text
@@ -613,7 +613,8 @@ def test_the_hook_and_client_lines_are_the_same_for_the_same_answer(hook_request
     output, _ = run_hook(post_tool_use(429, {"x": "y"}))
     line = output["hookSpecificOutput"]["additionalContext"]
     result = asyncio.run(ahn_claude.make_hook()(post_tool_use(429, {"x": "y"}), None, None))
-    assert result["hookSpecificOutput"]["additionalContext"].split("Full JSON:")[1] == line.split("Full JSON:")[1]
+    # The plugin's link also carries agent_vendor=anthropic for WebFetch (D48); the client adapter sends no vendor.
+    assert result["hookSpecificOutput"]["additionalContext"].split("Full JSON:")[1] == line.split("Full JSON:")[1].replace("&agent_vendor=anthropic", "")
 
 
 class LowerRaises(str):
@@ -683,4 +684,5 @@ def test_a_failing_hook_signal_reader_still_looks_up(hook_requests, monkeypatch)
 
     monkeypatch.setattr(hook, "_signals", broken)
     run_hook(post_tool_use(429, {"x": "y"}))
-    assert query_of(hook_requests[0]) == {"site_host": "example.com", "error_class": "service_error", "failure_stage": "response_observed"}
+    assert query_of(hook_requests[0]) == {"site_host": "example.com", "error_class": "service_error", "failure_stage": "response_observed",
+                                                 "agent_vendor": "anthropic"}

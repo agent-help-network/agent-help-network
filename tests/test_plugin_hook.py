@@ -358,7 +358,7 @@ def test_webfetch_status_decides_the_request(monkeypatch, capsys, captured, code
         (request, _), = captured
         assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
             "site_host": ["example.com"], "error_class": [expected], "failure_stage": ["response_observed"],
-            "http_status": [str(code)], "via": ["http_fetch"]}
+            "http_status": [str(code)], "via": ["http_fetch"], "agent_vendor": ["anthropic"]}
 
 
 def test_the_nytimes_403_example_still_looks_up_site_access(monkeypatch, capsys, captured):
@@ -367,8 +367,66 @@ def test_the_nytimes_403_example_still_looks_up_site_access(monkeypatch, capsys,
     (request, _), = captured
     assert urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query) == {
         "site_host": ["nytimes.com"], "error_class": ["site_access"], "failure_stage": ["response_observed"],
-        "http_status": ["403"], "via": ["http_fetch"]}
+        "http_status": ["403"], "via": ["http_fetch"], "agent_vendor": ["anthropic"]}
     assert json.loads(out)["hookSpecificOutput"]["additionalContext"].startswith("AHN nytimes.com: recommendation=")
+
+
+# --- agent_vendor (D48) ------------------------------------------------------------------------
+
+def test_webfetch_lookups_carry_agent_vendor_anthropic_and_nothing_else_new(monkeypatch, capsys, captured):
+    for raw in (payload("PostToolUse", url="https://example.com/a", response={"code": 403, "codeText": "Forbidden"}),
+                payload(url="https://example.org/a", error="Claude Code is unable to fetch from example.org")):
+        captured.clear()
+        run_main(monkeypatch, capsys, raw)
+        (request, _), = captured
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query)
+        assert query["agent_vendor"] == ["anthropic"]
+        assert request.full_url.count("agent_vendor") == 1
+
+
+@pytest.mark.parametrize("tool", ["mcp__playwright__browser_navigate", "mcp__fetch__fetch", "mcp__claude-in-chrome__navigate",
+                                  "Bash", "webfetch", "WebFetch2", "mcp__plugin_x__WebFetch", ""])
+def test_other_tools_send_no_agent_vendor_and_the_request_is_unchanged(monkeypatch, capsys, captured, tool):
+    # Not knowing the fetcher means claiming nothing; the request is what it was before agent_vendor existed.
+    raw = payload(tool=tool, fields={"url": "https://example.com/a"}, error="403 Forbidden https://example.com/a")
+    run_main(monkeypatch, capsys, raw)
+    if not captured:  # a tool the hook does not act on at all sends nothing, which is also "no vendor"
+        return
+    (request, _), = captured
+    assert "agent_vendor" not in request.full_url
+    via = {"mcp__playwright__browser_navigate": "browser", "mcp__fetch__fetch": "http_fetch",
+           "mcp__claude-in-chrome__navigate": "browser"}.get(tool)
+    expected = "site_host=example.com&error_class=site_access" + (f"&via={via}" if via else "")
+    assert urllib.parse.urlsplit(request.full_url).query == expected
+
+
+def test_the_request_without_a_vendor_is_byte_identical_to_the_old_one():
+    old = "https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=site_access&failure_stage=response_observed&http_status=403&via=http_fetch"
+    assert hook.lookup_url("example.com", "site_access", "response_observed", {"http_status": 403, "via": "http_fetch"}) == old
+    assert hook.lookup_url("example.com", "site_access", "response_observed", {"http_status": 403, "via": "http_fetch"}, None) == old
+    assert hook.lookup_url("example.com", "site_access", "response_observed", {"http_status": 403, "via": "http_fetch"}, "anthropic") == old + "&agent_vendor=anthropic"
+
+
+@pytest.mark.parametrize("vendor", ["openai", "google", "other", "Anthropic", "anthropic ", "", 1, ["anthropic"]])
+def test_the_hook_sends_no_vendor_but_anthropic_for_webfetch(vendor):
+    assert "agent_vendor" not in hook.lookup_url("example.com", "site_access", None, None, vendor)
+    assert "agent_vendor" not in hook.lookup_url("example.com", "site_access", None, {"agent_vendor": "anthropic"})
+
+
+def test_vendor_for_names_only_claude_codes_own_webfetch():
+    assert hook.vendor_for("WebFetch") == "anthropic"
+    for tool in ("webfetch", "WebFetch ", "mcp__x__WebFetch", "Bash", "", None, 3):
+        assert hook.vendor_for(tool) is None
+
+
+def test_the_service_answer_is_shown_the_same_with_the_new_codes(monkeypatch, capsys):
+    data = answer(recommendation={"action": "proceed", "confidence": "medium", "reasons": ["robots_blocks_not_your_agent"], "agent_vendor": "anthropic"},
+                  next_checks=[{"code": "robots_blocks_not_your_agent", "text": "..."}, {"code": "robots_names_vendor_alias", "text": "..."},
+                               {"code": "robots_blocks_some_agents", "text": "..."}])
+    context = context_for(monkeypatch, capsys, data)
+    assert "Next: robots_blocks_not_your_agent, robots_names_vendor_alias." in context and "agent_vendor" in context  # in the link only
+    for code in ("robots_blocks_some_agents", "robots_blocks_not_your_agent", "robots_names_vendor_alias"):
+        assert code in hook.NEXT_CHECKS
 
 
 @pytest.mark.parametrize("code", [403, 451])
@@ -547,7 +605,8 @@ def test_request_carries_only_hostname_and_codes(monkeypatch, capsys, captured):
     parts = urllib.parse.urlsplit(request.full_url)
     assert (parts.scheme, parts.netloc, parts.path) == ("https", "agenthelpnetwork.com", "/v1/incidents/check")
     # The status in the error text is not sent (only a PostToolUse result's code is); the tool is WebFetch.
-    assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"], "via": ["http_fetch"]}
+    assert urllib.parse.parse_qs(parts.query) == {"site_host": ["example.com"], "error_class": ["site_access"], "via": ["http_fetch"],
+                                                  "agent_vendor": ["anthropic"]}
     assert request.get_method() == "GET" and request.data is None
     assert request.get_header("User-agent") == "ahn-claude-code-plugin/0.2"
     for secret in ("user", "pw", "8443", "account", "claims", "12345", "token", "secret"):
@@ -566,7 +625,7 @@ def test_output_shape_and_length(monkeypatch, capsys, captured):
                               "blocked agents: Claude-User, ChatGPT-User, GPTBot; llms.txt: absent. "
                               "Official path: https://developer.example.com/apis.")
     assert "Next: response_observed, robots_blocks_agents." in context
-    assert "Full JSON: https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=site_access&failure_stage=response_observed." in context
+    assert "Full JSON: https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=site_access&failure_stage=response_observed&agent_vendor=anthropic." in context
     assert context.endswith("Declared policy is not an access guarantee; bypassing site controls is not advised.")
 
 
@@ -961,7 +1020,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.1"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.2"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}
