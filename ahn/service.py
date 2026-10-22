@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from . import background_reads, gov_registry, lookup_signals, status_scope
+from . import adoption, background_reads, gov_registry, lookup_signals, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -275,13 +275,23 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
 
 
 def _record_signal(conn, settings: Settings, host: str, error_class: str | None, failure_stage: str | None,
-                   signal: LookupSignal, action: str, *, public: bool, registered: bool, now: datetime) -> None:
+                   signal: LookupSignal, action: str, *, public: bool, registered: bool, now: datetime,
+                   result: dict | None = None) -> None:
     """Count the lookup's optional codes per host and hour inside a savepoint; never raises (D47).
 
     Same gate as lookup_metrics (eligible apex host, inside the lookup register in public mode, metrics
     switch on), minus example hosts. Database writes only; nothing here reaches the answer.
+
+    The answered lookup also goes into the daily adoption counts (D49, ahn/adoption.py) under the metrics switch alone:
+    it holds no host, so it does not need the host gate. It runs first, because it asks whether this source already
+    has a digest row today.
     """
-    if not (settings.collect_lookup_metrics and aggregate_eligible_host(host) and (not public or registered)):
+    if not settings.collect_lookup_metrics:
+        return
+    gated = aggregate_eligible_host(host) and (not public or registered)
+    if result is not None:
+        _record_adoption(conn, settings, host, signal, result, now, count_source=bool(gated))
+    if not gated:
         return
     if host in lookup_signals.EXAMPLE_HOSTS:
         return
@@ -294,6 +304,18 @@ def _record_signal(conn, settings: Settings, host: str, error_class: str | None,
     except Exception:
         # Shadow bookkeeping: a failure (for example a migration not applied yet) must not touch the lookup.
         LOG.warning("lookup_signal_unavailable")
+
+
+def _record_adoption(conn, settings: Settings, host: str, signal: LookupSignal, result: dict, now: datetime, *,
+                     count_source: bool) -> None:
+    """Add the answered lookup to the daily adoption counts inside a savepoint; never raises (D49)."""
+    try:
+        with conn.transaction():
+            conn.execute("SET LOCAL lock_timeout = '200ms'")
+            adoption.record(conn, settings.key_pepper, host, signal, result, now, count_source=count_source)
+            conn.execute("SET LOCAL lock_timeout = DEFAULT")
+    except Exception:
+        LOG.warning("lookup_adoption_unavailable")
 
 
 def _queue_reads(conn, jobs: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -553,7 +575,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 LOG.warning("response_guide_unavailable")
         if signal is not None:
             _record_signal(conn, settings, host, error_class, failure_stage, signal, result["recommendation"]["action"],
-                           public=public, registered=registered, now=now)
+                           public=public, registered=registered, now=now, result=result)
     return result
 
 

@@ -343,6 +343,10 @@ TABLES = {
     # day-specific keyed IP digests. Deleted by prune_analytics after a fixed period; stated in sections 02 and 06.
     "lookup_signals_hourly": Pruned(Phrase("Hourly per-host counts of lookup codes: {days} days", "호스트별 시간 단위 조회 코드 집계: {days}일"),
                                     Phrase("for {days} days, together with a keyed digest", "{days}일 집계하며")),
+    # Adoption measurement (migration 028, ahn/adoption.py, D49): fixed-list categories per day, no hostname, address or digest.
+    "lookup_outcome_daily": Pruned(Phrase(
+        "Daily counts of answered lookups by client category (plugin, ahn-client, MCP host, script, browser, crawler or other), the MCP host family or ahn-client integration label where there is one (each read from the User-Agent header, which is not kept), the recommendation given and whether the hostname's declared-policy read was ready, stale or pending, with no hostname and no address: {days} days",
+        "응답한 조회의 일별 집계(클라이언트 종류 — 플러그인·ahn-client·MCP 호스트·스크립트·브라우저·크롤러·기타 —, 해당할 때 MCP 호스트 계열이나 ahn-client 연동 라벨(둘 다 User-Agent 헤더에서 읽고 헤더 자체는 보관하지 않음), 준 권고, 그 호스트명의 선언 정책 읽기가 준비·오래됨·대기 중 어느 상태였는지, 호스트명과 주소 없음): {days}일")),
     "lookup_sources_daily": Pruned(Phrase(
         "Keyed IP digests specific to one hostname and one UTC day, with the client's last lookup time, the kind of blocked lookup and the recommendation it was given: {days} days",
         "호스트명과 날짜(UTC)에만 해당하도록 비밀키로 변환한 IP 값과 그 클라이언트의 마지막 조회 시각·막힘 유형·그때 준 권고: {days}일"),

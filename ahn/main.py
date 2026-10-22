@@ -394,9 +394,20 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         except Exception:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
         snapshot["board"] = owner_board(BOARD_DEFAULT_DAYS)
+        snapshot["adoption"] = owner_adoption(ADOPTION_DEFAULT_DAYS)
         return templates.TemplateResponse(request, "monitor.html", snapshot, headers=OWNER_HEADERS)
 
     BOARD_DEFAULT_DAYS = 7
+    ADOPTION_DEFAULT_DAYS = 7
+
+    def owner_adoption(days: int) -> dict | None:
+        """Adoption numbers for the owner (ahn/adoption.py); None when the table is not there yet."""
+        try:
+            from . import adoption
+            with connect(settings) as conn:
+                return adoption.summary(conn, days)
+        except Exception:
+            return None
 
     def owner_board(days: int) -> dict | None:
         """Signal-history numbers for the owner (ahn/signal_history.py); None when the tables are not there yet."""
@@ -421,6 +432,22 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if board is None:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
         return JSONResponse(board, headers=OWNER_HEADERS)
+
+    @app.get("/owner/adoption.json", include_in_schema=False)
+    def owner_adoption_json(request: Request):
+        # Same gate as /owner, checked before the query. Owner-only: adoption numbers are not public.
+        denied = owner_denied(request)
+        if denied is not None:
+            return denied
+        raw = request.query_params.get("days")
+        days = ADOPTION_DEFAULT_DAYS if raw is None else parse_days(raw)
+        if days is None:
+            return JSONResponse({"error": "invalid_days", "min": 1, "max": OWNER_HOSTS_MAX_DAYS, "default": ADOPTION_DEFAULT_DAYS},
+                                status_code=422, headers=OWNER_HEADERS)
+        adoption_summary = owner_adoption(days)
+        if adoption_summary is None:
+            return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
+        return JSONResponse(adoption_summary, headers=OWNER_HEADERS)
 
     @app.get("/owner/hosts", include_in_schema=False)
     def owner_hosts(request: Request):
@@ -459,8 +486,16 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         address = lookup_signals.clean_address(request.headers.get(lookup_signals.ORIGIN_HEADER if hop else "cf-connecting-ip", ""))
         if address and is_operator_address(address, settings.owner_allowed_ips):
             return None
+        from . import traffic
+        hint = client_type(request, settings.key_pepper)
+        category = traffic.CATEGORY_WEB if kind == "web" else traffic.client_category(hint)
+        mcp_host = traffic.MCP_HOST_NONE
+        if category == "mcp_host":
+            sent = request.headers.get(lookup_signals.ORIGIN_CLIENT_HEADER, "") if hop else ""
+            mcp_host = sent if sent in traffic.MCP_HOSTS else "other_mcp"
         return lookup_signals.LookupSignal(
-            client_kind=kind or lookup_signals.client_kind_of(client_type(request, settings.key_pepper)), source_address=address,
+            client_kind=kind or lookup_signals.client_kind_of(hint), source_address=address,
+            category=category, adapter=traffic.adapter_label(request.headers.get("user-agent", "")), mcp_host=mcp_host,
             **lookup_signals.lenient_codes(http_status, challenge, retry_after, via))
 
     @app.get("/v1/incidents/check", response_model=CheckResponse)

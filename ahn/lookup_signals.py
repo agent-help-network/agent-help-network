@@ -59,6 +59,8 @@ EXAMPLE_HOSTS = frozenset({"example.com", "example.net", "example.org"})
 # on its loopback hop (honoured only on an authenticated hop, see ahn/main.py).
 TEST_HEADER = "x-ahn-test"
 ORIGIN_HEADER = "x-ahn-origin-ip"
+# The MCP adapter also passes the caller's MCP host family (a fixed label from ahn/traffic.py, never the User-Agent), on the same hop.
+ORIGIN_CLIENT_HEADER = "x-ahn-origin-client"
 
 
 def valid_http_status(code: int) -> bool:
@@ -154,6 +156,10 @@ class LookupSignal:
     challenge: str | None = None
     retry_after: str | None = None
     via: str | None = None
+    # Adoption measurement (ahn/adoption.py, D49): fixed-list labels only; not part of the D47 counts.
+    category: str | None = None
+    adapter: str | None = None
+    mcp_host: str | None = None
 
 
 def _new_source(conn, day, host, digest, minute, group, action) -> bool:
