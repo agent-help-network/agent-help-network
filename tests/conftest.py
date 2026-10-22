@@ -10,6 +10,13 @@ def _no_network(*_args, **_kwargs):
 
 
 @pytest.fixture(autouse=True)
+def feed_allowlist_off(monkeypatch):
+    # The interim robots allowlist (status_refresh.feed_host_allowed) is off for the existing feed tests, which read stub
+    # feeds under real mapping hosts; tests/test_feed_robots_allowlist*.py turn it on explicitly.
+    monkeypatch.setenv("AHN_FEED_ROBOTS_ALLOWLIST", "0")
+
+
+@pytest.fixture(autouse=True)
 def no_live_access_profile(monkeypatch):
     # The lookup path reads only the database. By default the declared-policy layer is absent
     # (no cached row, nothing due), as before the reads moved off the lookup path; tests that
