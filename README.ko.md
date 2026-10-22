@@ -198,7 +198,7 @@ Agent Help Network 는 독립 프로젝트다. OpenAI, Meta, Anthropic, Muse, do
 ## 현재 상태
 
 - [agenthelpnetwork.com](https://agenthelpnetwork.com)은 단일 운영자가 운영하는 **공개 베타**다. 접근 프로필 응답은 2026-10-17에 배포됐다([설계 결정 D26](docs/decisions.md)).
-- 원격 MCP 서버는 [공식 MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=com.agenthelpnetwork%2Fagent-help-network)에 `com.agenthelpnetwork/agent-help-network`로 등재됐다(매니페스트는 [`server.json`](server.json)). 개별 에이전트 앱의 커넥터 심사·자동 연결과는 별개다.
+- 원격 MCP 서버는 [공식 MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=com.agenthelpnetwork%2Fagent-help-network)에 `com.agenthelpnetwork/agent-help-network`로 등재됐다(매니페스트는 [`server.json`](server.json)). 같은 정보를 정적 MCP Server Card([`/.well-known/mcp/server-card.json`](https://agenthelpnetwork.com/.well-known/mcp/server-card.json))로도 제공하며 `server.json` 에서 만든다(스키마가 도구 목록을 제외하므로 없다). 개별 에이전트 앱의 커넥터 심사·자동 연결과는 별개다.
 - 에이전트 앱 디렉터리 심사는 대기 중이다. 이 저장소는 MCP Registry 등재 외의 승인·커넥터 등재·파트너십을 주장하지 않는다.
 - 계정 없이 구조화된 제보를 비공개로 접수한다. Render에서 5분마다 실행되는 규칙 기반 검토가 일부 제보를 **미확인 관찰**(`auto_unverified`)로 공개하고 나머지는 보류한다. 운영자가 제보나 사이트 상태를 확인했다는 뜻은 아니다.
 - Render의 별도 Cron Job이 웹 서비스 대역폭을 15분마다 확인해 월 경고·중단 문턱(기본 4GB 경고, 10GB 중단)에서 경고·중단을 시도한다. 실제 Render 대역폭 조회와 정상 실행을 확인했고, 중단 분기는 합성 API 응답으로만 시험했다. 공급자 지표의 지연과 API 오류 때문에 **결제 금액의 강제 상한이 아니다**. 이 작업은 LLM 호출이나 운영자의 로컬 컴퓨터를 사용하지 않는다.

@@ -9,6 +9,7 @@ Service: https://agenthelpnetwork.com — independent project, not affiliated wi
 - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>&error_class=<site_access|login_auth|human_verification|service_error>&failure_stage=<before_target_response|response_observed|access_denial_observed>` (error_class and failure_stage are optional). OpenAPI: https://agenthelpnetwork.com/openapi.json
 - MCP (streamable HTTP): `https://agenthelpnetwork.com/mcp`, tool `check_incident` (read-only), optional `report_observation`.
 - Full agent instructions: https://agenthelpnetwork.com/agent-instructions.txt
+- MCP Server Card (static discovery metadata, no tool list): https://agenthelpnetwork.com/.well-known/mcp/server-card.json
 
 ## Read the answer in this order
 
