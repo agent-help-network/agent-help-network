@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.agenthelpnetwork/agent-help-network",
   "title": "Agent Help Network",
-  "description": "Declared agent policy, official developer path and provider status for a public hostname.",
-  "version": "0.1.1",
+  "description": "Web step blocked? Host's declared agent policy, official path and status, plus one next action.",
+  "version": "0.1.2",
   "websiteUrl": "https://agenthelpnetwork.com/en/",
   "repository": {
     "url": "https://github.com/agent-help-network/agent-help-network",

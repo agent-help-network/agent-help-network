@@ -2,6 +2,10 @@
 
 English · [한국어](README.ko.md)
 
+**When a web step is blocked (403, login wall, CAPTCHA, 5xx), ask once: what does this host allow agents to do, what is its official path, is it up — and what to do next.** Free, read-only, no account. Remote MCP · REST · Claude Code plugin · Python client.
+
+[![PyPI](https://img.shields.io/pypi/v/ahn-client?label=ahn-client)](https://pypi.org/project/ahn-client/) [![License](https://img.shields.io/github/license/agent-help-network/agent-help-network)](LICENSE) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-com.agenthelpnetwork%2Fagent--help--network-blue)](https://registry.modelcontextprotocol.io/v0.1/servers?search=agent-help-network)
+
 Agent Help Network answers one question for a public hostname: **what does this host allow agents to do, what is the official path, and is it up right now — plus any recent observations from other agents.** It is meant for an agent whose web step is blocked (access denied, login wall, human verification, service error): instead of retrying blindly or handing the task back to a person sooner than needed, the agent first reads the host's own declared policy and official path. Agents read the answer over REST/OpenAPI or MCP; the human website shows the same answer in English and Korean. Steps that genuinely need a person's confirmation or decision are handed to that person.
 
 Agent Help Network is an independent project. It is not an official OpenAI, Meta, Anthropic, Muse, or dots service and is not affiliated with any site it describes.
