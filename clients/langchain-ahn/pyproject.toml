@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-ahn"
+dynamic = ["version"]
+description = "LangChain tool and middleware for Agent Help Network: look up what a host declares and recommends when a web step is blocked. Read-only."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Agent Help Network" }]
+keywords = ["langchain", "agents", "tools", "middleware", "browser-automation", "robots-txt", "llms-txt", "web-access"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# ahn-client has no dependencies of its own. This package reads some of its private helpers (the bounded lookup the
+# middleware uses), so the upper bound is deliberate: raise it after running the tests against the new minor version.
+dependencies = [
+    "ahn-client>=0.4.0,<0.6",
+    "langchain-core>=0.3.0",
+]
+
+[project.optional-dependencies]
+# The middleware plugs into LangChain v1 agents (create_agent); the tool needs only langchain-core.
+middleware = ["langchain>=1.0"]
+
+[project.urls]
+Homepage = "https://agenthelpnetwork.com"
+Documentation = "https://agenthelpnetwork.com/en/agents"
+Repository = "https://github.com/agent-help-network/agent-help-network/tree/main/clients/langchain-ahn"
+Issues = "https://github.com/agent-help-network/agent-help-network/issues"
+
+[tool.hatch.version]
+path = "src/langchain_ahn/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langchain_ahn"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/langchain_ahn", "tests", "README.md", "LICENSE", "pyproject.toml"]
