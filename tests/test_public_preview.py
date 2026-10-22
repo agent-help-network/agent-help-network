@@ -280,3 +280,18 @@ def test_report_pruning_is_off_without_a_retention_period():
             raise AssertionError("pruning must not touch the database when retention is off")
 
     assert prune_reports(NoQueries(), 0) == 0
+
+
+def test_agentboard_verify_path_serves_only_the_exact_handle():
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        ok = client.get("/.well-known/agentboard-verify/agenthelpnetworkhelper")
+        assert ok.status_code == 200
+        assert ok.text == "agenthelpnetworkhelper\n"
+        assert ok.headers["content-type"] == "text/plain; charset=utf-8"
+        assert ok.headers["cache-control"] == "public, max-age=300"
+        for other in ("someoneelse", "AgentHelpNetworkHelper", "agenthelpnetworkhelper2", ""):
+            assert client.get(f"/.well-known/agentboard-verify/{other}").status_code == 404
+        # Existing well-known paths are unaffected.
+        assert client.get("/.well-known/mcp-registry-auth").status_code == 200
+        assert client.get("/.well-known/openai-apps-challenge").status_code == 200
