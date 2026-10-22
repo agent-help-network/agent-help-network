@@ -39,7 +39,7 @@ MAJOR = {"page": {"id": "p", "updated_at": "2026-10-22T11:00:00Z"}, "status": {"
 
 def atom(*entries) -> bytes:
     def one(words, published, updated):
-        body = "".join(f"<p><small>t</small><br><strong>{w}</strong> - text</p>" for w in words)
+        body = "".join(f"<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>{w}</strong> - text</p>" for w in words)
         return (f"<entry><id>tag:page.example,2005:Incident/1</id><published>{published:%Y-%m-%dT%H:%M:%SZ}</published>"
                 f"<updated>{updated:%Y-%m-%dT%H:%M:%SZ}</updated><title>Title</title><content type=\"html\">{escape(body)}</content></entry>")
     return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><id>x</id><title>h</title>"
@@ -367,6 +367,10 @@ def test_a_failed_first_atom_read_still_drops_the_api_statement_and_closes_its_p
     age(db, timedelta(hours=27))
     world.now += timedelta(hours=27)
     batch(db, world)
+    age(db, timedelta(hours=26))  # past any backoff: a second failed attempt
+    world.now += timedelta(hours=26)
+    batch(db, world)
+    assert q(db, "SELECT failures FROM status_cache WHERE site_host='github.com'") == [{"failures": 2}]  # the backoff count is kept
     stored = q(db, "SELECT indicator,fetched_at,feed_source,active_incidents,last_error_detail FROM status_cache WHERE site_host='github.com'")[0]
     assert stored["indicator"] == "unknown" and stored["fetched_at"] is None and stored["feed_source"] is None and stored["active_incidents"] is None
     assert stored["last_error_detail"] is not None and stored["last_error_detail"] != "robots_disallowed"  # the failed Atom read is recorded
@@ -440,3 +444,22 @@ def test_a_discovered_page_whose_atom_redirects_is_disabled_not_failing(monkeypa
         status_refresh._read_source(source, None, {}, history=True)
     assert caught.value.label == "feed_disabled"
     assert background_reads.feed_backoff(1, "feed_disabled") == background_reads.FEED_BACKOFF_MAX
+
+
+def test_a_problem_still_open_after_the_cache_row_was_deleted_is_closed_by_the_first_atom_read(db, world, monkeypatch):
+    github = REAL_SOURCES["github.com"]
+    monkeypatch.setattr(status_refresh, "SOURCES", {"github.com": github})
+    monkeypatch.setattr(service, "SOURCES", {"github.com": github})
+    sync_curated_sources(db)
+    world.robots = Robots(ATOM_CLOSED)  # the API is open
+    batch(db, world)
+    with connect(db) as conn:
+        signal_history._apply_provider_events(conn, datetime.now(timezone.utc), 1000)
+        conn.execute("DELETE FROM status_cache WHERE site_host='github.com'")  # e.g. a changed feed address drops the cached read
+    assert [e["ended_at"] for e in q(db, "SELECT ended_at FROM outage_episodes WHERE signal='P' AND site_host='github.com'")] == [None]
+    world.robots.body = DEFAULT  # only the Atom is open now
+    world.now += timedelta(hours=27)
+    batch(db, world)
+    assert q(db, "SELECT feed_source FROM status_cache WHERE site_host='github.com'") == [{"feed_source": "history_atom"}]
+    ended = q(db, "SELECT ended_reason FROM outage_episodes WHERE signal='P' AND site_host='github.com'")
+    assert [e["ended_reason"] for e in ended] == ["robots_disallowed"]

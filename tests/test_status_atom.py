@@ -1,7 +1,7 @@
 """The Atom history of a Statuspage page as an open-announcement signal (D52): the pure parser, no database, no network.
 
 Feeds are built here in the shape a Statuspage page serves (the body of an entry is HTML, newest update first, each
-update as ``<small>time</small><br><strong>Status</strong> - text``). Nothing from a real host is read.
+update as ``<small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Status</strong> - text``). Nothing from a real host is read.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 from html import escape
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,7 @@ def iso(delta: timedelta) -> str:
 
 def entry(words, *, published=timedelta(hours=-3), updated=timedelta(hours=-1), title="Elevated errors", with_updated=True):
     """One entry; ``words`` are the status words of its updates, newest first."""
-    body = "".join(f"<p><small>Oct 22, 12:00 UTC</small><br><strong>{w}</strong> - text</p>" for w in words)
+    body = "".join(f"<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>{w}</strong> - text</p>" for w in words)
     return (f"<entry><id>tag:status.example,2005:Incident/1</id><published>{iso(published)}</published>"
             + (f"<updated>{iso(updated)}</updated>" if with_updated else "")
             + f"<link rel=\"alternate\" type=\"text/html\" href=\"https://status.example/incidents/1\"/>"
@@ -217,12 +218,12 @@ def raw_entry(body_html: str, *, published=timedelta(hours=-3)) -> str:
 
 
 @pytest.mark.parametrize("body_html", [
-    "<p><small>t</small><br><strong>Résolu</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
-    "<p><small>t</small><br><strong class='s'>Resolved</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
-    "<p><small>t</small><br><strong>Resolved:</strong> - text</p><p><small>t</small><br><strong>Investigating</strong> - x</p>",
-    "<p><small>t</small><br><strong>Update</strong> - the <strong>identified</strong> cause</p>"
-    "<p><small>t</small><br><strong>Resolved</strong> - fixed</p>",
-    "<p><small>t</small><br><strong>Resolved</strong> - this was <strong>identified</strong> earlier</p>",
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Résolu</strong> - text</p><p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Investigating</strong> - x</p>",
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong class='s'>Resolved</strong> - text</p><p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Investigating</strong> - x</p>",
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Resolved:</strong> - text</p><p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Investigating</strong> - x</p>",
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Update</strong> - the <strong>identified</strong> cause</p>"
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Resolved</strong> - fixed</p>",
+    "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Resolved</strong> - this was <strong>identified</strong> earlier</p>",
 ], ids=["localized", "attribute", "punctuation-resolved", "bold-in-update-text", "bold-in-resolved-text"])
 def test_a_status_it_cannot_read_never_becomes_an_open_incident(body_html):
     reading = parse_history(feed(raw_entry(body_html)), NOW)
@@ -230,8 +231,8 @@ def test_a_status_it_cannot_read_never_becomes_an_open_incident(body_html):
 
 
 def test_an_unreadable_entry_is_marked_and_takes_the_maintenance_count_with_it():
-    reading = parse_history(feed(raw_entry("<p><small>t</small><br><strong>Résolu</strong> - x</p>"),
-                                 raw_entry("<p><small>t</small><br><strong>In progress</strong> - x</p>")), NOW)
+    reading = parse_history(feed(raw_entry("<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Résolu</strong> - x</p>"),
+                                 raw_entry("<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>In progress</strong> - x</p>")), NOW)
     assert (reading.unreadable, reading.open_maintenances, reading.open_incidents) == (1, 1, 0)
     assert reading.active_maintenances() is None  # an entry that may have been a maintenance: the count is not trusted
     assert parse_history(feed(), NOW).active_maintenances() is None  # no entries: nothing to count from
@@ -239,10 +240,10 @@ def test_an_unreadable_entry_is_marked_and_takes_the_maintenance_count_with_it()
 
 
 def test_status_words_are_normalised_but_only_an_exact_update_is_skipped():
-    ok = parse_history(feed(raw_entry("<p><small>t</small><br><strong>  IN   Progress. </strong> - x</p>")), NOW)
+    ok = parse_history(feed(raw_entry("<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>  IN   Progress. </strong> - x</p>")), NOW)
     assert ok.open_maintenances == 1 and ok.unreadable == 0
-    odd = parse_history(feed(raw_entry("<p><small>t</small><br><strong>Updated</strong> - x</p>"
-                                       "<p><small>t</small><br><strong>Investigating</strong> - y</p>")), NOW)
+    odd = parse_history(feed(raw_entry("<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Updated</strong> - x</p>"
+                                       "<p><small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Investigating</strong> - y</p>")), NOW)
     assert odd.open_incidents == 0 and odd.unreadable == 1  # "Updated" is not "Update": it stops the reading of the entry
 
 
@@ -274,3 +275,44 @@ def test_a_utf16_document_with_an_internal_entity_is_refused():
     for encoding in ("utf-16", "utf-16-le", "utf-16-be"):
         with pytest.raises(AtomError):
             parse_history(doc.encode(encoding), NOW)
+
+
+# --- the real shape of a head, and a head of another shape ---------------------------------------------------------------
+
+def test_the_head_with_var_elements_and_a_space_after_the_br_is_read():
+    body = ("<p> <small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Monitoring</strong> - x </p>"
+            "<p> <small>Oct <var data-var='date'>22</var>, <var data-var='time'>07:00</var> UTC</small><br> <strong>Investigating</strong> - y </p>")
+    assert parse_history(feed(raw_entry(body)), NOW).open_incidents == 1
+
+
+@pytest.mark.parametrize("head", [
+    "<small>Oct 22<b>x</b> UTC</small><br><strong>Resolved</strong> - x",               # another element inside the time
+    "<small>Oct <var onclick='a'>22</var> UTC</small><br><strong>Resolved</strong> - x",  # no wait: attributes are allowed in var
+    "<small>Oct 22 UTC</small><span></span><strong>Resolved</strong> - x",               # no <br>
+    "<small>Oct 22 UTC</small><br><em>Resolved</em> - x",                                 # no <strong>
+], ids=["b-in-time", "var-with-attribute", "no-br", "no-strong"])
+def test_a_head_of_another_shape_is_unreadable_and_no_older_update_is_consulted(head):
+    older = "<p><small>Oct 21 UTC</small><br><strong>Investigating</strong> - old</p>"
+    reading = parse_history(feed(raw_entry("<p>" + head + "</p>" + older)), NOW)
+    if "onclick" in head:
+        assert reading.open_incidents == 0  # a var with an attribute is still a head: Resolved closes the entry
+    else:
+        assert reading.open_incidents == 0 and reading.unreadable == 1
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "status_atom"
+SAMPLE_NOW = datetime(2026, 10, 22, 15, 5, tzinfo=timezone.utc)
+
+
+def test_a_real_feed_with_an_open_incident_reads_as_it_did_with_the_first_parser():
+    # Titles, texts and links were replaced by "x"/example.invalid in the fixture; the markup is the page's own.
+    reading = parse_history((FIXTURES / "open_incident.atom").read_bytes(), SAMPLE_NOW)
+    assert (reading.open_incidents, reading.open_maintenances, reading.unreadable) == (1, 0, 0)
+    assert reading.entries == 25 and reading.window_blind is False
+    assert reading.incident_updated_at == datetime(2026, 10, 22, 14, 35, 29, tzinfo=timezone.utc)
+
+
+def test_a_real_feed_with_maintenance_in_progress_reads_as_it_did_with_the_first_parser():
+    reading = parse_history((FIXTURES / "maintenance.atom").read_bytes(), SAMPLE_NOW)
+    assert (reading.open_incidents, reading.open_maintenances, reading.unreadable) == (0, 2, 0)
+    assert reading.future_entries == 9 and reading.active_maintenances() is None  # future entries: the count is not trusted

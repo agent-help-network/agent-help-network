@@ -28,9 +28,13 @@ FEED_LIMIT = 25               # the number of entries a Statuspage history feed 
 MIN_WINDOW = timedelta(days=7)  # a feed whose past entries reach back less than this cannot show an older open incident
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _DTD = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)", re.IGNORECASE)
-# One update of an entry body, as Statuspage renders it: <small>time</small><br><strong>Status</strong> - text. Only this
-# structure counts, so a bold word inside an update's text, or a <strong> with attributes, is never taken for a status.
-_STATUS = re.compile(r"<small>[^<]{0,80}</small>\s*<br\s*/?>\s*(?:<strong>([^<]{1,40})</strong>)?")
+# The head of one update of an entry body, as Statuspage renders it:
+#   <small>Oct <var data-var='date'>22</var>, <var data-var='time'>08:07</var> UTC</small><br> <strong>Resolved</strong> - text
+# Every <small> is taken for a head and must match this shape exactly (only <var> elements inside the time), and be
+# followed by a plain <strong>word</strong>; a head that does not is unreadable and is never skipped over, so no older
+# update is mistaken for the newest one.
+_HEAD = re.compile(r"<small>(?:[^<]|<var\b[^<>]{0,40}>[^<]{0,20}</var>){0,120}</small>\s*<br\s*/?>\s*(?:<strong>([^<]{1,40})</strong>)?")
+_SMALL = re.compile(r"<small>")
 _CLOSED = frozenset({"resolved", "postmortem", "completed"})
 _INCIDENT_OPEN = frozenset({"investigating", "identified", "monitoring"})
 _MAINTENANCE_OPEN = frozenset({"in progress", "verifying"})
@@ -74,10 +78,11 @@ def _status_word(html: str | None) -> str | None:
     """The newest real status of an entry: the first <strong> word in the body (updates are newest first) that is not
     exactly "update", lowercased with spaces collapsed and trailing punctuation dropped; None when the body has none. A word
     that is not one of the known states (another language, anything odd) is returned as it is: the caller counts nothing."""
-    for match in _STATUS.finditer(html or ""):
-        if match.group(1) is None:
-            return "?"  # an update head whose status is not a plain <strong>word</strong>: the entry is unreadable, and no older update is consulted
-        word = " ".join(match.group(1).lower().split()).rstrip(" .:;,!")
+    for start in _SMALL.finditer(html or ""):
+        head = _HEAD.match(html, start.start())
+        if head is None or head.group(1) is None:
+            return "?"  # a head of another shape, or without a plain status word: unreadable; no older update is consulted
+        word = " ".join(head.group(1).lower().split()).rstrip(" .:;,!")
         if word != "update":
             return word
     return None
