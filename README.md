@@ -165,6 +165,7 @@ Most design documents are in Korean; the API contract also has an English versio
 - [Discovery and cold start](docs/discovery-and-cold-start.md) · [Product research (2026-10-06)](docs/product-research-2026-10-06.md) · [Voluntary public beta](docs/pilot-plan.md)
 - [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
 - [Initial design proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
+- [LangChain package `langchain-ahn`](clients/langchain-ahn/README.md) (a lookup tool and the middleware, for LangChain agents)
 - [Python client `ahn-client`](clients/python/README.md) and its framework adapters (LangChain, CrewAI, OpenAI Agents SDK, Claude Agent SDK, Browser Use) · [Claude Code plugin](plugins/claude-code/ahn/README.md) · [MCP Registry manifest](server.json)
 - [Contributing](CONTRIBUTING.md) · [Feedback changelog](docs/feedback-changelog.md) (suggestions received and what happened to them) · [Security policy](SECURITY.md)
 
