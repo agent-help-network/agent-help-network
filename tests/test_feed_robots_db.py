@@ -31,7 +31,7 @@ from ahn.status_refresh import Source, due_feeds, refresh_batch, refresh_one, sy
 
 REAL_DISCOVER = background_reads.discover  # tests/conftest.py replaces it for every test; this is the real one
 FIXTURES = Path(__file__).parent / "fixtures" / "status_scope"
-ATLASSIAN_DEFAULT = b"User-agent: *\nDisallow: /api/\nDisallow: /embed/\n"
+ATLASSIAN_DEFAULT = b"User-agent: *\nDisallow: /api/\nDisallow: /embed/\nDisallow: /history.atom\n"  # Atom closed too: D52 reads it otherwise (tests/test_status_atom_db.py)
 QUIET = {"page": {"updated_at": "2026-10-21T11:00:00Z"}, "status": {"indicator": "none"}}
 
 OPEN = Source("Open Status", "https://open.example/", "https://open.example/api/v2/status.json")
@@ -144,7 +144,7 @@ def test_the_batch_reads_each_robots_txt_once_and_requests_only_what_it_allows(d
     assert {h: r["robots_status"] for h, r in rows.items()} == {"open.example": "absent", "shut.example": "ok", "fail.example": "error"}
     shut = rows["shut.example"]
     assert shut["decisions"]["/api/v2/status.json"] == {"allowed": False, "rule": "disallow: /api/", "group": "*"}
-    assert shut["decisions"]["/history.atom"]["allowed"] is True  # decided and stored, though nothing reads it yet
+    assert shut["decisions"]["/history.atom"]["allowed"] is False  # decided and stored too (this file closes it; D52 reads it when it is open)
     assert shut["robots_sha256"] == hashlib.sha256(ATLASSIAN_DEFAULT).hexdigest() and shut["parser_version"] == feed_robots.PARSER_VERSION
     assert "Disallow" not in json.dumps({k: str(v) for k, v in shut.items()})  # the file itself is not stored
     assert all(not rows["fail.example"]["decisions"][p]["allowed"] for p in rows["fail.example"]["decisions"])

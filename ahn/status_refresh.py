@@ -28,7 +28,7 @@ from psycopg.types.json import Jsonb
 # The service's reader version recorded with every stored read (provenance), as for robots.txt reads.
 from .access_profile import USER_AGENT as READER_VERSION
 from .access_profile import _resolve, read_capped
-from . import feed_robots, status_scope
+from . import feed_robots, status_atom, status_scope
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
 from .settings import Settings
@@ -48,7 +48,7 @@ class FeedFailure(ValueError):
 
 
 FAILURE_LABELS = frozenset({"too_large", "invalid_body", "dns_failed", "connect_error", "tls_error", "timeout",
-                            "read_error", "no_cname", "id_mismatch", "not_public", "error"})
+                            "read_error", "no_cname", "id_mismatch", "not_public", "feed_disabled", "error"})
 _DNS_HINTS = ("getaddrinfo", "name or service", "nodename nor servname", "name resolution", "no address associated")
 _TLS_HINTS = ("ssl", "certificate", "tls")
 
@@ -1110,7 +1110,8 @@ GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 # cron's refresh_batch, a lookup's background refresh_one, the first discovery of a status.<host> page and the two
 # Statuspage scope lists) all go through one check: `_read_and_store` (the first two and the lists, which are part
 # of a feed read) and `discover_source` (discovery) ask the gate for the host's decision before the first request.
-HISTORY_PATH = "/history.atom"  # a Statuspage page's own Atom feed: decided and stored with the other paths, not read yet
+HISTORY_PATH = feed_robots.HISTORY_PATH  # a Statuspage page's own Atom feed: decided with the other paths; read only
+# where the API path is disallowed and this one is allowed, as an open-announcement signal and nothing more (D52)
 
 
 def feed_paths(source: "Source") -> tuple[str, ...]:
@@ -1178,7 +1179,8 @@ def _store_blocked(conn, hosts: list[str], reason: str = ROBOTS_DISALLOWED) -> N
                VALUES (%s,'unknown',NULL,NULL,%s,NULL) ON CONFLICT (site_host) DO UPDATE SET
                indicator='unknown',source_updated_at=NULL,fetched_at=NULL,last_error_at=NULL,last_error_detail=EXCLUDED.last_error_detail,
                failures=NULL,body_sha256=NULL,active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
-               active_maintenances=NULL,affected=NULL,affected_regional=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL""",
+               active_maintenances=NULL,affected=NULL,affected_regional=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,
+               feed_source=NULL,window_blind=NULL""",
             (host, ROBOTS_DISALLOWED),
         )
 
@@ -1239,8 +1241,16 @@ def _pool_get(pool, status_host: str, path: str, cap: int) -> bytes:
         response.release_conn()
 
 
+def _atom_reading(body: bytes) -> "status_atom.AtomReading":
+    """The open announcements of an Atom history body; a body that is not one is a failed read."""
+    try:
+        return status_atom.parse_history(body, datetime.now(timezone.utc))
+    except status_atom.AtomError as exc:
+        raise FeedFailure(str(exc)) from exc
+
+
 def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scope: dict | None = None,
-                                scope_allowed=None, gate=None) -> tuple[Source, str, datetime | None]:
+                                scope_allowed=None, gate=None, history: bool = False) -> tuple[Source, object, datetime | None]:
     """Fetch a publisher-owned Statuspage endpoint using a pinned public IP; digest receives body_sha256.
 
     With scope (a feed refresh, not the first discovery), the page's unresolved incidents and active
@@ -1248,7 +1258,11 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scop
 
     gate is the robots.txt gate (feed_robots.Gate) of a first discovery: it is asked once the DNS delegation has
     verified the page (DNS only so far) and before anything is requested from it. A feed refresh passes None: its
-    caller (_read_and_store) has asked the gate for this feed already."""
+    caller (_read_and_store) has asked the gate for this feed already.
+
+    history (D52): read the page's /history.atom instead of status.json (the caller has seen that its host's robots.txt
+    allows that path and not the API): the second item of the result is then a status_atom.AtomReading, not an indicator,
+    and the page id of status.json is not there to check (the DNS delegation above is the verification)."""
     target = _statuspage_target(site_host)
     if target is None:
         raise FeedFailure("no_cname")
@@ -1272,9 +1286,12 @@ def _read_discovered_statuspage(site_host: str, digest: dict | None = None, scop
         assert_hostname=status_host, timeout=urllib3.Timeout(connect=2.0, read=3.0), retries=False,
     )
     try:
-        body = _pool_get(pool, status_host, "/api/v2/status.json", 32_768)
+        body = _pool_get(pool, status_host, HISTORY_PATH if history else "/api/v2/status.json",
+                         status_atom.ATOM_CAP if history else 32_768)
         if digest is not None:
             digest["body_sha256"] = sha256_hex(body)
+        if history:
+            return Source("", f"https://{status_host}/", f"https://{status_host}/api/v2/status.json", "discovered_statuspage"), _atom_reading(body), None
         payload = json.loads(body)
         page = payload.get("page") if isinstance(payload, dict) else None
         if not isinstance(page, dict) or page.get("id") != page_id:
@@ -1491,7 +1508,7 @@ STATUS_JSON_SUFFIX = "/api/v2/status.json"
 
 
 def _read_source(source: Source, client: httpx.Client, digest: dict | None = None,
-                 scope: dict | None = None, scope_allowed=None) -> tuple[str, datetime | None]:
+                 scope: dict | None = None, scope_allowed=None, history: bool = False) -> tuple[str, datetime | None]:
     """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received.
 
     scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
@@ -1501,19 +1518,37 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     the first list (the cron's time budget): when it refuses, both lists are skipped, not counted as a failure.
 
     The robots.txt decision for this feed's host (D50) is the caller's: _read_and_store asks the gate first and passes
-    scope=None when the host's robots.txt disallows a list. Nothing in here consults the gate."""
+    scope=None when the host's robots.txt disallows a list. Nothing in here consults the gate.
+
+    history (D52): the caller found that this Statuspage page's robots.txt disallows the API path and allows
+    /history.atom. The page's Atom history is read instead (no redirect followed, 128 KiB cap; the page owner's
+    switched-off feed answers 302 to /inactive.atom, which is ``feed_disabled``, tried again a day later) and the first
+    item of the result is a status_atom.AtomReading, not an indicator. A positive signal only: ahn/status_atom.py."""
     if source.kind == "discovered_statuspage":
         host = urlparse(source.page_url).hostname
         if not host or not host.startswith("status."):
             raise FeedFailure("error")
-        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest, scope, scope_allowed)
+        _, indicator, updated_at = _read_discovered_statuspage(host[7:], digest, scope, scope_allowed, history=history)
         return indicator, updated_at
     if source.kind not in FEED_KINDS:
         raise FeedFailure("error")
     cap, parse = FEED_KINDS[source.kind]
-    data = _get_capped(client, source.api_url, cap)
+    url = source.api_url
+    if history:
+        parsed = urlparse(source.api_url)
+        if source.kind != "statuspage" or parsed.scheme != "https" or feed_robots.history_path(source.api_url) is None:
+            raise FeedFailure("error")
+        url, cap = f"https://{parsed.netloc}{HISTORY_PATH}", status_atom.ATOM_CAP
+    try:
+        data = _get_capped(client, url, cap)
+    except FeedFailure as exc:
+        if history and exc.label.startswith("http_3"):
+            raise FeedFailure("feed_disabled") from exc
+        raise
     if digest is not None:
         digest["body_sha256"] = sha256_hex(data)
+    if history:
+        return _atom_reading(data), None
     body = httpx.Response(200, content=data).json()
     result = parse(body)
     # Only an active indicator needs a scope: a "none" page costs one request (the curated feeds are read on a schedule).
@@ -1569,6 +1604,7 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
            active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
            incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
            affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional,failures=NULL,
+           feed_source=NULL,window_blind=NULL,
            scope_failures=CASE %s::text WHEN 'ok' THEN NULL
                                WHEN 'failed' THEN LEAST(COALESCE(status_cache.scope_failures,0)+1,32767)
                                ELSE status_cache.scope_failures END,
@@ -1582,6 +1618,28 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
     # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
     from .signal_history import record_provider_status
     record_provider_status(conn, site_host, indicator, updated_at)
+
+
+def _store_history(conn, site_host: str, reading: "status_atom.AtomReading", digest: dict) -> None:
+    """Record a successful Atom read (D52). No indicator (it stays 'unknown'), no impact, no component names; the open
+    incident count, its latest update time, the maintenance count (NULL when the feed cannot be trusted for it) and
+    whether the window is blind. Replaced by every read; the scope columns of an API read are cleared."""
+    conn.execute(
+        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,last_error_at,last_error_detail,
+                                     origin_operator,vantage,reader_version,body_sha256,
+                                     active_incidents,incident_updated_at,active_maintenances,failures,
+                                     feed_source,window_blind)
+           VALUES (%s,'unknown',NULL,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,NULL,'history_atom',%s)
+           ON CONFLICT (site_host) DO UPDATE SET
+           indicator='unknown',source_updated_at=NULL,fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
+           origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
+           body_sha256=EXCLUDED.body_sha256,active_incidents=EXCLUDED.active_incidents,max_incident_impact=NULL,
+           incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
+           affected=NULL,affected_regional=NULL,failures=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,
+           feed_source='history_atom',window_blind=EXCLUDED.window_blind""",
+        (site_host, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
+         min(reading.open_incidents, 32_767), reading.incident_updated_at, reading.active_maintenances(), reading.window_blind),
+    )
 
 
 def _store_failure(conn, site_host: str, label: str) -> None:
@@ -1615,7 +1673,7 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             return None
         with connect(settings) as conn:
             previous = conn.execute(
-                "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error FROM status_cache WHERE site_host=%s",
+                "SELECT fetched_at,last_error_at,scope_failures,scope_failed_at,scope_error,feed_source FROM status_cache WHERE site_host=%s",
                 (hosts[0],),
             ).fetchone()
         now = datetime.now(timezone.utc)
@@ -1627,7 +1685,11 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
         # host per day; the answer lasts until then). A path the file disallows is never requested.
         paths = feed_paths(source)
         decision = (gate or make_gate(settings)).decide(feed_robots.host_and_path(source.api_url)[0], paths)
-        if not decision.allows(paths[0]):
+        # D52: a Statuspage page whose robots.txt disallows the API but allows /history.atom is read through that Atom
+        # feed instead, for the open announcements it lists and nothing else.
+        history = (not decision.allows(paths[0]) and feed_robots.history_path(source.api_url) is not None
+                   and source.kind in ("statuspage", "discovered_statuspage") and decision.allows(HISTORY_PATH))
+        if not history and not decision.allows(paths[0]):
             with connect(settings) as conn:
                 _store_blocked(conn, hosts, ROBOTS_UNREADABLE if decision.robots_status == "error" else ROBOTS_DISALLOWED)
             return BLOCKED
@@ -1641,7 +1703,10 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             lists_allowed = all(decision.allows(path) for path in paths[1:] if path != HISTORY_PATH)
             scope: dict | None = None if status_scope.scope_paused(previous, now) or not lists_allowed else {}
             try:
-                indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed)
+                if history:
+                    reading, _ = _read_source(source, client, digest, history=True)
+                else:
+                    indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed)
             except FeedNotAllowed:
                 return None  # not requested, so neither a read nor a failure
             except READ_ERRORS as exc:
@@ -1651,8 +1716,15 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
                         _store_failure(conn, host, label)
                 return False
             with connect(settings) as conn:
+                if history and not (previous and previous["feed_source"] == "history_atom"):
+                    # First Atom reading for these hosts: whatever the API said before is no longer read (and a provider
+                    # problem still open on its strength ends), exactly as when the API is disallowed.
+                    _store_blocked(conn, hosts)
                 for host in hosts:
-                    _store_read(conn, host, indicator, updated_at, digest, scope or {})
+                    if history:
+                        _store_history(conn, host, reading, digest)
+                    else:
+                        _store_read(conn, host, indicator, updated_at, digest, scope or {})
             return True
         finally:
             if own_client:
@@ -1784,7 +1856,8 @@ def _due_groups(conn, now: datetime) -> tuple[list[dict], dict]:
             continue
         feed_host, feed_path = feed_robots.host_and_path(row["api_url"])
         decision = decisions.get(feed_host)
-        if decision is not None and feed_path in decision.decisions and not decision.allows(feed_path):
+        if (decision is not None and feed_path in decision.decisions and not decision.allows(feed_path)
+                and not (feed_robots.history_path(row["api_url"]) and decision.allows(HISTORY_PATH))):
             # Its host's robots.txt does not allow the feed: nothing to read until that decision lapses (24 hours,
             # an hour when the file could not be read), then the read of the file itself is what is due (D50).
             due = decision.expires_at()

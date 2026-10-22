@@ -283,7 +283,7 @@ REQUEST_SITES = {
     ("gov_registry.py", "refresh_one", "fetch"): 3,  # the government lists' publishers, through an injected fetcher
     ("status_refresh.py", "_get_capped", "stream"): 1,
     ("status_refresh.py", "_pool_get", "request"): 1,
-    ("status_refresh.py", "_read_and_store", "_read_source"): 1,
+    ("status_refresh.py", "_read_and_store", "_read_source"): 2,  # the second: the page's Atom history where only the API is disallowed (D52)
     ("status_refresh.py", "_read_discovered_statuspage", "HTTPSConnectionPool"): 1,
     ("status_refresh.py", "_read_discovered_statuspage", "_pool_get"): 2,
     ("status_refresh.py", "_read_source", "_get_capped"): 2,
@@ -424,6 +424,7 @@ VERB_SITES = {
     ("status_refresh.py", "_get_capped", "stream"): 1,
     ("status_refresh.py", "_pool_get", "request"): 1,
     ("status_refresh.py", "_read_discovered_statuspage", "get"): 3,
+    ("status_refresh.py", "_store_history", "get"): 1,  # digest.get, a dictionary lookup
     ("status_refresh.py", "_store_read", "get"): 9,
     ("status_refresh.py", "main", "get"): 1,
     ("status_refresh.py", "parse_betterstack", "get"): 4,

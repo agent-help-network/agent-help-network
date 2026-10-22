@@ -361,6 +361,21 @@ def _provider_scope(row: dict) -> dict:
     return out
 
 
+def _atom_scope(row: dict) -> dict:
+    """provider_status fields of a reading taken from a page's Atom history (D52): only what the feed says. No indicator,
+    no basis, no impact: a count of zero is left out (nothing listed is unknown, not healthy)."""
+    out: dict = {"source_kind": "history_atom"}
+    if row.get("active_incidents"):
+        out["active_incidents"] = row["active_incidents"]
+        if row.get("incident_updated_at") is not None:
+            out["incident_updated_at"] = row["incident_updated_at"].astimezone(timezone.utc)
+    if row.get("active_maintenances") is not None:
+        out["active_maintenances"] = row["active_maintenances"]
+    if row.get("window_blind"):
+        out["window_blind"] = True
+    return out
+
+
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None):
@@ -437,7 +452,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
                           c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
                           c.active_incidents,c.max_incident_impact,c.incident_updated_at,
-                          c.active_maintenances,c.affected,c.affected_regional
+                          c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
                    WHERE s.site_host=%s AND s.enabled=true""",
                 (host,),
@@ -450,25 +465,30 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 feed_host = feed_robots.host_and_path(source["api_url"])[0]
                 feed_decision = feed_robots.feed_state(conn, source["api_url"])
                 if not feed_robots.shown(feed_decision, feed_host):
-                    if feed_decision == "undecided" and mapped_source:
-                        due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
-                        if due is None or due <= now:
-                            jobs.append(("status_feed", host))
-                    elif feed_decision in ("disallowed", "unknown"):
-                        robots_blocked_page = (source["source_name"], source["status_page_url"])  # a link, never a reading
-                    source = None
+                    # D52: where the API is disallowed and the page's Atom history is allowed, the open announcements
+                    # it lists are shown (information only) once that feed has been read.
+                    atom = feed_decision == "disallowed" and feed_robots.history_allowed(conn, source["api_url"])
+                    if not (atom and source["feed_source"] == "history_atom"):
+                        if (feed_decision == "undecided" or atom) and mapped_source:
+                            due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
+                            if due is None or due <= now:
+                                jobs.append(("status_feed", host))
+                        if feed_decision in ("disallowed", "unknown"):
+                            robots_blocked_page = (source["source_name"], source["status_page_url"])  # a link, never a reading
+                        source = None
             if source:
                 fetched_at = source["fetched_at"]
                 # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
                 freshness, failed_later = background_reads.feed_freshness(
                     fetched_at, source["last_error_at"], now, source["last_error_detail"])
+                from_atom = source["feed_source"] == "history_atom"
                 provider_status = {
                     "source_name": source["source_name"], "source_url": source["status_page_url"],
-                    "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],
+                    "indicator": None if from_atom else source["indicator"], "source_updated_at": source["source_updated_at"],
                     "fetched_at": fetched_at, "freshness": freshness,
                     "error_detail": source["last_error_detail"] if failed_later else None,
                 }
-                provider_status.update(_provider_scope(source))
+                provider_status.update(_atom_scope(source) if from_atom else _provider_scope(source))
                 provider_partial = status_scope.scope_partial(
                     source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
                 provider_regional = source["affected_regional"] is True

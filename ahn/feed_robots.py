@@ -51,6 +51,8 @@ STATUSES = ("ok", "absent", "unavailable", "error")
 _PATH_RE = re.compile(r"^/[\x21-\x7e]{0,300}$")
 
 INTERIM_FILE = Path(__file__).with_name("feed_robots_allowed.txt")
+HISTORY_PATH = "/history.atom"      # a Statuspage page's public Atom history (D52): decided with the feed's other paths
+STATUS_JSON_PATH = "/api/v2/status.json"
 
 
 @functools.lru_cache(maxsize=1)
@@ -251,6 +253,19 @@ def _state(decision: Decision | None, path: str) -> str:
     if decision.allows(path):
         return "allowed"
     return "unknown" if decision.robots_status == "error" else "disallowed"
+
+
+def history_path(api_url: str) -> str | None:
+    """The Atom history path of a Statuspage feed address (D52), or None when the address is not a page's own
+    /api/v2/status.json (another platform, or a page served under a path prefix)."""
+    return HISTORY_PATH if urlparse(api_url).path == STATUS_JSON_PATH else None
+
+
+def history_allowed(conn, api_url: str) -> bool:
+    """Database only. Whether the stored decision for this feed's host allows the page's Atom history."""
+    path = history_path(api_url)
+    host, _ = host_and_path(api_url)
+    return bool(path and host and _state(load(conn, host), path) == "allowed")
 
 
 def shown(state: str, host: str) -> bool:

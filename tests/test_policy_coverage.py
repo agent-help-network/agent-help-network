@@ -643,6 +643,27 @@ def test_feed_robots_decisions_in_the_policy_match_the_code():
     assert_phrases("feed robots storage", {lang: section(lang, "06") for lang in LANGS}, kept)
 
 
+def test_atom_history_reads_in_the_policy_match_the_code():
+    # D52: where only the status API is disallowed, the page's Atom history is read as an open-announcement signal.
+    from ahn import feed_robots, status_atom, status_refresh
+    assert status_atom.ATOM_CAP == 128 * 1024 and feed_robots.HISTORY_PATH == status_refresh.HISTORY_PATH == "/history.atom"
+    reads = {"atom": Phrase(
+        "where a Statuspage page's robots.txt disallows its status API but allows its public incident-history feed (/history.atom), "
+        "we read that feed instead, at the same frequency and under the same limits (at most 128 KB, no redirect followed)",
+        "Statuspage 페이지의 robots.txt 가 상태 API 는 금지하지만 공개 사건 이력 피드(/history.atom)는 허용하면 "
+        "같은 빈도와 같은 제한(최대 128 KB, 리다이렉트를 따르지 않음)으로 그 피드를 대신 읽습니다"),
+        "unknown_not_operational": Phrase(
+            "we report only whether an announced incident is currently open; when none is listed we report the provider's status as unknown, not as operational",
+            "발표된 사건이 지금 열려 있는지만 알리고, 열린 사건이 없으면 정상이 아니라 알 수 없음으로 알립니다")}
+    assert_phrases("atom history reads", {lang: section(lang, "05") for lang in LANGS}, reads)
+    kept = {"kept": Phrase(
+        "we keep only the number of open incidents, the latest update time of the open incidents, the number of maintenances in progress "
+        "(left empty when that feed cannot be trusted for it), whether the feed's window is too short to be trusted, and that its source is that feed",
+        "열린 사건 수, 열린 사건의 가장 늦은 갱신 시각, 진행 중 점검 수(그 피드로는 믿을 수 없으면 비워 둠), "
+        "피드의 창이 너무 짧아 믿을 수 없는지 여부, 출처가 그 피드라는 표시만 두고")}
+    assert_phrases("atom history storage", {lang: section(lang, "06") for lang in LANGS}, kept)
+
+
 def test_stored_provenance_is_described_in_the_policy():
     # Migration 020 stores, with each cached read, a hash of the bytes received and who read it from where,
     # and, with each report, the interface it arrived through.
@@ -680,6 +701,8 @@ COLUMNS = {
                                     "업체가 공개한 사건·컴포넌트 이름 최대 3개(각 80자)"),
     "status_cache.affected_regional": Phrase("whether every affected component is in a region or point-of-presence group",
                                              "영향받는 컴포넌트가 모두 지역·거점 그룹에 속하는지"),
+    "status_cache.feed_source": Phrase("and that its source is that feed", "출처가 그 피드라는 표시"),
+    "status_cache.window_blind": Phrase("whether the feed's window is too short to be trusted", "피드의 창이 너무 짧아 믿을 수 없는지 여부"),
     "status_cache.scope_failures": _SCOPE_FAILURES,
     "status_cache.scope_failed_at": _SCOPE_FAILURES,
     "status_cache.scope_error": _SCOPE_FAILURES,
