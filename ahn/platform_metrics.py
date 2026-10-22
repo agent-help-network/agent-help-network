@@ -156,6 +156,10 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     try:
         with psycopg.connect(database_url) as conn:
             conn.execute("DELETE FROM lookup_signals_hourly WHERE hour < now() - interval '35 days'")
-            conn.execute("DELETE FROM lookup_sources_daily WHERE day < CURRENT_DATE - 1")
+            conn.execute("DELETE FROM lookup_sources_daily WHERE day < (now() AT TIME ZONE 'UTC')::date - 1")
+            # The minute of a source's last lookup is only needed for the 10-60 minute re-lookup window: once it is
+            # older than 61 minutes (lookup_signals.MINUTE_PRECISION_MINUTES) it is cut to the hour.
+            conn.execute("UPDATE lookup_sources_daily SET last_at = date_trunc('hour', last_at)"
+                         " WHERE last_at < now() - interval '61 minutes' AND last_at <> date_trunc('hour', last_at)")
     except psycopg.Error as exc:
         print(f"lookup_signals_prune failed={type(exc).__name__}")

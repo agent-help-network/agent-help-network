@@ -86,6 +86,9 @@ def test_a_lookup_with_codes_is_counted_per_host_and_hour(db, client):
         "site_host": HOST, "error_class": "site_access", "failure_stage": "access_denial_observed", "http_status_class": "5xx",
         "challenge": "header", "retry_after": "lt_60", "via": "browser", "client_kind": "rest_other", "after_action": "none",
         "lookups": 1, "sources": 1}
+    (source,) = rows(db, "lookup_sources_daily")
+    assert source["last_at"].second == 0 and source["last_at"].microsecond == 0  # kept to the minute, never finer
+    assert source["last_group"] == "outage" and source["last_action"] == row["action"]
     assert row["action"] == response.json()["recommendation"]["action"]
 
 
@@ -224,7 +227,7 @@ def test_mcp_hop_forwards_the_test_mark(db):
 
 
 @pytest.mark.parametrize("sent,stored", [
-    ({"http_status": "403", "challenge": "header", "retry_after": "60_3600", "via": "unknown"}, ("403", "header", "60_3600", "unknown")),
+    ({"http_status": "403", "challenge": "header", "retry_after": "60_3600", "via": "unknown"}, ("403", "header", "60_3600", "unspecified")),
     ({"http_status": "404", "challenge": "maybe", "retry_after": "5", "via": "curl"}, ("unspecified",) * 4),
     ({"http_status": "abc"}, ("unspecified",) * 4), ({"http_status": "600", "via": "browser"}, ("unspecified", "unspecified", "unspecified", "browser")),
     ({"http_status": ""}, ("unspecified",) * 4), ({"made_up_name": "x"}, ("unspecified",) * 4),
@@ -259,12 +262,19 @@ CODES = [
 
 @pytest.mark.parametrize("case", CASES)
 def test_the_answer_is_identical_with_and_without_the_codes(db, client, case):
-    baseline = comparable(lookup(client, ip=OPERATOR_IP, **case))  # an excluded lookup: nothing is recorded for it
-    assert rows(db) == []
-    for codes in CODES:
-        counted = comparable(lookup(client, **case, **codes))
-        assert counted == baseline, (case, codes)
-    assert rows(db)  # and the codes really were recorded
+    """Twin hosts get the same lookups in the same order, one with codes and one without. The two runs end in the same
+    aggregate state at every step, so the whole answer (the seven-day volume band and trend included) must match."""
+    twin_a, twin_b = "twin-one.io", "twin-two.io"
+    for step in range(14):  # crosses the 1-4, 5-9 and 10-49 volume bands
+        codes = CODES[step % len(CODES)]
+        with_codes = lookup(client, host=twin_a, **case, **codes).json()
+        without = lookup(client, host=twin_b, **case).json()
+        for body, host in ((with_codes, twin_a), (without, twin_b)):
+            assert body.pop("site_host") == host
+            body.pop("generated_at")
+        assert with_codes == without, (case, codes, step)
+    assert with_codes["lookup_activity"]["volume_band"] == "10-49"  # the volume really moved through the bands
+    assert rows(db)
 
 
 def test_recommendation_and_next_checks_ignore_the_codes_after_many_lookups(db, client):
@@ -371,8 +381,8 @@ def test_cleanup_keeps_35_days_of_hourly_counts_and_2_days_of_digests(db):
                            ("keep_today", "interval '0'")):
             conn.execute(f"INSERT INTO lookup_signals_hourly {cols} VALUES (now() - {age},%s,'a','b','c','d','e','f','g','h','i',1,0)", (label,))
         for label, back in (("today", 0), ("yesterday", 1), ("two_days", 2), ("long_ago", 30)):
-            conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,first_hour,last_at,last_group,last_action) "
-                         "VALUES (CURRENT_DATE - %s,%s,repeat('a',64),now(),now(),'block','unknown')", (back, label))
+            conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                         "VALUES ((now() AT TIME ZONE 'UTC')::date - %s,%s,repeat('a',64),now(),'block','unknown')", (back, label))
     platform_metrics.prune_analytics(db.database_url)
     assert {r["site_host"] for r in rows(db)} == {"keep_new", "keep_today"}
     assert {r["site_host"] for r in rows(db, "lookup_sources_daily")} == {"today", "yesterday"}
@@ -385,3 +395,225 @@ def test_lookup_signal_cleanup_does_not_touch_the_other_tables(db):
     platform_metrics.prune_analytics(db.database_url)
     with connect(db) as conn:
         assert conn.execute("SELECT checks FROM lookup_metrics WHERE site_host=%s", (HOST,)).fetchone()["checks"] == 3
+
+
+def test_cleanup_uses_the_utc_date_whatever_the_session_time_zone(db):
+    with connect(db) as conn:
+        conn.execute("SET TIME ZONE 'Pacific/Kiritimati'")  # UTC+14: its date is ahead of UTC for 14 hours a day
+        for label, back in (("yesterday", 1), ("two_days", 2)):
+            conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                         "VALUES ((now() AT TIME ZONE 'UTC')::date - %s,%s,repeat('b',64),now(),'block','unknown')", (back, label))
+    with connect(db) as conn:
+        conn.execute("SET TIME ZONE 'Pacific/Kiritimati'")
+        conn.execute("DELETE FROM lookup_sources_daily WHERE day < (now() AT TIME ZONE 'UTC')::date - 1")
+        assert {r["site_host"] for r in conn.execute("SELECT site_host FROM lookup_sources_daily")} == {"yesterday"}
+    # and the cleanup itself, run from a connection whose database default is that zone, keeps the same two days
+    with connect(db) as conn:
+        conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                     "VALUES ((now() AT TIME ZONE 'UTC')::date - 2,'two_days',repeat('b',64),now(),'block','unknown')")
+        conn.execute("ALTER DATABASE ahn_test SET timezone TO 'Pacific/Kiritimati'")
+    try:
+        platform_metrics.prune_analytics(db.database_url)
+    finally:
+        with connect(db) as conn:
+            conn.execute("ALTER DATABASE ahn_test RESET timezone")
+    assert {r["site_host"] for r in rows(db, "lookup_sources_daily")} == {"yesterday"}
+
+
+def test_minute_precision_is_cut_to_the_hour_after_61_minutes_without_changing_the_relookup_verdict(db):
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    old = (now - timedelta(minutes=62)).replace(minute=37) if now.minute != 37 else (now - timedelta(minutes=63))
+    old = now - timedelta(minutes=62)
+    recent = now - timedelta(minutes=60)
+    with connect(db) as conn:
+        for label, when in (("old", old), ("recent", recent), ("on_the_hour", now.replace(minute=0) - timedelta(hours=3))):
+            conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                         "VALUES ((now() AT TIME ZONE 'UTC')::date,%s,repeat('c',64),%s,'block','unknown')", (label, when))
+    platform_metrics.prune_analytics(db.database_url)
+    kept = {r["site_host"]: r["last_at"] for r in rows(db, "lookup_sources_daily")}
+    assert kept["old"] == old.replace(minute=0)           # older than 61 minutes: now to the hour
+    assert kept["recent"] == recent                        # inside the window: still to the minute
+    assert kept["on_the_hour"] == now.replace(minute=0) - timedelta(hours=3)
+    assert lookup_signals.MINUTE_PRECISION_MINUTES == 61 > lookup_signals.RELOOKUP_MAX_MINUTES
+
+
+@pytest.mark.parametrize("minutes_ago", [9, 10, 37, 60, 61, 62, 90])
+def test_cutting_the_minute_never_changes_whether_a_lookup_is_a_relookup(db, minutes_ago):
+    """Same verdict from a row cut to the hour by the cleanup as from the exact row (the window is at most 60 minutes)."""
+    start = datetime(2026, 10, 21, 12, 29, tzinfo=timezone.utc)
+    verdicts = []
+    for cut in (False, True):
+        with connect(db) as conn:
+            conn.execute("TRUNCATE lookup_sources_daily, lookup_signals_hourly")
+            record(conn, 0, start=start)
+            if cut and minutes_ago > 61:  # the cleanup only touches rows older than 61 minutes at the time it runs
+                conn.execute("UPDATE lookup_sources_daily SET last_at = date_trunc('hour', last_at)")
+            verdicts.append(record(conn, minutes_ago, start=start))
+    assert verdicts[0] == verdicts[1]
+    assert (verdicts[0] != "none") == (10 <= minutes_ago <= 60)
+
+
+# --- size bounds (A1) ---------------------------------------------------------------------------
+
+def many_combinations(conn, host, hour_start, count, *, ip=CALLER_IP):
+    kinds = ["site_access", "login_auth", "human_verification", "service_error", None]
+    stages = ["before_target_response", "response_observed", "access_denial_observed", "unknown", None]
+    statuses = [401, 402, 403, 407, 408, 429, 451, 503, None]
+    n = 0
+    for error_class in kinds:
+        for stage in stages:
+            for status in statuses:
+                for challenge in ("header", "none", None):
+                    for retry in ("none", "lt_60", "60_3600", "gt_3600", None):
+                        if n >= count:
+                            return
+                        lookup_signals.record(conn, PEPPER, host, error_class, stage,
+                                              LookupSignal(client_kind="rest_other", source_address=ip, http_status=status,
+                                                           challenge=challenge, retry_after=retry),
+                                              "unknown", hour_start)
+                        n += 1
+
+
+def test_one_source_cannot_grow_a_host_beyond_the_per_host_hour_cap(db):
+    hour = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
+    with connect(db) as conn:
+        many_combinations(conn, HOST, hour, 110)
+        found = conn.execute("SELECT error_class, lookups FROM lookup_signals_hourly WHERE site_host=%s", (HOST,)).fetchall()
+    assert len(found) == lookup_signals.HOST_HOUR_ROW_CAP + 1  # the cap, plus the one overflow row
+    assert sum(r["lookups"] for r in found) == 110              # nothing is lost, only folded
+    overflow = [r for r in found if r["error_class"] == lookup_signals.OVERFLOW]
+    assert len(overflow) == 1 and overflow[0]["lookups"] == 110 - lookup_signals.HOST_HOUR_ROW_CAP
+
+
+def test_an_existing_combination_still_counts_after_the_cap_is_reached(db):
+    hour = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
+    with connect(db) as conn:
+        many_combinations(conn, HOST, hour, 40)
+        before = conn.execute("SELECT count(*) AS n FROM lookup_signals_hourly").fetchone()["n"]
+        many_combinations(conn, HOST, hour, 1)  # the first combination again
+        after = conn.execute("SELECT count(*) AS n, max(lookups) AS most FROM lookup_signals_hourly").fetchone()
+    assert after["n"] == before and after["most"] >= 2
+
+
+def test_the_whole_hour_is_bounded_across_many_hosts(db, monkeypatch):
+    monkeypatch.setattr(lookup_signals, "HOUR_ROW_CAP", 40)
+    monkeypatch.setattr(lookup_signals, "HOST_HOUR_ROW_CAP", 5)
+    hour = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
+    with connect(db) as conn:
+        for number in range(30):
+            many_combinations(conn, f"host-{number}.io", hour, 4)
+        total = conn.execute("SELECT count(*) AS n, sum(lookups) AS lookups FROM lookup_signals_hourly").fetchone()
+        folded = conn.execute("SELECT lookups FROM lookup_signals_hourly WHERE site_host=%s", (lookup_signals.OVERFLOW_HOST,)).fetchall()
+    assert total["n"] <= 41 and total["lookups"] == 120
+    assert len(folded) == 1 and folded[0]["lookups"] == 120 - 40
+
+
+def test_a_new_hour_starts_with_fresh_caps(db):
+    hour = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
+    with connect(db) as conn:
+        many_combinations(conn, HOST, hour, 50)
+        many_combinations(conn, HOST, hour + timedelta(hours=1), 3)
+        n = conn.execute("SELECT count(*) AS n FROM lookup_signals_hourly WHERE hour=%s", ((hour + timedelta(hours=1)).replace(minute=0),)).fetchone()["n"]
+    assert n == 3
+
+
+def test_the_source_table_is_bounded_per_day_and_lookups_are_still_counted(db, monkeypatch):
+    monkeypatch.setattr(lookup_signals, "SOURCES_DAY_ROW_CAP", 3)
+    with connect(db) as conn:
+        for number in range(8):
+            record(conn, 0, ip=f"198.51.100.{number + 1}")
+        assert conn.execute("SELECT count(*) AS n FROM lookup_sources_daily").fetchone()["n"] == 3
+        assert conn.execute("SELECT sum(lookups) AS n, sum(sources) AS s FROM lookup_signals_hourly").fetchone() == {"n": 8, "s": 3}
+
+
+def test_through_the_route_a_hundred_combinations_make_a_bounded_number_of_rows(db, client):
+    for number in range(110):
+        lookup(client, error_class=("site_access", "login_auth", "human_verification", "service_error")[number % 4],
+               failure_stage=("before_target_response", "response_observed", "access_denial_observed", "unknown")[number // 4 % 4],
+               http_status=(401, 403, 429, 503, 451, 402, 407, 408)[number // 16 % 8], challenge=("header", "none")[number // 2 % 2])
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM lookup_signals_hourly").fetchone()["n"] <= lookup_signals.HOST_HOUR_ROW_CAP + 2
+        assert conn.execute("SELECT sum(lookups) AS n FROM lookup_signals_hourly").fetchone()["n"] == 110
+
+
+def test_public_mode_register_gate_applies_to_signals(db, monkeypatch):
+    """A host outside the bounded lookup register is answered but not counted (the same gate as lookup_metrics)."""
+    monkeypatch.setattr("ahn.service.QUERIED_HOST_CAP", 1)
+    client = TestClient(create_app(db))
+    assert lookup(client, host="first-site.io", error_class="site_access").status_code == 200   # takes the only slot
+    assert lookup(client, host="second-site.io", error_class="site_access").status_code == 200  # register is full
+    assert {r["site_host"] for r in rows(db)} == {"first-site.io"}
+    with connect(db) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM lookup_metrics WHERE site_host='second-site.io'").fetchone()["n"] == 0
+
+
+# --- IPv6, concurrency, locks, savepoint, queue ---------------------------------------------------
+
+def test_ipv6_addresses_of_one_subscriber_count_as_one_source(db, client):
+    for number in range(1, 6):
+        lookup(client, ip=f"2001:db8:1:2::{number}", error_class="site_access")
+    (row,) = rows(db)
+    assert row["lookups"] == 5 and row["sources"] == 1
+    assert len(rows(db, "lookup_sources_daily")) == 1
+    lookup(client, ip="2001:db8:1:3::1", error_class="site_access")
+    assert sum(r["sources"] for r in rows(db)) == 2
+
+
+def test_two_first_lookups_of_one_source_count_it_once(db):
+    """Concurrent first lookups: whichever inserts the source row counts it; the other sees it already there."""
+    with connect(db) as first, connect(db) as second:
+        a = lookup_signals._new_source(first, T0.date(), HOST, "d" * 64, T0, "block", "unknown")
+        first.commit()
+        b = lookup_signals._new_source(second, T0.date(), HOST, "d" * 64, T0, "block", "unknown")
+    assert (a, b) == (True, False)
+    with connect(db) as one, connect(db) as two:
+        record(one, 0)
+        one.commit()
+        record(two, 1)
+        two.commit()
+    assert sum(r["sources"] for r in rows(db)) == 1
+
+
+def test_a_locked_table_does_not_stall_the_lookup(db, client):
+    import time
+    holder = connect(db)
+    try:
+        holder.execute("LOCK TABLE lookup_signals_hourly IN ACCESS EXCLUSIVE MODE")
+        started = time.monotonic()
+        response = lookup(client, error_class="site_access")
+        elapsed = time.monotonic() - started
+    finally:
+        holder.rollback()
+        holder.close()
+    assert response.status_code == 200
+    assert elapsed < 3, elapsed  # gave up after 200 ms instead of waiting for the lock
+    with connect(db) as conn:  # the bookkeeping before it was kept
+        assert conn.execute("SELECT sum(checks) AS n FROM lookup_metrics WHERE site_host=%s", (HOST,)).fetchone()["n"] == 1
+    assert rows(db) == []
+
+
+def test_a_signal_failure_after_some_writes_leaves_none_of_them(db, client, monkeypatch):
+    """The savepoint claim: a write that succeeded before the failure is undone with it, and the lookup is unaffected."""
+    def half_then_fail(conn, pepper, host, *_args, **_kwargs):
+        conn.execute("INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action) "
+                     "VALUES ((now() AT TIME ZONE 'UTC')::date,%s,repeat('e',64),now(),'block','unknown')", (host,))
+        raise RuntimeError("fails after a write")
+    monkeypatch.setattr(lookup_signals, "record", half_then_fail)
+    response = lookup(client, error_class="site_access")
+    assert response.status_code == 200
+    assert rows(db, "lookup_sources_daily") == [] and rows(db) == []
+
+
+def test_queued_reads_are_committed_before_the_worker_is_woken(db, monkeypatch):
+    from ahn import access_profile, background_reads
+    monkeypatch.setattr("ahn.service.cached_profile", access_profile.cached_profile)  # let the lookup queue a first read
+    seen = []
+
+    def wake_spy():
+        with connect(db) as other:  # another connection, as the worker's would be
+            seen.append(other.execute("SELECT count(*) AS n FROM background_reads WHERE site_host=%s", (HOST,)).fetchone()["n"])
+    monkeypatch.setattr(background_reads, "wake", wake_spy)
+    assert lookup(TestClient(create_app(db)), error_class="site_access").status_code == 200
+    with connect(db) as conn:
+        queued = conn.execute("SELECT count(*) AS n FROM background_reads WHERE site_host=%s", (HOST,)).fetchone()["n"]
+    assert queued >= 1 and seen == [queued]  # everything queued was already visible when the worker was woken

@@ -99,7 +99,8 @@ def outer_request_headers(ctx: Context | None) -> dict:
     structured_output=True,
 )
 async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "",
-                         http_status: int | None = None, challenge: str = "", retry_after: str = "", via: str = "",
+                         http_status: int | float | str | None = None, challenge: str | int | float | bool | None = None,
+                         retry_after: str | int | float | bool | None = None, via: str | int | float | bool | None = None,
                          ctx: Context | None = None) -> CheckResponse:
     try:
         valid_host(site_host)
@@ -112,7 +113,7 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     if failure_stage and failure_stage not in FailureStage._value2member_map_:
         raise ToolError("failure_stage must be one of: " + ", ".join(item.value for item in FailureStage))
     # The four signal codes are never a reason to refuse a lookup: a value outside its list is dropped.
-    codes = lenient_codes(None if http_status is None else str(http_status), challenge, retry_after, via)
+    codes = lenient_codes(http_status, challenge, retry_after, via)
     params = {"site_host": site_host}
     if error_class:
         params["error_class"] = error_class

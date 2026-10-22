@@ -106,7 +106,32 @@ def test_lenient_codes_keep_valid_values_and_drop_the_rest():
     assert lenient_codes("404", "maybe", "5", "curl") == {"http_status": None, "challenge": None, "retry_after": None, "via": None}
     assert lenient_codes(None, None, None, None) == {"http_status": None, "challenge": None, "retry_after": None, "via": None}
     assert lenient_codes("٣٠٣", None, None, None)["http_status"] is None
-    assert lenient_codes("599", "none", "none", "unknown") == {"http_status": 599, "challenge": "none", "retry_after": "none", "via": "unknown"}
+    # via=unknown says no more than leaving it out, so it is stored as not sent.
+    assert lenient_codes("599", "none", "none", "unknown") == {"http_status": 599, "challenge": "none", "retry_after": "none", "via": None}
+
+
+@pytest.mark.parametrize("value", ["9" * 5000, "9" * 4, "", "0403", " 403", "40３", 10 ** 5000, True, 429.5, float("nan"), float("inf"), -403, [], {}, None],
+                         ids=["long5000", "four", "empty", "zero403", "space403", "fullwidth", "bigint", "bool", "float", "nan", "inf", "neg", "list", "dict", "none"])
+def test_lenient_codes_survive_any_input(value):
+    from ahn.lookup_signals import lenient_codes
+    result = lenient_codes(value, value, value, value)
+    assert result == {"http_status": None, "challenge": None, "retry_after": None, "via": None}
+
+
+def test_lenient_codes_accept_whole_numbers_of_any_numeric_type():
+    from ahn.lookup_signals import lenient_codes
+    assert lenient_codes(403, None, None, None)["http_status"] == 403
+    assert lenient_codes(403.0, None, None, None)["http_status"] == 403
+    assert lenient_codes("503", None, None, None)["http_status"] == 503
+
+
+def test_ipv6_sources_are_counted_per_slash_64():
+    day = date(2026, 10, 21)
+    same = {source_digest(PEPPER, day, "demo-site.io", f"2001:db8:1:2::{n}") for n in range(1, 6)}
+    assert len(same) == 1
+    assert source_digest(PEPPER, day, "demo-site.io", "2001:db8:1:3::1") not in same
+    assert source_digest(PEPPER, day, "demo-site.io", "2001:db8:1:2:ffff::1") in same  # still inside the /64
+    assert "2001:db8" not in next(iter(same))
 
 
 def test_openapi_lists_the_new_lookup_parameters(client):
@@ -143,7 +168,27 @@ def test_mcp_tool_drops_bad_signal_codes_instead_of_refusing(monkeypatch):
     assert seen["params"] == {"site_host": "demo-site.io"}
     with pytest.raises(mcp_adapter.ToolError, match="stop"):
         asyncio.run(mcp_adapter.check_incident("demo-site.io", http_status=503, via="unknown"))
-    assert seen["params"] == {"site_host": "demo-site.io", "http_status": 503, "via": "unknown"}
+    assert seen["params"] == {"site_host": "demo-site.io", "http_status": 503}  # via=unknown is not passed on
+
+
+@pytest.mark.parametrize("arguments", [
+    {"http_status": "abc"}, {"http_status": 429.5}, {"http_status": "9" * 3000}, {"http_status": True}, {"challenge": 1}, {"retry_after": 5.5},
+    {"via": False}, {"challenge": "yes", "retry_after": "soon", "via": "api", "http_status": 404}, {"http_status": 403, "challenge": "header"},
+])
+def test_mcp_call_never_fails_because_of_a_signal_value(monkeypatch, arguments):
+    """Through the real tool layer (argument validation included): a wrong or oddly typed signal never costs the answer."""
+    seen = {}
+
+    async def fake(method, path, *, params=None, extra_headers=None, **_):
+        seen["params"] = params
+        return ANSWER
+    monkeypatch.setattr(mcp_adapter, "call_api", fake)
+    result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "demo-site.io", **arguments}))
+    assert result.structured_content["site_host"] == "demo-site.io"
+    assert seen["params"]["site_host"] == "demo-site.io"
+    assert not set(seen["params"]) - {"site_host", "http_status", "challenge", "retry_after", "via"}
+    for name, value in seen["params"].items():
+        assert name == "site_host" or value in (403, "header")  # only values that were valid reached the API
 
 
 def test_mcp_tool_passes_only_the_codes_it_was_given(monkeypatch):
@@ -163,6 +208,15 @@ def test_mcp_tool_passes_only_the_codes_it_was_given(monkeypatch):
                               "challenge": "header", "retry_after": "lt_60", "via": "browser"}
 
 
+ANSWER = {
+    "site_host": "demo-site.io", "generated_at": "2026-10-20T00:00:00Z", "synthetic": False, "window_hours": 24,
+    "data_horizon_hours": 168, "current_site_status": "unknown", "evidence_level": "no_reports",
+    "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN", "summary": "x", "failures": 0, "successes": 0,
+    "reporting_sources": 0, "observations": [], "provider_status": None, "provider_source_state": "not_verified_by_current_methods",
+    "recommendation": {"action": "unknown", "confidence": "low", "reasons": []}, "next_checks": [],
+}
+
+
 def _ctx(headers):
     return SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers=headers)))
 
@@ -172,6 +226,10 @@ def test_outer_request_headers_pass_only_the_address_and_the_test_mark():
     assert mcp_adapter.outer_request_headers(_ctx(outer)) == {"x-ahn-origin-ip": "198.51.100.7", "x-ahn-test": "1"}
     assert mcp_adapter.outer_request_headers(_ctx({"x-ahn-test": "0"})) == {}
     assert mcp_adapter.outer_request_headers(None) == {}
+    # A caller cannot choose its own origin: the header it sends on the outer request is never passed on, only the edge address is.
+    forged = {"x-ahn-origin-ip": "203.0.113.9", "cf-connecting-ip": "198.51.100.7"}
+    assert mcp_adapter.outer_request_headers(_ctx(forged)) == {"x-ahn-origin-ip": "198.51.100.7"}
+    assert mcp_adapter.outer_request_headers(_ctx({"x-ahn-origin-ip": "203.0.113.9"})) == {}
     assert mcp_adapter.outer_request_headers(SimpleNamespace(request_context=SimpleNamespace(request=None))) == {}
 
     class NoContext:
@@ -187,7 +245,8 @@ def test_retention_literals_in_the_cleanup_match_the_constants():
     source = inspect.getsource(platform_metrics.prune_analytics)
     assert re.search(r"DELETE FROM lookup_signals_hourly WHERE hour < now\(\) - interval '%d days'" % lookup_signals.HOURLY_RETENTION_DAYS, source)
     # `day < CURRENT_DATE - 1` keeps today and yesterday: two days.
-    assert re.search(r"DELETE FROM lookup_sources_daily WHERE day < CURRENT_DATE - %d\b" % (lookup_signals.SOURCES_RETENTION_DAYS - 1), source)
+    # The UTC date, not the database session's.
+    assert re.search(r"DELETE FROM lookup_sources_daily WHERE day < \(now\(\) AT TIME ZONE 'UTC'\)::date - %d\b" % (lookup_signals.SOURCES_RETENTION_DAYS - 1), source)
     assert (lookup_signals.HOURLY_RETENTION_DAYS, lookup_signals.SOURCES_RETENTION_DAYS) == (35, 2)
 
 
@@ -199,3 +258,9 @@ def test_migration_only_adds_two_tables():
     assert "Rollback:" in sql
     # No column can hold an address, a path or free text: every text column is a short varchar or the digest.
     assert not re.search(r"\btext\b|\bip\b|inet", code, re.I)
+
+
+def test_an_enormous_content_length_is_refused_not_a_server_error(client):
+    """Same family as the 5000-digit http_status: a digit string past Python's int conversion limit must not become a 500."""
+    response = client.post("/v1/observations", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": "9" * 5000})
+    assert response.status_code < 500

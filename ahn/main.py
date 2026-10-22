@@ -252,7 +252,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
                 return JSONResponse({"error": "json_required"}, status_code=415)
             size = request.headers.get("content-length", "")
-            if not size.isdigit() or int(size) > 4096:
+            if not size.isdigit() or len(size) > 9 or int(size) > 4096:
                 return JSONResponse({"error": "body_too_large_or_unframed"}, status_code=413)
         if report_limiter and request.method == "POST" and request.url.path == "/v1/observations" and not exempt and not await report_limiter.allow(request):
             return JSONResponse({"error": "report_rate_limited"}, status_code=429, headers={"Retry-After": "60", "Cache-Control": "no-store"})
@@ -261,7 +261,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             if "transfer-encoding" in request.headers and "content-length" in request.headers:
                 return JSONResponse({"error": "conflicting_framing"}, status_code=400)
             size = request.headers.get("content-length", "")
-            if not size.isdigit() or int(size) > 4096:
+            if not size.isdigit() or len(size) > 9 or int(size) > 4096:
                 rejected_body = True
             if not rejected_body:
                 body = bytearray()

@@ -286,7 +286,10 @@ def _record_signal(conn, settings: Settings, host: str, error_class: str | None,
         return
     try:
         with conn.transaction():
+            # Never wait on a table lock for the sake of a count: give up after 200 ms (the setting ends with the savepoint).
+            conn.execute("SET LOCAL lock_timeout = '200ms'")
             lookup_signals.record(conn, settings.key_pepper, host, error_class, failure_stage, signal, action, now)
+            conn.execute("SET LOCAL lock_timeout = DEFAULT")
     except Exception:
         # Shadow bookkeeping: a failure (for example a migration not applied yet) must not touch the lookup.
         LOG.warning("lookup_signal_unavailable")

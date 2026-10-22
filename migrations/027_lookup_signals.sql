@@ -6,6 +6,8 @@
 -- Rollback: DROP TABLE lookup_sources_daily; DROP TABLE lookup_signals_hourly;
 --           DELETE FROM schema_migrations WHERE version=27;
 -- The application keeps working with the tables missing: the write is a savepoint that logs and carries on.
+-- Size is bounded by the application, not by what clients send (ahn/lookup_signals.py): at most 32 combination rows per
+-- host and hour, 500 per hour in all (the rest fold into 'overflow' rows), and 20,000 source digests per day.
 
 -- One row per combination of codes in an hour. Every column holds a value from a fixed list, 'unspecified' when the
 -- client did not send that code. action is the recommendation the lookup was answered with; after_action is the
@@ -33,12 +35,13 @@ CREATE INDEX IF NOT EXISTS lookup_signals_hourly_host ON lookup_signals_hourly (
 
 -- To tell separate clients apart without keeping an address: source_digest is a keyed digest of the IP address that
 -- is specific to this host and this UTC day, so the same address gives a different value for another host or day.
--- last_at is cut to the minute (the 10 to 60 minute re-lookup window cannot be told apart by hour). Kept 2 days.
+-- last_at is cut to the minute, because the 10 to 60 minute re-lookup window cannot be told apart by hour; the hourly
+-- cleanup cuts it to the hour once it is older than 61 minutes. last_group is the coarse kind of blocked lookup
+-- (outage, block, rate, login, or unspecified); last_action is the recommendation given. Rows are kept 2 days.
 CREATE TABLE IF NOT EXISTS lookup_sources_daily (
     day date NOT NULL,
     site_host varchar(253) NOT NULL,
     source_digest char(64) NOT NULL,
-    first_hour timestamptz NOT NULL,
     last_at timestamptz NOT NULL,
     last_group varchar(16) NOT NULL,
     last_action varchar(32) NOT NULL,

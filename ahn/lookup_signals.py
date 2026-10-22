@@ -22,8 +22,22 @@ from hashlib import sha256
 HOURLY_RETENTION_DAYS = 35
 SOURCES_RETENTION_DAYS = 2
 
+# Row bounds. Each lookup creates at most one new combination row, so the tables are bounded by these caps, not by
+# what a client sends: per host and hour at most HOST_HOUR_ROW_CAP combination rows (more fold into one overflow row of
+# that host), per hour at most HOUR_ROW_CAP rows in all (more fold into one overflow row for every host), and per UTC
+# day at most SOURCES_DAY_ROW_CAP source digests (more lookups are still counted, just without a source).
+HOST_HOUR_ROW_CAP = 32
+HOUR_ROW_CAP = 500
+SOURCES_DAY_ROW_CAP = 20000
+OVERFLOW = "overflow"
+OVERFLOW_HOST = "(overflow)"
+
+# The last-lookup time of a source is kept to the minute (the 10-60 minute re-lookup window needs it) for at most this
+# many minutes and is then cut to the hour by the cleanup job, so the minute never outlives the window it serves.
+MINUTE_PRECISION_MINUTES = 61
+
 # HTTP statuses a client may send: the ones that mean "blocked, rate limited or the site failed".
-# Anything else (404, 422, ...) is not an access problem and is refused with the allowed list.
+# Anything else (404, 422, ...) is not an access problem and is ignored (counted as not sent).
 HTTP_STATUS_VALUES = (401, 402, 403, 407, 408, 429, 451)
 HTTP_STATUS_RANGE = (500, 599)
 UNSPECIFIED = "unspecified"
@@ -48,7 +62,7 @@ ORIGIN_HEADER = "x-ahn-origin-ip"
 
 
 def valid_http_status(code: int) -> bool:
-    return code in HTTP_STATUS_VALUES or HTTP_STATUS_RANGE[0] <= code <= HTTP_STATUS_RANGE[1]
+    return not isinstance(code, bool) and (code in HTTP_STATUS_VALUES or HTTP_STATUS_RANGE[0] <= code <= HTTP_STATUS_RANGE[1])
 
 
 def status_class(code: int | None) -> str:
@@ -87,15 +101,29 @@ def lenient_codes(http_status, challenge, retry_after, via) -> dict:
     """Signal codes as sent, with any value outside its fixed list dropped (treated as not sent).
 
     A typo in an optional signal must never cost the caller its answer, so these four are not validated with a 400
-    (error_class and failure_stage keep theirs). Names are matched exactly; an unknown query name is ignored by the server.
+    (error_class and failure_stage keep theirs). Accepts whatever type arrived (text from the query string, anything
+    from an MCP client) and never converts a long digit string to a number. ``via=unknown`` is stored as not sent:
+    it says no more than leaving the code out. Names are matched exactly; an unknown query name is ignored by the server.
     """
     from .models import Challenge, RetryAfter, Via
-    code = int(http_status) if isinstance(http_status, str) and http_status.isascii() and http_status.isdigit() else None
+    code = None
+    if isinstance(http_status, bool):
+        pass
+    elif isinstance(http_status, int):
+        code = http_status
+    elif isinstance(http_status, float):
+        code = int(http_status) if http_status.is_integer() and abs(http_status) < 10_000 else None
+    elif isinstance(http_status, str) and len(http_status) <= 3 and http_status.isascii() and http_status.isdigit():
+        code = int(http_status)
+
+    def listed(value, enum):
+        return value if isinstance(value, str) and value in enum._value2member_map_ else None
+    via = listed(via, Via)
     return {
         "http_status": code if code is not None and valid_http_status(code) else None,
-        "challenge": challenge if challenge in Challenge._value2member_map_ else None,
-        "retry_after": retry_after if retry_after in RetryAfter._value2member_map_ else None,
-        "via": via if via in Via._value2member_map_ else None,
+        "challenge": listed(challenge, Challenge),
+        "retry_after": listed(retry_after, RetryAfter),
+        "via": None if via == Via.unknown.value else via,
     }
 
 
@@ -109,7 +137,10 @@ def clean_address(value: str) -> str | None:
 
 def source_digest(pepper: str, day, host: str, address: str) -> str:
     """Keyed digest specific to one host and one UTC day: the same address gives a different value for another
-    host or another day, so it cannot be followed across either. 64 hex characters."""
+    host or another day, so it cannot be followed across either. An IPv6 address is reduced to its /64 first. 64 hex characters."""
+    ip = ipaddress.ip_address(address)
+    if ip.version == 6:  # one subscriber usually holds a whole /64: count it as one source
+        address = ipaddress.ip_network((ip, 64), strict=False).network_address.compressed
     message = f"src-v1|{day.isoformat()}|{host}|{address}".encode("utf-8")
     return hmac.new(pepper.encode("utf-8"), message, sha256).hexdigest()
 
@@ -123,6 +154,39 @@ class LookupSignal:
     challenge: str | None = None
     retry_after: str | None = None
     via: str | None = None
+
+
+def _new_source(conn, day, host, digest, minute, group, action) -> bool:
+    """Insert the source's first row of the day; True when this call created it (so concurrent first lookups count once)."""
+    if conn.execute("SELECT count(*) AS n FROM (SELECT 1 FROM lookup_sources_daily WHERE day=%s LIMIT %s) s",
+                    (day, SOURCES_DAY_ROW_CAP)).fetchone()["n"] >= SOURCES_DAY_ROW_CAP:
+        return False
+    return conn.execute(
+        """INSERT INTO lookup_sources_daily (day,site_host,source_digest,last_at,last_group,last_action)
+           VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (day,site_host,source_digest) DO NOTHING RETURNING 1 AS made""",
+        (day, host, digest, minute, group, action)).fetchone() is not None
+
+
+def _count_lookup(conn, hour, host, key: tuple, sources: int) -> None:
+    """Add one lookup to its combination row; a new combination is subject to the row caps (overflow rows past them)."""
+    columns = "hour,site_host,error_class,failure_stage,http_status_class,challenge,retry_after,via,client_kind,action,after_action"
+    where = columns.replace(",", "=%s AND ") + "=%s"
+    bump = f"UPDATE lookup_signals_hourly SET lookups=lookups+1, sources=sources+%s WHERE {where}"
+    if conn.execute(bump, (sources, hour, host, *key)).rowcount:
+        return
+    use_host, use_key = host, key
+    over = (OVERFLOW,) * len(key)
+    if conn.execute("SELECT count(*) AS n FROM (SELECT 1 FROM lookup_signals_hourly WHERE hour=%s LIMIT %s) s",
+                    (hour, HOUR_ROW_CAP)).fetchone()["n"] >= HOUR_ROW_CAP:
+        use_host, use_key = OVERFLOW_HOST, over
+    elif conn.execute("SELECT count(*) AS n FROM (SELECT 1 FROM lookup_signals_hourly WHERE hour=%s AND site_host=%s LIMIT %s) s",
+                      (hour, host, HOST_HOUR_ROW_CAP)).fetchone()["n"] >= HOST_HOUR_ROW_CAP:
+        use_key = over
+    marks = ",".join(["%s"] * (len(use_key) + 2))
+    conn.execute(
+        f"""INSERT INTO lookup_signals_hourly ({columns},lookups,sources) VALUES ({marks},1,%s)
+            ON CONFLICT ({columns}) DO UPDATE SET lookups=lookup_signals_hourly.lookups+1, sources=lookup_signals_hourly.sources+EXCLUDED.sources""",
+        (hour, use_host, *use_key, sources))
 
 
 def record(conn, pepper: str, host: str, error_class: str | None, failure_stage: str | None,
@@ -139,34 +203,23 @@ def record(conn, pepper: str, host: str, error_class: str | None, failure_stage:
     after_action = NO_ACTION
     new_source = False
     if signal.source_address:
-        day = now.date()
+        day = now.date()  # `now` is UTC
         digest = source_digest(pepper, day, host, signal.source_address)
-        previous = conn.execute(
-            "SELECT last_at,last_group,last_action FROM lookup_sources_daily WHERE day=%s AND site_host=%s AND source_digest=%s",
-            (day, host, digest),
-        ).fetchone()
-        if previous is None:
+        if _new_source(conn, day, host, digest, minute, group, action):
             new_source = True
         else:
-            new_source = previous["last_at"] < hour
-            if group != UNSPECIFIED and previous["last_group"] != UNSPECIFIED:
-                waited = (minute - previous["last_at"]).total_seconds() / 60
-                if RELOOKUP_MIN_MINUTES <= waited <= RELOOKUP_MAX_MINUTES:
-                    after_action = previous["last_action"]
-        conn.execute(
-            """INSERT INTO lookup_sources_daily (day,site_host,source_digest,first_hour,last_at,last_group,last_action)
-               VALUES (%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (day,site_host,source_digest)
-               DO UPDATE SET last_at=EXCLUDED.last_at, last_group=EXCLUDED.last_group, last_action=EXCLUDED.last_action""",
-            (day, host, digest, hour, minute, group, action),
-        )
-    conn.execute(
-        """INSERT INTO lookup_signals_hourly
-           (hour,site_host,error_class,failure_stage,http_status_class,challenge,retry_after,via,client_kind,action,after_action,lookups,sources)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s)
-           ON CONFLICT (hour,site_host,error_class,failure_stage,http_status_class,challenge,retry_after,via,client_kind,action,after_action)
-           DO UPDATE SET lookups=lookup_signals_hourly.lookups+1, sources=lookup_signals_hourly.sources+EXCLUDED.sources""",
-        (hour, host, error_class or UNSPECIFIED, failure_stage or UNSPECIFIED, http_class, signal.challenge or UNSPECIFIED,
-         signal.retry_after or UNSPECIFIED, signal.via or UNSPECIFIED, signal.client_kind, action, after_action, 1 if new_source else 0),
-    )
+            previous = conn.execute(
+                "SELECT last_at,last_group,last_action FROM lookup_sources_daily WHERE day=%s AND site_host=%s AND source_digest=%s FOR UPDATE",
+                (day, host, digest)).fetchone()
+            if previous is not None:
+                new_source = previous["last_at"] < hour
+                if group != UNSPECIFIED and previous["last_group"] != UNSPECIFIED:
+                    waited = (minute - previous["last_at"]).total_seconds() / 60
+                    if RELOOKUP_MIN_MINUTES <= waited <= RELOOKUP_MAX_MINUTES:
+                        after_action = previous["last_action"]
+                conn.execute("UPDATE lookup_sources_daily SET last_at=%s,last_group=%s,last_action=%s WHERE day=%s AND site_host=%s AND source_digest=%s",
+                             (minute, group, action, day, host, digest))
+    _count_lookup(conn, hour, host, (error_class or UNSPECIFIED, failure_stage or UNSPECIFIED, http_class, signal.challenge or UNSPECIFIED,
+                                     signal.retry_after or UNSPECIFIED, signal.via or UNSPECIFIED, signal.client_kind, action, after_action),
+                  1 if new_source else 0)
     return after_action
