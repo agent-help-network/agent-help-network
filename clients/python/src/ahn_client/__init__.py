@@ -19,5 +19,5 @@ from ._classify import classify, signals
 from ._client import check, clear_cache
 from ._result import Result
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = ["check", "classify", "clear_cache", "signals", "Result", "__version__"]

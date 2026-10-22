@@ -26,7 +26,7 @@ classifiers = [
 # ahn-client has no dependencies of its own. This package reads some of its private helpers (the bounded lookup the
 # middleware uses), so the upper bound is deliberate: raise it after running the tests against the new minor version.
 dependencies = [
-    "ahn-client>=0.4.0,<0.5",
+    "ahn-client>=0.4.0,<0.6",
     "langchain-core>=0.3.0",
 ]
 

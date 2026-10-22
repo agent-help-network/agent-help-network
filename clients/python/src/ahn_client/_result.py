@@ -10,6 +10,14 @@ MAX_SUMMARY = 700
 ACTIONS = ("proceed", "use_official_path", "hand_off_to_human", "wait_provider_incident", "stop_declared_block", "unknown")
 CONFIDENCES = ("high", "medium", "low")
 
+# Short sentences for the next_checks codes that came with the vendor-aware robots rule (D48), shown in summary().
+# They restate the contract's text (docs/api-contract.en.md, next_checks table); they decide nothing.
+NEXT_CHECK_NOTES = {
+    "robots_blocks_some_agents": "Note: robots.txt blocks some agents and the answer does not know yours; if your fetcher sends a blocked token, stop; else it is not about you.",
+    "robots_blocks_not_your_agent": "Note: robots.txt blocks other agents, not the ones this answer was decided on; keep requests modest, not an access guarantee.",
+    "robots_names_vendor_alias": "Note: a robots.txt block names your vendor under an unlisted name; not a declared block, not permission: prefer an official path.",
+}
+
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._~/%+=&?#-]*)?$")
@@ -38,7 +46,8 @@ def _retry_after(profile: Optional[Dict[str, Any]]) -> Optional[int]:
 
 
 def _summary(host: str, data: Dict[str, Any], url: str) -> str:
-    """The same line the Claude Code plugin prints, at most MAX_SUMMARY characters, from validated fields only."""
+    """A line like the Claude Code plugin's, at most MAX_SUMMARY characters, from validated fields only. It differs from the
+    plugin's in one way: for the three D48 robots codes (NEXT_CHECK_NOTES) a short sentence follows the link."""
     rec = _dict(data.get("recommendation")) or {}
     profile = _dict(data.get("access_profile"))
     official = _dict(data.get("official_paths")) or {}
@@ -64,8 +73,9 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
     else:
         status = "not connected (official page listed)" if isinstance(data.get("official_status_page"), dict) else "not connected"
     codes = [_code(item.get("code")) for item in checks if isinstance(item, dict)][:2]
+    note = next((NEXT_CHECK_NOTES[code] for code in codes if code in NEXT_CHECK_NOTES), "")
 
-    def render(agent_limit: Optional[int], show_path: bool, show_url: bool) -> str:
+    def render(agent_limit: Optional[int], show_path: bool, show_url: bool, show_note: bool = False) -> str:
         if blocked is None:
             agents = "unknown"
         elif not blocked:
@@ -83,10 +93,19 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_code(data.get('evidence_level'))}. Next: {', '.join(codes) or 'none'}. "
                 f"Full JSON: {full}. "
+                f"{note + ' ' if note and show_note else ''}"
                 "Declared policy is not an access guarantee; bypassing site controls is not advised.")
 
     text = ""
-    for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False)):
+    # Order of sacrifice. Without a note: agent names, then path, then link (as the plugin does). With a note, the note
+    # is dropped before anything the reader needs to apply it: at least 3 blocked-agent names and the link stay, and the
+    # path goes before the names shrink below 3. Only when that is not enough are the names given up, then the link.
+    if note:
+        order = ((6, True, True, True), (3, True, True, True), (6, True, True, False), (3, True, True, False),
+                 (6, False, True, False), (3, False, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False))
+    else:
+        order = ((6, True, True, False), (3, True, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False))
+    for options in order:
         text = render(*options)
         if len(text) <= MAX_SUMMARY:
             return text
@@ -164,5 +183,6 @@ class Result:
         return tuple(item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item))
 
     def summary(self) -> str:
-        """One line, at most 700 characters, built only from validated fields."""
+        """One line, at most 700 characters, built only from validated fields. Like the plugin's line, plus a short sentence
+        for the next_checks codes in ``NEXT_CHECK_NOTES``."""
         return _summary(self.host, self.raw, self.url)

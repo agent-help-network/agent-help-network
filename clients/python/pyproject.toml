@@ -46,4 +46,4 @@ path = "src/ahn_client/__init__.py"
 packages = ["src/ahn_client"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/ahn_client", "examples", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/ahn_client", "examples", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]

@@ -19,6 +19,11 @@ Environment:
 A lookup carries the hostname, error_class, failure_stage and, when the tool result already holds them, four more
 enum codes: http_status, challenge, retry_after and via. Nothing else is read out of the result for the request: no
 path, query, body text or header value leaves the machine.
+
+From version 0.3.2 a lookup that comes from Claude Code's own WebFetch also carries agent_vendor=anthropic (WebFetch
+identifies itself as Claude-User). Any other tool, and a WebFetch whose tool name is not exactly "WebFetch", sends no
+vendor: when the fetcher is not known, nothing is claimed. The service judges robots.txt for that vendor; the hook
+decides nothing about it.
 """
 
 from __future__ import annotations
@@ -103,6 +108,7 @@ HOST_LIKE = re.compile(r"[A-Za-z0-9.-]+")
 # Characters IDNA2003 (Python's "idna" codec) maps to a different domain than IDNA2008 (browsers) uses.
 IDNA_DEVIATIONS = frozenset("ßς‌‍")
 MAX_AGENT_TOKENS = 64
+AGENT_VENDOR_WEBFETCH = "anthropic"
 
 # Closed enums of the response contract (docs/api-contract.en.md; ahn/models.py is the machine form).
 # A value outside them is dropped, never shown.
@@ -541,8 +547,10 @@ def cache_path(env=None, windows: bool | None = None) -> str | None:
     return os.path.join(directory, CACHE_FILE) if directory else None
 
 
-def recently_seen(host: str, now: float | None = None, env=None) -> bool:
-    """True when host was looked up within the TTL; otherwise records it. Cache errors never stop a lookup."""
+def recently_seen(host: str, now: float | None = None, env=None, vendor: str | None = None) -> bool:
+    """True when host (looked up for this vendor, or for none) was looked up within the TTL; otherwise records it. The
+    answer depends on the vendor, so a lookup without one does not hide a lookup with one. Cache errors never stop a lookup."""
+    key = host + "#" + vendor if vendor else host
     now = time.time() if now is None else now
     path = cache_path(env)
     if not path:
@@ -559,9 +567,9 @@ def recently_seen(host: str, now: float | None = None, env=None) -> bool:
     entries = {key: stamp for key, stamp in entries.items()
                if isinstance(key, str) and isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
                and -1e12 < stamp < 1e12 and 0 <= now - stamp < CACHE_TTL_SECONDS}
-    if host in entries:
+    if key in entries:
         return True
-    entries[host] = now
+    entries[key] = now
     if len(entries) > CACHE_MAX_ENTRIES:
         entries = dict(sorted(entries.items(), key=lambda item: item[1])[-CACHE_MAX_ENTRIES:])
     directory = os.path.dirname(path)
@@ -595,11 +603,20 @@ def valid_signals(found: dict | None) -> dict:
     return {name: found[name] for name, ok in allowed if name in found and ok(found[name])}
 
 
-def lookup_url(host: str, error_class: str, stage: str | None, extra: dict | None = None) -> str:
+def vendor_for(tool) -> str | None:
+    """"anthropic" for Claude Code's own WebFetch (its requests send the Claude-User token), None for every other tool:
+    an MCP browser or fetch server, or a Bash command, may send any user agent, so no vendor is claimed for it."""
+    return AGENT_VENDOR_WEBFETCH if tool == "WebFetch" else None
+
+
+def lookup_url(host: str, error_class: str, stage: str | None, extra: dict | None = None, vendor: str | None = None) -> str:
     query = {"site_host": host, "error_class": error_class}
     if stage:
         query["failure_stage"] = stage
     query.update(valid_signals(extra))
+    # Not a signal code: the service does not count or store it, it only decides the robots part of the answer.
+    if vendor == AGENT_VENDOR_WEBFETCH:
+        query["agent_vendor"] = vendor
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
@@ -699,7 +716,7 @@ def blocked_agents(robots: dict) -> tuple[list[str], int]:
     return declared, len(tokens) - len(declared)
 
 
-def summary(host: str, data: dict, url: str, note: str = "") -> str:
+def summary(host: str, data: dict, url: str, note: str = "", vendor: str | None = None) -> str:
     """The additionalContext line, at most MAX_CONTEXT characters, built only from contract enums and validated values."""
     if not isinstance(data, dict):
         raise ValueError("unexpected response")
@@ -737,7 +754,10 @@ def summary(host: str, data: dict, url: str, note: str = "") -> str:
         if len(codes) == 2:
             break
 
-    def render(agent_limit: int | None, show_path: bool, show_url: bool) -> str:
+    # The answer was decided for this vendor (D48); say so, so a reader knows it is not the vendor-neutral one.
+    mark = f"Answer for agent_vendor={vendor} (WebFetch). " if vendor == AGENT_VENDOR_WEBFETCH else ""
+
+    def render(agent_limit: int | None, show_path: bool, show_url: bool, show_mark: bool = True) -> str:
         if blocked is None:
             agents = "unknown"
         elif not blocked:
@@ -756,9 +776,10 @@ def summary(host: str, data: dict, url: str, note: str = "") -> str:
                 f"Declared policy: {policy}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_enum(data.get('evidence_level'), EVIDENCE_LEVELS)}. Next: {', '.join(codes) or 'none'}. "
-                f"Full JSON: {full}. {CLOSING}")
+                f"{mark if show_mark else ''}Full JSON: {full}. {CLOSING}")
 
-    for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False)):
+    for options in ((6, True, True), (3, True, True), (0, True, True), (0, False, True), (0, False, False),
+                    (6, True, True, False), (3, True, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False)):
         text = render(*options)
         if len(text) <= MAX_CONTEXT:
             return text
@@ -778,11 +799,14 @@ def run(raw: bytes, env=os.environ) -> tuple[dict | None, str]:
     if skip_host(name, env.get("AHN_HOOK_SKIP_HOSTS", "")):
         return None, "skipped host"
     host = apex(name)
-    if recently_seen(host, env=env):
+    tool = payload.get("tool_name") if isinstance(payload, dict) else None
+    vendor = vendor_for(tool)
+    if recently_seen(host, env=env, vendor=vendor):
         return None, f"{host} looked up within 10 minutes"
-    url = lookup_url(host, error_class, stage)
+    # The agent_vendor stays in the "Full JSON" link: it is not counted, and the link then gives the answer shown in the line.
+    url = lookup_url(host, error_class, stage, vendor=vendor)
     # The signals ride on the request only. The "Full JSON" link in the line stays without them, so following it counts nothing twice.
-    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload))), url, retry_note(payload, name) if error_class == "service_error" else "")
+    text = summary(host, fetch_within(lookup_url(host, error_class, stage, signals(payload), vendor)), url, retry_note(payload, name) if error_class == "service_error" else "", vendor)
     event = payload.get("hook_event_name")
     return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, f"{host} {error_class}"
 

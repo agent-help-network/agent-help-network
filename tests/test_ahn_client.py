@@ -417,6 +417,202 @@ def test_summary_without_profile_or_provider(transport):
     assert "not read for this hostname" in line and "Official path: none" in line and len(line) <= 700
 
 
+# --- agent_vendor (D48) -----------------------------------------------------------------------------------
+
+def server_vendors():
+    from ahn.models import AgentVendor
+    return {member.value for member in AgentVendor}
+
+
+def query(request):
+    return urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query)
+
+
+def test_the_vendor_list_is_the_servers():
+    from ahn_client import _signals
+    assert set(_signals.AGENT_VENDORS) == server_vendors() and len(_signals.AGENT_VENDORS) == 13
+
+
+@pytest.mark.parametrize("vendor", sorted(server_vendors()))
+def test_agent_vendor_is_sent_when_given(transport, vendor):
+    calls = transport()
+    result = ahn.check("example.com", "site_access", agent_vendor=vendor)
+    (request, _), = calls
+    assert query(request) == {"site_host": ["example.com"], "error_class": ["site_access"], "agent_vendor": [vendor]}
+    assert result.url.endswith("&agent_vendor=" + vendor)  # the "Full JSON" link gives the answer the line shows
+
+
+@pytest.mark.parametrize("vendor", ["Anthropic", "ANTHROPIC", " anthropic", "anthropic ", "", "claude", "unknown", "openai,google", 1, True, b"anthropic", ["anthropic"]])
+def test_a_wrong_vendor_raises_before_anything_is_sent(transport, vendor):
+    calls = transport()
+    with pytest.raises(ValueError):
+        ahn.check("example.com", "site_access", agent_vendor=vendor)
+    assert calls == []
+
+
+def test_a_wrong_vendor_raises_even_when_the_client_is_disabled(monkeypatch, transport):
+    calls = transport()
+    monkeypatch.setenv("AHN_CLIENT_DISABLE", "1")
+    with pytest.raises(ValueError):
+        ahn.check("example.com", "site_access", agent_vendor="nope")
+    assert ahn.check("example.com", "site_access", agent_vendor="anthropic") is None and calls == []
+
+
+def test_a_wrong_vendor_raises_even_for_a_host_that_is_never_looked_up(transport):
+    transport()
+    with pytest.raises(ValueError):
+        ahn.check("localhost", agent_vendor="nope")
+
+
+def test_without_a_vendor_the_request_is_the_one_0_4_0_sent(transport):
+    calls = transport()
+    for call in (lambda: ahn.check("example.com", "site_access", "response_observed", http_status=403, via="http_fetch"),
+                 lambda: ahn.check("example.com", "site_access", "response_observed", http_status=403, via="http_fetch", agent_vendor=None)):
+        ahn.clear_cache()
+        result = call()
+        assert calls[-1][0].full_url == ("https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=site_access"
+                                         "&failure_stage=response_observed&http_status=403&via=http_fetch")
+        assert "agent_vendor" not in result.url
+        assert calls[-1][0].headers == {"User-agent": _client.user_agent(), "Accept": "application/json"}
+    assert _client.lookup_url("example.com", "site_access", None) == "https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&error_class=site_access"
+
+
+def test_a_vendor_is_not_a_signal_code():
+    from ahn_client import _signals
+    assert "agent_vendor" not in _signals.SIGNAL_NAMES
+    assert "agent_vendor" not in _signals.valid_signals({"agent_vendor": "anthropic"})
+    assert "agent_vendor" not in _client.lookup_url("example.com", None, None, {"agent_vendor": "anthropic"})
+
+
+def test_answers_are_cached_per_vendor(transport):
+    calls = transport()
+    ahn.check("example.com", "site_access", agent_vendor="anthropic")
+    ahn.check("example.com", "site_access", agent_vendor="anthropic")
+    assert len(calls) == 1
+    ahn.check("example.com", "site_access", agent_vendor="openai")
+    ahn.check("example.com", "site_access")
+    assert len(calls) == 3
+
+
+def test_the_client_never_changes_the_services_verdict(transport):
+    # The judgement is the service's: whatever vendor is sent, the recommendation shown is the one that came back.
+    body = {**ANSWER, "recommendation": {"action": "proceed", "confidence": "medium", "reasons": ["robots_blocks_not_your_agent"], "agent_vendor": "anthropic"}}
+    transport(body=body)
+    result = ahn.check("example.com", "site_access", agent_vendor="openai")
+    assert (result.recommendation, result.confidence, result.reasons) == ("proceed", "medium", ("robots_blocks_not_your_agent",))
+
+
+NEW_CODES = {
+    "robots_blocks_some_agents": "Note: robots.txt blocks some agents and the answer does not know yours",
+    "robots_blocks_not_your_agent": "Note: robots.txt blocks other agents, not the ones this answer was decided on",
+    "robots_names_vendor_alias": "Note: a robots.txt block names your vendor under an unlisted name",
+}
+
+
+@pytest.mark.parametrize("code", sorted(NEW_CODES))
+def test_summary_explains_the_new_next_check_codes(transport, code):
+    transport(body={**ANSWER, "next_checks": [{"code": code, "text": "..."}, {"code": "official_path_available", "text": "..."}]})
+    line = ahn.check("example.com", "site_access", agent_vendor="anthropic").summary()
+    assert f"Next: {code}, official_path_available." in line and NEW_CODES[code] in line
+    assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
+
+
+def test_the_alias_note_comes_with_a_following_wildcard_code(transport):
+    transport(body={**ANSWER, "next_checks": [{"code": "robots_names_vendor_alias", "text": "..."}, {"code": "robots_wildcard_disallow", "text": "..."}]})
+    line = ahn.check("example.com", "site_access").summary()
+    assert "Next: robots_names_vendor_alias, robots_wildcard_disallow." in line and NEW_CODES["robots_names_vendor_alias"] in line
+
+
+def _answer_for_summary(tokens, path_length, codes):
+    return {"recommendation": {"action": "use_official_path", "confidence": "high"},
+            "access_profile": {"robots_status": "ok", "llms_txt_status": "absent",
+                               "robots": {"agents_blocked": [f"Agent{index}-User" for index in range(tokens)]}},
+            "official_paths": {"api_docs": "https://developer.example.com/" + "x" * path_length},
+            "evidence_level": "no_reports", "next_checks": [{"code": code, "text": "..."} for code in codes]}
+
+
+def _features(line):
+    import re
+    return {"names": len(re.findall(r"Agent\d+-User", line)), "note": "Note:" in line,
+            "path": "developer.example.com" in line, "link": "Full JSON: https://" in line}
+
+
+SUMMARY_HOSTS = ("example.com", "h" * 44 + ".com", ".".join(["a" * 60] * 3) + ".com")
+
+
+@pytest.mark.parametrize("codes", [("robots_blocks_some_agents", "robots_wildcard_disallow"), ("response_observed", "robots_blocks_some_agents"),
+                                   ("robots_names_vendor_alias",), ("response_observed", "robots_blocks_not_your_agent")])
+@pytest.mark.parametrize("tokens", [6, 18])
+def test_the_note_is_dropped_before_the_names_the_path_and_the_link(codes, tokens):
+    # The reader needs at least 3 blocked-agent names and the link to apply a note; the note is the first thing to go.
+    for host in SUMMARY_HOSTS:
+        url = ("https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host
+               + "&error_class=site_access&failure_stage=before_target_response&agent_vendor=anthropic")
+        for path_length in range(0, 80):
+            line = ahn._result._summary(host, _answer_for_summary(tokens, path_length, codes), url)
+            found = _features(line)
+            assert len(line) <= 700 and line.endswith("bypassing site controls is not advised.")
+            if found["note"]:
+                assert found["names"] >= 3 and found["link"] and found["path"]  # the note never costs a name, the path or the link
+            if len(host) < 60:
+                assert found["names"] >= 3 and found["link"]  # a host that leaves room keeps 3 names and the link
+
+
+def test_a_note_fits_with_a_short_path_and_a_normal_host():
+    for tokens in (6, 18):
+        line = ahn._result._summary("example.com", _answer_for_summary(tokens, 10, ("response_observed", "robots_blocks_some_agents")),
+                                    "https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com&agent_vendor=anthropic")
+        assert _features(line) == {"names": 6, "note": True, "path": True, "link": True}
+
+
+def test_each_step_of_the_sacrifice_order_is_reached_in_turn():
+    codes = ("response_observed", "robots_blocks_some_agents")
+
+    def state(host, path_length):
+        url = "https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host + "&agent_vendor=anthropic"
+        line = ahn._result._summary(host, _answer_for_summary(6, path_length, codes), url)
+        assert len(line) <= 700 and "…" not in line  # intact: never cut off
+        return tuple(_features(line).values())  # names, note, path, link
+
+    assert state("example.com", 0) == (6, True, True, True)      # room for everything
+    assert state("example.com", 30) == (3, True, True, True)     # the 6 names do not fit next to the note: 3 names
+    assert state("example.com", 79) == (6, False, True, True)    # the note goes, the 6 names come back
+    assert state("h" * 60 + ".com", 79) == (3, False, True, True)    # then the names shrink, to 3
+    assert state("h" * 80 + ".com", 79) == (6, False, False, True)  # a long host: the path goes, the 6 names return
+    assert state("h" * 110 + ".com", 79) == (3, False, False, True)
+    assert state("h" * 125 + ".com", 79) == (0, False, False, True)  # only then the names go ...
+    assert state("h" * 145 + ".com", 79) == (0, False, False, False)  # ... and last the link
+
+
+def test_the_path_is_given_up_before_the_names_when_there_is_a_note():
+    # A host this long leaves no room for the note and the path: with a note the path goes, the 6 names and the link stay.
+    host = "h" * 56 + ".com"
+    url = "https://agenthelpnetwork.com/v1/incidents/check?site_host=" + host + "&error_class=site_access&failure_stage=before_target_response&agent_vendor=anthropic"
+    line = ahn._result._summary(host, _answer_for_summary(6, 79, ("robots_blocks_some_agents",)), url)
+    assert _features(line) == {"names": 6, "note": False, "path": False, "link": True}
+    line = ahn._result._summary(host, _answer_for_summary(18, 79, ("robots_blocks_some_agents",)), url)
+    assert _features(line) == {"names": 6, "note": False, "path": False, "link": True}
+    # Without a note the plugin's order holds: the agent names shrink before the path goes.
+    line = ahn._result._summary(host, _answer_for_summary(6, 79, ("response_observed",)), url)
+    assert _features(line)["path"] and _features(line)["link"] and _features(line)["names"] < 6
+
+
+def test_the_note_is_not_added_for_other_codes_so_the_line_still_matches_the_plugin(transport):
+    transport()
+    result = ahn.check("example.com", "site_access", "response_observed")
+    assert "Note:" not in result.summary() and result.summary() == hook.summary("example.com", ANSWER, result.url)
+
+
+def test_the_note_is_only_an_addition_to_the_plugin_line(transport):
+    body = {**ANSWER, "next_checks": [{"code": "robots_blocks_not_your_agent", "text": "..."}]}
+    transport(body=body)
+    result = ahn.check("example.com", "site_access", "response_observed", agent_vendor="anthropic")
+    plugin = hook.summary("example.com", body, result.url)
+    assert result.summary().replace(" " + NEW_CODES["robots_blocks_not_your_agent"], "XX", 1) != plugin  # sanity: they differ
+    closing = " Declared policy is not an access guarantee; bypassing site controls is not advised."
+    assert result.summary().startswith(plugin[:-len(closing)]) and result.summary().endswith(closing)
+
+
 # --- cache, errors ---------------------------------------------------------------------------------------
 
 def test_answers_are_cached_per_host(transport):

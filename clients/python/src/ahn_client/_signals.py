@@ -19,6 +19,11 @@ CHALLENGES = ("header", "none")
 RETRY_AFTER_BANDS = ("none", "lt_60", "60_3600", "gt_3600")
 VIAS = ("http_fetch", "browser", "unknown")
 SIGNAL_NAMES = ("http_status", "challenge", "retry_after", "via")
+# The vendors of the service's ``agent_vendor`` parameter (docs/api-contract.en.md, "Agent vendor"). Not a signal code: the
+# service neither counts nor stores it; it only chooses the robots part of the answer. tests/test_ahn_client.py compares
+# this list with the service's own (the values of ahn.models.AgentVendor).
+AGENT_VENDORS = ("openai", "anthropic", "google", "perplexity", "meta", "mistral", "amazon", "microsoft", "apple",
+                 "duckduckgo", "diffbot", "exa", "other")
 RETRY_AFTER_SECONDS = re.compile(r"[0-9]{1,10}")
 MAX_HEADERS = 200
 # The top-level module of an exception class says which kind of client raised it.
