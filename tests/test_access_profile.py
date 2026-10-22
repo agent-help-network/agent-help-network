@@ -64,6 +64,7 @@ PREVIOUS_KINDS = {
 # Added from vendor documentation; each is named by its own robots.txt group in the test below.
 ADDED_KINDS = {
     "Google-Agent": "user_agent", "Google-GeminiNotebook": "user_agent", "Amzn-User": "user_agent", "Diffbot-User": "user_agent",
+    "ExaSearchBot": "search_crawler",
     "DuckDuckBot": "search_crawler", "Amzn-SearchBot": "search_crawler", "Meta-WebIndexer": "search_crawler",
     "MistralAI-Index": "search_crawler", "Applebot": "search_crawler", "MistralAI-Training": "training_crawler",
 }
