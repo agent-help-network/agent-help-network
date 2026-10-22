@@ -7,7 +7,7 @@
 --           DELETE FROM schema_migrations WHERE version=27;
 -- The application keeps working with the tables missing: the write is a savepoint that logs and carries on.
 -- Size is bounded by the application, not by what clients send (ahn/lookup_signals.py): at most 32 combination rows per
--- host and hour, 500 per hour in all (the rest fold into 'overflow' rows), and 20,000 source digests per day.
+-- host and hour, 200 per hour in all (the rest fold into 'overflow' rows), and 20,000 source digests per day.
 
 -- One row per combination of codes in an hour. Every column holds a value from a fixed list, 'unspecified' when the
 -- client did not send that code. action is the recommendation the lookup was answered with; after_action is the

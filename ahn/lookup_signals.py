@@ -27,7 +27,7 @@ SOURCES_RETENTION_DAYS = 2
 # that host), per hour at most HOUR_ROW_CAP rows in all (more fold into one overflow row for every host), and per UTC
 # day at most SOURCES_DAY_ROW_CAP source digests (more lookups are still counted, just without a source).
 HOST_HOUR_ROW_CAP = 32
-HOUR_ROW_CAP = 500
+HOUR_ROW_CAP = 200
 SOURCES_DAY_ROW_CAP = 20000
 OVERFLOW = "overflow"
 OVERFLOW_HOST = "(overflow)"
