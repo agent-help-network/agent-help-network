@@ -29,6 +29,12 @@ A public response for `github.com` (`error_class=site_access`), captured from th
 {
   "site_host": "github.com",
   "generated_at": "2026-10-18T05:26:34.687021Z",
+  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
+  "links": {
+    "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
+    "changelog": "https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md"
+  },
   "synthetic": false,
   "window_hours": 24,
   "data_horizon_hours": 168,
@@ -370,6 +376,36 @@ So the declared-block answer (`stop_declared_block`, or `use_official_path` high
 
 **The previous rule** still applies when `AHN_VENDOR_AWARE_BLOCK=0`, to a profile read before D48 (no `robots.vendor_aliases_blocked`), and when a governing token that the answer needs is missing from a cached profile's `rules` (every vendor's without `agent_vendor`, that vendor's own with it). A missing token is never read as allowed. Under the previous rule a **declared block** (robots block) means `robots_status` is `ok` and at least one `user_agent` or `search_crawler` token has an explicit group (a group that names it) that disallows the root. Training-crawler blocks appear in `agents_blocked` but do not trigger it. A **wildcard-only disallow** (robots caution) means `robots_status` is `ok`, no declared block applies, and at least one `user_agent` or `search_crawler` token that no group names inherits a `*` group that disallows the root (`User-agent: *` with `Disallow: /`); groups that name other tokens (an allowed search crawler, a blocked training crawler) do not prevent it. It is not a declared block and is never reported as "allows agents": treat it as not inviting automation, prefer an official path, and do not read it as permission.
 
+### Summary line and next action
+
+Every lookup answer also carries `summary_line` and `next_action` (D51). Both are computed from `recommendation`, `access_profile`, `official_paths` and `provider_status` after the answer is decided; they never change `recommendation` or `next_checks`, which remain the verdict.
+
+- `summary_line` is one English sentence pair of at most 200 printable ASCII characters, chosen from a fixed table of templates in `ahn/response_guide.py`. The only value filled in is a whole number of seconds. It never contains the hostname, an agent token, a URL, or any text taken from the site or the provider. The same inputs always give the same line.
+- `next_action` always has `do`, `url` and `retry_after_seconds`:
+
+| `do` | When | `url` | `retry_after_seconds` |
+| --- | --- | --- | --- |
+| `wait_for_provider` | `recommendation.action` is `wait_provider_incident` | The provider's status page | 900: the earliest time the provider statement can be read again |
+| `hand_off_to_human` | `hand_off_to_human` | `null` | `null` |
+| `use_official_path` | `use_official_path` | `official_paths.api_docs`, else `developer_portal` | While the profile is `pending`, its `retry_after_seconds`; else `null` |
+| `stop_automation` | `stop_declared_block` | `null` | `null` |
+| `proceed` | `proceed` | `null` | `null` |
+| `retry_lookup_once` | `unknown` with `profile_pending` (first read queued) | `null` | `access_profile.retry_after_seconds` |
+| `stop_if_listed` | `unknown` with `robots_blocks_some_agents` | `null` | `null` |
+| `lookup_apex_host` | `unknown` with `profile_not_read` | `null` | `null` |
+| `no_clear_action` | Any other `unknown`, including a `pending` profile whose earlier read failed | `null` | `access_profile.retry_after_seconds` when a read is queued, else `null` |
+
+- `retry_after_seconds` is when to repeat the same lookup **once**. It is not a polling interval. If a repeated lookup answers `retry_lookup_once` again, read it as `no_clear_action`.
+- `stop_if_you_are` is present only when `recommendation.reasons` contains `robots_blocks_some_agents`: the agent tokens from this service's token table whose vendor is explicitly disallowed at the site root. If your requests identify as one of them, treat it as a declared block and stop retrying pages. Send `agent_vendor` for an answer for your own agent.
+- `lookup_host` is present only with `lookup_apex_host`: the site's main domain, whose declared policy covers the site.
+- `url` is taken only from the curated official paths and verified status sources described above, and must be an `https` URL of at most 200 characters; otherwise it is `null`.
+- If the three keys cannot be produced, they are left out and the rest of the answer is unchanged. The OpenAPI schema always lists `summary_line`, `next_action` and `links` as optional properties, whether or not they are present.
+- `do` never says more or less than `recommendation.action`. The four values that split `unknown` all mean that no verdict exists; they only say what can be done now.
+
+### Links
+
+`links` gives the service's public feedback places: `feedback` (the "Field reports" category of the repository's GitHub Discussions: tell us when an answer was wrong or did not fit your next step) and `changelog` (`docs/feedback-changelog.md`: what we changed after feedback). The values are the same for every lookup and may change. A link that is not set is left out, never `null`; with neither set, `links` is left out. They carry nothing about the caller.
+
 ### `next_checks`
 
 `next_checks` is an ordered list of `{code, text}` items with English `text`; the human website shows the same codes in Korean. The checks come from human verification and sign-in, the optional failure stage, the declared and official layers, a fresh provider statement, and whether reports exist. They never infer the actual result or cause of a task, never grant permission to bypass a site, and are not an automatic outage verdict. Order:
@@ -502,6 +538,10 @@ Two packages in this repository call only `GET /v1/incidents/check` and never su
 `/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident` and `report_observation`.
 
 `check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction; plus, in shadow mode, an hourly per-host count of its optional lookup signal codes, see [Lookup signal codes](#lookup-signal-codes)), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
+
+MCP `check_incident` returns two text blocks: first `summary_line` (and, when `next_action.url` is set, a second line `URL: <url>`), then the full answer as JSON, the same as the structured content and the REST answer. Read the last block if you parse text.
+
+Setting `AHN_RESPONSE_GUIDE=0` removes `summary_line`, `next_action`, `links` and the first MCP block, so the answer is the same as before D51.
 
 ## Background reads (stale-while-revalidate)
 

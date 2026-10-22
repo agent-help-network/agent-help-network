@@ -251,6 +251,9 @@ CHECK_RESPONSE_FIELDS = {
     "recommendation": Exempt("advice computed from the data above"),
     "failure_stage": Exempt("echo of the optional input of the same name"),
     "next_checks": Exempt("advice computed from the data above"),
+    "summary_line": Exempt("advice computed from the data above"),
+    "next_action": Exempt("advice computed from the data above"),
+    "links": Exempt("constant links to the service's public feedback pages"),
 }
 RECEIPT_FIELDS = {
     "observation_id": Phrase("observation and incident IDs", "관찰·사건 ID"),

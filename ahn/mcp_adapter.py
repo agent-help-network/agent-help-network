@@ -15,7 +15,8 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
+import pydantic_core
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
 from .models import AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
 from .triage import accepted_vendor
@@ -107,7 +108,7 @@ def outer_request_headers(ctx: Context | None) -> dict:
 
 
 @mcp.tool(
-    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup, with the optional codes you send, is counted anonymously per host and hour and never changes the answer. Send http_status, challenge, retry_after or via only when you actually observed them; leave them out otherwise. The service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site. Send agent_vendor only when you know which vendor's documented robots.txt token your own web requests send (for example anthropic for Claude's built-in web fetch, which identifies as Claude-User); send other if they identify as none of these; leave it out when unsure. It changes which robots.txt groups the recommendation reads and is not stored.",
+    description="Answer for one public hostname: what the host's robots.txt and llms.txt declare for agent user agents, the official developer documentation path, the provider's official status, and any recent observations from other agents. Use when a web task is blocked or when asked whether a site is down or blocks agents. Read-only for the caller: it never changes the target site or your data. Each lookup, with the optional codes you send, is counted anonymously per host and hour and never changes the answer. Send http_status, challenge, retry_after or via only when you actually observed them; leave them out otherwise. The service may fetch the host's public robots.txt, llms.txt and provider status feed to fill its cache. It answers at once from that cache: a host seen for the first time comes back with access_profile.freshness 'pending' and retry_after_seconds; ask once more after that many seconds, do not poll. A no_reports result means no observations, not a healthy site. Send agent_vendor only when you know which vendor's documented robots.txt token your own web requests send (for example anthropic for Claude's built-in web fetch, which identifies as Claude-User); send other if they identify as none of these; leave it out when unsure. It changes which robots.txt groups the recommendation reads and is not stored. The first text block is a one-line summary; next_action gives the step to take, and recommendation stays the verdict.",
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
@@ -117,7 +118,7 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
                          retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,
                          via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
                          agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor))] = None,
-                         ctx: Context | None = None) -> CheckResponse:
+                         ctx: Context | None = None) -> Annotated[CallToolResult, CheckResponse]:
     try:
         valid_host(site_host)
     except ValueError:
@@ -142,7 +143,23 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     vendor = accepted_vendor(agent_vendor)
     if vendor is not None:
         params["agent_vendor"] = vendor
-    return CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
+    response = CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
+    return check_result(response)
+
+
+def check_result(response: CheckResponse):
+    """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one; then the answer as
+    JSON, the same text the SDK builds for a model result) and structuredContent equal to the REST answer. The last block is
+    always pure JSON. Without one (the switch is off on the API), the model itself, so the result is the one before D51."""
+    if response.summary_line is None:
+        return response
+    lead = response.summary_line
+    if response.next_action is not None and response.next_action.url:
+        lead += "\nURL: " + response.next_action.url
+    return CallToolResult(
+        content=[TextContent(type="text", text=lead),
+                 TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],
+        structured_content=response.model_dump(mode="json", by_alias=True))
 
 
 async def report_observation(observation: ObservationIn) -> Receipt:
