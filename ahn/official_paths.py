@@ -1106,7 +1106,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-tokens/",
         "rate_limits_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-request-limits/",
-        "openapi_url": "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json?_v=2.300.200",
+        "openapi_url": "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json",
         "terms": {"url": "https://developer.atlassian.com/platform/marketplace/atlassian-developer-terms/",
                   "quote": "Atlassian may place limits on access to the Atlassian Platform (e.g., limits on numbers of calls or "
                            "requests, or on points that reflect the work performed in response to an API request)."},
@@ -1844,10 +1844,115 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "openapi_url": "https://raw.githubusercontent.com/ngrok/ngrok-openapi/refs/heads/main/ngrok.yaml",
         "verified_at": "2026-10-21",
     },
+    "arxiv.org": {
+        "rate_limits_url": "https://info.arxiv.org/help/api/tou.html",
+        "terms": {"url": "https://info.arxiv.org/help/api/tou.html",
+                  "quote": "You agree to respect limitations on use of arXiv APIs, including rate limits and authorization mechanisms."},
+        "verified_at": "2026-10-22",
+    },
+    "open-meteo.com": {
+        "auth": [{"method": "api_key", "source_url": "https://open-meteo.com/en/docs"},
+                 {"method": "none", "source_url": "https://open-meteo.com/en/docs"}],
+        "free_tier": {"quote": "Less than 10'000 API calls per day, 5'000 per hour and 600 per minute.",
+                      "source_url": "https://open-meteo.com/en/terms"},
+        "rate_limits_url": "https://open-meteo.com/en/terms",
+        "terms": {"url": "https://open-meteo.com/en/terms",
+                  "quote": "We reserve the right to block applications and IP addresses that misuse our service without prior notice."},
+        "verified_at": "2026-10-22",
+    },
+    "semanticscholar.org": {
+        "auth": [{"method": "api_key", "source_url": "https://www.semanticscholar.org/product/api"},
+                 {"method": "none", "source_url": "https://www.semanticscholar.org/product/api"}],
+        "key_signup_url": "https://www.semanticscholar.org/product/api#api-key-form",
+        "free_tier": {"quote": "Most Semantic Scholar endpoints are available to the public without authentication, but they are "
+                               "rate-limited to 1000 requests per second shared among all unauthenticated users.",
+                      "source_url": "https://www.semanticscholar.org/product/api"},
+        "rate_limits_url": "https://www.semanticscholar.org/product/api",
+        "verified_at": "2026-10-22",
+    },
+    "linkedin.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authentication"}],
+        "verified_at": "2026-10-22",
+    },
+    "fly.io": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.fly.io/machines/api/working-with-machines-api"}],
+        "rate_limits_url": "https://docs.fly.io/machines/api/working-with-machines-api",
+        "verified_at": "2026-10-22",
+    },
+    "mailchimp.com": {
+        "auth": [{"method": "api_key", "source_url": "https://mailchimp.com/help/about-api-keys/"},
+                 {"method": "oauth2", "source_url": "https://mailchimp.com/developer/marketing/build/start-developing/set-up-an-oauth-app"}],
+        "key_signup_url": "https://mailchimp.com/help/about-api-keys/",
+        "verified_at": "2026-10-22",
+    },
+    "jsr.io": {
+        "auth": [{"method": "pat", "source_url": "https://jsr.io/docs/api"}],
+        "verified_at": "2026-10-22",
+    },
+    "fontawesome.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.fontawesome.com/apis/graphql/get-started"}],
+        "verified_at": "2026-10-22",
+    },
+    "okta.com": {
+        "rate_limits_url": "https://developer.okta.com/docs/reference/rate-limits/",
+        "verified_at": "2026-10-22",
+    },
+    "canva.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://www.canva.dev/docs/apps/rest-apis/authentication/"}],
+        "verified_at": "2026-10-22",
+    },
+    "springer.com": {
+        "terms": {"url": "https://dev.springernature.com/terms-conditions/",
+                  "quote": "You must stay within the specified rate limits for each API."},
+        "verified_at": "2026-10-22",
+    },
+    "sam.gov": {
+        "auth": [{"method": "api_key", "source_url": "https://open.gsa.gov/api/entity-api/"}],
+        "key_signup_url": "https://open.gsa.gov/api/entity-api/",
+        "rate_limits_url": "https://open.gsa.gov/api/entity-api/",
+        "openapi_url": "https://open.gsa.gov/api/entity-api/v1/openapi.yaml",
+        "verified_at": "2026-10-22",
+    },
+    "elastic.co": {
+        "auth": [{"method": "api_key", "source_url": "https://www.elastic.co/docs/api/"}],
+        "verified_at": "2026-10-22",
+    },
+    "azure.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://learn.microsoft.com/en-us/rest/api/azure/"}],
+        "verified_at": "2026-10-22",
+    },
+    "browserbase.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.browserbase.com/integrations/mcp/setup.md"}],
+        "key_signup_url": "https://docs.browserbase.com/integrations/mcp/setup.md",
+        "free_tier": {"quote": "Includes 3 concurrent sessions.", "source_url": "https://docs.browserbase.com/account/billing/plans.md"},
+        "rate_limits_url": "https://docs.browserbase.com/optimizations/concurrency/overview.md",
+        "official_mcp": [{"endpoint": "https://mcp.browserbase.com/mcp",
+                          "doc_url": "https://docs.browserbase.com/integrations/mcp/setup.md"}],
+        "verified_at": "2026-10-22",
+    },
+    "langchain.com": {
+        "auth": [{"method": "api_key", "source_url": "https://docs.langchain.com/langsmith/smith-api-ref.md"}],
+        "key_signup_url": "https://docs.langchain.com/langsmith/create-account-api-key",
+        "openapi_url": "https://docs.langchain.com/langsmith/langsmith-platform-openapi.json",
+        "official_mcp": [{"endpoint": "https://docs.langchain.com/mcp", "doc_url": "https://docs.langchain.com/use-these-docs"}],
+        "verified_at": "2026-10-22",
+    },
+    "snapchat.com": {
+        "auth": [{"method": "oauth2", "source_url": "https://developers.snap.com/marketing-api/Ads-API/authentication.md"}],
+        "rate_limits_url": "https://developers.snap.com/marketing-api/Ads-API/rate-limits.md",
+        "verified_at": "2026-10-22",
+    },
+    "facebook.com": {
+        "auth": [{"method": "api_key", "source_url": "https://developers.facebook.com/documentation/facebook-login/guides/access-tokens"},
+                 {"method": "oauth2", "source_url": "https://developers.facebook.com/documentation/facebook-login/guides/access-tokens"}],
+        "key_signup_url": "https://developers.facebook.com/docs/graph-api/get-started",
+        "verified_at": "2026-10-22",
+    },
 }
 # Separate hosts of the same publisher and API share one bundle.
 for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so", "twitter.com": "x.com",
-                         "wikimedia.org": "wikipedia.org", "stackoverflow.com": "stackexchange.com"}.items():
+                         "wikimedia.org": "wikipedia.org", "stackoverflow.com": "stackexchange.com",
+                         "claude.com": "anthropic.com", "claude.ai": "anthropic.com", "daum.net": "kakao.com"}.items():
     OFFICIAL_ACCESS[_alias] = OFFICIAL_ACCESS[_primary]
 
 
