@@ -183,7 +183,7 @@ def test_registry_manifest_matches_the_published_schema_limits():
     manifest = json.loads((Path(__file__).resolve().parents[1] / "server.json").read_text(encoding="utf-8"))
     assert manifest["$schema"] == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     assert 1 <= len(manifest["description"]) <= 100  # schema maxLength for the official registry
-    assert manifest["version"] == "0.1.1"
+    assert manifest["version"] == "0.1.2"  # registry metadata is immutable per version: bump on every description change
     assert manifest["repository"]["source"] == "github"
     assert manifest["repository"]["url"] == "https://github.com/agent-help-network/agent-help-network"
     assert manifest["remotes"] == [{"type": "streamable-http", "url": "https://agenthelpnetwork.com/mcp"}]
