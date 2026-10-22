@@ -1706,7 +1706,7 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             with connect(settings) as conn:
                 _store_blocked(conn, hosts, ROBOTS_UNREADABLE if decision.robots_status == "error" else ROBOTS_DISALLOWED)
             return BLOCKED
-        if history and previous and previous["feed_source"] != "history_atom" and previous["fetched_at"] is not None:
+        if history and (previous is None or (previous["feed_source"] != "history_atom" and previous["fetched_at"] is not None)):
             # The API statement of these hosts is no longer read (the file now closes it), whether or not the Atom read
             # that follows succeeds: drop it and close the provider problem that rested on it before the attempt, so a
             # failed first Atom read cannot leave an old `major` on show.
