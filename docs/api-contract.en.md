@@ -17,7 +17,7 @@ This is the English version of the [Korean API contract](api-contract.md); both 
 
 ## `GET /v1/incidents/check`
 
-Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`.
+Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`, and the lookup signal codes `http_status`, `challenge`, `retry_after`, `via` ([below](#lookup-signal-codes)).
 
 Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs except `window_hours` (it always uses the default 24 hours) and returns the same structure.
 
@@ -341,9 +341,6 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 | `use_official_path` | Wildcard-only disallow (below) and an official path is listed. | medium | `robots_wildcard_disallow`, `official_path_available` |
 | `unknown` | Wildcard-only disallow and no official path. | low | `robots_wildcard_disallow` |
 | `use_official_path` | Official path listed and `error_class` absent, `site_access`, or `service_error`. | medium | `official_path_available` |
-| `government_registry_listed` | The domain appears in a public government domain list (`host_facts.government_registry`). The list says who registered the domain; it does not vouch for every page or link on it. |
-| `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (`host_facts.suffix_rule`). That says who may register a domain, not that any page or link is vouched for. |
-| `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site. Compare the address with one the organisation publishes elsewhere before entering credentials or payment details. |
 | `proceed` | `robots_status` is `ok` with neither a declared block nor a wildcard-only disallow. | low | `robots_allows_agents` |
 | `unknown` | Anything else. | low | `robots_unknown` when an access profile exists (for example, unreadable `robots.txt`); `profile_not_read` when the hostname is a subdomain or tenant host in public mode (a `www.<apex>` name gets the apex's profile instead); otherwise empty |
 
@@ -379,6 +376,9 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 | `llms_txt_present` | The host publishes `llms.txt`; read it first. |
 | `content_use_ai_input_declared_no` | The host's `robots.txt` declares `ai-input=no` (or AIPREF `ai-use=n`) for user-directed agents; a content-use preference, not an access rule. Follow your operator's policy and tell the user if it matters. |
 | `official_path_available` | An official developer path is listed; prefer it over page automation. |
+| `government_registry_listed` | The domain appears in a public government domain list (`host_facts.government_registry`). The list says who registered the domain; it does not vouch for every page or link on it. |
+| `government_suffix_restricted` | The registry limits registration under this suffix to government bodies (`host_facts.suffix_rule`). That says who may register a domain, not that any page or link is vouched for. |
+| `government_list_version_missing` | The domain is not in the loaded version of the government list. A newly registered name can be missing; this is a fact about the list version, not a finding about the site. Compare the address with one the organisation publishes elsewhere before entering credentials or payment details. |
 | `provider_scope` | The provider reports an active issue; compare affected services and update time with the blocked step. |
 | `provider_components_only` | The provider's page-level status is active, but it has announced no incident or maintenance (`basis: components_only`); only some components are marked. Check on the provider's status page whether a component you use is one of them. A `minor` or `maintenance` page is then not a reason to wait; a `major` or `critical` one still is. |
 | `provider_incident_stale` | The provider's active incidents have had no update for more than 7 days and no maintenance is in progress. If `provider_status.affected` names a service you use, wait for the provider; otherwise continue. A `major` or `critical` page above the worst incident's impact is still a reason to wait. |
@@ -391,7 +391,24 @@ A `.go.kr` host has the suffix rule and no list entry, because this service read
 
 ### `failure_stage`
 
-The optional `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) is **what the caller observed**, and only shapes the checks. The service does not verify where a response came from or why access was denied. The value is echoed back in the response but is never stored as evidence for reports, provider status, or per-host lookup counts. An invalid `error_class` or `failure_stage` on the REST lookup returns `400` with only `{"error": "invalid_request", "field": ..., "allowed_values": [...]}` and never reflects the input. The MCP tool accepts the same optional values.
+The optional `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`) is **what the caller observed**, and only shapes the checks. The service does not verify where a response came from or why access was denied. The value is echoed back in the response. It is never evidence for reports, provider status, or the `recommendation`; it is only counted in the hourly lookup signal counts described in the next section. An invalid `error_class` or `failure_stage` on the REST lookup returns `400` with only `{"error": "invalid_request", "field": ..., "allowed_values": [...]}` and never reflects the input. The MCP tool accepts the same optional values.
+
+### Lookup signal codes
+
+Four more optional codes describe the failed step as the caller saw it. Each comes from a fixed list; send only what you already know and leave the rest out. They are accepted on `GET /v1/incidents/check` and on the MCP `check_incident` tool under the same names (the tool takes `http_status` as an integer).
+
+| Parameter | Values | Meaning |
+|---|---|---|
+| `http_status` | `401`, `402`, `403`, `407`, `408`, `429`, `451`, or any `500`-`599` | The HTTP status the target returned. Other statuses (404, 422, ...) are not access problems and are ignored (counted as not sent). Take it from the response itself, not from a guess in an error message. |
+| `challenge` | `header`, `none` | `header` when the target's response carried a bot-challenge header such as `cf-mitigated: challenge`; `none` when it did not. Never decided from the page body. |
+| `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | The `Retry-After` value of a 429 or 503 in seconds: under 60, 60 to 3600, over 3600. `none` when the header is absent or is a date. |
+| `via` | `http_fetch`, `browser`, `unknown` | What made the failed request: a plain HTTP fetch or a browser. `unknown` is accepted but stored as not sent. |
+
+A value outside its list is **ignored, not refused**: the lookup is answered normally and counted as if that code had not been sent, because a typo in an optional signal should not cost the caller its answer. (`error_class` and `failure_stage` keep their `400`.) A code that is left out is counted as unknown (`unspecified`), never as `none`: send `challenge=none` or `retry_after=none` only when you looked at the response headers and saw no such header.
+
+**What the service does with them (D47, shadow mode).** A lookup is counted per public hostname and UTC hour together with `error_class`, `failure_stage`, these codes (`http_status` folded to its class, all `5xx` as `5xx`), the kind of client software (`plugin`, `ahn_client`, `mcp`, `web`, `rest_other`, from the User-Agent and the MCP hop, so only a hint), and the `recommendation.action` the lookup was answered with. Counts are kept 35 days. To count separate clients without keeping an address, a keyed digest of the IP address that is specific to the hostname and the UTC day is kept 2 days with the time of the client's last lookup, the coarse kind of blocked lookup (`outage`, `block`, `rate`, `login`) and its recommendation (the time is kept to the minute for about an hour, until the next cleanup after it is 61 minutes old, then cut to the hour; the cleanup runs every 15 minutes); a lookup of the same host 10 to 60 minutes after an earlier one (both inclusive, both lookups blocked ones) is counted as a re-lookup after that recommendation. No digest or exact count is ever returned. Lookups from the operator's own network, lookups marked `X-AHN-Test: 1`, documentation example hosts, and hosts that are not eligible apex hosts are not counted. In public mode a host is counted only while it is in the lookup register (the same condition as the daily lookup counts). The tables are size-bounded: at most 32 code combinations per host and hour and 200 per hour in all, the rest fold into `overflow` rows. The caps are approximate under concurrent writes. For an MCP call, the adapter passes the caller's address and test mark on its authenticated loopback hop for this count only.
+
+**Nothing here changes an answer.** `recommendation`, `next_checks`, `evidence_level`, `observations` and every other field are the same with or without these codes. The codes are not reports and are never merged into `observations` or `evidence_level` (D11). No response field shows them yet; if one is added later it will appear as an optional layer with coarse bands, only when at least three separate clients contributed.
 
 ## `POST /v1/observations`
 
@@ -426,7 +443,7 @@ Disabled in public operation (see the public intake contract below). Requires th
 
 ## `DELETE /v1/observations/{id}`
 
-In local test mode, requires the same reporter's key (public mode uses a withdrawal token; see below). A withdrawn observation is excluded from lookups and leaves only a minimal audit event. Repeating the request returns success (idempotent). Retention is set by the operator and stated on the privacy policy page: reports have no automatic deletion date unless `AHN_REPORT_RETENTION_DAYS` (30–3650) is set, in which case the hourly cleanup deletes reports older than that period and withdrawn reports 30 days after withdrawal. A report can also be deleted sooner on request (see the support address on the policy page).
+In local test mode, requires the same reporter's key (public mode uses a withdrawal token; see below). A withdrawn observation is excluded from lookups and leaves only a minimal audit event. Repeating the request returns success (idempotent). Retention is set by the operator and stated on the privacy policy page: reports have no automatic deletion date unless `AHN_REPORT_RETENTION_DAYS` (30–3650) is set, in which case the periodic cleanup (every 15 minutes) deletes reports older than that period and withdrawn reports 30 days after withdrawal. A report can also be deleted sooner on request (see the support address on the policy page).
 
 ## Incident list and detail
 
@@ -440,7 +457,7 @@ Two packages in this repository call only `GET /v1/incidents/check` and never su
 
 `/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident` and `report_observation`.
 
-`check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
+`check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction; plus, in shadow mode, an hourly per-host count of its optional lookup signal codes, see [Lookup signal codes](#lookup-signal-codes)), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
 
 ## Background reads (stale-while-revalidate)
 

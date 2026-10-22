@@ -68,13 +68,19 @@ AHN_CLIENT_UA_PREFIX = "ahn-client/"
 CLIENT_KINDS = ("plugin_hint", "ahn_client_hint", "mcp_hint", "browser_hint", "agent_or_script_hint", "crawler_hint", "unknown")
 
 
+def is_operator_address(address: str, owner_allowed_ips: tuple[str, ...]) -> bool:
+    """True when this address is one of the operator's allowed individual IPs."""
+    return valid_owner_ip(address, owner_allowed_ips)
+
+
 def is_operator_request(request: Request, owner_allowed_ips: tuple[str, ...]) -> bool:
     """True when the edge-provided address is one of the operator's allowed individual IPs.
 
     One definition for every measurement that must leave the operator out. Nothing is stored: the caller
-    decides what to do with the answer. Existing daily lookup totals do not use it yet (owner decision pending).
+    decides what to do with the answer. The existing daily lookup totals (lookup_metrics) deliberately do not
+    use it; the lookup signals (ahn/lookup_signals.py) do.
     """
-    return valid_owner_ip(request.headers.get("cf-connecting-ip", ""), owner_allowed_ips)
+    return is_operator_address(request.headers.get("cf-connecting-ip", ""), owner_allowed_ips)
 
 
 def attribute_request(request: Request, owner_allowed_ips: tuple[str, ...]) -> tuple[str, str, str, str]:

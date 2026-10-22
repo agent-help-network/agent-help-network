@@ -120,8 +120,25 @@ def prune_reports(conn: psycopg.Connection, retention_days: int) -> int:
     return conn.execute(f"DELETE FROM observations WHERE id IN ({expired})", params).rowcount
 
 
+def cut_source_minutes(database_url: str) -> None:
+    """Cut the minute of a source's last lookup to the hour once it is older than 61 minutes (D47).
+
+    The minute is only needed for the 10-60 minute re-lookup window (lookup_signals.MINUTE_PRECISION_MINUTES). It runs
+    first and on its own connection, so a failure in any other cleanup step cannot leave minutes in place; the cron
+    that calls it runs every 15 minutes, so a minute lives about an hour, at most about 76 minutes. 'UTC' makes the
+    cut independent of the database session's time zone.
+    """
+    try:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("UPDATE lookup_sources_daily SET last_at = date_trunc('hour', last_at, 'UTC')"
+                         " WHERE last_at < now() - interval '61 minutes' AND last_at <> date_trunc('hour', last_at, 'UTC')")
+    except psycopg.Error as exc:
+        print(f"lookup_sources_cut failed={type(exc).__name__}")
+
+
 def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     """Keep daily pseudonyms short-lived even if Render's metrics API is down."""
+    cut_source_minutes(database_url)
     with psycopg.connect(database_url) as conn:
         prune_reports(conn, report_retention_days)
         conn.execute("DELETE FROM traffic_client_daily WHERE day < CURRENT_DATE - 13")
@@ -149,3 +166,13 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM robots_read_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"signal_history_prune failed={type(exc).__name__}")
+    # Lookup signals (migration 027, ahn/lookup_signals.py, D47): hourly counts per host 35 days, the host- and
+    # day-specific source digests 2 days (today and yesterday). The literals match lookup_signals.HOURLY_RETENTION_DAYS
+    # and SOURCES_RETENTION_DAYS; tests/test_lookup_signals.py and the policy-coverage test check that.
+    # Own transaction for the same reason as above.
+    try:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("DELETE FROM lookup_signals_hourly WHERE hour < now() - interval '35 days'")
+            conn.execute("DELETE FROM lookup_sources_daily WHERE day < (now() AT TIME ZONE 'UTC')::date - 1")
+    except psycopg.Error as exc:
+        print(f"lookup_signals_prune failed={type(exc).__name__}")
