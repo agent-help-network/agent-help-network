@@ -417,7 +417,7 @@ VERB_SITES = {
     ("mcp_adapter.py", "call_api", "get"): 5,
     ("mcp_adapter.py", "call_api", "request"): 1,
     ("mcp_adapter.py", "main", "get"): 2,
-    ("mcp_adapter.py", "outer_request_headers", "get"): 2,
+    ("mcp_adapter.py", "outer_request_headers", "get"): 3,
     ("platform_metrics.py", "collect_render_metrics", "get"): 1,
     ("platform_metrics.py", "latest_sample", "get"): 9,
     ("status_refresh.py", "_due_groups", "get"): 2,
