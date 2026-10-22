@@ -221,9 +221,10 @@ def _ctx(headers):
     return SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers=headers)))
 
 
-def test_outer_request_headers_pass_only_the_address_and_the_test_mark():
+def test_outer_request_headers_pass_only_the_address_the_test_mark_and_a_fixed_family_label():
     outer = {"cf-connecting-ip": " 198.51.100.7 ", "x-ahn-test": "1", "authorization": "Bearer secret", "user-agent": "x"}
-    assert mcp_adapter.outer_request_headers(_ctx(outer)) == {"x-ahn-origin-ip": "198.51.100.7", "x-ahn-test": "1"}
+    assert mcp_adapter.outer_request_headers(_ctx(outer)) == {
+        "x-ahn-origin-ip": "198.51.100.7", "x-ahn-test": "1", "x-ahn-origin-client": "other_mcp"}  # a fixed family label, never the header
     assert mcp_adapter.outer_request_headers(_ctx({"x-ahn-test": "0"})) == {}
     assert mcp_adapter.outer_request_headers(None) == {}
     # A caller cannot choose its own origin: the header it sends on the outer request is never passed on, only the edge address is.

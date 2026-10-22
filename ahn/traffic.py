@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import re
 from datetime import date, datetime, timezone
 from hashlib import sha256
 from urllib.parse import urlsplit
@@ -107,6 +108,67 @@ def client_type(request: Request, pepper: str = "") -> str:
     if "mozilla/" in ua:
         return "browser_hint"
     return "unknown"
+
+
+# Adoption measurement (ahn/adoption.py, docs/decisions.md D49): the same hints, folded into the plan's client
+# categories. "crawler" and "web" (the human search page) are stored but are not adoption; see adoption.EXCLUDED.
+CLIENT_CATEGORIES = ("plugin", "ahn_client", "mcp_host", "agent_or_script", "browser", "unknown")
+CATEGORY_CRAWLER = "crawler"
+CATEGORY_WEB = "web"
+_CATEGORY_OF_TYPE = {
+    "plugin_hint": "plugin", "ahn_client_hint": "ahn_client", "mcp_hint": "mcp_host",
+    "agent_or_script_hint": "agent_or_script", "browser_hint": "browser", "crawler_hint": CATEGORY_CRAWLER, "unknown": "unknown",
+}
+
+# MCP host families, from the User-Agent of the caller's own request to /mcp (the adapter forwards only this label, never
+# the header). Tokens are matched in this order; a host that matches none is "other_mcp", and a call with no User-Agent
+# at all, or no label on the hop (no label, a value off the list, or a request with the right token that is not the
+# loopback hop), is "unknown_mcp" (so an unlisted host and a missing header are not counted as the same thing). Hints, like every kind here.
+MCP_HOSTS = ("claude", "chatgpt", "cursor", "vscode", "other_mcp", "unknown_mcp")
+MCP_HOST_UNKNOWN = "unknown_mcp"  # no User-Agent (or no label on the hop) to read a family from
+MCP_HOST_NONE = "none"
+_MCP_HOST_TOKENS = (
+    ("claude", ("claude", "anthropic")),
+    ("chatgpt", ("openai", "chatgpt")),
+    ("cursor", ("cursor",)),
+    ("vscode", ("vscode", "visual studio code", "copilot")),
+)
+
+# ahn-client names its framework adapter in the User-Agent: "ahn-client/0.4.0 (+langchain; +https://...)". The names the
+# shipped adapters use are listed (the Claude Agent SDK and OpenAI Agents SDK ones carry a hyphen, stored with an underscore);
+# any other well-formed label is "other", no label is "none". The raw label is never kept.
+ADAPTERS = ("langchain", "crewai", "openai_agents", "claude_agent_sdk")
+ADAPTER_NONE = "none"
+ADAPTER_OTHER = "other"
+_ADAPTER_LABEL = re.compile(r"\(\+([a-z][a-z0-9_-]{0,23});")
+
+
+def client_category(kind: str) -> str:
+    """Map client_type() onto the adoption categories; anything not known is "unknown"."""
+    return _CATEGORY_OF_TYPE.get(kind, "unknown")
+
+
+def mcp_host_kind(user_agent: str) -> str:
+    """Coarse MCP host family from a User-Agent value (first 512 characters, case-insensitive)."""
+    ua = (user_agent or "").lower()[:512]
+    if not ua.strip():
+        return MCP_HOST_UNKNOWN
+    for name, tokens in _MCP_HOST_TOKENS:
+        if any(token in ua for token in tokens):
+            return name
+    return "other_mcp"
+
+
+def adapter_label(user_agent: str) -> str:
+    """The ahn-client framework adapter from a User-Agent value: one of ADAPTERS, "other", or "none"."""
+    ua = (user_agent or "").lower()[:512]
+    if not ua.startswith(AHN_CLIENT_UA_PREFIX):
+        return ADAPTER_NONE
+    found = _ADAPTER_LABEL.search(ua)
+    if not found:
+        return ADAPTER_NONE
+    label = found.group(1).replace("-", "_")
+    return label if label in ADAPTERS else ADAPTER_OTHER
 
 
 def daily_client_digest(request: Request, pepper: str) -> tuple[date, str | None]:

@@ -176,3 +176,11 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM lookup_sources_daily WHERE day < (now() AT TIME ZONE 'UTC')::date - 1")
     except psycopg.Error as exc:
         print(f"lookup_signals_prune failed={type(exc).__name__}")
+    # Daily adoption counts (migration 028, ahn/adoption.py, D49): no host, address or digest, kept 90 days (today and
+    # the 89 days before; the literal matches adoption.RETENTION_DAYS, checked by the policy-coverage test).
+    # Own transaction for the same reason as above.
+    try:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("DELETE FROM lookup_outcome_daily WHERE day < CURRENT_DATE - 89")
+    except psycopg.Error as exc:
+        print(f"lookup_outcome_prune failed={type(exc).__name__}")
