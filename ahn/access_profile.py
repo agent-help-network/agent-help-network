@@ -106,6 +106,12 @@ def robots_text(text: str | bytes) -> str:
 # stricter way would report working sites as closed, so the answer uses this reading, and parse_robots reports where
 # google_style=True (strict RFC 9309 and robots.cc) would answer differently. A blank line alone, with no other record
 # before it (agent / blank / agent), still joins the agent lines as RFC 9309 says.
+# Unicode dashes a hand-edited robots.txt can carry in a user-agent name (U+2010 hyphen to U+2015 horizontal bar, U+2212
+# minus, U+FE63 small hyphen-minus, U+FF0D fullwidth hyphen-minus), read as "-": `perplexity\u2011user` names
+# Perplexity-User. It only ever makes a name match more tokens, never fewer.
+_DASHES = str.maketrans({char: "-" for char in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"})
+
+
 def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list[dict], list[str]]:
     """The file's groups and sitemaps; the one group split every reader of robots.txt uses. Never raises.
 
@@ -142,7 +148,7 @@ def split_groups(text: str | bytes, *, google_style: bool = False) -> tuple[list
                 other_record = break_pending = False
             words = value.split("/", 1)[0].split()
             if words:
-                current["agents"].append(words[0].lower())
+                current["agents"].append(words[0].translate(_DASHES).lower())
             in_agent_lines = True
             continue
         if key in ("allow", "disallow"):

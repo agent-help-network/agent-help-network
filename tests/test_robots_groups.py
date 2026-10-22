@@ -296,3 +296,24 @@ def test_no_check_when_the_readings_agree_or_the_profile_predates_the_field():
     assert "robots_grouping_differs_by_parser" not in _codes(_profile(older_row))
     unread = {"robots_status": "absent", "robots": None, "llms_txt_status": "absent", "freshness": "fresh"}
     assert "robots_grouping_differs_by_parser" not in _codes(unread)
+
+
+# --- Unicode dashes in user-agent names (D48) ---------------------------------------------------------------------
+
+def test_unicode_dash_in_a_group_name_reads_as_a_hyphen():
+    # chatgpt.com's robots.txt names "perplexity\u2011user" (U+2011 non-breaking hyphen); it must name Perplexity-User.
+    for dash in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d":
+        text = f"User-agent: Perplexity{dash}User\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
+        for google_style in (False, True):
+            groups, _ = split_groups(text, google_style=google_style)
+            assert groups[0]["agents"] == ["perplexity-user"]
+        parsed = parse_robots(text)
+        assert _rule(parsed, "Perplexity-User")["explicit_group"] is True and parsed["agents_blocked"] == ["Perplexity-User"]
+        assert parsed["grouping_differs_by_parser"] == []
+
+
+def test_other_non_ascii_characters_in_a_group_name_are_kept():
+    for name in ("claude\u00b7user", "claude\u2027user", "claude_user", "claude\u30fcuser"):
+        groups, _ = split_groups(f"User-agent: {name}\nDisallow: /\n")
+        assert groups[0]["agents"] == [name.lower()]
+        assert parse_robots(f"User-agent: {name}\nDisallow: /\n")["agents_blocked"] == []
