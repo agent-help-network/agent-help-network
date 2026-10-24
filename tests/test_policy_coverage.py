@@ -917,6 +917,36 @@ def test_signal_history_is_described_as_host_facts_kept_private_for_now():
     assert_phrases("signal history", {lang: policy_text(lang) for lang in LANGS}, wanted)
 
 
+def board_policy_text(lang: str, ahn_check: bool) -> str:
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True,
+                        public_board=True, public_board_since=date(2026, 10, 27), public_board_ahn_check=ahn_check)
+    response = TestClient(create_app(settings)).get(f"/{lang}/policy")
+    assert response.status_code == 200
+    return plain(response.text)
+
+
+def test_public_board_policy_states_its_window_and_what_it_never_shows():
+    """D53: while the board is on, the policy names it, its 7-day window (the code constant) and what stays private."""
+    from ahn import public_board
+    from ahn.triage import STALE_INCIDENT_DAYS
+
+    assert STALE_INCIDENT_DAYS == 7
+    window = {"en": f"within the last {STALE_INCIDENT_DAYS} days", "ko": f"최근 {STALE_INCIDENT_DAYS}일 안에"}
+    for ahn_check in (False, True):
+        for lang in LANGS:
+            text = board_policy_text(lang, ahn_check)
+            assert public_board.PATH in text and f"/{lang}/now" in text, f"the {lang} policy does not name the board"
+            assert public_board.POLICY_BEFORE[lang] not in text, f"the {lang} policy still says the history is private only"
+            if not ahn_check:
+                assert window[lang] in text, f"the {lang} policy does not state the {STALE_INCIDENT_DAYS}-day window"
+                never = {"en": "no refused read", "ko": "거절된 읽기"}[lang]
+                anchor = {"en": "It shows no robots.txt read result", "ko": "robots.txt 읽기 결과"}[lang]
+                assert never in sentence_with(text, anchor), f"the {lang} policy does not exclude refused reads"
+            else:
+                never = {"en": "Refused reads are never shown there", "ko": "거절된 읽기는 그곳에 나오지 않습니다"}[lang]
+                assert never in text, f"the {lang} policy does not exclude refused reads from the AHN-check column"
+
+
 # Every column of the signal-history tables (migration 024) and the policy wording that names it.
 _SH_READ = {
     "site_host": Phrase("we keep the hostname", "호스트명"), "read_at": Phrase("the time", "시각"),

@@ -49,6 +49,14 @@ class Settings:
     # AHN_RESPONSE_GUIDE=0 leaves summary_line, next_action and links out of a lookup answer (D51), so the answer is the
     # one before D51, and the MCP result is one JSON block again. On by default.
     response_guide: bool = True
+    # AHN_PUBLIC_BOARD=1 serves the public "Site problems right now" board (ahn/public_board.py, D53): /v1/now and
+    # /{lang}/now. Off by default: the paths then do not exist and the policy text is the one before D53.
+    public_board: bool = False
+    # AHN_PUBLIC_BOARD_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date.
+    public_board_since: date | None = None
+    # AHN_PUBLIC_BOARD_AHN_CHECK=1 adds the AHN-check (robots.txt read) column to that board. Off by default, and
+    # ignored while the board itself is off.
+    public_board_ahn_check: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -83,7 +91,18 @@ class Settings:
             except ValueError:
                 raise RuntimeError("AHN_PUBLIC_BUNDLE=1 needs AHN_PUBLIC_BUNDLE_SINCE=YYYY-MM-DD, "
                                    "the date the privacy policy shows as last updated") from None
+        public_board = os.environ.get("AHN_PUBLIC_BOARD", "").strip() == "1"
+        public_board_since = None
+        if public_board:
+            try:
+                public_board_since = date.fromisoformat(os.environ.get("AHN_PUBLIC_BOARD_SINCE", "").strip())
+            except ValueError:
+                raise RuntimeError("AHN_PUBLIC_BOARD=1 needs AHN_PUBLIC_BOARD_SINCE=YYYY-MM-DD, "
+                                   "the date the privacy policy shows as last updated") from None
+        public_board_ahn_check = public_board and os.environ.get("AHN_PUBLIC_BOARD_AHN_CHECK", "").strip() == "1"
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
                    vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0",
-                   response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0")
+                   response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0",
+                   public_board=public_board, public_board_since=public_board_since,
+                   public_board_ahn_check=public_board_ahn_check)

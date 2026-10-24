@@ -483,6 +483,11 @@ def test_the_owner_board_follows_the_same_freshness(db, small):
     sync_curated_sources(db)
     datto_type_row(db, fetched_minutes=70, error="timeout")
     with connect(db) as conn:
+        # D53: a statement without the provider's own update time is left off the board and counted as such.
+        excluded = {}
+        assert "render.com" not in signal_history._provider_now(conn, datetime.now(timezone.utc), excluded)
+        assert excluded == {"no_update_time": 1}
+        conn.execute("UPDATE status_cache SET source_updated_at=now() - interval '1 day' WHERE site_host='render.com'")
         assert "render.com" in signal_history._provider_now(conn, datetime.now(timezone.utc))
 
 
