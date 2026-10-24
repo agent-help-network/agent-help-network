@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from . import adoption, background_reads, feed_robots, gov_registry, lookup_signals, status_scope
@@ -376,6 +377,60 @@ def _atom_scope(row: dict) -> dict:
     return out
 
 
+_FEED_SOURCE_SQL = """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
+                          c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
+                          c.active_incidents,c.max_incident_impact,c.incident_updated_at,
+                          c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
+                   FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
+                   WHERE s.site_host=%s AND s.enabled=true"""
+
+
+class FeedView(NamedTuple):
+    """What the provider layer of an answer reads from the stored rows (see feed_view)."""
+    row: dict | None              # the stored source row, shown or not
+    provider_status: dict | None  # the statement to show; None when there is no source or it may not be shown
+    partial: bool
+    regional: bool
+    queue_decision: bool          # a robots decision (or the Atom history) is still to be read for this feed
+    blocked_page: tuple | None    # (name, url) of a page whose feed its own robots.txt does not allow: a link, never a reading
+
+
+def feed_view(conn, host: str, now: datetime) -> FeedView:
+    """The provider layer of an answer, from database rows only: no request, no queue insert, no write. check() and the
+    home page's real-answer card both read the feed through this one function, so they cannot disagree about it."""
+    source = conn.execute(_FEED_SOURCE_SQL, (host,)).fetchone()
+    if not source:
+        return FeedView(None, None, False, False, False, None)
+    # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
+    # decision yet only a host on the interim list (read by hand on 2026-10-22) keeps its statement on
+    # show, and the read that decides is queued; a host whose robots.txt disallows it, or could not be
+    # read, shows none and links to the official page when there is one.
+    feed_host = feed_robots.host_and_path(source["api_url"])[0]
+    decision = feed_robots.feed_state(conn, source["api_url"])
+    if not feed_robots.shown(decision, feed_host):
+        # D52: where the API is disallowed and the page's Atom history is allowed, the open announcements
+        # it lists are shown (information only) once that feed has been read.
+        atom = decision == "disallowed" and feed_robots.history_allowed(conn, source["api_url"])
+        if not (atom and source["feed_source"] == "history_atom"):
+            blocked_page = (source["source_name"], source["status_page_url"]) if decision in ("disallowed", "unknown") else None
+            return FeedView(source, None, False, False, decision == "undecided" or atom, blocked_page)
+    fetched_at = source["fetched_at"]
+    # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
+    freshness, failed_later = background_reads.feed_freshness(
+        fetched_at, source["last_error_at"], now, source["last_error_detail"])
+    from_atom = source["feed_source"] == "history_atom"
+    provider_status = {
+        "source_name": source["source_name"], "source_url": source["status_page_url"],
+        "indicator": None if from_atom else source["indicator"], "source_updated_at": source["source_updated_at"],
+        "fetched_at": fetched_at, "freshness": freshness,
+        "error_detail": source["last_error_detail"] if failed_later else None,
+    }
+    provider_status.update(_atom_scope(source) if from_atom else _provider_scope(source))
+    partial = status_scope.scope_partial(
+        source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
+    return FeedView(source, provider_status, partial, source["affected_regional"] is True, False, None)
+
+
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None):
@@ -448,60 +503,19 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             ).fetchone()
             if discovery:
                 provider_discovery_attempted_at = discovery["last_discovery_at"]
-            source = conn.execute(
-                """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
-                          c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
-                          c.active_incidents,c.max_incident_impact,c.incident_updated_at,
-                          c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
-                   FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
-                   WHERE s.site_host=%s AND s.enabled=true""",
-                (host,),
-            ).fetchone()
-            if source:
-                # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
-                # decision yet only a host on the interim list (read by hand on 2026-10-22) keeps its statement on
-                # show, and the read that decides is queued; a host whose robots.txt disallows it, or could not be
-                # read, shows none and links to the official page when there is one.
-                feed_host = feed_robots.host_and_path(source["api_url"])[0]
-                feed_decision = feed_robots.feed_state(conn, source["api_url"])
-                if not feed_robots.shown(feed_decision, feed_host):
-                    # D52: where the API is disallowed and the page's Atom history is allowed, the open announcements
-                    # it lists are shown (information only) once that feed has been read.
-                    atom = feed_decision == "disallowed" and feed_robots.history_allowed(conn, source["api_url"])
-                    if not (atom and source["feed_source"] == "history_atom"):
-                        if (feed_decision == "undecided" or atom) and mapped_source:
-                            due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
-                            if due is None or due <= now:
-                                jobs.append(("status_feed", host))
-                        if feed_decision in ("disallowed", "unknown"):
-                            robots_blocked_page = (source["source_name"], source["status_page_url"])  # a link, never a reading
-                        source = None
-            if source:
-                fetched_at = source["fetched_at"]
-                # The age of the last successful statement decides; a later failed read only adds error_detail (D46).
-                freshness, failed_later = background_reads.feed_freshness(
-                    fetched_at, source["last_error_at"], now, source["last_error_detail"])
-                from_atom = source["feed_source"] == "history_atom"
-                provider_status = {
-                    "source_name": source["source_name"], "source_url": source["status_page_url"],
-                    "indicator": None if from_atom else source["indicator"], "source_updated_at": source["source_updated_at"],
-                    "fetched_at": fetched_at, "freshness": freshness,
-                    "error_detail": source["last_error_detail"] if failed_later else None,
-                }
-                provider_status.update(_atom_scope(source) if from_atom else _provider_scope(source))
-                provider_partial = status_scope.scope_partial(
-                    source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
-                provider_regional = source["affected_regional"] is True
-                if mapped_source:
-                    # Stale-while-revalidate: answer with the cached statement; once it would read as
-                    # stale by age (or was never read), refresh it behind the lookup, not again within
-                    # FEED_RETRY_MINUTES of the last attempt. An active indicator is due after
-                    # FEED_RETRY_MINUTES already, and a failing feed backs off (the cron uses the same
-                    # rule, background_reads.feed_next_due), so a resolved problem stops reading as
-                    # active within about that long. Curated feeds are also read by the cron (D44).
-                    due = background_reads.feed_next_due(source, timedelta(hours=background_reads.FEED_STALE_HOURS))
-                    if due is None or due <= now:
-                        jobs.append(("status_feed", host))
+            feed = feed_view(conn, host, now)
+            provider_status, provider_partial, provider_regional = feed.provider_status, feed.partial, feed.regional
+            robots_blocked_page = feed.blocked_page
+            if feed.row and mapped_source and (provider_status is not None or feed.queue_decision):
+                # Stale-while-revalidate: answer with the cached statement; once it would read as
+                # stale by age (or was never read), refresh it behind the lookup, not again within
+                # FEED_RETRY_MINUTES of the last attempt. An active indicator is due after
+                # FEED_RETRY_MINUTES already, and a failing feed backs off (the cron uses the same
+                # rule, background_reads.feed_next_due), so a resolved problem stops reading as
+                # active within about that long. Curated feeds are also read by the cron (D44).
+                due = background_reads.feed_next_due(feed.row, timedelta(hours=background_reads.FEED_STALE_HOURS))
+                if due is None or due <= now:
+                    jobs.append(("status_feed", host))
             if eligible:
                 volume = conn.execute(
                     """SELECT COALESCE(sum(checks) FILTER (WHERE day >= CURRENT_DATE - 6),0) AS recent,
@@ -632,8 +646,9 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
 
     Database SELECTs only. It queues no read, records no lookup, signal or adoption row and contacts no host, so a home
     page view never makes a new external read. Returns None (the card is left out) when nothing usable is cached: no
-    public mode, no response guide, a host never read or still pending, or a status feed that this answer could not
-    show the way a lookup would. Nothing here is a fixed value: every field comes from the cache rows.
+    public mode, no response guide, or a host never read or still pending. The provider layer comes from feed_view,
+    the function check() uses (D50 gate, D52 Atom history), so the card is the answer a lookup gives. Nothing here is a
+    fixed value: every field comes from the cache rows.
     """
     if not (settings.public_mode and settings.response_guide):
         return None
@@ -643,35 +658,16 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
         access_profile, _due = cached_profile(conn, site_host, now=now)
         if access_profile is None or access_profile["freshness"] == "pending" or access_profile["fetched_at"] is None:
             return None
-        provider_status, provider_regional = None, False
-        source = conn.execute(
-            """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
-                      c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
-                      c.active_incidents,c.max_incident_impact,c.incident_updated_at,
-                      c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
-               FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
-               WHERE s.site_host=%s AND s.enabled=true""",
-            (site_host,),
-        ).fetchone()
-        if source:
-            feed_host = feed_robots.host_and_path(source["api_url"])[0]
-            if not feed_robots.shown(feed_robots.feed_state(conn, source["api_url"]), feed_host) or source["feed_source"] == "history_atom":
-                return None
-            freshness, failed_later = background_reads.feed_freshness(
-                source["fetched_at"], source["last_error_at"], now, source["last_error_detail"])
-            provider_status = {
-                "source_name": source["source_name"], "source_url": source["status_page_url"],
-                "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],
-                "fetched_at": source["fetched_at"], "freshness": freshness,
-                "error_detail": source["last_error_detail"] if failed_later else None,
-            }
-            provider_status.update(_provider_scope(source))
-            provider_regional = source["affected_regional"] is True
+        feed = feed_view(conn, site_host, now)
+    provider_status, provider_regional = feed.provider_status, feed.regional
+    official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
                              vendor_aware=settings.vendor_aware_block)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
-                                   "provider_status": provider_status, "official_paths": official})
+                                   "provider_status": provider_status, "official_paths": official,
+                                   "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
+                                                            if official_page else None)})
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
     return {
