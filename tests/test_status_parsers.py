@@ -75,11 +75,22 @@ def test_instatus_up_with_a_scheduled_maintenance_still_reads_none():
 
 def test_instatus_uses_the_latest_update_of_the_active_items_when_the_page_is_not_up():
     body = {"page": {"status": "HASISSUES"},
-            "activeIncidents": [{"updatedAt": "2026-10-19T10:00:00.000Z"}, {"updatedAt": "2026-10-19T11:30:00Z"}, {"name": "no time"}],
+            "activeIncidents": [{"updatedAt": "2026-10-19T10:00:00.000Z"}, {"updatedAt": "2026-10-19T11:30:00Z"}],
             "activeMaintenances": []}
     assert parse_instatus(body) == ("minor", datetime(2026, 10, 19, 11, 30, tzinfo=timezone.utc))
     assert parse_instatus({"page": {"status": "UNDERMAINTENANCE"}, "activeMaintenances": [{"updatedAt": "2026-10-19T09:00:00Z"}]})[1] == \
         datetime(2026, 10, 19, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("unreadable", [{"name": "no time"}, {"updatedAt": None}, {"updatedAt": "yesterday"},
+                                        {"updatedAt": "2026-10-19T10:00:00"}, {"updatedAt": 1760000000}, "item", None, []])
+@pytest.mark.parametrize("key", ["activeIncidents", "activeMaintenances"])
+def test_instatus_one_active_item_without_a_readable_time_leaves_the_page_without_a_time(unreadable, key):
+    # D54: another item's time never stands in for it (as status_scope does for incidents); the read still succeeds.
+    body = {"page": {"status": "HASISSUES"}, "activeIncidents": [{"updatedAt": "2026-10-11T10:00:00Z"}], "activeMaintenances": []}
+    body[key] = body[key] + [unreadable]
+    assert parse_instatus(body) == ("minor", None)
+    assert _read(INSTATUS, lambda _r: httpx.Response(200, json=body)) == ("minor", None)
 
 
 @pytest.mark.parametrize("state", ["up", "HASISSUE", "MAJOROUTAGE", "OPERATIONAL", "", None, 1])
@@ -92,8 +103,7 @@ def test_instatus_unknown_state_is_invalid_body(state):
 
 @pytest.mark.parametrize("body", [[], "UP", None, {}, {"page": None}, {"page": "UP"}, {"status": "UP"},
                                   {"page": {"status": "HASISSUES"}, "activeIncidents": "none"},
-                                  {"page": {"status": "HASISSUES"}, "activeIncidents": [{"updatedAt": "yesterday"}]},
-                                  {"page": {"status": "HASISSUES"}, "activeIncidents": [{"updatedAt": "2026-10-19T10:00:00"}]}])
+                                  {"page": {"status": "HASISSUES"}, "activeMaintenances": {"updatedAt": "2026-10-19T10:00:00Z"}}])
 def test_instatus_malformed_body_is_invalid_body(body):
     with pytest.raises(ValueError):
         parse_instatus(body)

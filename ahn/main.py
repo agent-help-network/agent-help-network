@@ -28,7 +28,7 @@ from .service import ServiceError, check, home_example, public_incident, public_
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
-from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO, accepted_vendor
+from .triage import CHECKS_KO, MAINTENANCE_CHECK_KO, PAGE_STALE_CHECK_KO, accepted_vendor
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
 
@@ -670,7 +670,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,
-                      next_check_ko={**CHECKS_KO, "provider_maintenance": MAINTENANCE_CHECK_KO}, error=error)
+                      next_check_ko={**CHECKS_KO, "provider_maintenance": MAINTENANCE_CHECK_KO,
+                                     "provider_page_stale": PAGE_STALE_CHECK_KO}, error=error)
 
     @app.get("/{lang}/incidents/{incident_id}", include_in_schema=False)
     def detail_page(request: Request, lang: str, incident_id: UUID):

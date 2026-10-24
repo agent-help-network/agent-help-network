@@ -353,7 +353,9 @@ def test_affected_names_are_cleaned_cut_deduplicated_and_at_most_three():
 @pytest.mark.parametrize("indicator", sorted(ACTIVE_INDICATORS))
 @pytest.mark.parametrize("basis", [None, "incident", "maintenance"])
 def test_wait_is_unchanged_whenever_something_is_announced_or_unknown(indicator, basis):
-    status = {"indicator": indicator, "freshness": "fresh", **({"basis": basis} if basis else {})}
+    # A current page update time: D54 (a minor page with no list, its time old or missing) is tested in test_page_stale.py.
+    status = {"indicator": indicator, "freshness": "fresh", "source_updated_at": datetime.now(timezone.utc),
+              **({"basis": basis} if basis else {})}
     assert recommendation(None, status, None, None) == {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
     assert recommendation("login_auth", status, None, None)["action"] == "wait_provider_incident"
 

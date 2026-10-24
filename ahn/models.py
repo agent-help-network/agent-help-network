@@ -240,6 +240,9 @@ class ProviderStatus(StrictModel):
     # may be missing a recent or an older open incident.
     source_kind: Literal["history_atom"] | None = Field(default=None, exclude_if=_omit_none)
     window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
+    # "active_items" (D54): source_updated_at is the latest update of the incidents and maintenances the feed lists as
+    # active (Instatus, Google Gmail), not a page-wide time. Left out for every other feed.
+    source_time: Literal["active_items"] | None = Field(default=None, exclude_if=_omit_none)
     # Scope of an Atlassian Statuspage feed (ahn/status_scope.py, D43). Each is left out when it was not read.
     active_incidents: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     max_incident_impact: Literal["none", "minor", "major", "critical"] | None = Field(default=None, exclude_if=_omit_none)
@@ -452,7 +455,7 @@ class Recommendation(StrictModel):
 
 
 class NextCheck(StrictModel):
-    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_components_only", "provider_incident_stale", "provider_scope_partial", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
+    code: Literal["locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed", "access_denial_observed", "provider_scope", "provider_components_only", "provider_incident_stale", "provider_scope_partial", "provider_update_time_unknown", "provider_clear", "provider_unknown", "reports_unknown", "reports_stale", "reports_unverified", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_wildcard_disallow", "robots_grouping_differs_by_parser", "robots_unknown", "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no", "official_path_available", "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"]
     text: str
 
 

@@ -22,6 +22,7 @@ CHECKS = {
     "provider_components_only": "The provider's page-level status shows an issue, but the provider has announced no incident or maintenance (provider_status.basis is components_only). Some components are marked down or under maintenance; check on the provider's status page whether a component you use is one of them. A minor or maintenance page is not treated as a reason to wait; a major or critical one still is, because an outage can show on components before an incident is posted.",
     "provider_incident_stale": f"The provider's active incidents have had no update for more than {STALE_INCIDENT_DAYS} days (provider_status.incident_updated_at is the latest one) and no maintenance is in progress. An incident left open without updates is not treated as a reason to wait: if provider_status.affected names a service you use, wait for the provider; otherwise continue. A major or critical page above the worst incident's impact is still a reason to wait, because components can show a new outage before an incident is posted.",
     "provider_scope_partial": "The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether provider_status.affected names a service you use before waiting.",
+    "provider_update_time_unknown": "The provider's status page shows a minor issue, lists no incidents this service can read, and carries no page update time it can use (provider_status.source_updated_at), so a current issue cannot be told from one left on the page for weeks. The answer still waits, with low confidence: check the date of the issue on the provider's status page, and if it is old or names no service you use, continue.",
     "provider_clear": "The provider reports no active issue. Continue diagnosing this specific attempt; the statement does not prove access from your environment.",
     "provider_unknown": "No live provider status is available here. Check an official status page if one is linked, and keep the current status unknown.",
     "reports_unknown": "No matching published observations were found. This does not establish that the site works or that your issue is isolated.",
@@ -57,6 +58,7 @@ CHECKS_KO = {
     "provider_components_only": "업체 페이지 전체 표시는 문제를 가리키지만, 업체가 발표한 사건이나 점검은 없습니다(provider_status.basis 가 components_only). 일부 컴포넌트만 장애·점검으로 표시돼 있으니, 업체 상태 페이지에서 사용하는 컴포넌트가 거기 있는지 확인하세요. minor·maintenance 표시는 기다릴 이유로 보지 않지만, major·critical 표시는 사건이 게시되기 전에 컴포넌트에 먼저 장애가 보일 수 있어 계속 기다릴 이유로 봅니다.",
     "provider_incident_stale": f"업체의 활성 사건이 {STALE_INCIDENT_DAYS}일 넘게 업데이트되지 않았고(가장 최근 업데이트는 provider_status.incident_updated_at) 진행 중인 점검도 없습니다. 업데이트 없이 열려 있는 사건은 기다릴 이유로 보지 않습니다. provider_status.affected 에 사용하는 서비스가 있으면 업체를 기다리고, 없으면 진행하세요. 다만 페이지 전체 표시가 가장 심한 사건보다 높은 major·critical 이면 새 장애가 사건 게시 전에 컴포넌트에 먼저 보일 수 있어 계속 기다릴 이유로 봅니다.",
     "provider_scope_partial": "발표된 문제의 범위가 업체 일부일 수 있습니다. 영향받는 컴포넌트가 모두 지역·거점(PoP) 그룹이거나, 가장 심한 사건이 페이지 전체 표시보다 가볍습니다. 기다리기 전에 provider_status.affected 에 사용하는 서비스가 있는지 확인하세요.",
+    "provider_update_time_unknown": "업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고 쓸 수 있는 페이지 갱신 시각(provider_status.source_updated_at)도 없어, 지금 문제인지 몇 주째 남아 있는 표시인지 구별할 수 없습니다. 대기는 유지하되 확신도는 낮습니다. 업체 상태 페이지에서 그 문제의 날짜를 확인하고, 오래됐거나 사용하는 서비스가 없으면 진행하세요.",
     "provider_clear": "업체 발표상 활성 문제는 없습니다. 현재 환경에서 접속된다는 증거는 아니므로 이번 시도를 계속 진단하세요.",
     "provider_unknown": "여기에는 실시간 업체 상태가 없습니다. 공식 상태 페이지 링크가 있으면 확인하고 현재 상태는 미상으로 두세요.",
     "reports_unknown": "일치하는 공개 관찰이 없습니다. 사이트가 정상이라거나 이번 문제가 개별적이라는 뜻은 아닙니다.",
@@ -91,8 +93,15 @@ PREVIOUS_CHECKS = {
 # Same code (provider_scope), different text: the provider announced scheduled work, which is not an incident to diagnose.
 MAINTENANCE_CHECK = "The provider has announced scheduled maintenance. Compare its window and affected services with your blocked step; wait for the maintenance to end instead of retrying in a loop."
 MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하고, 반복 재시도하지 말고 점검이 끝날 때까지 기다리세요."
+# Same code (provider_incident_stale), different text: a minor page with no incident list, from a feed whose update
+# time is that of its active incidents and maintenances (source_time active_items), where that time is more than a week
+# old (D54). The D45 text names incident_updated_at and a maintenance count, which such a feed does not have.
+PAGE_STALE_CHECK = f"The provider's status page shows a minor issue, lists no incidents this service can read, and nothing it lists as active (incidents or maintenance) has been updated for more than {STALE_INCIDENT_DAYS} days (provider_status.source_updated_at, source_time active_items). An issue left without updates is not treated as a reason to wait: if the provider's status page names a service you use as affected, wait for the provider; otherwise continue."
+PAGE_STALE_CHECK_KO = f"업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고, 페이지가 진행 중으로 올린 사건·점검이 {STALE_INCIDENT_DAYS}일 넘게 갱신되지 않았습니다(provider_status.source_updated_at, source_time active_items). 갱신 없이 남아 있는 문제는 기다릴 이유로 보지 않습니다. 업체 상태 페이지에 사용하는 서비스가 영향받는다고 나와 있으면 업체를 기다리고, 없으면 진행하세요."
 ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS  # minor, major, critical, maintenance
 WAIT_DESPITE_COMPONENTS_ONLY = frozenset({"major", "critical"})
+# D54: a provider time further ahead than this is treated as no time at all (shared with the public board, D53).
+FUTURE_SLACK = timedelta(hours=1)
 
 AGENT_KINDS_FOR_BLOCK = {"user_agent", "search_crawler"}
 
@@ -117,6 +126,70 @@ def incident_stale(provider_status: dict | None, now: datetime | None = None) ->
     return (now or datetime.now(timezone.utc)) - updated > timedelta(days=STALE_INCIDENT_DAYS)
 
 
+def usable_provider_time(value, now: datetime) -> datetime | None:
+    """A provider time this service can judge: timezone-aware (an ISO string is parsed) and not more than FUTURE_SLACK
+    ahead of now. None for a missing, unreadable, naive or far-future time. Shared with the board (D53, D54)."""
+    if isinstance(value, str):
+        try:
+            value = status_scope._aware(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime) or value.tzinfo is None or value - now > FUTURE_SLACK:
+        return None
+    return value
+
+
+def provider_updated_at(provider_status: dict, now: datetime) -> datetime | None:
+    """The latest usable provider time (page or incident): the time the board judges and shows (D53), and the one a
+    page with no incident list is judged on (D54)."""
+    times = [time for time in (usable_provider_time(provider_status.get("source_updated_at"), now),
+                               usable_provider_time(provider_status.get("incident_updated_at"), now)) if time is not None]
+    return max(times) if times else None
+
+
+def _minor_page_without_incident_list(provider_status: dict) -> bool:
+    """D54: a minor page whose statement rests on no list this service read: no basis (the incident list, or the
+    maintenance count beside an empty one, was not read; D43 basis), not a reading of a page's Atom history (D52, which
+    has no indicator), and no maintenance counted in progress (a count of 1 or more, or any value that is not a whole
+    number, leaves the answer alone).
+
+    The indicator does not tell whether a maintenance is in progress: on 2026-10-22 www.cloudflarestatus.com had two
+    maintenances in progress and showed major. An unread count is still accepted here, because the only feeds a stale
+    time can release (page_stale: source_time active_items) store no count: an Instatus time is the latest updatedAt of
+    its active incidents and active maintenances, so a maintenance updated within the week keeps the page from being
+    stale, and Google's Gmail feed lists incidents only. What this leaves open is in D54 (trade-off c)."""
+    if provider_status.get("indicator") != "minor" or provider_status.get("basis") is not None:
+        return False
+    if provider_status.get("source_kind") == "history_atom":
+        return False
+    maintenances = provider_status.get("active_maintenances")
+    return maintenances is None or (type(maintenances) is int and maintenances == 0)
+
+
+def page_stale(provider_status: dict | None, now: datetime | None = None) -> bool:
+    """D54: a minor page with no incident list (D45 has no incident time to judge), from a feed whose update time is
+    that of its active incidents and maintenances (source_time active_items: Instatus, Google Gmail), whose latest
+    usable provider time is more than STALE_INCIDENT_DAYS old. A missing or unreadable time is not "stale": unknown is
+    not anything. Any other feed is never stale here: its stored time is the page's own (an incident.io page's
+    page.updated_at stood still while incidents came and went, D54), so an old one says nothing about the incidents."""
+    if not provider_status or provider_status.get("source_time") != "active_items":
+        return False
+    if not _minor_page_without_incident_list(provider_status):
+        return False
+    now = now or datetime.now(timezone.utc)
+    updated = provider_updated_at(provider_status, now)
+    return updated is not None and now - updated > timedelta(days=STALE_INCIDENT_DAYS)
+
+
+def page_time_unknown(provider_status: dict | None, now: datetime | None = None) -> bool:
+    """D54: a minor page with no incident list and no usable provider time at all, from any feed. The answer still
+    waits (a time we cannot read is not an old one), with low confidence and provider_update_time_unknown. A page that
+    carries an old page-wide time (not source_time active_items) is neither this nor page_stale: it waits as before."""
+    if not provider_status or not _minor_page_without_incident_list(provider_status):
+        return False
+    return provider_updated_at(provider_status, now or datetime.now(timezone.utc)) is None
+
+
 def page_above_incidents(provider_status: dict) -> bool:
     """A major or critical page indicator higher than the worst active incident (or that worst impact unknown):
     something besides the incidents, such as components flipped by monitoring, holds the page up."""
@@ -129,7 +202,7 @@ def page_above_incidents(provider_status: dict) -> bool:
 def provider_wait_reason(provider_status: dict | None, now: datetime | None = None) -> str | None:
     """Whether the provider's statement alone makes the lookup answer wait, and under which reason code: the first rows
     of the recommendation, shared with the public board (signal_history.board_provider) so the two never part.
-    None: no fresh active statement, or one that is not a reason to wait (D43, D45)."""
+    None: no fresh active statement, or one that is not a reason to wait (D43, D45, D54)."""
     if not (provider_status and provider_status.get("freshness") == "fresh"
             and provider_status.get("indicator") in ACTIVE_INDICATORS):
         return None
@@ -137,6 +210,11 @@ def provider_wait_reason(provider_status: dict | None, now: datetime | None = No
         # Only incidents nobody has updated for over a week (D45): not a reason to wait by themselves. A major or
         # critical page above them still waits, for the same reason as a components_only page (D43).
         return "provider_incident_stale" if page_above_incidents(provider_status) else None
+    if page_stale(provider_status, now):
+        # A minor page with no incident list whose active incidents and maintenances nobody has updated for over a
+        # week (D54, Instatus and Google Gmail feeds only): not a reason to wait, for the reason of D45. A major or
+        # critical page keeps waiting, and so do a page with no usable time and any feed whose time is the page's own.
+        return None
     if provider_status.get("basis") != "components_only":
         return "provider_scope"
     # Nothing announced (basis components_only, D43). Only a minor or maintenance page stops being a reason to
@@ -300,7 +378,12 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
     if wait_reason is not None:
-        return _wait(wait_reason, provider_regional)
+        result = _wait(wait_reason, provider_regional)
+        if wait_reason == "provider_scope" and page_time_unknown(provider_status, now):
+            # D54: a minor page with no incident list and no usable time may be a leftover; still wait, less sure.
+            result["confidence"] = "low"
+            result["reasons"].append("provider_update_time_unknown")
+        return result
     if error_class == "human_verification":
         return {"action": "hand_off_to_human", "confidence": "high", "reasons": ["human_handoff"]}
     if error_class == "login_auth":
@@ -399,9 +482,12 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
             if provider_status.get("basis") == "components_only":
                 codes.append("provider_components_only")
             else:
-                codes.append("provider_incident_stale" if incident_stale(provider_status, now) else "provider_scope")
+                stale = incident_stale(provider_status, now) or page_stale(provider_status, now)
+                codes.append("provider_incident_stale" if stale else "provider_scope")
             if provider_partial:
                 codes.append("provider_scope_partial")
+            if page_time_unknown(provider_status, now):
+                codes.append("provider_update_time_unknown")
         elif indicator == "none":
             codes.append("provider_clear")
         else:
@@ -411,4 +497,6 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     codes.append("reports_stale" if evidence_level == "stale_reports" else "reports_unknown" if evidence_level == "no_reports" else "reports_unverified")
     maintenance = bool(provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "maintenance")
     texts = CHECKS if vendor_aware else {**CHECKS, **PREVIOUS_CHECKS}
+    if page_stale(provider_status, now):
+        texts = {**texts, "provider_incident_stale": PAGE_STALE_CHECK}
     return [{"code": code, "text": MAINTENANCE_CHECK if maintenance and code == "provider_scope" else texts[code]} for code in codes]

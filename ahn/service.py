@@ -16,7 +16,7 @@ from .models import ObservationIn, OutcomeIn
 from .official_paths import official_paths
 from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import OFFICIAL_STATUS_PAGES, SOURCES, register_source
+from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
 from . import response_guide
 from .triage import next_checks, recommendation
 
@@ -345,8 +345,14 @@ def _retry_after(conn, host: str) -> int | None:
 
 
 def _provider_scope(row: dict) -> dict:
-    """The stored scope of a Statuspage feed as provider_status fields (D43); a field that was not read is left out."""
+    """The stored scope of a Statuspage feed as provider_status fields (D43); a field that was not read is left out.
+
+    source_time (D54) is "active_items" when the row's feed address is one whose update time is defined by the
+    incidents and maintenances it lists as active (status_refresh.ACTIVE_ITEM_TIME_FEEDS: Instatus, Google Gmail), and
+    left out otherwise, including when the address is not known to be one."""
     out: dict = {}
+    if row.get("api_url") in ACTIVE_ITEM_TIME_FEEDS:
+        out["source_time"] = "active_items"
     if row.get("active_incidents") is not None:
         out["active_incidents"] = row["active_incidents"]
         out["max_incident_impact"] = row["max_incident_impact"]

@@ -745,6 +745,18 @@ SOURCES: dict[str, Source] = {
     "humansecurity.com": Source("HUMAN Status", "https://status.humansecurity.com/", "https://status.humansecurity.com/api/v2/status.json"),
     "ietf.org": Source("IETF System Status", "https://status.ietf.org/", "https://status.ietf.org/summary.json", "instatus"),
 }
+# D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
+# Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
+# maintenances. Google's Gmail feed takes the latest modified (or begin) of the open Gmail incidents. Every other kind
+# stores a page-wide time that need not move with incidents: an incident.io page answering status.json kept
+# page.updated_at at 2026-10-16T20:01:40Z while its Atom history listed at least 8 incidents opened and resolved on 2026-10-21
+# to 2026-10-23 (status.openai.com, read 2026-10-24); Atlassian's page.updated_at and Better Stack's updated_at are
+# not shown to follow incidents. Only these kinds may have a minor page judged stale by its time (triage.page_stale).
+ACTIVE_ITEM_TIME_KINDS = frozenset({"instatus", "google_gmail"})
+# The feed addresses of those kinds. A stored status_sources.api_url is matched exactly: the cron reads a host with
+# its SOURCES entry (or as a discovered Statuspage page), so an address in this set is always read by one of the
+# parsers above, and an address outside it (a discovered page, an unlisted address) is never treated as one.
+ACTIVE_ITEM_TIME_FEEDS = frozenset(source.api_url for source in SOURCES.values() if source.kind in ACTIVE_ITEM_TIME_KINDS)
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
 OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
@@ -1383,17 +1395,24 @@ def parse_instatus(body: dict) -> tuple[str, datetime | None]:
         raise ValueError("unknown provider status")
     updated_at = None
     if state != "UP":
-        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt).
-        times = []
+        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt). One active
+        # item with no readable time (missing, unparseable, without a timezone, or not an object) leaves the page with
+        # no time at all, as status_scope does for incidents: another item's time never stands in for it, so a new
+        # item posted without a time cannot leave an old item's time to make the page look stale (D54: the answer then
+        # waits with low confidence instead of being released).
+        times, unknown = [], False
         for key in ("activeIncidents", "activeMaintenances"):
             items = body.get(key)
             if items is None:
                 continue
             if not isinstance(items, list):
                 raise ValueError("invalid provider status response")
-            times += [_aware_time(item["updatedAt"], "provider update time")
-                      for item in items if isinstance(item, dict) and item.get("updatedAt") is not None]
-        updated_at = max(times) if times else None
+            for item in items:
+                try:
+                    times.append(_aware_time(item["updatedAt"], "provider update time"))
+                except (KeyError, TypeError, ValueError):
+                    unknown = True
+        updated_at = None if unknown or not times else max(times)
     return INSTATUS_STATES[state], updated_at
 
 

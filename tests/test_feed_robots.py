@@ -429,7 +429,7 @@ VERB_SITES = {
     ("status_refresh.py", "main", "get"): 1,
     ("status_refresh.py", "parse_betterstack", "get"): 4,
     ("status_refresh.py", "parse_google_gmail", "get"): 7,
-    ("status_refresh.py", "parse_instatus", "get"): 4,
+    ("status_refresh.py", "parse_instatus", "get"): 3,
     ("status_refresh.py", "parse_status", "get"): 4,
     ("status_refresh.py", "refresh_batch", "get"): 1,
     ("status_refresh.py", "refresh_one", "get"): 1,
