@@ -28,7 +28,7 @@
         <div><dt>next_action.do</dt><dd class="home-live-do">{{ example.do }}</dd></div>
         {% if example.url %}<div><dt>next_action.url</dt><dd>{{ example.url }}</dd></div>{% endif %}
         {% if example.confidence %}<div><dt>confidence</dt><dd>{{ example.confidence }}</dd></div>{% endif %}
-        <div><dt>layers</dt><dd>robots {{ example.robots_status }} · llms.txt {{ example.llms_txt_status }} · status: {{ example.status or ('no feed' if en else '피드 없음') }}</dd></div>
+        <div><dt>layers</dt><dd>robots {{ example.robots_status }} · llms.txt {{ example.llms_txt_status }} · {{ 'status' if en else '상태' }}: {% if example.status %}{{ example.status }}{% elif example.provider_name %}{{ example.provider_name }} ({{ 'history feed, ' if en else '이력 피드, ' }}{% if example.open_incidents %}{{ example.open_incidents }} {{ 'open incident' if en else '열린 사건' }}{{ 's' if en and example.open_incidents != 1 else '' }}{% else %}{{ 'no open incident listed' if en else '게시된 열린 사건 없음' }}{% endif %}){% else %}{{ 'no feed' if en else '피드 없음' }}{% endif %}</dd></div>
       </dl>
       <p class="home-live-foot"><span>{{ 'Rendered from the cached answer, read ' ~ example.read_on ~ ' (UTC). The line above is the API’s own text.' if en else '캐시된 응답(' ~ example.read_on ~ ' UTC 에 읽음)에서 그립니다. 위 문장은 API 가 돌려주는 원문(영어)입니다.' }}</span> <a href="/openapi.json">{{ 'Response format ↗' if en else '응답 형식 ↗' }}</a></p>
     </aside>

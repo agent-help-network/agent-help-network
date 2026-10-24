@@ -679,6 +679,9 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
         "robots_status": access_profile["robots_status"],
         "llms_txt_status": access_profile["llms_txt_status"],
         "status": status if provider_status else None,
+        # Named only when a statement is shown; an Atom reading has no indicator, only the open announcements it lists.
+        "provider_name": provider_status["source_name"] if provider_status else None,
+        "open_incidents": provider_status.get("active_incidents") or 0 if provider_status else 0,
         "read_on": access_profile["fetched_at"].astimezone(timezone.utc).strftime("%Y-%m-%d"),
     }
 

@@ -315,7 +315,7 @@ def test_home_shows_the_real_answer_card_only_when_the_cache_gave_one(monkeypatc
             page = client.get(f"/{lang}/").text
             assert 'class="home-live"' in page
             assert "use_official_path" in page and "docs.github.com/en/rest" in page and "2026-10-22" in page
-            assert "robots ok · llms.txt present · status: none" in page
+            assert ("robots ok · llms.txt present · " + ("status" if lang == "en" else "상태") + ": none") in page
             assert "home-hero-solo" not in page
         assert len(calls) == 1  # kept for a minute in the process, not read per page view
     monkeypatch.setattr("ahn.main.home_example", lambda _settings: None)
@@ -374,3 +374,25 @@ def test_home_links_never_start_a_counted_lookup_for_a_crawler(monkeypatch):
             assert 'href="/openapi.json"' in card and "site_host" not in card
             for tag in re.findall(r"<a [^>]*search\?site_host=[^>]*>", page):
                 assert 'rel="nofollow"' in tag, tag
+
+
+def test_home_card_layers_line_names_what_the_answer_has(monkeypatch):
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+
+    def layers(card):
+        monkeypatch.setattr("ahn.main.home_example", lambda _s: card)
+        with TestClient(create_app(settings)) as client:
+            return {lang: client.get(f"/{lang}/").text for lang in ("en", "ko")}
+
+    atom = {**CARD, "status": None, "provider_name": "GitHub Status", "open_incidents": 0}
+    page = layers(atom)
+    assert "status: GitHub Status (history feed, no open incident listed)" in page["en"]
+    assert "상태: GitHub Status (이력 피드, 게시된 열린 사건 없음)" in page["ko"]
+    for text in page.values():
+        assert "no feed" not in text and "피드 없음" not in text and "status: none" not in text
+    two = layers({**atom, "open_incidents": 2})
+    assert "history feed, 2 open incidents)" in two["en"] and "이력 피드, 2 열린 사건)" in two["ko"]
+    plain = layers({**CARD, "provider_name": "GitHub Status", "open_incidents": 0})
+    assert "status: none" in plain["en"] and "상태: none" in plain["ko"]
+    nofeed = layers({**CARD, "status": None, "provider_name": None, "open_incidents": 0})
+    assert "status: no feed" in nofeed["en"] and "상태: 피드 없음" in nofeed["ko"]
