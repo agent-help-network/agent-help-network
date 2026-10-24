@@ -356,3 +356,21 @@ def test_home_layout_and_policy_paragraphs_moved_to_the_agents_page(monkeypatch)
             if lang == "ko":
                 for ending in ("세요", "나요", "까요", "어요", "아요", "해요"):
                     assert ending not in home, ending
+
+
+def test_home_links_never_start_a_counted_lookup_for_a_crawler(monkeypatch):
+    # /v1/incidents/check and /{lang}/search both run check(), which registers the host and counts a lookup, so a crawler
+    # following a home link would be counted. The card links to the static OpenAPI document instead, and the example
+    # hostnames are nofollow.
+    import re
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: dict(CARD))
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = _main(client.get(f"/{lang}/").text)
+            assert "/v1/incidents/check?" not in page.replace("GET /v1/incidents/check?site_host=example.org", "").replace(
+                "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com", "")
+            card = page[page.index('class="home-live"'):page.index("</aside>")]
+            assert 'href="/openapi.json"' in card and "site_host" not in card
+            for tag in re.findall(r"<a [^>]*search\?site_host=[^>]*>", page):
+                assert 'rel="nofollow"' in tag, tag

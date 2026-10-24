@@ -17,7 +17,7 @@
       <form class="ledger-search" action="/{{ lang }}/search" method="get">
         <label for="site_host">{{ 'LOOK UP A PUBLIC HOSTNAME' if en else '공개 호스트명 조회' }}</label>
         <div class="ledger-search-row"><input id="site_host" name="site_host" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'View profile' if en else '프로필 보기' }} <span aria-hidden="true">↗</span></button></div>
-        <p>{{ 'Hostname only, never a URL path, account or secret.' if en else '호스트명만 입력하십시오. URL 경로·계정 식별자·비밀 정보는 입력하지 마십시오.' }} {{ 'Try' if en else '예:' }} <a href="/{{ lang }}/search?site_host=github.com">github.com</a> · <a href="/{{ lang }}/search?site_host=cloudflare.com">cloudflare.com</a> · <a href="/{{ lang }}/search?site_host=chatgpt.com">chatgpt.com</a></p>
+        <p>{{ 'Hostname only, never a URL path, account or secret.' if en else '호스트명만 입력하십시오. URL 경로·계정 식별자·비밀 정보는 입력하지 마십시오.' }} {{ 'Try' if en else '예:' }} <a rel="nofollow" href="/{{ lang }}/search?site_host=github.com">github.com</a> · <a rel="nofollow" href="/{{ lang }}/search?site_host=cloudflare.com">cloudflare.com</a> · <a rel="nofollow" href="/{{ lang }}/search?site_host=chatgpt.com">chatgpt.com</a></p>
       </form>
     </div>
     {% if example %}
@@ -30,7 +30,7 @@
         {% if example.confidence %}<div><dt>confidence</dt><dd>{{ example.confidence }}</dd></div>{% endif %}
         <div><dt>layers</dt><dd>robots {{ example.robots_status }} · llms.txt {{ example.llms_txt_status }} · status: {{ example.status or ('no feed' if en else '피드 없음') }}</dd></div>
       </dl>
-      <p class="home-live-foot"><span>{{ 'Rendered from the cached answer, read ' ~ example.read_on ~ ' (UTC). The line above is the API’s own text.' if en else '캐시된 응답(' ~ example.read_on ~ ' UTC 에 읽음)에서 그립니다. 위 문장은 API 가 돌려주는 원문(영어)입니다.' }}</span> <a href="/v1/incidents/check?site_host={{ example.site_host }}">{{ 'Full JSON ↗' if en else '전체 JSON ↗' }}</a></p>
+      <p class="home-live-foot"><span>{{ 'Rendered from the cached answer, read ' ~ example.read_on ~ ' (UTC). The line above is the API’s own text.' if en else '캐시된 응답(' ~ example.read_on ~ ' UTC 에 읽음)에서 그립니다. 위 문장은 API 가 돌려주는 원문(영어)입니다.' }}</span> <a href="/openapi.json">{{ 'Response format ↗' if en else '응답 형식 ↗' }}</a></p>
     </aside>
     {% endif %}
   </div>

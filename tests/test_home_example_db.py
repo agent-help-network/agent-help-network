@@ -95,3 +95,64 @@ def test_the_card_is_left_out_when_the_response_guide_is_off_or_a_feed_cannot_sh
                      "('github.com','GitHub Status','https://www.githubstatus.com','https://www.githubstatus.com/api/v2/status.json',true)")
     monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
     assert service.home_example(settings) is None
+
+
+def source_row(settings, *, indicator, incident_age_hours=None, incidents=0):
+    """A connected Statuspage feed read just now; ``incident_age_hours`` is the age of its open incident's last update."""
+    with connect(settings) as conn:
+        conn.execute("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,enabled) VALUES "
+                     "('github.com','GitHub Status','https://www.githubstatus.com','https://www.githubstatus.com/api/v2/status.json',true)")
+        conn.execute(
+            "INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,active_incidents,max_incident_impact,"
+            "incident_updated_at,active_maintenances) VALUES ('github.com',%s,now(),now(),%s,%s,"
+            "CASE WHEN %s::int IS NULL THEN NULL ELSE now() - make_interval(hours => %s::int) END,0)",
+            (indicator, incidents, "major" if incidents else None, incident_age_hours, incident_age_hours))
+
+
+def same_answer(settings, expected_do):
+    """The card and a real lookup of the same cached state say the same thing (parity)."""
+    card = service.home_example(settings)
+    answer = service.check(settings, "github.com")
+    assert card is not None
+    assert card["do"] == answer["next_action"]["do"] == expected_do
+    assert card["summary_line"] == answer["summary_line"]
+    assert card["confidence"] == answer["recommendation"]["confidence"]
+    assert card["url"] == ((answer["next_action"]["url"] or "").removeprefix("https://").rstrip("/") or None)
+    return card, answer
+
+
+def test_parity_profile_only(monkeypatch):
+    settings = prepare(monkeypatch)
+    seed(settings)
+    same_answer(settings, "use_official_path")
+
+
+def test_parity_a_fresh_open_incident(monkeypatch):
+    settings = prepare(monkeypatch)
+    seed(settings)
+    source_row(settings, indicator="major", incident_age_hours=1, incidents=1)
+    card, answer = same_answer(settings, "wait_for_provider")
+    assert card["status"] == "major" and answer["provider_status"]["indicator"] == "major"
+
+
+def test_parity_a_stale_incident_is_not_a_reason_to_wait_d45(monkeypatch):
+    settings = prepare(monkeypatch)
+    seed(settings)
+    source_row(settings, indicator="major", incident_age_hours=24 * 30, incidents=1)
+    card, answer = same_answer(settings, "use_official_path")
+    assert answer["recommendation"]["action"] == "use_official_path"
+
+
+def test_parity_a_hidden_feed_hides_the_card_and_the_lookup_shows_no_provider(monkeypatch):
+    settings = prepare(monkeypatch)
+    seed(settings)
+    source_row(settings, indicator="major", incident_age_hours=1, incidents=1)
+    monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
+    assert service.home_example(settings) is None
+    assert service.check(settings, "github.com")["provider_status"] is None
+
+
+def test_parity_nothing_cached_hides_the_card_and_the_lookup_is_pending(monkeypatch):
+    settings = prepare(monkeypatch)
+    assert service.home_example(settings) is None
+    assert service.check(settings, "github.com")["access_profile"]["freshness"] == "pending"
