@@ -37,6 +37,9 @@ ROWS: dict[str, tuple[str, str]] = {
     "W4": ("wait_for_provider", f"The provider's status page shows a major or critical problem beyond any posted incident. Wait instead of retrying; {_WAIT_IN}."),
     # Same condition as next_checks provider_update_time_unknown: wait only if recent and naming a service you use.
     "W5": ("wait_for_provider", "The provider shows a minor issue with no update time we can read, so it may be old. If its status page dates it recently and names a service you use, wait; otherwise continue."),
+    # D55: no incident announced, only maintenance in progress (provider_maintenance_only). Same waits, honest about why.
+    "W6": ("wait_for_provider", f"The provider has posted no incident, only maintenance in progress on some regions or points of presence. If a service you use is affected, wait; {_WAIT_IN}."),
+    "W7": ("wait_for_provider", f"The provider has posted no incident, only maintenance in progress, while its status page shows an issue. Wait instead of retrying in a loop; {_WAIT_IN}."),
     "H1": ("hand_off_to_human", "This step needs human verification. Hand it to the user through your normal handoff; do not try to solve or bypass the check."),
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     "O1": ("use_official_path", "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in {n} s."),
@@ -88,6 +91,12 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
     action = recommendation.get("action")
     reasons = set(recommendation.get("reasons") or ())
     if action == "wait_provider_incident":
+        if "provider_maintenance_only" in reasons:
+            # D55: say that nothing but maintenance is announced. A maintenance page that is not regional keeps W2,
+            # which already says so.
+            if "provider_scope_partial" in reasons:
+                return "W6", True
+            return ("W2" if (provider_status or {}).get("indicator") == "maintenance" else "W7"), True
         if "provider_scope_partial" in reasons:
             return "W3", True
         if "provider_update_time_unknown" in reasons:

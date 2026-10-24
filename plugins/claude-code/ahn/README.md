@@ -44,7 +44,7 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.3 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.4 |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
@@ -140,7 +140,7 @@ The hook never reports observations. It makes no POST requests and never calls `
 
 ### Next codes the line can carry
 
-The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3; `provider_incident_stale` was added after 0.2.4 and is accepted from version 0.2.5; `robots_blocks_some_agents`, `robots_blocks_not_your_agent` and `robots_names_vendor_alias` came with the vendor-aware robots rule (D48) and are accepted from version 0.3.1 (their wording below is the contract's); `provider_update_time_unknown` came with D54 and is accepted from version 0.3.3. An older hook drops a code it does not know from the line.
+The `Next:` part of the line shows up to two `next_checks` codes, as the service sent them. The hook accepts every code of the contract's `next_checks` list. The first five were added to the list after 0.2.1 and are accepted from version 0.2.2; the two provider codes were added after 0.2.2 and are accepted from version 0.2.3; `provider_incident_stale` was added after 0.2.4 and is accepted from version 0.2.5; `robots_blocks_some_agents`, `robots_blocks_not_your_agent` and `robots_names_vendor_alias` came with the vendor-aware robots rule (D48) and are accepted from version 0.3.1 (their wording below is the contract's); `provider_update_time_unknown` came with D54 and is accepted from version 0.3.3; `provider_maintenance_only` came with D55 and is accepted from version 0.3.4. An older hook drops a code it does not know from the line.
 
 | Code | Meaning |
 | :- | :- |
@@ -155,6 +155,7 @@ The `Next:` part of the line shows up to two `next_checks` codes, as the service
 | `provider_components_only` | The provider's page-level status shows an issue, but it has announced no incident or maintenance (`provider_status.basis` is `components_only`); only some components are marked. Check on the provider's status page whether a component you use is one of them. With a `minor` or `maintenance` page the recommendation is then not `wait_provider_incident`; with `major` or `critical` it still is |
 | `provider_incident_stale` | The provider's active incidents have had no update for more than 7 days and no maintenance is in progress. An incident left open without updates is then not a reason for `wait_provider_incident`: if `provider_status.affected` names a service you use, wait for the provider; otherwise continue. A `major` or `critical` page above the worst incident's impact still waits. The same code is used for a `minor` page with no incident list from an Instatus or Google Gmail feed (`provider_status.source_time: active_items`) whose active incidents and maintenances were last updated (`provider_status.source_updated_at`) more than 7 days ago (D54) |
 | `provider_update_time_unknown` | The provider's page shows `minor`, lists no incidents the service can read, and carries no update time it can use, so a current issue cannot be told from one left on the page. The answer still waits, with `low` confidence: check the date on the provider's status page, and continue if the issue is old or names no service you use (D54) |
+| `provider_maintenance_only` | The provider has announced no incident: its active status rests only on maintenance in progress (`provider_status.basis` is `maintenance`, `active_incidents` is 0). The page-level indicator may still read `minor`, `major` or `critical`, and the service cannot tell from it whether anything besides the maintenance is wrong, so the answer still waits with unchanged confidence. Compare the maintenance window and affected services with your blocked step (D55) |
 | `provider_scope_partial` | The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether `provider_status.affected` names a service you use. When every affected component is regional, a `wait_provider_incident` answer has `low` confidence |
 
 ### On the service side

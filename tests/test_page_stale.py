@@ -30,6 +30,8 @@ WEEK = timedelta(days=STALE_INCIDENT_DAYS)
 OFFICIAL = {"developer_portal": "https://dev.example.com/"}
 ROBOTS_OK = {"robots_status": "ok", "robots": {"rules": []}}
 WAIT = {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
+# D55: the same wait (action and confidence) when it rests only on maintenance in progress, with no incident.
+MAINTENANCE_ONLY = {**WAIT, "reasons": ["provider_scope", "provider_maintenance_only"]}
 UNSURE = {"action": "wait_provider_incident", "confidence": "low", "reasons": ["provider_scope", "provider_update_time_unknown"]}
 ITEMS = {"source_time": "active_items"}
 INSTATUS_URL = "https://status.mediavine.com/summary.json"
@@ -203,7 +205,7 @@ def test_the_indicator_does_not_say_maintenance_so_a_counted_one_is_what_holds()
     status = page(updated=NOW - timedelta(days=30), active_maintenances=2, **ITEMS)
     assert recommendation(None, status, None, None, now=NOW) == WAIT
     major = scoped("major", updated=NOW - timedelta(days=58), active_incidents=0, active_maintenances=2)
-    assert major["basis"] == "maintenance" and recommendation(None, major, None, None, now=NOW) == WAIT
+    assert major["basis"] == "maintenance" and recommendation(None, major, None, None, now=NOW) == MAINTENANCE_ONLY
 
 
 # --- times that cannot be used -------------------------------------------------------------------------------------
@@ -288,7 +290,7 @@ def test_announced_incidents_keep_the_d45_rule():
     assert recommendation(None, unknown, None, None, now=NOW) == WAIT
     # A page in maintenance: out of D54's scope (indicator maintenance, basis maintenance).
     work = scoped("maintenance", updated=NOW - timedelta(days=57), active_incidents=0, active_maintenances=2)
-    assert recommendation(None, work, None, None, now=NOW) == WAIT
+    assert recommendation(None, work, None, None, now=NOW) == MAINTENANCE_ONLY
 
 
 @pytest.mark.parametrize("missed", [dict(), dict(active_incidents=0), dict(active_maintenances=0),
