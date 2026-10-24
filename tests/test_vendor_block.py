@@ -439,13 +439,13 @@ def test_mcp_tool_advertises_the_vendor_list_and_drops_a_wrong_value(monkeypatch
 def test_new_codes_have_texts_and_are_in_the_model_and_the_contracts():
     model_codes = set(NextCheck.model_fields["code"].annotation.__args__)
     new = {"robots_blocks_some_agents", "robots_blocks_not_your_agent", "robots_names_vendor_alias"}
-    assert new <= model_codes and len(model_codes) == 33
+    assert new <= model_codes and len(model_codes) == 34
     assert new <= set(triage.CHECKS) and new <= set(triage.CHECKS_KO)
     en = (ROOT / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
     ko = (ROOT / "docs" / "api-contract.md").read_text(encoding="utf-8")
     for code in new | {"agent_vendor", "vendor_aliases_blocked", "AHN_VENDOR_AWARE_BLOCK=0"}:
         assert f"`{code}`" in en and f"`{code}`" in ko, code
-    assert "모두 33개 코드" in ko
+    assert "모두 34개 코드" in ko
     for vendor in AgentVendor:
         assert f"`{vendor.value}`" in en
     decisions = (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")

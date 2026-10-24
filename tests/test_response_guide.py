@@ -51,6 +51,11 @@ def provider(indicator: str, *, basis="incident", impact="minor", updated=NOW - 
             "active_incidents": 1, "max_incident_impact": impact, "incident_updated_at": updated, "active_maintenances": maintenances}
 
 
+def maintenance_only(indicator: str, *, incidents=0, maintenances=2) -> dict:
+    return {"source_name": "Example Status", "source_url": STATUS_URL, "indicator": indicator, "freshness": "fresh", "basis": "maintenance",
+            "active_incidents": incidents, "max_incident_impact": "none", "active_maintenances": maintenances}
+
+
 def answer(site_host="example.com", *, error_class=None, provider_status=None, access_profile=None, official=None, official_page=None,
            not_read=False, regional=False, vendor=None, checks=False) -> dict:
     rec = recommendation(error_class, provider_status, access_profile, official, profile_not_read=not_read, provider_regional=regional,
@@ -102,6 +107,9 @@ def providers():
                 for updated in (NOW - timedelta(hours=3), NOW - timedelta(days=30)):
                     for maintenances in (0, 1):
                         yield provider(indicator, basis=basis, impact=impact, updated=updated, maintenances=maintenances)
+    # D55: an active status that rests only on maintenance in progress, with no incident (the shape status_scope.basis gives).
+    for indicator in ("minor", "major", "critical", "maintenance"):
+        yield maintenance_only(indicator)
 
 
 PROFILES = [
@@ -196,8 +204,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     assert used == set(ROWS), set(ROWS) - used
 
 
-def test_the_table_has_the_26_rows_and_the_nine_do_values():
-    assert len(ROWS) == 26
+def test_the_table_has_the_28_rows_and_the_nine_do_values():
+    assert len(ROWS) == 28
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
@@ -682,6 +690,7 @@ def test_an_unlisted_combination_falls_to_the_default_row_of_its_action_and_is_l
 def test_every_triage_reason_code_is_known_to_the_table():
     # Reasons the table reads; a new reason in triage that is not here must be read (or named) before the table is complete.
     read = {"provider_scope", "provider_scope_partial", "provider_components_only", "provider_incident_stale", "provider_update_time_unknown",
+            "provider_maintenance_only",
             "human_handoff", "account_handoff",
             "profile_pending", "official_path_available", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
             "robots_fetch_refused", "robots_wildcard_disallow", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_unknown",
