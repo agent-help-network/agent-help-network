@@ -85,28 +85,23 @@ def test_cached_host_gives_a_card_from_stored_rows_and_nothing_is_written(monkey
     assert counts(settings) == before
 
 
-def test_the_card_is_left_out_when_the_response_guide_is_off_or_a_feed_cannot_show(monkeypatch):
+def test_the_card_is_left_out_when_the_response_guide_is_off(monkeypatch):
     settings = prepare(monkeypatch)
     seed(settings)
     assert service.home_example(Settings(TEST_URL, "test-pepper-must-be-at-least-thirty-two-chars", public_mode=True,
                                          response_guide=False)) is None
-    with connect(settings) as conn:
-        conn.execute("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,enabled) VALUES "
-                     "('github.com','GitHub Status','https://www.githubstatus.com','https://www.githubstatus.com/api/v2/status.json',true)")
-    monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
-    assert service.home_example(settings) is None
 
 
-def source_row(settings, *, indicator, incident_age_hours=None, incidents=0):
+def source_row(settings, *, indicator, incident_age_hours=None, incidents=0, feed_source=None):
     """A connected Statuspage feed read just now; ``incident_age_hours`` is the age of its open incident's last update."""
     with connect(settings) as conn:
         conn.execute("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,enabled) VALUES "
                      "('github.com','GitHub Status','https://www.githubstatus.com','https://www.githubstatus.com/api/v2/status.json',true)")
         conn.execute(
             "INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,active_incidents,max_incident_impact,"
-            "incident_updated_at,active_maintenances) VALUES ('github.com',%s,now(),now(),%s,%s,"
-            "CASE WHEN %s::int IS NULL THEN NULL ELSE now() - make_interval(hours => %s::int) END,0)",
-            (indicator, incidents, "major" if incidents else None, incident_age_hours, incident_age_hours))
+            "incident_updated_at,active_maintenances,feed_source) VALUES ('github.com',%s,now(),now(),%s,%s,"
+            "CASE WHEN %s::int IS NULL THEN NULL ELSE now() - make_interval(hours => %s::int) END,0,%s)",
+            (indicator, incidents, "major" if incidents else None, incident_age_hours, incident_age_hours, feed_source))
 
 
 def same_answer(settings, expected_do):
@@ -143,13 +138,45 @@ def test_parity_a_stale_incident_is_not_a_reason_to_wait_d45(monkeypatch):
     assert answer["recommendation"]["action"] == "use_official_path"
 
 
-def test_parity_a_hidden_feed_hides_the_card_and_the_lookup_shows_no_provider(monkeypatch):
+def test_parity_a_feed_the_robots_gate_hides_gives_the_lookups_answer_without_a_provider(monkeypatch):
     settings = prepare(monkeypatch)
     seed(settings)
     source_row(settings, indicator="major", incident_age_hours=1, incidents=1)
     monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
-    assert service.home_example(settings) is None
-    assert service.check(settings, "github.com")["provider_status"] is None
+    card, answer = same_answer(settings, "use_official_path")
+    assert answer["provider_status"] is None and card["status"] is None
+
+
+def test_parity_d52_history_atom_feed_is_shown_like_the_lookup_shows_it(monkeypatch):
+    # github.com's API is disallowed by its robots.txt and its Atom history is allowed: the card must appear and say what check() says.
+    settings = prepare(monkeypatch)
+    seed(settings)
+    source_row(settings, indicator="unknown", incident_age_hours=1, incidents=1, feed_source="history_atom")
+    monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
+    monkeypatch.setattr("ahn.feed_robots.history_allowed", lambda _conn, _url: True)
+    before = counts(settings)
+    card = service.home_example(settings)
+    assert card is not None
+    assert counts(settings) == before
+    answer = service.check(settings, "github.com")
+    assert answer["provider_status"]["source_name"] == "GitHub Status" and answer["provider_status"]["indicator"] is None
+    assert card["summary_line"] == answer["summary_line"] and card["do"] == answer["next_action"]["do"]
+    assert card["confidence"] == answer["recommendation"]["confidence"]
+    assert card["status"] is None  # an Atom reading carries no indicator
+    with TestClient(create_app(settings)) as client:
+        assert 'class="home-live"' in client.get("/en/").text
+
+
+def test_the_home_page_queues_nothing_for_a_feed_that_is_due(monkeypatch):
+    settings = prepare(monkeypatch)
+    seed(settings)
+    source_row(settings, indicator="unknown", incident_age_hours=1, incidents=1, feed_source="history_atom")
+    monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "undecided")
+    before = counts(settings)
+    service.home_example(settings)
+    assert counts(settings) == before
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM background_reads").fetchone()["n"] == 0
 
 
 def test_parity_nothing_cached_hides_the_card_and_the_lookup_is_pending(monkeypatch):
