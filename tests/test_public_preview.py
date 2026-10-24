@@ -391,8 +391,22 @@ def test_home_card_layers_line_names_what_the_answer_has(monkeypatch):
     for text in page.values():
         assert "no feed" not in text and "피드 없음" not in text and "status: none" not in text
     two = layers({**atom, "open_incidents": 2})
-    assert "history feed, 2 open incidents)" in two["en"] and "이력 피드, 2 열린 사건)" in two["ko"]
+    assert "history feed, 2 open incidents)" in two["en"] and "이력 피드, 열린 사건 2건)" in two["ko"]
     plain = layers({**CARD, "provider_name": "GitHub Status", "open_incidents": 0})
     assert "status: none" in plain["en"] and "상태: none" in plain["ko"]
     nofeed = layers({**CARD, "status": None, "provider_name": None, "open_incidents": 0})
     assert "status: no feed" in nofeed["en"] and "상태: 피드 없음" in nofeed["ko"]
+
+
+def test_home_action_table_stacks_at_phone_width(monkeypatch):
+    # Three columns squeezed into a phone broke the source column one letter per line; each row now stacks, and the
+    # source cell carries its own label so the hidden header is not needed to read it.
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    monkeypatch.setattr("ahn.main.home_example", lambda _s: None)
+    with TestClient(create_app(settings)) as client:
+        for lang, label in (("en", "From"), ("ko", "근거")):
+            page = client.get(f"/{lang}/").text
+            assert page.count(f'class="ledger-actions-from" data-label="{label}"') == 6
+        css = client.get("/static/site.css").text
+    assert ".ledger-actions-from::before{content:attr(data-label)" in css
+    assert "@media(max-width:640px){.ledger-actions thead" in css

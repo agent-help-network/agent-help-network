@@ -106,6 +106,8 @@ html{font-family:system-ui,"Noto Sans KR",Segoe UI,Arial,sans-serif}
 .ledger-code{background:#10202a;color:#e3ecf1;border-radius:4px;padding:14px 16px;margin:0 0 12px;font:12.5px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .ledger-actions td:first-child{white-space:nowrap}
 .ledger-actions th,.ledger-actions td{overflow-wrap:anywhere}
+/* Phone width: each action becomes a stacked block (name, what to do, source) instead of three squeezed columns. */
+@media(max-width:640px){.ledger-actions thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.ledger-actions,.ledger-actions tbody,.ledger-actions tr,.ledger-actions td{display:block;width:auto}.ledger-actions tr{padding:12px 0;border-bottom:1px solid var(--line)}.ledger-actions tr td{border:0;padding:2px 0;word-break:keep-all}.ledger-actions td:first-child{white-space:normal;margin-bottom:4px}.ledger-actions td:first-child code{font-size:13px;font-weight:700}.ledger-actions-from{color:#5b6f80;font-size:12px}.ledger-actions-from::before{content:attr(data-label) ": ";font-weight:650}}
 @media (max-width:760px){.ledger-code-grid{grid-template-columns:1fr}}
 .page-head h1{font-size:clamp(34px,4vw,50px)}
 .search-box,.result-card,.empty-state,.callout,.info-card,.prompt-panel,.report-form,.report-receipt,.evidence-card{border-radius:4px;box-shadow:none}
