@@ -486,6 +486,17 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 **운영자.** `python -m ahn.cli bundle --out 파일` 은 DB 에서 번들을 만들어 공개 없이 확인할 수 있게 쓰고, `--store` 는 크론과 같은 DB 잠금을 잡고 웹 서비스가 주는 저장 파일을 바꾼다. 둘 다 `AHN_OPERATOR_NAME` 이 필요하다.
 
+## 지금 문제가 있는 사이트 (운영자가 켜야 제공)
+
+`GET /v1/now`(JSON, 스키마 `ahn-now/1`)와 사람용 페이지 `/en/now`·`/ko/now` 는 운영자가 `AHN_PUBLIC_BOARD=1` 로 켰을 때만 있다. 지금은 꺼져 있어 404 다. 목록은 데이터베이스만 읽어 만들고(어떤 사이트에도 요청하지 않음) 웹 프로세스마다 1분에 한 번까지만 다시 만든다. `Cache-Control: public, max-age=60` 와 `ETag` 를 붙이며 `If-None-Match` 가 맞으면 304 다. `next_update_after` 보다 자주 읽지 않는다.
+
+- `problems[]`·`maintenance[]`(각 20개까지, 더 있으면 `truncated`): `site_host` 와 `provider`(업체가 발표한 그대로의 `indicator`: `critical`·`major`·`minor`·`maintenance`, `source_name`, `source_url`, `source_updated_at`, `fetched_at`). 그 업체 발표가 조회 답을 기다리게 하는 경우(`recommendation` 과 같은 규칙)이면서 업체가 최근 7일 안에 갱신한 동안만 올린다. 갱신 시각이 없는 발표, 열린 사건이 모두 7일 넘게 갱신되지 않은 발표는 뺀다.
+- 줄의 `ahn_check`, `coverage.ahn_check_vantage`, `checks_paused`, `stats_7d` 의 `a_*` 수는 운영자가 `AHN_PUBLIC_BOARD_AHN_CHECK=1`(기본 꺼짐)도 켰을 때만 나온다: 데이터센터 한 곳에서 한 AHN 자체 robots.txt 판독이며 `result` 는 실패 종류 중 하나다. 거절된 읽기는 나오지 않는다.
+- `coverage`: `provider_feeds_read`, `feed_scope`(`looked_up_hosts_only`), `curated_hosts`.
+- `stats_7d`: `days`, `provider_periods`(최근 7일 업체 문제 구간 수, 호스트명 없음), `provider_left_out_now`(지금 목록에서 뺀 새 업체 문제 발표 수, 사유별: `stale_incidents`·`stale_update`·`no_update_time`·`not_a_wait`·`feed_not_shown`).
+- `legend`·`note`: 고정 문구. 목록에 없다고 사이트가 정상이라는 뜻은 아니다.
+- 이 파일에 절대 없는 것: 거절된 읽기(401·403·429·503), 에이전트 제보, 조회 수, 누가 호스트를 조회했는지.
+
 ## 다음 계약: 질문·경험 네트워크
 
 사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 [확장 설계](agent-network-architecture.md)에 제안했다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.

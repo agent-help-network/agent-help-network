@@ -361,9 +361,11 @@ def test_the_owner_view_says_whether_shared_infrastructure_feeds_are_read(db):
 
 def test_provider_changes_are_recorded_once_and_shown_while_fresh(db):
     host = next(h for h in sorted(SOURCES) if h not in signal_history.INFRA_HOSTS and SOURCES[h].kind == "statuspage")
-    bodies = iter([{"page": {"updated_at": "2026-10-21T11:00:00Z"}, "status": {"indicator": "none"}},
-                   {"page": {"updated_at": "2026-10-21T11:00:00Z"}, "status": {"indicator": "none"}},
-                   {"page": {"updated_at": "2026-10-21T11:30:00Z"}, "status": {"indicator": "major"}}])
+    # Recent provider times: the board lists only statements the provider updated within 7 days (D53).
+    earlier, later = (f"{datetime.now(timezone.utc) - timedelta(minutes=m):%Y-%m-%dT%H:%M:%SZ}" for m in (60, 30))
+    bodies = iter([{"page": {"updated_at": earlier}, "status": {"indicator": "none"}},
+                   {"page": {"updated_at": earlier}, "status": {"indicator": "none"}},
+                   {"page": {"updated_at": later}, "status": {"indicator": "major"}}])
     with connect(db) as conn:  # registered by a lookup, as D22 requires before any feed read
         assert register_source(conn, host)
         conn.execute("INSERT INTO queried_hosts (site_host) VALUES (%s)", (host,))

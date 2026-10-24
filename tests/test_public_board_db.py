@@ -1,0 +1,290 @@
+"""Public "Site problems right now" board (D53) against the dedicated ahn_test database. Stub data only; no host is read.
+
+The provider fixtures copy the shapes of the live candidates of 2026-10-23 that were false problems: cloudflare.com
+(page "major" with only two regional maintenances, provider update time 57 days old), gocardless.com ("minor",
+updated 16 days ago, no scope), mediavine.com ("minor", no update time at all), next to a fresh "major" incident
+(the shape of zapier.com during a real outage) that must stay.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from markupsafe import escape
+
+TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
+if not TEST_URL:
+    pytest.skip("AHN_TEST_DATABASE_URL is required", allow_module_level=True)
+os.environ.setdefault("AHN_DATABASE_URL", TEST_URL)  # ahn.main builds its module-level app from the environment
+os.environ.setdefault("AHN_KEY_PEPPER", "test-pepper-must-be-at-least-thirty-two-chars")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from ahn import feed_robots, public_board, signal_history, triage  # noqa: E402
+from ahn.db import connect, migrate  # noqa: E402
+from ahn.main import create_app  # noqa: E402
+from ahn.service import _provider_scope  # noqa: E402
+from ahn.settings import Settings  # noqa: E402
+from ahn.status_refresh import register_source  # noqa: E402
+
+PEPPER = "test-pepper-must-be-at-least-thirty-two-chars"
+TABLES = "robots_read_events, provider_status_events, outage_episodes, robots_read_daily"
+FRESH, STALE_HOSTS = "zapier.com", ("cloudflare.com", "gocardless.com", "mediavine.com")
+SINCE = "2026-10-27"
+
+
+def settings(**switches) -> Settings:
+    return Settings(TEST_URL, PEPPER, public_mode=True, reporting_enabled=True, **switches)
+
+
+ON = dict(public_board=True, public_board_since=datetime(2026, 10, 27).date())
+
+
+@pytest.fixture
+def db():
+    base = settings()
+    with connect(base) as conn:
+        if conn.info.dbname != "ahn_test":
+            raise RuntimeError("Refusing to reset a database other than ahn_test")
+    migrate(base)
+    with connect(base) as conn:
+        conn.execute(f"TRUNCATE {TABLES}, status_cache, status_sources, queried_hosts, host_access_profile RESTART IDENTITY")
+    return base
+
+
+def put_status(conn, host, indicator, *, updated, incidents=None, impact=None, incident_updated=None, maintenances=None,
+               affected=None, fetched=None):
+    assert register_source(conn, host)
+    conn.execute(
+        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,active_incidents,max_incident_impact,
+                                     incident_updated_at,active_maintenances,affected)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (host, indicator, updated, fetched or datetime.now(timezone.utc), incidents, impact, incident_updated,
+         maintenances, affected))
+
+
+def live_shapes(db, now):
+    with connect(db) as conn:
+        put_status(conn, "cloudflare.com", "major", updated=now - timedelta(days=57), incidents=0, impact="none",
+                   maintenances=2, affected=["Nairobi, Kenya - (NBO)", "Guatemala City, Guatemala - (GUA)"])
+        put_status(conn, "gocardless.com", "minor", updated=now - timedelta(days=16))
+        put_status(conn, "mediavine.com", "minor", updated=None)
+        put_status(conn, FRESH, "major", updated=now - timedelta(minutes=20), incidents=1, impact="major",
+                   incident_updated=now - timedelta(minutes=20), maintenances=0, affected=["Zaps"])
+
+
+def board(db, now):
+    with connect(db) as conn:
+        return signal_history.board_summary(conn, now=now)
+
+
+def lookup(client, host):
+    body = client.get("/v1/incidents/check", params={"site_host": host}).json()
+    for key in ("generated_at",):
+        body.pop(key, None)
+    return body
+
+
+# The judgement ------------------------------------------------------------------------------------------------------
+
+def status(indicator, *, updated, **scope_row):
+    row = {"indicator": indicator, "max_incident_impact": None, **scope_row}
+    return {"indicator": indicator, "source_updated_at": updated, "freshness": "fresh", **_provider_scope(row)}
+
+
+NOW = datetime(2026, 10, 24, 3, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("provider, expected", [
+    (status("major", updated=NOW - timedelta(days=57), active_incidents=0, max_incident_impact="none", active_maintenances=2),
+     "stale_update"),                                          # cloudflare.com on 2026-10-23
+    (status("minor", updated=NOW - timedelta(days=16)), "stale_update"),  # gocardless.com
+    (status("minor", updated=None), "no_update_time"),         # mediavine.com
+    (status("major", updated=NOW - timedelta(hours=1), active_incidents=1, max_incident_impact="major",
+            incident_updated_at=NOW - timedelta(days=30), active_maintenances=0), "stale_incidents"),  # D45
+    (status("minor", updated=NOW, active_incidents=0, active_maintenances=0), "not_a_wait"),  # components only
+    (status("major", updated=NOW - timedelta(minutes=20), active_incidents=1, max_incident_impact="major",
+            incident_updated_at=NOW - timedelta(minutes=20), active_maintenances=0), None),  # zapier.com-like
+    (status("minor", updated=NOW - timedelta(days=7)), None),  # exactly 7 days: still listed
+    (status("minor", updated=NOW - timedelta(days=7, seconds=1)), "stale_update"),
+    # A stale page time with a fresh incident update: the latest time the statement carries decides.
+    (status("major", updated=NOW - timedelta(days=40), active_incidents=1, max_incident_impact="major",
+            incident_updated_at=NOW - timedelta(hours=2), active_maintenances=0), None),
+])
+def test_board_provider_reasons(provider, expected):
+    assert signal_history.board_provider(provider, NOW) == expected
+
+
+@pytest.mark.parametrize("indicator", ["minor", "major", "critical", "maintenance"])
+@pytest.mark.parametrize("age", [timedelta(minutes=5), timedelta(days=3), timedelta(days=9), None])
+@pytest.mark.parametrize("basis", [dict(), dict(active_incidents=0, active_maintenances=0),
+                                   dict(active_incidents=2, max_incident_impact="minor", incident_updated_at=NOW - timedelta(days=20),
+                                        active_maintenances=0)])
+def test_a_board_line_always_implies_a_lookup_wait(indicator, age, basis):
+    """The board is never louder than the lookup answer: both use triage.provider_wait_reason."""
+    provider = status(indicator, updated=NOW - age if age else None, **basis)
+    if signal_history.board_provider(provider, NOW) is None:
+        assert triage.provider_wait_reason(provider, NOW) is not None
+        decision = triage.recommendation(None, provider, None, None, now=NOW)
+        assert decision["action"] == "wait_provider_incident"
+
+
+# Switch off: nothing changes ----------------------------------------------------------------------------------------
+
+def test_switch_off_by_default_and_the_paths_do_not_exist(db, monkeypatch):
+    for name in ("AHN_PUBLIC_BOARD", "AHN_PUBLIC_BOARD_SINCE", "AHN_PUBLIC_BOARD_AHN_CHECK"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AHN_PUBLIC_BOARD_AHN_CHECK", "1")  # ignored while the board itself is off
+    from_env = Settings.from_env()
+    assert not from_env.public_board and from_env.public_board_since is None and not from_env.public_board_ahn_check
+    live_shapes(db, datetime.now(timezone.utc))
+    with TestClient(create_app(settings())) as client:
+        for path in ("/v1/now", "/en/now", "/ko/now"):
+            assert client.get(path).status_code == 404, path
+        assert "Site problems" not in client.get("/llms.txt").text
+        assert "/now<" not in client.get("/sitemap.xml").text
+        for lang in ("en", "ko"):
+            assert str(escape(public_board.POLICY_BEFORE[lang])) in client.get(f"/{lang}/policy").text
+        assert "/now" not in client.get("/en/").text
+
+
+def test_switch_needs_its_policy_date(monkeypatch):
+    monkeypatch.setenv("AHN_DATABASE_URL", TEST_URL)
+    monkeypatch.setenv("AHN_PUBLIC_BOARD", "1")
+    monkeypatch.delenv("AHN_PUBLIC_BOARD_SINCE", raising=False)
+    with pytest.raises(RuntimeError, match="AHN_PUBLIC_BOARD_SINCE"):
+        Settings.from_env()
+    monkeypatch.setenv("AHN_PUBLIC_BOARD_SINCE", SINCE)
+    on = Settings.from_env()
+    assert on.public_board and on.public_board_since.isoformat() == SINCE and not on.public_board_ahn_check
+
+
+def test_the_lookup_answer_is_the_same_with_the_switch_on_or_off(db):
+    live_shapes(db, datetime.now(timezone.utc))
+    with TestClient(create_app(settings())) as off, TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as on:
+        for host in (FRESH, *STALE_HOSTS):
+            before, after = lookup(off, host), lookup(on, host)
+            assert before == after, host
+        # The live false problems still wait in the lookup answer: this change narrows the board only.
+        assert lookup(off, "gocardless.com")["recommendation"]["action"] == "wait_provider_incident"
+
+
+# Switch on ----------------------------------------------------------------------------------------------------------
+
+def test_live_false_problems_are_left_out_and_a_fresh_major_stays(db):
+    now = datetime.now(timezone.utc)
+    live_shapes(db, now)
+    summary = board(db, now)
+    assert [c["site_host"] for c in summary["candidates"]] == [FRESH]
+    assert summary["provider_excluded_now"] == {"stale_incidents": 0, "stale_update": 2, "no_update_time": 1,
+                                                "not_a_wait": 0, "feed_not_shown": 0}
+    with TestClient(create_app(settings(**ON))) as client:
+        body = client.get("/v1/now").json()
+        assert body["schema"] == "ahn-now/1"
+        assert [line["site_host"] for line in body["problems"]] == [FRESH] and body["maintenance"] == []
+        assert body["problems"][0]["provider"]["indicator"] == "major"
+        assert body["stats_7d"]["provider_left_out_now"]["stale_update"] == 2
+        assert lookup(client, FRESH)["recommendation"]["action"] == "wait_provider_incident"
+
+
+def test_a_feed_its_robots_txt_hides_is_not_listed(db, monkeypatch):
+    now = datetime.now(timezone.utc)
+    live_shapes(db, now)
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "disallowed")
+    summary = board(db, now)
+    assert summary["candidates"] == [] and summary["provider_excluded_now"]["feed_not_shown"] == 4
+
+
+def test_ahn_check_column_is_hidden_unless_its_own_switch_is_on(db):
+    now = datetime.now(timezone.utc)
+    live_shapes(db, now)
+    host = next(h for h in sorted(signal_history.board_hosts())
+                if h not in signal_history.INFRA_HOSTS and h not in (FRESH, *STALE_HOSTS) and len(h.split(".")) == 2)
+    with connect(db) as conn:
+        for at, outcome in ((now - timedelta(days=3), "responding"), (now - timedelta(minutes=90), "no_response:connect"),
+                            (now - timedelta(minutes=30), "no_response:connect")):
+            conn.execute(
+                """INSERT INTO robots_read_events (site_host,read_at,read_host,robots_status,detail,a_outcome,origin_operator,vantage)
+                   VALUES (%s,%s,%s,%s,NULL,%s,'agenthelpnetwork.com','{}'::jsonb)""",
+                (host, at, host, "ok" if outcome == "responding" else "error", outcome))
+        signal_history.rollup(conn, now=now, thresholds=signal_history.STAGES["1"])
+    assert host in {c["site_host"] for c in board(db, now)["candidates"]}  # the owner view has it
+    with TestClient(create_app(settings(**ON))) as client:
+        raw = client.get("/v1/now").text
+        assert host not in raw and "ahn_check" not in raw and "a_likely_false_positive" not in raw
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/now").text
+            assert host not in page and "robots.txt" not in page.split("<main", 1)[1].split("</main>")[0]
+    with TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as client:
+        body = client.get("/v1/now").json()
+        line = next(line for line in body["problems"] if line["site_host"] == host)
+        assert line["ahn_check"]["result"] == "no_response" and "provider" not in line
+        assert "a_likely_false_positive" in body["stats_7d"] and "checks_paused" in body
+        assert "robots.txt 판독 응답 없음" in client.get("/ko/now").text
+
+
+def test_refused_reads_never_reach_the_public_board(db):
+    now = datetime.now(timezone.utc)
+    host = next(h for h in sorted(signal_history.board_hosts()) if h not in signal_history.INFRA_HOSTS and len(h.split(".")) == 2)
+    with connect(db) as conn:
+        for minutes in (200, 120, 60, 10):
+            conn.execute(
+                """INSERT INTO robots_read_events (site_host,read_at,read_host,robots_status,detail,a_outcome,origin_operator,vantage)
+                   VALUES (%s,%s,%s,'refused','http_403','refused','agenthelpnetwork.com','{}'::jsonb)""",
+                (host, now - timedelta(minutes=minutes), host))
+        signal_history.rollup(conn, now=now, thresholds=signal_history.STAGES["1"])
+    with TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as client:
+        body = client.get("/v1/now").json()
+        raw = client.get("/v1/now").text + client.get("/en/now").text + client.get("/ko/now").text
+        assert host not in raw and body["problems"] == [] and body["stats_7d"]["a_episodes"] == 0
+
+
+def test_pages_in_both_languages_quote_outage_only_from_the_provider(db):
+    live_shapes(db, datetime.now(timezone.utc))
+    with TestClient(create_app(settings(**ON))) as client:
+        en, ko = client.get("/en/now"), client.get("/ko/now")
+        assert en.status_code == ko.status_code == 200
+        assert "<h1>Site problems right now</h1>" in en.text and "<h1>지금 문제가 있는 사이트</h1>" in ko.text
+        assert "Provider reports: major outage (provider’s own indicator)" in en.text
+        assert "업체 발표: 주요 장애(업체 표현)" in ko.text
+        for page in (en.text, ko.text):
+            assert FRESH in page and not any(host in page for host in STALE_HOSTS)
+            main = page.split("<main", 1)[1].split("</main>")[0]
+            # "outage"/"장애" only inside the provider quote.
+            assert main.count("outage") == main.count("major outage (provider’s own indicator)")
+            assert main.count("장애") == main.count("주요 장애(업체 표현)")
+        assert en.headers["cache-control"] == "public, max-age=60"
+
+
+def test_empty_board_says_absence_is_not_health(db):
+    with TestClient(create_app(settings(**ON))) as client:
+        assert "A site missing from this list is not known to be working." in client.get("/en/now").text
+        assert "이 목록에 없다고 사이트가 정상이라는 뜻은 아니에요." in client.get("/ko/now").text
+        body = client.get("/v1/now").json()
+        assert body["problems"] == [] and body["note"] == public_board.NOT_LISTED_NOTE
+
+
+def test_json_etag_and_cache(db):
+    live_shapes(db, datetime.now(timezone.utc))
+    with TestClient(create_app(settings(**ON))) as client:
+        first = client.get("/v1/now")
+        assert first.headers["cache-control"] == "public, max-age=60" and first.headers["etag"]
+        again = client.get("/v1/now", headers={"If-None-Match": first.headers["etag"]})
+        assert again.status_code == 304 and again.content == b""
+
+
+def test_policy_llms_and_sitemap_describe_the_board_only_while_on(db):
+    with TestClient(create_app(settings(**ON))) as client:
+        for lang in ("en", "ko"):
+            text = client.get(f"/{lang}/policy").text
+            old, new = public_board.policy_sentences(False)[lang]
+            assert str(escape(old)) not in text and str(escape(new)) in text
+        assert "Last updated October 27, 2026" in client.get("/en/policy").text
+        llms = client.get("/llms.txt").text
+        assert "## Site problems now" in llms and "/v1/now" in llms and "robots.txt AHN could not read" not in llms
+        assert "https://agenthelpnetwork.com/ko/now" in client.get("/sitemap.xml").text
+    with TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as client:
+        assert str(escape(public_board.policy_sentences(True)["en"][1])) in client.get("/en/policy").text
+        assert "robots.txt AHN could not read" in client.get("/llms.txt").text

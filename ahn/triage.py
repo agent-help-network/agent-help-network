@@ -126,6 +126,27 @@ def page_above_incidents(provider_status: dict) -> bool:
     return worst is None or status_scope.impact_rank(provider_status["indicator"]) > worst
 
 
+def provider_wait_reason(provider_status: dict | None, now: datetime | None = None) -> str | None:
+    """Whether the provider's statement alone makes the lookup answer wait, and under which reason code: the first rows
+    of the recommendation, shared with the public board (signal_history.board_provider) so the two never part.
+    None: no fresh active statement, or one that is not a reason to wait (D43, D45)."""
+    if not (provider_status and provider_status.get("freshness") == "fresh"
+            and provider_status.get("indicator") in ACTIVE_INDICATORS):
+        return None
+    if incident_stale(provider_status, now):
+        # Only incidents nobody has updated for over a week (D45): not a reason to wait by themselves. A major or
+        # critical page above them still waits, for the same reason as a components_only page (D43).
+        return "provider_incident_stale" if page_above_incidents(provider_status) else None
+    if provider_status.get("basis") != "components_only":
+        return "provider_scope"
+    # Nothing announced (basis components_only, D43). Only a minor or maintenance page stops being a reason to
+    # wait: a major or critical page may be a monitoring integration flipping components before anyone posts an
+    # incident, or a list read from a cache that lags the indicator, so the wait stays and the check explains it.
+    if provider_status.get("indicator") in WAIT_DESPITE_COMPONENTS_ONLY:
+        return "provider_components_only"
+    return None
+
+
 def declared_block(access_profile: dict | None) -> list[str]:
     """Agent tokens whose own robots group disallows the site root (declared policy, not a measurement)."""
     if not access_profile or access_profile.get("robots_status") != "ok" or not access_profile.get("robots"):
@@ -275,19 +296,11 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
 def _recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                     official: dict | None, *, profile_not_read: bool, provider_regional: bool, now: datetime | None,
                     agent_vendor: str | None, vendor_aware: bool) -> dict:
-    if provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") in ACTIVE_INDICATORS:
-        if incident_stale(provider_status, now):
-            # Only incidents nobody has updated for over a week (D45): not a reason to wait by themselves. A major or
-            # critical page above them still waits, for the same reason as a components_only page (D43).
-            if page_above_incidents(provider_status):
-                return _wait("provider_incident_stale", provider_regional)
-        elif provider_status.get("basis") != "components_only":
-            return _wait("provider_scope", provider_regional)
-        # Nothing announced (basis components_only, D43). Only a minor or maintenance page stops being a reason to
-        # wait: a major or critical page may be a monitoring integration flipping components before anyone posts an
-        # incident, or a list read from a cache that lags the indicator, so the wait stays and the check explains it.
-        elif provider_status.get("indicator") in WAIT_DESPITE_COMPONENTS_ONLY:
-            return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
+    wait_reason = provider_wait_reason(provider_status, now)
+    if wait_reason == "provider_components_only":
+        return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
+    if wait_reason is not None:
+        return _wait(wait_reason, provider_regional)
     if error_class == "human_verification":
         return {"action": "hand_off_to_human", "confidence": "high", "reasons": ["human_handoff"]}
     if error_class == "login_auth":

@@ -616,6 +616,17 @@ The bundle is one gzip JSON Lines file for agents and frameworks that want this 
 
 **Operators.** `python -m ahn.cli bundle --out FILE` writes a bundle from the database to inspect it without publishing anything; `--store` replaces the stored file the web service serves, under the same database lock as the cron. Both need `AHN_OPERATOR_NAME`.
 
+## Site problems right now (served only once the operator turns it on)
+
+`GET /v1/now` (JSON, schema `ahn-now/1`) and the human pages `/en/now` and `/ko/now` exist only while the operator sets `AHN_PUBLIC_BOARD=1`; today they are off and answer 404. The list is read from the database only (no request to any site), at most once a minute per web process, and is sent with `Cache-Control: public, max-age=60` and an `ETag` (`If-None-Match` gets 304). Do not fetch it more often than `next_update_after`.
+
+- `problems[]` and `maintenance[]` (at most 20 each, `truncated` says when more exist): `site_host` and `provider` (`indicator` as the provider publishes it: `critical`, `major`, `minor` or `maintenance`; `source_name`, `source_url`, `source_updated_at`, `fetched_at`). A host is listed only while its provider statement would make a lookup answer wait (the same rule as `recommendation`) and the provider updated that statement within the last 7 days. A statement with no update time, or whose open incidents all stopped updating more than 7 days ago, is left out.
+- `ahn_check` (on a line) and `coverage.ahn_check_vantage`, `checks_paused` and the `a_*` numbers in `stats_7d` appear only when the operator also sets `AHN_PUBLIC_BOARD_AHN_CHECK=1` (off by default): AHN's own robots.txt reads from one datacenter location, `result` one of the failure kinds, never a refused read.
+- `coverage`: `provider_feeds_read`, `feed_scope` (`looked_up_hosts_only`), `curated_hosts`.
+- `stats_7d`: `days`, `provider_periods` (provider problem periods in the last 7 days, no host named) and `provider_left_out_now` (fresh provider problem statements left off the list right now, by reason: `stale_incidents`, `stale_update`, `no_update_time`, `not_a_wait`, `feed_not_shown`).
+- `legend`, `note`: fixed text. A host missing from the list is not known to be working.
+- Never in this file: refused reads (401, 403, 429, 503), agent reports, lookup counts or who looked a host up.
+
 ## Next contract: questions and experience network
 
 Questions without a site host, voluntary experience sharing, and answers, corrections, and search are not part of the v1 report contract. A separate `/v2/knowledge/*` contract and schema are proposed in the [extension design](agent-network-architecture.md). Do not describe them as an available API or MCP tool.

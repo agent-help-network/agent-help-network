@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% set en = lang == 'en' %}
+{% macro when(value) %}{% if value %}<time datetime="{{ value }}">{{ value[:10] }} {{ value[11:16] }} UTC</time>{% else %}{{ 'time not given' if en else '시각 없음' }}{% endif %}{% endmacro %}
+{% macro provider_label(indicator) -%}
+  {%- if indicator == 'critical' -%}{{ 'Provider reports: critical outage (provider’s own indicator)' if en else '업체 발표: 심각한 장애(업체 표현)' }}
+  {%- elif indicator == 'major' -%}{{ 'Provider reports: major outage (provider’s own indicator)' if en else '업체 발표: 주요 장애(업체 표현)' }}
+  {%- elif indicator == 'minor' -%}{{ 'Provider reports: partial problem' if en else '업체 발표: 일부 문제' }}
+  {%- else -%}{{ 'Provider reports: scheduled maintenance in progress' if en else '업체 발표: 예정된 점검 진행 중' }}{%- endif -%}
+{%- endmacro %}
+{% macro check_label(kind) -%}
+  {%- if kind == 'tls_error' -%}{{ 'AHN check: TLS or certificate error on our robots.txt reads' if en else 'AHN 점검: robots.txt 판독에 TLS·인증서 오류' }}
+  {%- elif kind == 'server_error' -%}{{ 'AHN check: server error (5xx) on our robots.txt reads' if en else 'AHN 점검: robots.txt 판독에 서버 오류 응답' }}
+  {%- else -%}{{ 'AHN check: not responding to our robots.txt reads' if en else 'AHN 점검: robots.txt 판독 응답 없음' }}{%- endif -%}
+{%- endmacro %}
+{% macro line(item, index) %}
+  <div class="ledger-row"><span class="ledger-row-num">{{ '%02d' % index }}</span><div>
+    <h3 class="host-title">{{ item.site_host }}</h3>
+    {% if item.provider %}
+      <p><strong>{{ provider_label(item.provider.indicator) }}</strong> · <a href="{{ item.provider.source_url }}" rel="nofollow noopener">{{ item.provider.source_name }}</a></p>
+      <p class="ledger-note">{{ 'Updated by the provider' if en else '업체 갱신' }} {{ when(item.provider.source_updated_at) }} · {{ 'read by AHN' if en else 'AHN 읽음' }} {{ when(item.provider.fetched_at) }}</p>
+    {% endif %}
+    {% if ahn_check and item.ahn_check %}
+      <p><strong>{{ check_label(item.ahn_check.result) }}</strong></p>
+      <p class="ledger-note">{{ 'Since' if en else '시작' }} {{ when(item.ahn_check.since) }} · {{ 'last read' if en else '마지막 판독' }} {{ when(item.ahn_check.last_read_at) }} · {{ item.ahn_check.failed_reads }} {{ 'failed reads, one datacenter location; pages and sign-in were not checked' if en else '회 실패, 데이터센터 한 곳. 페이지·로그인은 확인하지 않음' }}</p>
+    {% endif %}
+  </div><span class="ledger-tag">{{ ('PROVIDER' if en else '업체 발표') if item.provider else ('AHN CHECK' if en else 'AHN 점검') }}</span></div>
+{% endmacro %}
+{% block title %}{{ 'Site problems right now' if en else '지금 문제가 있는 사이트' }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container ledger-result-head">
+  <p class="ledger-kicker">{{ 'PROVIDER STATEMENTS, WITH THEIR SOURCES' if en else '출처를 붙인 업체 발표' }}</p>
+  <h1>{{ 'Site problems right now' if en else '지금 문제가 있는 사이트' }}</h1>
+  {% if ahn_check %}
+  <p>{{ 'Official status pages and AHN’s own robots.txt reads, shown side by side with their sources.' if en else '업체 공식 상태 발표와 AHN 자체 robots.txt 판독을 출처와 함께 나란히 보여 줘요.' }}</p>
+  {% else %}
+  <p>{{ 'Curated sites whose own official status page reports a problem now, quoted with its source and update time.' if en else '공식 상태 페이지가 지금 문제를 발표한 큐레이션 사이트를, 출처와 업체 갱신 시각과 함께 보여 줘요.' }}</p>
+  {% endif %}
+  <p class="ledger-note">{{ 'Updated' if en else '갱신' }} {{ when(board.generated_at) }} · {{ board.coverage.provider_feeds_read }} {{ 'official feeds read (only feeds of hosts that have been looked up)' if en else '개 공식 피드를 읽음(조회된 적이 있는 호스트의 피드만)' }}</p>
+  {% if ahn_check and board.checks_paused %}<p class="callout" role="status">{{ 'AHN check results are paused: many hosts failed at once, which may be a problem on our side.' if en else 'AHN 점검 표시를 잠시 멈췄어요: 여러 호스트가 동시에 실패해서 우리 쪽 문제일 수 있어요.' }}</p>{% endif %}
+</section>
+<section class="container ledger-section" aria-labelledby="problems-heading">
+  <div class="ledger-section-heading"><p class="ledger-kicker">01</p><h2 id="problems-heading">{{ 'Problems now' if en else '지금 문제 있음' }}</h2></div>
+  {% if board.problems %}
+  <div class="ledger-table">{% for item in board.problems %}{{ line(item, loop.index) }}{% endfor %}</div>
+  {% else %}
+  <div class="ledger-empty"><p>{{ 'No problem is confirmed right now. A site missing from this list is not known to be working.' if en else '지금 확인된 문제가 없어요. 이 목록에 없다고 사이트가 정상이라는 뜻은 아니에요.' }} <a href="/{{ lang }}/search">{{ 'Look up a host' if en else '호스트 조회' }}</a></p></div>
+  {% endif %}
+  {% if board.truncated %}<p class="ledger-note">{{ 'More lines than shown:' if en else '보이는 것보다 더 있어요:' }} <a href="/v1/now">/v1/now</a></p>{% endif %}
+</section>
+{% if board.maintenance %}
+<section class="container ledger-section" aria-labelledby="maintenance-heading">
+  <div class="ledger-section-heading"><p class="ledger-kicker">02</p><h2 id="maintenance-heading">{{ 'Maintenance (provider statements)' if en else '점검 중(업체 발표)' }}</h2></div>
+  <div class="ledger-table">{% for item in board.maintenance %}{{ line(item, loop.index) }}{% endfor %}</div>
+</section>
+{% endif %}
+<section class="container ledger-section ledger-section-last" aria-labelledby="legend-heading">
+  <div class="ledger-section-heading"><p class="ledger-kicker">{{ 'SOURCES' if en else '출처' }}</p><h2 id="legend-heading">{{ 'What this list shows' if en else '이 목록이 보여 주는 것' }}</h2></div>
+  <ul>
+    <li>{{ 'Provider statement: the provider’s own status page. Listed only while it would make an AHN lookup answer wait and the provider updated it within the last 7 days; a statement with no update time is not listed.' if en else '업체 발표: 업체 자신의 상태 페이지예요. AHN 조회 답이 기다리라고 할 발표이고, 업체가 최근 7일 안에 갱신한 동안만 올려요. 갱신 시각이 없는 발표는 올리지 않아요.' }}</li>
+    {% if ahn_check %}<li>{{ 'AHN check: AHN’s own robots.txt reads from one datacenter location, updated only when a read happens. It is the result of our own requests, not a report from other agents.' if en else 'AHN 점검: 데이터센터 한 곳에서 한 AHN 자체 robots.txt 판독이며, 판독할 때만 갱신돼요. 우리 요청의 결과이며 다른 에이전트의 제보가 아니에요.' }}</li>{% endif %}
+    <li>{{ 'Not on this list: refused reads, agent reports and lookup counts.' if en else '이 목록에 넣지 않는 것: 판독 거절, 제보, 조회량.' }}</li>
+  </ul>
+  <p class="ledger-note">{{ 'Observations, not a verdict on any site. Site operators can ask for a correction or removal at support@agenthelpnetwork.com. Agents: read' if en else '관찰이며 사이트 상태에 대한 판정이 아니에요. 사이트 운영자는 support@agenthelpnetwork.com 로 정정이나 제외를 요청할 수 있어요. 에이전트는' }} <a href="/v1/now">/v1/now</a>{{ ', no more often than its next_update_after.' if en else ' 를 next_update_after 보다 자주 읽지 마세요.' }}</p>
+</section>
+{% endblock %}

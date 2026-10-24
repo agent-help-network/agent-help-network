@@ -551,19 +551,75 @@ def _baselines(conn, hosts: list[str], now: datetime) -> dict[str, str]:
     return result
 
 
-def _provider_now(conn, now: datetime) -> dict[str, dict]:
-    """Curated hosts whose fresh provider value is a problem (the lookup answer's own freshness rule)."""
+def board_provider(provider_status: dict, now: datetime) -> str | None:
+    """Why a provider statement, built as the lookup answer builds it, stays off the board; None when it is listed.
+
+    The board lists only what makes the lookup answer itself wait (triage.provider_wait_reason, D43 and D45), and is
+    stricter in one way: the statement must carry the provider's own update time, and the latest one it carries (page
+    or incident) must be no older than STALE_INCIDENT_DAYS. So a board line always implies a lookup wait, never the
+    other way round, and a statement nobody has touched for a week (a page left at "major" since August) or one with
+    no time at all is not shown as a current problem.
+    """
+    from .triage import STALE_INCIDENT_DAYS, incident_stale, provider_wait_reason
+
+    reason = provider_wait_reason(provider_status, now)
+    if reason == "provider_incident_stale" or (reason is None and incident_stale(provider_status, now)):
+        return "stale_incidents"
+    if reason is None:
+        return "not_a_wait"
+    updated = provider_status.get("source_updated_at")
+    if not isinstance(updated, datetime) or updated.tzinfo is None:
+        return "no_update_time"
+    latest = max(time for time in (updated, provider_status.get("incident_updated_at"))
+                 if isinstance(time, datetime) and time.tzinfo is not None)
+    if now - latest > timedelta(days=STALE_INCIDENT_DAYS):
+        return "stale_update"
+    return None
+
+
+PROVIDER_EXCLUSIONS = ("stale_incidents", "stale_update", "no_update_time", "not_a_wait", "feed_not_shown")
+
+
+def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None) -> dict[str, dict]:
+    """Curated hosts whose provider statement belongs on the board (board_provider). The statement is read and built
+    as the lookup answer does: an enabled source, the feed shown under its host's robots.txt decision (D50; a reading
+    from a page's Atom history has no indicator and is never a board line, D52), the D46 freshness rule and the stored
+    scope (service._provider_scope). excluded, when given, counts each fresh problem statement left out, by reason."""
+    from . import feed_robots
     from .background_reads import feed_freshness
+    from .service import _provider_scope
 
     curated = board_hosts()
     rows = conn.execute(
-        """SELECT site_host,indicator,fetched_at,source_updated_at,last_error_at,last_error_detail FROM status_cache
-           WHERE indicator=ANY(%s) AND fetched_at >= %s""",
+        """SELECT s.site_host,s.source_name,s.status_page_url,s.api_url,c.indicator,c.fetched_at,c.source_updated_at,
+                  c.last_error_at,c.last_error_detail,c.active_incidents,c.max_incident_impact,c.incident_updated_at,
+                  c.active_maintenances,c.affected,c.feed_source
+           FROM status_sources s JOIN status_cache c ON c.site_host=s.site_host
+           WHERE s.enabled=true AND c.indicator=ANY(%s) AND c.fetched_at >= %s""",
         (sorted(PROVIDER_PROBLEMS), now - FEED_FRESH),
     ).fetchall()
-    return {row["site_host"]: {key: row[key] for key in ("site_host", "indicator", "fetched_at", "source_updated_at")}
-            for row in rows if row["site_host"] in curated
-            and feed_freshness(row["fetched_at"], row["last_error_at"], now, row["last_error_detail"])[0] == "fresh"}
+    result = {}
+    for row in rows:
+        if row["site_host"] not in curated or row["site_host"] in result:
+            continue
+        freshness = feed_freshness(row["fetched_at"], row["last_error_at"], now, row["last_error_detail"])[0]
+        if freshness != "fresh":
+            continue
+        if row["feed_source"] == "history_atom" or not feed_robots.shown(
+                feed_robots.feed_state(conn, row["api_url"]), feed_robots.host_and_path(row["api_url"])[0]):
+            reason = "feed_not_shown"
+        else:
+            status = {"indicator": row["indicator"], "source_updated_at": row["source_updated_at"],
+                      "fetched_at": row["fetched_at"], "freshness": freshness, **_provider_scope(row)}
+            reason = board_provider(status, now)
+        if reason is not None:
+            if excluded is not None:
+                excluded[reason] = excluded.get(reason, 0) + 1
+            continue
+        result[row["site_host"]] = {"site_host": row["site_host"], "indicator": row["indicator"],
+                                    "fetched_at": row["fetched_at"], "source_updated_at": row["source_updated_at"],
+                                    "source_name": row["source_name"], "source_url": row["status_page_url"]}
+    return result
 
 
 def _infra_feeds(conn, feeds: set[str], now: datetime) -> list[dict]:
@@ -603,7 +659,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
         """SELECT id,site_host,kind,first_fail_at,confirmed_at,last_event_at,reads,held_overlap,feed_connected
            FROM outage_episodes WHERE signal='A' AND ended_at IS NULL ORDER BY first_fail_at""").fetchall()
     confirmed_open = [row for row in open_a if row["confirmed_at"] is not None]
-    provider = _provider_now(conn, now)
+    provider_excluded = dict.fromkeys(PROVIDER_EXCLUSIONS, 0)
+    provider = _provider_now(conn, now, provider_excluded)
     window_a = conn.execute(
         """SELECT a.id,a.site_host,a.kind,a.first_fail_at,a.confirmed_at,a.ended_at,a.ended_reason,a.last_event_at,a.reads,
                   a.feed_connected,a.matched_episode_id,p.first_fail_at AS p_started,
@@ -638,8 +695,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
                                                       "last_read_at": _iso(row["last_event_at"]), "baseline": state}}
     for host, row in provider.items():
         entry = candidates.setdefault(host, {"site_host": host, "provider": None, "ahn_check": None})
-        entry["provider"] = {"indicator": row["indicator"], "fetched_at": _iso(row["fetched_at"]),
-                             "source_updated_at": _iso(row["source_updated_at"])}
+        entry["provider"] = {"indicator": row["indicator"], "source_name": row["source_name"], "source_url": row["source_url"],
+                             "fetched_at": _iso(row["fetched_at"]), "source_updated_at": _iso(row["source_updated_at"])}
     order = {"critical": 0, "major": 1, "minor": 2, "maintenance": 4}
     listed = sorted(candidates.values(), key=lambda c: (order.get((c["provider"] or {}).get("indicator"), 3), c["site_host"]))
 
@@ -717,6 +774,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
         "candidates_now": len(listed), "candidates": listed[:CANDIDATE_LIST_MAX], "truncated": len(listed) > CANDIDATE_LIST_MAX,
         "candidate_sources": {"ahn_check": sum(1 for c in listed if c["ahn_check"]), "provider": sum(1 for c in listed if c["provider"])},
         "excluded_now": excluded, "stale_now": excluded["stale"],
+        # Fresh provider problem statements kept off the board, by board_provider's reason (suspected false problems).
+        "provider_excluded_now": provider_excluded,
         "suspects_now": len(open_a) - len(confirmed_open), "intermittent_now": intermittent,
         "held_windows": sum(held_by_reason.values()), "held_by_reason": held_by_reason, "infra_explained_windows": explained,
         "held_now": bool(latest and latest["held"]),
