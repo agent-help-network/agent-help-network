@@ -488,9 +488,9 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 ## 지금 문제가 있는 사이트 (운영자가 켜야 제공)
 
-`GET /v1/now`(JSON, 스키마 `ahn-now/1`)와 사람용 페이지 `/en/now`·`/ko/now` 는 운영자가 `AHN_PUBLIC_BOARD=1` 로 켰을 때만 있다. 지금은 꺼져 있어 404 다. 목록은 데이터베이스만 읽어 만들고(어떤 사이트에도 요청하지 않음) 웹 프로세스마다 1분에 한 번까지만 다시 만든다. `Cache-Control: public, max-age=60` 와 `ETag` 를 붙이며 `If-None-Match` 가 맞으면 304 다. `next_update_after` 보다 자주 읽지 않는다.
+`GET /v1/now`(JSON, 스키마 `ahn-now/1`)와 사람용 페이지 `/en/now`·`/ko/now` 는 운영자가 `AHN_PUBLIC_BOARD=1` 로 켰을 때만(공개 조회도 켜져 있을 때) 있다. 지금은 꺼져 있어 404 다. 목록은 데이터베이스만 읽어 만들고(어떤 사이트에도 요청하지 않음) 웹 프로세스마다 1분에 한 번까지만 다시 만든다. `Cache-Control: public, max-age=60` 와 `ETag` 를 붙이며 `If-None-Match` 가 맞으면 304 다. `next_update_after` 보다 자주 읽지 않는다.
 
-- `problems[]`·`maintenance[]`(각 20개까지, 더 있으면 `truncated`): `site_host` 와 `provider`(업체가 발표한 그대로의 `indicator`: `critical`·`major`·`minor`·`maintenance`, `source_name`, `source_url`, `source_updated_at`, `fetched_at`). 그 업체 발표가 조회 답을 기다리게 하는 경우(`recommendation` 과 같은 규칙)이면서 업체가 최근 7일 안에 갱신한 동안만 올린다. 갱신 시각이 없는 발표, 열린 사건이 모두 7일 넘게 갱신되지 않은 발표는 뺀다.
+- `problems[]`·`maintenance[]`(각 20개까지, 더 있으면 `truncated`): `site_host` 와 `provider`(업체가 발표한 그대로의 `indicator`: `critical`·`major`·`minor`·`maintenance`, 읽었으면 조회 응답과 같은 `basis`, 판정에 쓴 가장 최근 업체 시각(페이지 또는 사건)인 `updated_at`, `source_name`, `source_url`, `source_updated_at`, `fetched_at`). 점검만으로 indicator 가 오른 페이지(`basis: maintenance`)는 `maintenance` 에 둔다. 그 업체 발표가 조회 답을 기다리게 하는 경우(`recommendation` 과 같은 규칙)이면서 업체가 최근 7일 안에 갱신한 동안만 올린다. 갱신 시각이 없는 발표(한 시간 넘게 미래인 시각은 없는 것으로 본다), 열린 사건이 모두 7일 넘게 갱신되지 않은 발표는 뺀다.
 - 줄의 `ahn_check`, `coverage.ahn_check_vantage`, `checks_paused`, `stats_7d` 의 `a_*` 수는 운영자가 `AHN_PUBLIC_BOARD_AHN_CHECK=1`(기본 꺼짐)도 켰을 때만 나온다: 데이터센터 한 곳에서 한 AHN 자체 robots.txt 판독이며 `result` 는 실패 종류 중 하나다. 거절된 읽기는 나오지 않는다.
 - `coverage`: `provider_feeds_read`, `feed_scope`(`looked_up_hosts_only`), `curated_hosts`.
 - `stats_7d`: `days`, `provider_periods`(최근 7일 업체 문제 구간 수, 호스트명 없음), `provider_left_out_now`(지금 목록에서 뺀 새 업체 문제 발표 수, 사유별: `stale_incidents`·`stale_update`·`no_update_time`·`not_a_wait`·`feed_not_shown`).

@@ -1,11 +1,9 @@
 {% extends "base.html" %}
 {% set en = lang == 'en' %}
 {% macro when(value) %}{% if value %}<time datetime="{{ value }}">{{ value[:10] }} {{ value[11:16] }} UTC</time>{% else %}{{ 'time not given' if en else '시각 없음' }}{% endif %}{% endmacro %}
-{% macro provider_label(indicator) -%}
-  {%- if indicator == 'critical' -%}{{ 'Provider reports: critical outage (provider’s own indicator)' if en else '업체 발표: 심각한 장애(업체 표현)' }}
-  {%- elif indicator == 'major' -%}{{ 'Provider reports: major outage (provider’s own indicator)' if en else '업체 발표: 주요 장애(업체 표현)' }}
-  {%- elif indicator == 'minor' -%}{{ 'Provider reports: partial problem' if en else '업체 발표: 일부 문제' }}
-  {%- else -%}{{ 'Provider reports: scheduled maintenance in progress' if en else '업체 발표: 예정된 점검 진행 중' }}{%- endif -%}
+{% macro provider_label(provider) -%}
+  {%- if provider.basis == 'maintenance' or provider.indicator == 'maintenance' -%}{{ 'Provider reports: scheduled maintenance in progress' if en else '업체 발표: 예정된 점검 진행 중' }}
+  {%- else -%}{{ 'Provider reports a problem' if en else '업체 발표: 문제 있음' }} ({{ 'its status indicator' if en else '업체 상태 값' }} “{{ provider.indicator }}”){%- endif -%}
 {%- endmacro %}
 {% macro check_label(kind) -%}
   {%- if kind == 'tls_error' -%}{{ 'AHN check: TLS or certificate error on our robots.txt reads' if en else 'AHN 점검: robots.txt 판독에 TLS·인증서 오류' }}
@@ -16,8 +14,8 @@
   <div class="ledger-row"><span class="ledger-row-num">{{ '%02d' % index }}</span><div>
     <h3 class="host-title">{{ item.site_host }}</h3>
     {% if item.provider %}
-      <p><strong>{{ provider_label(item.provider.indicator) }}</strong> · <a href="{{ item.provider.source_url }}" rel="nofollow noopener">{{ item.provider.source_name }}</a></p>
-      <p class="ledger-note">{{ 'Updated by the provider' if en else '업체 갱신' }} {{ when(item.provider.source_updated_at) }} · {{ 'read by AHN' if en else 'AHN 읽음' }} {{ when(item.provider.fetched_at) }}</p>
+      <p><strong>{{ provider_label(item.provider) }}</strong> · <a href="{{ item.provider.source_url }}" rel="nofollow noopener">{{ item.provider.source_name }}</a></p>
+      <p class="ledger-note">{{ 'Updated by the provider' if en else '업체 갱신' }} {{ when(item.provider.updated_at) }} · {{ 'read by AHN' if en else 'AHN 읽음' }} {{ when(item.provider.fetched_at) }}</p>
     {% endif %}
     {% if ahn_check and item.ahn_check %}
       <p><strong>{{ check_label(item.ahn_check.result) }}</strong></p>

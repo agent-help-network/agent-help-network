@@ -174,7 +174,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         assert "\n## Pages" in llms_body
         llms_body = llms_body.replace("\n## Pages", "\n" + LLMS_SECTION + "## Pages", 1)
         policy_updated = max(POLICY_UPDATED, settings.public_bundle_since or POLICY_UPDATED)
-    if settings.public_board:  # the public board is described only while it is served (D53)
+    # D53: the board is served only with the public lookup on, so a board line always matches a lookup that waits.
+    public_board_on = settings.public_board and settings.public_mode
+    if public_board_on:  # the public board is described only while it is served (D53)
         from .public_board import llms_section, policy_sentences
         for code, (old, new) in policy_sentences(settings.public_board_ahn_check).items():
             assert old in lang_text[code]["profile_text"]
@@ -234,7 +236,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/sitemap.xml", include_in_schema=False)
         def sitemap():
-            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if settings.public_board else ())
+            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
             urls = "".join(
                 f"<url><loc>https://agenthelpnetwork.com/{lang}{page}</loc></url>"
                 for lang in ("en", "ko") for page in pages
@@ -364,7 +366,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": settings.public_board, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
@@ -484,7 +486,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         from .bundle import add_routes as add_bundle_routes
         add_bundle_routes(app, settings)
 
-    if settings.public_board:  # off by default: /v1/now and /{lang}/now then do not exist (404), D53
+    if public_board_on:  # off by default: /v1/now and /{lang}/now then do not exist (404), D53
         from .public_board import add_routes as add_board_routes
         add_board_routes(app, settings, render, lang_text)
 

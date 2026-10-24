@@ -112,6 +112,17 @@ NOW = datetime(2026, 10, 24, 3, 30, tzinfo=timezone.utc)
     # A stale page time with a fresh incident update: the latest time the statement carries decides.
     (status("major", updated=NOW - timedelta(days=40), active_incidents=1, max_incident_impact="major",
             incident_updated_at=NOW - timedelta(hours=2), active_maintenances=0), None),
+    # Open incidents that stopped updating 20 days ago stay stale on the board whatever the maintenance count, even
+    # though D45 lets the lookup keep waiting when the count is unknown or not zero.
+    (status("minor", updated=NOW - timedelta(hours=1), active_incidents=1, max_incident_impact="minor",
+            incident_updated_at=NOW - timedelta(days=20), active_maintenances=1), "stale_incidents"),
+    (status("minor", updated=NOW - timedelta(hours=1), active_incidents=1, max_incident_impact="minor",
+            incident_updated_at=NOW - timedelta(days=20)), "stale_incidents"),
+    # A time from the future is no time: it would otherwise stay listed for ever.
+    (status("major", updated=NOW + timedelta(days=400)), "no_update_time"),
+    (status("major", updated=NOW + timedelta(minutes=30)), None),  # clock skew within FUTURE_SLACK
+    (status("major", updated=NOW - timedelta(days=30), active_incidents=1, max_incident_impact="major",
+            incident_updated_at=NOW + timedelta(days=400), active_maintenances=0), "stale_update"),
 ])
 def test_board_provider_reasons(provider, expected):
     assert signal_history.board_provider(provider, NOW) == expected
@@ -247,14 +258,13 @@ def test_pages_in_both_languages_quote_outage_only_from_the_provider(db):
         en, ko = client.get("/en/now"), client.get("/ko/now")
         assert en.status_code == ko.status_code == 200
         assert "<h1>Site problems right now</h1>" in en.text and "<h1>지금 문제가 있는 사이트</h1>" in ko.text
-        assert "Provider reports: major outage (provider’s own indicator)" in en.text
-        assert "업체 발표: 주요 장애(업체 표현)" in ko.text
+        assert "Provider reports a problem (its status indicator “major”)" in en.text
+        assert "업체 발표: 문제 있음 (업체 상태 값 “major”)" in ko.text
         for page in (en.text, ko.text):
             assert FRESH in page and not any(host in page for host in STALE_HOSTS)
             main = page.split("<main", 1)[1].split("</main>")[0]
-            # "outage"/"장애" only inside the provider quote.
-            assert main.count("outage") == main.count("major outage (provider’s own indicator)")
-            assert main.count("장애") == main.count("주요 장애(업체 표현)")
+            # The provider's own value is quoted as it is; "outage"/"장애" is never our word for it.
+            assert "outage" not in main.lower() and "장애" not in main
         assert en.headers["cache-control"] == "public, max-age=60"
 
 
@@ -288,3 +298,67 @@ def test_policy_llms_and_sitemap_describe_the_board_only_while_on(db):
     with TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as client:
         assert str(escape(public_board.policy_sentences(True)["en"][1])) in client.get("/en/policy").text
         assert "robots.txt AHN could not read" in client.get("/llms.txt").text
+
+
+def test_the_time_shown_is_the_time_judged(db):
+    """A page updated 30 days ago with an incident updated an hour ago is listed on the incident time, and shows it."""
+    now = datetime.now(timezone.utc)
+    with connect(db) as conn:
+        put_status(conn, FRESH, "major", updated=now - timedelta(days=30), incidents=1, impact="major",
+                   incident_updated=now - timedelta(hours=1), maintenances=0)
+    with TestClient(create_app(settings(**ON))) as client:
+        provider = client.get("/v1/now").json()["problems"][0]["provider"]
+        assert provider["updated_at"] == signal_history._iso(now - timedelta(hours=1))
+        assert provider["source_updated_at"] == signal_history._iso(now - timedelta(days=30))
+        page = client.get("/en/now").text
+        assert f"Updated by the provider <time datetime=\"{provider['updated_at']}\">" in page
+
+
+def test_a_page_raised_by_maintenance_only_is_listed_as_maintenance(db):
+    """The cloudflare shape with a fresh time: page "major" from maintenances only (D43 basis) is not a problem line."""
+    now = datetime.now(timezone.utc)
+    with connect(db) as conn:
+        put_status(conn, "cloudflare.com", "major", updated=now - timedelta(minutes=10), incidents=0, impact="none",
+                   maintenances=2, affected=["Nairobi, Kenya - (NBO)"])
+    with TestClient(create_app(settings(**ON))) as client:
+        body = client.get("/v1/now").json()
+        assert body["problems"] == [] and [line["site_host"] for line in body["maintenance"]] == ["cloudflare.com"]
+        assert body["maintenance"][0]["provider"]["basis"] == "maintenance"
+        page = client.get("/en/now").text
+        assert "No problem is confirmed right now" in page and "scheduled maintenance in progress" in page
+
+
+def _board_shape(candidates, provider_candidates, truncated):
+    return {"candidates": candidates, "provider_candidates": provider_candidates, "truncated": truncated, "days": 7,
+            "coverage": {"registered_feeds_curated": 1, "target_hosts": 1}, "p_episodes": 0, "held_now": False,
+            "provider_excluded_now": dict.fromkeys(signal_history.PROVIDER_EXCLUSIONS, 0),
+            "a_episodes": 0, "a_matched_feed": 0, "a_ahead_of_feed": 0, "a_likely_false_positive": 0}
+
+
+def test_ahn_check_only_candidates_do_not_cut_or_flag_the_provider_column():
+    """The owner list is cut at CANDIDATE_LIST_MAX with AHN-check-only lines ahead of maintenance lines. With the
+    AHN-check column off, the public board reads the uncut provider lines and says nothing about the others."""
+    checks = [{"site_host": f"h{i}.example", "provider": None, "ahn_check": {"kind": "no_response"}}
+              for i in range(signal_history.CANDIDATE_LIST_MAX)]
+    maint = {"site_host": "m.example", "ahn_check": None,
+             "provider": {"indicator": "maintenance", "source_name": "M", "source_url": "https://status.m.example/"}}
+    body = public_board.snapshot(_board_shape(checks, [maint], True), ahn_check=False, now=NOW)
+    assert body["maintenance"][0]["site_host"] == "m.example" and body["problems"] == []
+    assert body["truncated"] is False
+
+
+def test_the_board_needs_the_public_lookup(db):
+    """With the public lookup off a lookup answer carries no provider status, so the board would say more than it."""
+    with TestClient(create_app(Settings(TEST_URL, PEPPER, public_mode=False, **ON))) as client:
+        assert client.get("/v1/now").status_code == 404 and client.get("/en/now").status_code == 404
+
+
+def test_the_owner_view_names_the_left_out_hosts_and_the_public_board_does_not(db):
+    now = datetime.now(timezone.utc)
+    live_shapes(db, now)
+    left_out = {item["site_host"]: item for item in board(db, now)["provider_excluded_hosts"]}
+    assert set(left_out) == set(STALE_HOSTS)
+    assert left_out["mediavine.com"]["reason"] == "no_update_time" and left_out["gocardless.com"]["lookup_waits"] is True
+    with TestClient(create_app(settings(**ON))) as client:
+        raw = client.get("/v1/now").text
+        assert "provider_excluded_hosts" not in raw and not any(host in raw for host in STALE_HOSTS)

@@ -88,7 +88,8 @@ def llms_section(ahn_check: bool) -> str:
 
 
 def _provider(entry: dict) -> dict:
-    return {key: entry["provider"][key] for key in ("indicator", "source_name", "source_url", "source_updated_at", "fetched_at")
+    return {key: entry["provider"][key]
+            for key in ("indicator", "basis", "updated_at", "source_name", "source_url", "source_updated_at", "fetched_at")
             if entry["provider"].get(key) is not None}
 
 
@@ -97,9 +98,13 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
     from .signal_history import _iso
 
     problems, maintenance = [], []
-    for entry in board["candidates"]:
+    # Without the AHN-check column the board reads every provider line (uncut), so AHN-check-only candidates neither
+    # push provider lines out of the owner list's cut nor show through `truncated`.
+    for entry in (board["candidates"] if ahn_check else board["provider_candidates"]):
         provider = entry.get("provider")
         indicator = provider["indicator"] if provider else None
+        if provider and provider.get("basis") == "maintenance":
+            indicator = "maintenance"  # a page indicator raised by maintenance only (D43 basis) is not a problem line
         if provider is None and not (ahn_check and entry.get("ahn_check")):
             continue  # an AHN-check-only line while that column is off
         line = {"site_host": entry["site_host"]}
@@ -115,7 +120,7 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
     if ahn_check:
         coverage["ahn_check_vantage"] = {"kind": "datacenter", "count": 1}
     stats = {"days": board["days"], "provider_periods": board["p_episodes"],
-             # Fresh provider problem statements left off the list right now, by reason (suspected false problems).
+             # Fresh provider problem statements left off the list right now, by reason (no host named).
              "provider_left_out_now": board["provider_excluded_now"]}
     if ahn_check:
         stats.update({key: board[key] for key in ("a_episodes", "a_matched_feed", "a_ahead_of_feed", "a_likely_false_positive")})
@@ -124,7 +129,7 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
         "schema": SCHEMA, "generated_at": _iso(now), "next_update_after": _iso(now + NEXT_UPDATE),
         "coverage": coverage, "legend": legend,
         "problems": problems[:LIST_MAX], "maintenance": maintenance[:LIST_MAX],
-        "truncated": len(problems) > LIST_MAX or len(maintenance) > LIST_MAX or board["truncated"],
+        "truncated": len(problems) > LIST_MAX or len(maintenance) > LIST_MAX or (ahn_check and board["truncated"]),
         "stats_7d": stats, "note": NOT_LISTED_NOTE,
     }
     if ahn_check:

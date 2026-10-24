@@ -567,27 +567,49 @@ def board_provider(provider_status: dict, now: datetime) -> str | None:
         return "stale_incidents"
     if reason is None:
         return "not_a_wait"
-    updated = provider_status.get("source_updated_at")
-    if not isinstance(updated, datetime) or updated.tzinfo is None:
+    if _usable_time(provider_status.get("source_updated_at"), now) is None:
         return "no_update_time"
-    latest = max(time for time in (updated, provider_status.get("incident_updated_at"))
-                 if isinstance(time, datetime) and time.tzinfo is not None)
-    if now - latest > timedelta(days=STALE_INCIDENT_DAYS):
+    # Stricter than D45 here only: open incidents that all stopped updating a week ago are stale whatever the
+    # maintenance count, so a page refreshed by a maintenance notice does not keep an old incident on the board.
+    incident = _usable_time(provider_status.get("incident_updated_at"), now)
+    if provider_status.get("active_incidents") and incident is not None \
+            and now - incident > timedelta(days=STALE_INCIDENT_DAYS):
+        return "stale_incidents"
+    if now - provider_updated_at(provider_status, now) > timedelta(days=STALE_INCIDENT_DAYS):
         return "stale_update"
     return None
+
+
+FUTURE_SLACK = timedelta(hours=1)  # a provider time further ahead than this is treated as no time at all
+
+
+def _usable_time(value, now: datetime) -> datetime | None:
+    if not isinstance(value, datetime) or value.tzinfo is None or value - now > FUTURE_SLACK:
+        return None
+    return value
+
+
+def provider_updated_at(provider_status: dict, now: datetime) -> datetime | None:
+    """The latest usable provider time (page or incident): the time board_provider judged, and the one shown."""
+    times = [time for time in (_usable_time(provider_status.get("source_updated_at"), now),
+                               _usable_time(provider_status.get("incident_updated_at"), now)) if time is not None]
+    return max(times) if times else None
 
 
 PROVIDER_EXCLUSIONS = ("stale_incidents", "stale_update", "no_update_time", "not_a_wait", "feed_not_shown")
 
 
-def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None) -> dict[str, dict]:
+def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None,
+                  left_out: list[dict] | None = None) -> dict[str, dict]:
     """Curated hosts whose provider statement belongs on the board (board_provider). The statement is read and built
     as the lookup answer does: an enabled source, the feed shown under its host's robots.txt decision (D50; a reading
     from a page's Atom history has no indicator and is never a board line, D52), the D46 freshness rule and the stored
-    scope (service._provider_scope). excluded, when given, counts each fresh problem statement left out, by reason."""
+    scope (service._provider_scope). excluded, when given, counts each fresh problem statement left out, by reason;
+    left_out, when given, gets each one's host, reason and whether the lookup answer still waits on it (owner only)."""
     from . import feed_robots
     from .background_reads import feed_freshness
     from .service import _provider_scope
+    from .triage import provider_wait_reason
 
     curated = board_hosts()
     rows = conn.execute(
@@ -605,6 +627,7 @@ def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None) -
         freshness = feed_freshness(row["fetched_at"], row["last_error_at"], now, row["last_error_detail"])[0]
         if freshness != "fresh":
             continue
+        status = None
         if row["feed_source"] == "history_atom" or not feed_robots.shown(
                 feed_robots.feed_state(conn, row["api_url"]), feed_robots.host_and_path(row["api_url"])[0]):
             reason = "feed_not_shown"
@@ -615,9 +638,13 @@ def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None) -
         if reason is not None:
             if excluded is not None:
                 excluded[reason] = excluded.get(reason, 0) + 1
+            if left_out is not None:
+                left_out.append({"site_host": row["site_host"], "reason": reason,
+                                 "lookup_waits": status is not None and provider_wait_reason(status, now) is not None})
             continue
         result[row["site_host"]] = {"site_host": row["site_host"], "indicator": row["indicator"],
                                     "fetched_at": row["fetched_at"], "source_updated_at": row["source_updated_at"],
+                                    "updated_at": provider_updated_at(status, now), "basis": status.get("basis"),
                                     "source_name": row["source_name"], "source_url": row["status_page_url"]}
     return result
 
@@ -660,7 +687,11 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
            FROM outage_episodes WHERE signal='A' AND ended_at IS NULL ORDER BY first_fail_at""").fetchall()
     confirmed_open = [row for row in open_a if row["confirmed_at"] is not None]
     provider_excluded = dict.fromkeys(PROVIDER_EXCLUSIONS, 0)
-    provider = _provider_now(conn, now, provider_excluded)
+    provider_left_out: list[dict] = []
+    provider = _provider_now(conn, now, provider_excluded, provider_left_out)
+    # An unstable AHN-check baseline is listed beside a provider statement the lookup waits on, as before D53, even
+    # when that statement is too old for the board itself.
+    provider_waits = set(provider) | {item["site_host"] for item in provider_left_out if item["lookup_waits"]}
     window_a = conn.execute(
         """SELECT a.id,a.site_host,a.kind,a.first_fail_at,a.confirmed_at,a.ended_at,a.ended_reason,a.last_event_at,a.reads,
                   a.feed_connected,a.matched_episode_id,p.first_fail_at AS p_started,
@@ -686,7 +717,7 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
             excluded["stale"] += 1
             continue
         state = baseline.get(row["site_host"], "no_baseline")
-        if state != "shown" and not (state == "unstable" and row["site_host"] in provider):
+        if state != "shown" and not (state == "unstable" and row["site_host"] in provider_waits):
             excluded[state] += 1
             continue
         candidates[row["site_host"]] = {"site_host": row["site_host"], "provider": None,
@@ -696,7 +727,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
     for host, row in provider.items():
         entry = candidates.setdefault(host, {"site_host": host, "provider": None, "ahn_check": None})
         entry["provider"] = {"indicator": row["indicator"], "source_name": row["source_name"], "source_url": row["source_url"],
-                             "fetched_at": _iso(row["fetched_at"]), "source_updated_at": _iso(row["source_updated_at"])}
+                             "fetched_at": _iso(row["fetched_at"]), "source_updated_at": _iso(row["source_updated_at"]),
+                             "updated_at": _iso(row["updated_at"]), "basis": row["basis"]}
     order = {"critical": 0, "major": 1, "minor": 2, "maintenance": 4}
     listed = sorted(candidates.values(), key=lambda c: (order.get((c["provider"] or {}).get("indicator"), 3), c["site_host"]))
 
@@ -774,8 +806,11 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
         "candidates_now": len(listed), "candidates": listed[:CANDIDATE_LIST_MAX], "truncated": len(listed) > CANDIDATE_LIST_MAX,
         "candidate_sources": {"ahn_check": sum(1 for c in listed if c["ahn_check"]), "provider": sum(1 for c in listed if c["provider"])},
         "excluded_now": excluded, "stale_now": excluded["stale"],
-        # Fresh provider problem statements kept off the board, by board_provider's reason (suspected false problems).
+        # Fresh provider problem statements kept off the board, by reason; the hosts are for the owner view only.
         "provider_excluded_now": provider_excluded,
+        "provider_excluded_hosts": sorted(provider_left_out, key=lambda item: item["site_host"])[:CANDIDATE_LIST_MAX],
+        # Every provider line, uncut: the public board without its AHN-check column reads these, not candidates.
+        "provider_candidates": [c for c in listed if c["provider"]],
         "suspects_now": len(open_a) - len(confirmed_open), "intermittent_now": intermittent,
         "held_windows": sum(held_by_reason.values()), "held_by_reason": held_by_reason, "infra_explained_windows": explained,
         "held_now": bool(latest and latest["held"]),
