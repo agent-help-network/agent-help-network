@@ -90,9 +90,12 @@ def providers():
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "major", "freshness": "stale", "basis": "incident"}
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "none", "freshness": "fresh"}
     yield from atom_providers()
-    # D54: a minor page with no incident list (no basis), its own update time fresh, over a week old, or missing.
+    # D54: a minor page with no incident list (no basis), its update time fresh, over a week old, or missing, from a
+    # feed whose time is the page's own and from one whose time is that of its active items (Instatus, Google Gmail).
     for updated in (NOW - timedelta(hours=3), NOW - timedelta(days=30), None):
-        yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "minor", "freshness": "fresh", "source_updated_at": updated}
+        for kind in ({}, {"source_time": "active_items"}):
+            yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "minor", "freshness": "fresh",
+                   "source_updated_at": updated, **kind}
     for indicator in ("minor", "major", "critical", "maintenance"):
         for basis in ("incident", "components_only", "maintenance"):
             for impact in ("minor", "critical"):
@@ -193,8 +196,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     assert used == set(ROWS), set(ROWS) - used
 
 
-def test_the_table_has_the_25_rows_and_the_nine_do_values():
-    assert len(ROWS) == 25
+def test_the_table_has_the_26_rows_and_the_nine_do_values():
+    assert len(ROWS) == 26
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
@@ -320,6 +323,24 @@ def test_a_regional_wait_is_w3_and_the_token_table_fits_the_list_cap():
     assert select_row(result["recommendation"], None, result["provider_status"], "example.com") == ("W3", True)
     assert guide(result)["summary_line"] == ROWS["W3"][1]
     assert len(ALL_TOKENS) <= response_guide.MAX_STOP_TOKENS == 16
+
+
+def test_a_low_wait_on_a_minor_page_with_no_time_is_w5_not_the_plain_w1():
+    # D54 (2): the answer waits with low confidence and provider_update_time_unknown; the line says the issue may be
+    # old and when to wait, as W3 does for a regional scope. A regional scope still reads W3 first.
+    for kind in ({}, {"source_time": "active_items"}):
+        status = {"source_name": "S", "source_url": STATUS_URL, "indicator": "minor", "freshness": "fresh",
+                  "source_updated_at": None, **kind}
+        result = answer(provider_status=status)
+        assert result["recommendation"]["confidence"] == "low"
+        assert select_row(result["recommendation"], None, result["provider_status"], "example.com") == ("W5", True)
+        assert guide(result)["summary_line"] == ROWS["W5"][1] and "may be old" in ROWS["W5"][1]
+        regional = answer(provider_status=status, regional=True)
+        assert select_row(regional["recommendation"], None, regional["provider_status"], "example.com") == ("W3", True)
+    # A page with a usable time keeps W1.
+    fresh = answer(provider_status={"source_name": "S", "source_url": STATUS_URL, "indicator": "minor", "freshness": "fresh",
+                                    "source_updated_at": NOW - timedelta(days=30)})
+    assert select_row(fresh["recommendation"], None, fresh["provider_status"], "example.com") == ("W1", True)
 
 
 def test_an_invalid_api_docs_url_is_not_replaced_by_the_portal():

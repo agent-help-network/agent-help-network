@@ -178,9 +178,10 @@ def test_the_lookup_answer_is_the_same_with_the_switch_on_or_off(db):
         for host in (FRESH, *STALE_HOSTS):
             before, after = lookup(off, host), lookup(on, host)
             assert before == after, host
-        # The board switch narrows the board only. Since D54 the lookup no longer waits on gocardless.com (minor page
-        # left for 16 days, no incident list) and still waits, less sure, on mediavine.com (no update time).
-        assert lookup(off, "gocardless.com")["recommendation"]["action"] != "wait_provider_incident"
+        # The board switch narrows the board only. The lookup still waits on gocardless.com (an incident.io page time,
+        # which D54 does not judge) and waits, less sure, on mediavine.com (no update time, D54).
+        assert lookup(off, "gocardless.com")["recommendation"] == {"action": "wait_provider_incident",
+                                                                   "confidence": "medium", "reasons": ["provider_scope"]}
         assert lookup(off, "mediavine.com")["recommendation"]["confidence"] == "low"
 
 
@@ -361,25 +362,35 @@ def test_the_owner_view_names_the_left_out_hosts_and_the_public_board_does_not(d
     left_out = {item["site_host"]: item for item in board(db, now)["provider_excluded_hosts"]}
     assert set(left_out) == set(STALE_HOSTS)
     assert left_out["mediavine.com"]["reason"] == "no_update_time" and left_out["mediavine.com"]["lookup_waits"] is True
-    # D54: the lookup no longer waits on gocardless.com's minor page left for 16 days; the board reason is unchanged.
-    assert left_out["gocardless.com"]["reason"] == "stale_update" and left_out["gocardless.com"]["lookup_waits"] is False
+    # D54 does not judge gocardless.com's page time (incident.io): the lookup still waits, the board reason is unchanged.
+    assert left_out["gocardless.com"]["reason"] == "stale_update" and left_out["gocardless.com"]["lookup_waits"] is True
     with TestClient(create_app(settings(**ON))) as client:
         raw = client.get("/v1/now").text
         assert "provider_excluded_hosts" not in raw and not any(host in raw for host in STALE_HOSTS)
 
 
 def test_the_lookup_answers_the_left_out_minor_pages_as_the_board_judged_them(db):
-    """D54: gocardless.com (minor, page 16 days old, no incident list) no longer makes the lookup wait; mediavine.com
-    (minor, no update time) still waits, with low confidence. cloudflare.com (a page raised by maintenance) and the
-    fresh major incident are unchanged."""
+    """D54, from stored rows: kagi.com (Instatus, minor, its active items last updated 16 days ago) no longer makes the
+    lookup wait; gocardless.com (incident.io, minor, page time 16 days old) still waits exactly as before, because an
+    incident.io page time does not follow its incidents; mediavine.com (Instatus, minor, no update time) still waits,
+    with low confidence. cloudflare.com (maintenances in progress) and the fresh major incident are unchanged."""
     now = datetime.now(timezone.utc)
     live_shapes(db, now)
+    with connect(db) as conn:
+        put_status(conn, "kagi.com", "minor", updated=now - timedelta(days=16))
     with TestClient(create_app(settings())) as client:
-        stale = lookup(client, "gocardless.com")
-        assert stale["recommendation"]["action"] != "wait_provider_incident"
-        checks = {item["code"]: item["text"] for item in stale["next_checks"]}
+        released = lookup(client, "kagi.com")
+        assert released["provider_status"]["source_time"] == "active_items"
+        assert released["recommendation"]["action"] != "wait_provider_incident"
+        checks = {item["code"]: item["text"] for item in released["next_checks"]}
         assert "provider_scope" not in checks and checks["provider_incident_stale"] == triage.PAGE_STALE_CHECK
+        page_time = lookup(client, "gocardless.com")
+        assert "source_time" not in page_time["provider_status"]
+        assert page_time["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium",
+                                               "reasons": ["provider_scope"]}
+        assert [item["code"] for item in page_time["next_checks"] if item["code"].startswith("provider_")] == ["provider_scope"]
         unknown = lookup(client, "mediavine.com")
+        assert unknown["provider_status"]["source_time"] == "active_items"
         assert unknown["recommendation"]["action"] == "wait_provider_incident"
         assert unknown["recommendation"]["confidence"] == "low"
         assert unknown["recommendation"]["reasons"] == ["provider_scope", "provider_update_time_unknown"]
@@ -388,4 +399,6 @@ def test_the_lookup_answers_the_left_out_minor_pages_as_the_board_judged_them(db
         assert lookup(client, FRESH)["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium",
                                                            "reasons": ["provider_scope"]}
     left_out = {item["site_host"]: item for item in board(db, now)["provider_excluded_hosts"]}
-    assert left_out["gocardless.com"]["lookup_waits"] is False and left_out["mediavine.com"]["lookup_waits"] is True
+    assert left_out["kagi.com"] == {"site_host": "kagi.com", "reason": "stale_update", "lookup_waits": False}
+    # Left out of the board, all three: a board line still implies a lookup wait (D53), never the other way round.
+    assert left_out["gocardless.com"]["lookup_waits"] is True and left_out["mediavine.com"]["lookup_waits"] is True

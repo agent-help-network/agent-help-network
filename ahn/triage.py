@@ -93,10 +93,11 @@ PREVIOUS_CHECKS = {
 # Same code (provider_scope), different text: the provider announced scheduled work, which is not an incident to diagnose.
 MAINTENANCE_CHECK = "The provider has announced scheduled maintenance. Compare its window and affected services with your blocked step; wait for the maintenance to end instead of retrying in a loop."
 MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하고, 반복 재시도하지 말고 점검이 끝날 때까지 기다리세요."
-# Same code (provider_incident_stale), different text: a minor page with no incident list whose own update time is
-# more than a week old (D54). The D45 text names incidents and incident_updated_at, which such a page does not have.
-PAGE_STALE_CHECK = f"The provider's status page shows a minor issue, lists no incidents this service can read, and has not been updated for more than {STALE_INCIDENT_DAYS} days (provider_status.source_updated_at), and no maintenance is in progress. A minor page left without updates is not treated as a reason to wait: if the provider's status page names a service you use as affected, wait for the provider; otherwise continue."
-PAGE_STALE_CHECK_KO = f"업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고, 페이지가 {STALE_INCIDENT_DAYS}일 넘게 갱신되지 않았으며(provider_status.source_updated_at) 진행 중인 점검도 없습니다. 갱신 없이 남아 있는 경미 표시는 기다릴 이유로 보지 않습니다. 업체 상태 페이지에 사용하는 서비스가 영향받는다고 나와 있으면 업체를 기다리고, 없으면 진행하세요."
+# Same code (provider_incident_stale), different text: a minor page with no incident list, from a feed whose update
+# time is that of its active incidents and maintenances (source_time active_items), where that time is more than a week
+# old (D54). The D45 text names incident_updated_at and a maintenance count, which such a feed does not have.
+PAGE_STALE_CHECK = f"The provider's status page shows a minor issue, lists no incidents this service can read, and nothing it lists as active (incidents or maintenance) has been updated for more than {STALE_INCIDENT_DAYS} days (provider_status.source_updated_at, source_time active_items). An issue left without updates is not treated as a reason to wait: if the provider's status page names a service you use as affected, wait for the provider; otherwise continue."
+PAGE_STALE_CHECK_KO = f"업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고, 페이지가 진행 중으로 올린 사건·점검이 {STALE_INCIDENT_DAYS}일 넘게 갱신되지 않았습니다(provider_status.source_updated_at, source_time active_items). 갱신 없이 남아 있는 문제는 기다릴 이유로 보지 않습니다. 업체 상태 페이지에 사용하는 서비스가 영향받는다고 나와 있으면 업체를 기다리고, 없으면 진행하세요."
 ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS  # minor, major, critical, maintenance
 WAIT_DESPITE_COMPONENTS_ONLY = frozenset({"major", "critical"})
 # D54: a provider time further ahead than this is treated as no time at all (shared with the public board, D53).
@@ -149,20 +150,31 @@ def provider_updated_at(provider_status: dict, now: datetime) -> datetime | None
 def _minor_page_without_incident_list(provider_status: dict) -> bool:
     """D54: a minor page whose statement rests on no list this service read: no basis (the incident list, or the
     maintenance count beside an empty one, was not read; D43 basis), not a reading of a page's Atom history (D52, which
-    has no indicator), and no maintenance in progress. An unread maintenance count is accepted: a page in maintenance
-    shows indicator maintenance, not minor."""
+    has no indicator), and no maintenance counted in progress (a count of 1 or more, or any value that is not a whole
+    number, leaves the answer alone).
+
+    The indicator does not tell whether a maintenance is in progress: on 2026-10-22 www.cloudflarestatus.com had two
+    maintenances in progress and showed major. An unread count is still accepted here, because the only feeds a stale
+    time can release (page_stale: source_time active_items) store no count: an Instatus time is the latest updatedAt of
+    its active incidents and active maintenances, so a maintenance updated within the week keeps the page from being
+    stale, and Google's Gmail feed lists incidents only. What this leaves open is in D54 (trade-off c)."""
     if provider_status.get("indicator") != "minor" or provider_status.get("basis") is not None:
         return False
     if provider_status.get("source_kind") == "history_atom":
         return False
     maintenances = provider_status.get("active_maintenances")
-    return maintenances is None or (not isinstance(maintenances, bool) and maintenances == 0)
+    return maintenances is None or (type(maintenances) is int and maintenances == 0)
 
 
 def page_stale(provider_status: dict | None, now: datetime | None = None) -> bool:
-    """D54: a minor page with no incident list (D45 has no incident time to judge) whose latest usable provider time is
-    more than STALE_INCIDENT_DAYS old. A missing or unreadable time is not "stale": unknown is not anything."""
-    if not provider_status or not _minor_page_without_incident_list(provider_status):
+    """D54: a minor page with no incident list (D45 has no incident time to judge), from a feed whose update time is
+    that of its active incidents and maintenances (source_time active_items: Instatus, Google Gmail), whose latest
+    usable provider time is more than STALE_INCIDENT_DAYS old. A missing or unreadable time is not "stale": unknown is
+    not anything. Any other feed is never stale here: its stored time is the page's own (an incident.io page's
+    page.updated_at stood still while incidents came and went, D54), so an old one says nothing about the incidents."""
+    if not provider_status or provider_status.get("source_time") != "active_items":
+        return False
+    if not _minor_page_without_incident_list(provider_status):
         return False
     now = now or datetime.now(timezone.utc)
     updated = provider_updated_at(provider_status, now)
@@ -170,8 +182,9 @@ def page_stale(provider_status: dict | None, now: datetime | None = None) -> boo
 
 
 def page_time_unknown(provider_status: dict | None, now: datetime | None = None) -> bool:
-    """D54: a minor page with no incident list and no usable provider time at all. The answer still waits (a time we
-    cannot read is not an old one), with low confidence and provider_update_time_unknown."""
+    """D54: a minor page with no incident list and no usable provider time at all, from any feed. The answer still
+    waits (a time we cannot read is not an old one), with low confidence and provider_update_time_unknown. A page that
+    carries an old page-wide time (not source_time active_items) is neither this nor page_stale: it waits as before."""
     if not provider_status or not _minor_page_without_incident_list(provider_status):
         return False
     return provider_updated_at(provider_status, now or datetime.now(timezone.utc)) is None
@@ -198,8 +211,9 @@ def provider_wait_reason(provider_status: dict | None, now: datetime | None = No
         # critical page above them still waits, for the same reason as a components_only page (D43).
         return "provider_incident_stale" if page_above_incidents(provider_status) else None
     if page_stale(provider_status, now):
-        # A minor page with no incident list that nobody has updated for over a week (D54): not a reason to wait, for
-        # the reason of D45. A major or critical page keeps waiting, and so does a page with no usable time.
+        # A minor page with no incident list whose active incidents and maintenances nobody has updated for over a
+        # week (D54, Instatus and Google Gmail feeds only): not a reason to wait, for the reason of D45. A major or
+        # critical page keeps waiting, and so do a page with no usable time and any feed whose time is the page's own.
         return None
     if provider_status.get("basis") != "components_only":
         return "provider_scope"

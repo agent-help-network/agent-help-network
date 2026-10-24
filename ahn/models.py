@@ -240,6 +240,9 @@ class ProviderStatus(StrictModel):
     # may be missing a recent or an older open incident.
     source_kind: Literal["history_atom"] | None = Field(default=None, exclude_if=_omit_none)
     window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
+    # "active_items" (D54): source_updated_at is the latest update of the incidents and maintenances the feed lists as
+    # active (Instatus, Google Gmail), not a page-wide time. Left out for every other feed.
+    source_time: Literal["active_items"] | None = Field(default=None, exclude_if=_omit_none)
     # Scope of an Atlassian Statuspage feed (ahn/status_scope.py, D43). Each is left out when it was not read.
     active_incidents: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     max_incident_impact: Literal["none", "minor", "major", "critical"] | None = Field(default=None, exclude_if=_omit_none)

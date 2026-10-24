@@ -745,6 +745,18 @@ SOURCES: dict[str, Source] = {
     "humansecurity.com": Source("HUMAN Status", "https://status.humansecurity.com/", "https://status.humansecurity.com/api/v2/status.json"),
     "ietf.org": Source("IETF System Status", "https://status.ietf.org/", "https://status.ietf.org/summary.json", "instatus"),
 }
+# D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
+# Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
+# maintenances. Google's Gmail feed takes the latest modified (or begin) of the open Gmail incidents. Every other kind
+# stores a page-wide time that need not move with incidents: an incident.io page answering status.json kept
+# page.updated_at at 2026-10-16T20:01:40Z while its Atom history listed at least 8 incidents opened and resolved on 2026-10-21
+# to 2026-10-23 (status.openai.com, read 2026-10-24); Atlassian's page.updated_at and Better Stack's updated_at are
+# not shown to follow incidents. Only these kinds may have a minor page judged stale by its time (triage.page_stale).
+ACTIVE_ITEM_TIME_KINDS = frozenset({"instatus", "google_gmail"})
+# The feed addresses of those kinds. A stored status_sources.api_url is matched exactly: the cron reads a host with
+# its SOURCES entry (or as a discovered Statuspage page), so an address in this set is always read by one of the
+# parsers above, and an address outside it (a discovered page, an unlisted address) is never treated as one.
+ACTIVE_ITEM_TIME_FEEDS = frozenset(source.api_url for source in SOURCES.values() if source.kind in ACTIVE_ITEM_TIME_KINDS)
 # Publisher-owned pages for which this service has not verified a compatible
 # machine-readable status feed. A link must never be converted to an indicator.
 OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
