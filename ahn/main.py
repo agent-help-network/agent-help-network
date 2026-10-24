@@ -24,7 +24,7 @@ from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, Outc
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
 from .rate_limit import RequestLimiter
-from .service import ServiceError, check, public_incident, public_incidents, submit, withdraw, withdraw_public
+from .service import ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
@@ -581,6 +581,21 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         def delete_observation(observation_id: UUID, x_api_key: str | None = Security(write_key)):
             return withdraw(settings, x_api_key or "", observation_id)
 
+    home_cache: dict = {"at": 0.0, "card": None}
+
+    def home_card():
+        """The home page's real-answer card, from stored rows only (service.home_example); None hides the card.
+        Kept for a minute in the process so a page view costs no database round trip, and a failure just hides it."""
+        now = monotonic()
+        if now - home_cache["at"] > 60:
+            try:
+                home_cache["card"] = home_example(settings)
+            except Exception:
+                logging.getLogger(__name__).warning("home_example_unavailable")
+                home_cache["card"] = None
+            home_cache["at"] = now
+        return home_cache["card"]
+
     @app.get("/", include_in_schema=False)
     def root():
         return RedirectResponse("/en/", status_code=307)
@@ -589,7 +604,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     def home(request: Request, lang: str):
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
-        return render(request, lang, "home")
+        return render(request, lang, "home", example=home_card())
 
     @app.get("/{lang}/human", include_in_schema=False)
     def human_home(request: Request, lang: str):
