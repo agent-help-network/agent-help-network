@@ -62,13 +62,13 @@ def test_public_discovery_points_to_read_only_connections_without_stack_details(
             assert home.index('class="language"') > home.index('<footer class="site-footer">')
             assert 'hreflang="en"' in home
             assert 'hreflang="ko"' in home
-            assert ("Access observations for web tasks" if lang == "en" else "웹 작업을 위한 접근 관찰 기록") in home
+            assert ("Your agent hit a 403." if lang == "en" else "에이전트가 403 에 막혔습니까?") in home
             assert 'class="audience-switch"' in home
             assert 'class="ledger-search"' in home and 'name="site_host"' in home
             assert f'href="/{lang}/search?site_host=cloudflare.com"' in home
             assert 'name="site_host"' in human and 'class="audience-switch"' in human
             assert f'href="/{lang}/search?site_host=cloudflare.com"' in human
-            assert "GET /v1/incidents/check?site_host=example.org" in home
+            assert "claude plugin install ahn@agent-help-network" in home and "pip install ahn-client" in home
             assert (("current status is unknown" in human.lower()) if lang == "en" else ("현재 상태는 미상" in human))
             policy = client.get(f"/{lang}/policy").text
             assert '<div class="audience-switch"' in policy
@@ -295,3 +295,82 @@ def test_agentboard_verify_path_serves_only_the_exact_handle():
         # Existing well-known paths are unaffected.
         assert client.get("/.well-known/mcp-registry-auth").status_code == 200
         assert client.get("/.well-known/openai-apps-challenge").status_code == 200
+
+
+CARD = {"site_host": "github.com", "summary_line": "An official developer path is listed for this site.", "do": "use_official_path",
+        "url": "docs.github.com/en/rest", "confidence": "medium", "robots_status": "ok", "llms_txt_status": "present",
+        "status": "none", "read_on": "2026-10-22"}
+
+
+def _main(html: str) -> str:
+    return html[html.index("<main"):html.index("</main>")]
+
+
+def test_home_shows_the_real_answer_card_only_when_the_cache_gave_one(monkeypatch):
+    calls = []
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: calls.append(1) or dict(CARD))
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/").text
+            assert 'class="home-live"' in page
+            assert "use_official_path" in page and "docs.github.com/en/rest" in page and "2026-10-22" in page
+            assert "robots ok · llms.txt present · status: none" in page
+            assert "home-hero-solo" not in page
+        assert len(calls) == 1  # kept for a minute in the process, not read per page view
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: None)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/").text
+            assert page.count("home-live") == 0 and "Bytespider" not in page and "home-hero-solo" in page
+            assert 'class="ledger-search"' in page and "claude plugin install" in page
+
+
+def test_home_survives_a_failing_cache_read_and_makes_no_lookup(monkeypatch):
+    def boom(_settings):
+        raise RuntimeError("database down")
+    monkeypatch.setattr("ahn.main.home_example", boom)
+    monkeypatch.setattr("ahn.main.check", lambda *a, **k: (_ for _ in ()).throw(AssertionError("home must not run a lookup")))
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        page = client.get("/en/")
+        assert page.status_code == 200 and "home-live" not in page.text
+
+
+def test_home_layout_and_policy_paragraphs_moved_to_the_agents_page(monkeypatch):
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: None)
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            home = _main(client.get(f"/{lang}/").text)
+            agents = client.get(f"/{lang}/agents").text
+            assert "02 / " not in home and "ledger-access-grid" not in home
+            for name in ("stop_declared_block", "use_official_path", "hand_off_to_human", "wait_provider_incident", "proceed", "unknown"):
+                assert f"<code>{name}</code>" in home
+            for text in ("tab-claude", "tab-mcp", "tab-python", "tab-rest", "https://agenthelpnetwork.com/mcp", 'ahn-client[langchain]'):
+                assert text in home
+            assert "robots_wildcard_disallow" not in home and "QUERIED" not in home
+            assert f'href="/{lang}/agents#how-we-read"' in home and 'id="how-we-read"' in agents
+            assert "robots_wildcard_disallow" in agents and "ledger-note" not in agents
+            assert f'href="/{lang}/connect#demo"' in home
+            if lang == "ko":
+                for ending in ("세요", "나요", "까요", "어요", "아요", "해요"):
+                    assert ending not in home, ending
+
+
+def test_home_links_never_start_a_counted_lookup_for_a_crawler(monkeypatch):
+    # /v1/incidents/check and /{lang}/search both run check(), which registers the host and counts a lookup, so a crawler
+    # following a home link would be counted. The card links to the static OpenAPI document instead, and the example
+    # hostnames are nofollow.
+    import re
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: dict(CARD))
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = _main(client.get(f"/{lang}/").text)
+            assert "/v1/incidents/check?" not in page.replace("GET /v1/incidents/check?site_host=example.org", "").replace(
+                "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com", "")
+            card = page[page.index('class="home-live"'):page.index("</aside>")]
+            assert 'href="/openapi.json"' in card and "site_host" not in card
+            for tag in re.findall(r"<a [^>]*search\?site_host=[^>]*>", page):
+                assert 'rel="nofollow"' in tag, tag

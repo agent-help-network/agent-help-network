@@ -624,6 +624,68 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             conn.commit()
     return result
 
+HOME_EXAMPLE_HOST = "github.com"
+
+
+def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict | None:
+    """The home page's "real answer" card: the answer a lookup of one curated host gives from what is already stored.
+
+    Database SELECTs only. It queues no read, records no lookup, signal or adoption row and contacts no host, so a home
+    page view never makes a new external read. Returns None (the card is left out) when nothing usable is cached: no
+    public mode, no response guide, a host never read or still pending, or a status feed that this answer could not
+    show the way a lookup would. Nothing here is a fixed value: every field comes from the cache rows.
+    """
+    if not (settings.public_mode and settings.response_guide):
+        return None
+    now = datetime.now(timezone.utc)
+    official = official_paths(site_host)
+    with connect(settings) as conn:
+        access_profile, _due = cached_profile(conn, site_host, now=now)
+        if access_profile is None or access_profile["freshness"] == "pending" or access_profile["fetched_at"] is None:
+            return None
+        provider_status, provider_regional = None, False
+        source = conn.execute(
+            """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
+                      c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
+                      c.active_incidents,c.max_incident_impact,c.incident_updated_at,
+                      c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
+               FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
+               WHERE s.site_host=%s AND s.enabled=true""",
+            (site_host,),
+        ).fetchone()
+        if source:
+            feed_host = feed_robots.host_and_path(source["api_url"])[0]
+            if not feed_robots.shown(feed_robots.feed_state(conn, source["api_url"]), feed_host) or source["feed_source"] == "history_atom":
+                return None
+            freshness, failed_later = background_reads.feed_freshness(
+                source["fetched_at"], source["last_error_at"], now, source["last_error_detail"])
+            provider_status = {
+                "source_name": source["source_name"], "source_url": source["status_page_url"],
+                "indicator": source["indicator"], "source_updated_at": source["source_updated_at"],
+                "fetched_at": source["fetched_at"], "freshness": freshness,
+                "error_detail": source["last_error_detail"] if failed_later else None,
+            }
+            provider_status.update(_provider_scope(source))
+            provider_regional = source["affected_regional"] is True
+    verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
+                             provider_regional=provider_regional, now=now, agent_vendor=None,
+                             vendor_aware=settings.vendor_aware_block)
+    answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
+                                   "provider_status": provider_status, "official_paths": official})
+    action = answer["next_action"]
+    status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
+    return {
+        "site_host": site_host,
+        "summary_line": answer["summary_line"],
+        "do": action["do"],
+        "url": (action.get("url") or "").removeprefix("https://").removeprefix("http://").rstrip("/") or None,
+        "confidence": verdict.get("confidence"),
+        "robots_status": access_profile["robots_status"],
+        "llms_txt_status": access_profile["llms_txt_status"],
+        "status": status if provider_status else None,
+        "read_on": access_profile["fetched_at"].astimezone(timezone.utc).strftime("%Y-%m-%d"),
+    }
+
 
 def public_incidents(settings: Settings, site_host: str | None = None, error_class: str | None = None, limit: int = 20):
     where = ["i.visibility='published'", "o.review_state='published'", "o.synthetic=false", "o.withdrawn_at IS NULL", "o.observed_at >= now() - interval '7 days'"]
