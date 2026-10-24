@@ -35,7 +35,8 @@ ROWS: dict[str, tuple[str, str]] = {
     "W2": ("wait_for_provider", f"The provider reports scheduled maintenance. Wait for it to end instead of retrying in a loop, and {_WAIT_IN}."),
     "W3": ("wait_for_provider", f"The provider reports an issue that may reach only some regions. If a service you use is affected, wait; {_WAIT_IN}."),
     "W4": ("wait_for_provider", f"The provider's status page shows a major or critical problem beyond any posted incident. Wait instead of retrying; {_WAIT_IN}."),
-    "W5": ("wait_for_provider", f"The provider shows a minor issue with no update time we can read, so it may be old. If its status page dates it recently or names a service you use, wait; {_WAIT_IN}."),
+    # Same condition as next_checks provider_update_time_unknown: wait only if recent and naming a service you use.
+    "W5": ("wait_for_provider", "The provider shows a minor issue with no update time we can read, so it may be old. If its status page dates it recently and names a service you use, wait; otherwise continue."),
     "H1": ("hand_off_to_human", "This step needs human verification. Hand it to the user through your normal handoff; do not try to solve or bypass the check."),
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     "O1": ("use_official_path", "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in {n} s."),

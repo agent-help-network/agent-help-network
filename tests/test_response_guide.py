@@ -700,3 +700,14 @@ def test_the_contract_documents_name_every_do_value_and_the_switch():
             assert f"`{do}`" in text, (name, do)
         assert "AHN_RESPONSE_GUIDE=0" in text and "`summary_line`" in text and "`links`" in text and "`stop_if_you_are`" in text
     assert "| D51 " in (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")
+
+
+def test_w5_and_the_unknown_time_check_state_the_same_condition():
+    # One rule in both texts: wait only if the issue is recent AND names a service you use; otherwise (old, or no
+    # service you use) continue. The wait side must never read as "recent or names a service".
+    from ahn.triage import CHECKS, CHECKS_KO
+    w5 = ROWS["W5"][1]
+    assert "dates it recently and names a service you use, wait; otherwise continue" in w5
+    assert "recently or" not in w5 and "or names a service" not in w5
+    assert "if it is old or names no service you use, continue" in CHECKS["provider_update_time_unknown"]
+    assert "오래됐거나 사용하는 서비스가 없으면 진행" in CHECKS_KO["provider_update_time_unknown"]

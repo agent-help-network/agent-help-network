@@ -1395,17 +1395,24 @@ def parse_instatus(body: dict) -> tuple[str, datetime | None]:
         raise ValueError("unknown provider status")
     updated_at = None
     if state != "UP":
-        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt).
-        times = []
+        # The page carries no update time of its own; the active incidents and maintenances do (updatedAt). One active
+        # item with no readable time (missing, unparseable, without a timezone, or not an object) leaves the page with
+        # no time at all, as status_scope does for incidents: another item's time never stands in for it, so a new
+        # item posted without a time cannot leave an old item's time to make the page look stale (D54: the answer then
+        # waits with low confidence instead of being released).
+        times, unknown = [], False
         for key in ("activeIncidents", "activeMaintenances"):
             items = body.get(key)
             if items is None:
                 continue
             if not isinstance(items, list):
                 raise ValueError("invalid provider status response")
-            times += [_aware_time(item["updatedAt"], "provider update time")
-                      for item in items if isinstance(item, dict) and item.get("updatedAt") is not None]
-        updated_at = max(times) if times else None
+            for item in items:
+                try:
+                    times.append(_aware_time(item["updatedAt"], "provider update time"))
+                except (KeyError, TypeError, ValueError):
+                    unknown = True
+        updated_at = None if unknown or not times else max(times)
     return INSTATUS_STATES[state], updated_at
 
 

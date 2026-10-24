@@ -219,6 +219,23 @@ def test_a_missing_or_unreadable_time_is_not_old_the_wait_stays_low(updated, kin
     assert "provider_update_time_unknown" in codes(checks_for(status))
 
 
+def test_an_instatus_item_posted_without_a_time_beside_an_old_one_waits_low_not_released():
+    # parse_instatus leaves the page with no time when any active item has none: the 8-day-old item's time does not
+    # stand in for the new one, so the answer is the low-confidence wait (2), and the board leaves it out (no_update_time).
+    body = {"page": {"status": "HASISSUES"},
+            "activeIncidents": [{"name": "new", "updatedAt": None}, {"name": "old", "updatedAt": (NOW - timedelta(days=8)).isoformat()}]}
+    indicator, updated = status_refresh.parse_instatus(body)
+    status = {**page(indicator, updated=updated), **_provider_scope({"indicator": indicator, "api_url": INSTATUS_URL})}
+    assert status["source_time"] == "active_items" and "source_updated_at" not in status
+    assert not page_stale(status, NOW) and page_time_unknown(status, NOW)
+    assert recommendation(None, status, None, None, now=NOW) == UNSURE
+    assert signal_history.board_provider(status, NOW) == "no_update_time"
+    # Only the old item: released, as before.
+    old_only = {"page": {"status": "HASISSUES"}, "activeIncidents": body["activeIncidents"][1:]}
+    indicator, updated = status_refresh.parse_instatus(old_only)
+    assert page_stale(page(indicator, updated=updated, **ITEMS), NOW)
+
+
 def test_a_time_slightly_ahead_is_a_usable_time():
     status = page(updated=NOW + timedelta(minutes=30), **ITEMS)
     assert not page_stale(status, NOW) and not page_time_unknown(status, NOW)
