@@ -163,6 +163,12 @@ def test_parity_d52_history_atom_feed_is_shown_like_the_lookup_shows_it(monkeypa
     assert card["summary_line"] == answer["summary_line"] and card["do"] == answer["next_action"]["do"]
     assert card["confidence"] == answer["recommendation"]["confidence"]
     assert card["status"] is None  # an Atom reading carries no indicator
+    assert card["provider_name"] == "GitHub Status" and card["open_incidents"] == 1
+    with TestClient(create_app(settings)) as client:
+        en, ko = client.get("/en/").text, client.get("/ko/").text
+    assert "status: GitHub Status (history feed, 1 open incident)" in en
+    assert "상태: GitHub Status (이력 피드, 1 열린 사건)" in ko
+    assert "no feed" not in en and "피드 없음" not in ko
     with TestClient(create_app(settings)) as client:
         assert 'class="home-live"' in client.get("/en/").text
 
