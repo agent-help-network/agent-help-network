@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from ahn.triage import CHECKS, next_checks, recommendation
 
 
@@ -14,7 +16,8 @@ def test_unspecified_failure_starts_with_locating_the_response():
 
 
 def test_human_challenge_and_active_provider_issue_remain_distinct():
-    provider = {"freshness": "fresh", "indicator": "minor"}
+    # A current page time: a minor page with no list and no time adds provider_update_time_unknown (D54).
+    provider = {"freshness": "fresh", "indicator": "minor", "source_updated_at": datetime.now(timezone.utc)}
     codes = [item["code"] for item in next_checks("human_verification", provider, "no_reports")]
     assert codes == ["human_handoff", "provider_scope", "reports_unknown"]
 
@@ -35,7 +38,7 @@ def test_reported_failure_stage_changes_advice_without_claiming_cause():
 
 
 def test_maintenance_is_waited_out_like_minor_but_says_it_is_scheduled_maintenance():
-    minor = {"freshness": "fresh", "indicator": "minor"}
+    minor = {"freshness": "fresh", "indicator": "minor", "source_updated_at": datetime.now(timezone.utc)}
     maintenance = {"freshness": "fresh", "indicator": "maintenance"}
     assert recommendation("site_access", maintenance, None, None) == recommendation("site_access", minor, None, None)
     assert recommendation("site_access", maintenance, None, None)["action"] == "wait_provider_incident"

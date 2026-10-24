@@ -967,7 +967,7 @@ def test_next_check_codes_match_the_contract_list():
     assert hook.NEXT_CHECKS == {
         "locate_failure_stage", "human_handoff", "account_handoff", "before_target_response", "response_observed",
         "access_denial_observed", "provider_scope", "provider_components_only", "provider_incident_stale",
-        "provider_scope_partial",
+        "provider_scope_partial", "provider_update_time_unknown",
         "provider_clear", "provider_unknown", "reports_unknown", "reports_stale",
         "reports_unverified", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
         "robots_blocks_not_your_agent", "robots_allows_agents", "robots_wildcard_disallow",
@@ -1061,7 +1061,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.2"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.3"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}

@@ -178,8 +178,10 @@ def test_the_lookup_answer_is_the_same_with_the_switch_on_or_off(db):
         for host in (FRESH, *STALE_HOSTS):
             before, after = lookup(off, host), lookup(on, host)
             assert before == after, host
-        # The live false problems still wait in the lookup answer: this change narrows the board only.
-        assert lookup(off, "gocardless.com")["recommendation"]["action"] == "wait_provider_incident"
+        # The board switch narrows the board only. Since D54 the lookup no longer waits on gocardless.com (minor page
+        # left for 16 days, no incident list) and still waits, less sure, on mediavine.com (no update time).
+        assert lookup(off, "gocardless.com")["recommendation"]["action"] != "wait_provider_incident"
+        assert lookup(off, "mediavine.com")["recommendation"]["confidence"] == "low"
 
 
 # Switch on ----------------------------------------------------------------------------------------------------------
@@ -358,7 +360,32 @@ def test_the_owner_view_names_the_left_out_hosts_and_the_public_board_does_not(d
     live_shapes(db, now)
     left_out = {item["site_host"]: item for item in board(db, now)["provider_excluded_hosts"]}
     assert set(left_out) == set(STALE_HOSTS)
-    assert left_out["mediavine.com"]["reason"] == "no_update_time" and left_out["gocardless.com"]["lookup_waits"] is True
+    assert left_out["mediavine.com"]["reason"] == "no_update_time" and left_out["mediavine.com"]["lookup_waits"] is True
+    # D54: the lookup no longer waits on gocardless.com's minor page left for 16 days; the board reason is unchanged.
+    assert left_out["gocardless.com"]["reason"] == "stale_update" and left_out["gocardless.com"]["lookup_waits"] is False
     with TestClient(create_app(settings(**ON))) as client:
         raw = client.get("/v1/now").text
         assert "provider_excluded_hosts" not in raw and not any(host in raw for host in STALE_HOSTS)
+
+
+def test_the_lookup_answers_the_left_out_minor_pages_as_the_board_judged_them(db):
+    """D54: gocardless.com (minor, page 16 days old, no incident list) no longer makes the lookup wait; mediavine.com
+    (minor, no update time) still waits, with low confidence. cloudflare.com (a page raised by maintenance) and the
+    fresh major incident are unchanged."""
+    now = datetime.now(timezone.utc)
+    live_shapes(db, now)
+    with TestClient(create_app(settings())) as client:
+        stale = lookup(client, "gocardless.com")
+        assert stale["recommendation"]["action"] != "wait_provider_incident"
+        checks = {item["code"]: item["text"] for item in stale["next_checks"]}
+        assert "provider_scope" not in checks and checks["provider_incident_stale"] == triage.PAGE_STALE_CHECK
+        unknown = lookup(client, "mediavine.com")
+        assert unknown["recommendation"]["action"] == "wait_provider_incident"
+        assert unknown["recommendation"]["confidence"] == "low"
+        assert unknown["recommendation"]["reasons"] == ["provider_scope", "provider_update_time_unknown"]
+        assert "provider_update_time_unknown" in [item["code"] for item in unknown["next_checks"]]
+        assert lookup(client, "cloudflare.com")["recommendation"]["action"] == "wait_provider_incident"
+        assert lookup(client, FRESH)["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium",
+                                                           "reasons": ["provider_scope"]}
+    left_out = {item["site_host"]: item for item in board(db, now)["provider_excluded_hosts"]}
+    assert left_out["gocardless.com"]["lookup_waits"] is False and left_out["mediavine.com"]["lookup_waits"] is True

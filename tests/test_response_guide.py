@@ -90,6 +90,9 @@ def providers():
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "major", "freshness": "stale", "basis": "incident"}
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "none", "freshness": "fresh"}
     yield from atom_providers()
+    # D54: a minor page with no incident list (no basis), its own update time fresh, over a week old, or missing.
+    for updated in (NOW - timedelta(hours=3), NOW - timedelta(days=30), None):
+        yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "minor", "freshness": "fresh", "source_updated_at": updated}
     for indicator in ("minor", "major", "critical", "maintenance"):
         for basis in ("incident", "components_only", "maintenance"):
             for impact in ("minor", "critical"):
@@ -657,7 +660,8 @@ def test_an_unlisted_combination_falls_to_the_default_row_of_its_action_and_is_l
 
 def test_every_triage_reason_code_is_known_to_the_table():
     # Reasons the table reads; a new reason in triage that is not here must be read (or named) before the table is complete.
-    read = {"provider_scope", "provider_scope_partial", "provider_components_only", "provider_incident_stale", "human_handoff", "account_handoff",
+    read = {"provider_scope", "provider_scope_partial", "provider_components_only", "provider_incident_stale", "provider_update_time_unknown",
+            "human_handoff", "account_handoff",
             "profile_pending", "official_path_available", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
             "robots_fetch_refused", "robots_wildcard_disallow", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_unknown",
             "profile_not_read"}

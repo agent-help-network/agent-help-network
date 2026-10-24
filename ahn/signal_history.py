@@ -37,6 +37,11 @@ from statistics import median
 
 from psycopg.types.json import Jsonb
 
+# One definition of a usable provider time for the board and the lookup (D54): a provider time further ahead than
+# FUTURE_SLACK is no time at all.
+from .triage import FUTURE_SLACK, provider_updated_at  # noqa: F401  (FUTURE_SLACK kept importable from here)
+from .triage import usable_provider_time as _usable_time
+
 LOG = logging.getLogger(__name__)
 
 # Retention (platform_metrics.prune_analytics carries the same numbers; tests/test_policy_coverage.py checks them).
@@ -560,11 +565,15 @@ def board_provider(provider_status: dict, now: datetime) -> str | None:
     other way round, and a statement nobody has touched for a week (a page left at "major" since August) or one with
     no time at all is not shown as a current problem.
     """
-    from .triage import STALE_INCIDENT_DAYS, incident_stale, provider_wait_reason
+    from .triage import STALE_INCIDENT_DAYS, incident_stale, page_stale, provider_wait_reason
 
     reason = provider_wait_reason(provider_status, now)
     if reason == "provider_incident_stale" or (reason is None and incident_stale(provider_status, now)):
         return "stale_incidents"
+    if reason is None and page_stale(provider_status, now):
+        # D54: the lookup no longer waits on a minor page with no incident list left for over a week; the board
+        # reason stays the one it had before (stale_update), judged by the same helper and the same time.
+        return "stale_update"
     if reason is None:
         return "not_a_wait"
     if _usable_time(provider_status.get("source_updated_at"), now) is None:
@@ -580,20 +589,8 @@ def board_provider(provider_status: dict, now: datetime) -> str | None:
     return None
 
 
-FUTURE_SLACK = timedelta(hours=1)  # a provider time further ahead than this is treated as no time at all
-
-
-def _usable_time(value, now: datetime) -> datetime | None:
-    if not isinstance(value, datetime) or value.tzinfo is None or value - now > FUTURE_SLACK:
-        return None
-    return value
-
-
-def provider_updated_at(provider_status: dict, now: datetime) -> datetime | None:
-    """The latest usable provider time (page or incident): the time board_provider judged, and the one shown."""
-    times = [time for time in (_usable_time(provider_status.get("source_updated_at"), now),
-                               _usable_time(provider_status.get("incident_updated_at"), now)) if time is not None]
-    return max(times) if times else None
+# FUTURE_SLACK, _usable_time and provider_updated_at now live in triage (imported above): one definition of a
+# usable provider time for the board and the lookup (D54).
 
 
 PROVIDER_EXCLUSIONS = ("stale_incidents", "stale_update", "no_update_time", "not_a_wait", "feed_not_shown")
