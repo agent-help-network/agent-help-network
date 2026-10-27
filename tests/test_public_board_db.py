@@ -159,6 +159,20 @@ def test_switch_off_by_default_and_the_paths_do_not_exist(db, monkeypatch):
         for lang in ("en", "ko"):
             assert str(escape(public_board.POLICY_BEFORE[lang])) in client.get(f"/{lang}/policy").text
         assert "/now" not in client.get("/en/").text
+        for lang in ("en", "ko"):  # no entrance links to a page that would 404
+            assert f'href="/{lang}/now"' not in client.get(f"/{lang}/").text
+            assert f'href="/{lang}/now"' not in client.get(f"/{lang}/search").text
+
+
+def test_entrance_links_show_only_while_the_board_is_on(db):
+    with TestClient(create_app(settings(**ON))) as client:
+        for lang, nav, home in (("en", "Site status", "Sites with a problem right now →"), ("ko", "지금 문제", "지금 문제가 있는 사이트 →")):
+            link = f'href="/{lang}/now"'
+            page = client.get(f"/{lang}/").text
+            assert f'<a {link} >{nav}</a>' in page and f'<a {link}>{home}</a>' in page
+            assert page.index(f'href="/{lang}/search"') < page.index(f'<a {link} >') < page.index(f'href="/{lang}/report"')
+            assert f'<a {link} aria-current="page">{nav}</a>' in client.get(f"/{lang}/now").text
+            assert link in client.get(f"/{lang}/search").text
 
 
 def test_switch_needs_its_policy_date(monkeypatch):

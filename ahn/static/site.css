@@ -215,3 +215,5 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .home-foot a{color:var(--blue);font-weight:700}
 @media(max-width:800px){.home-hero{padding:40px 0}.home-hero-grid{grid-template-columns:minmax(0,1fr);gap:28px}}
 @media(max-width:520px){.home-live{padding:20px}.home-live-rows>div{flex-direction:column;gap:0}.home-tablist button{padding:0 14px}}
+/* Six menu items (with the public board link) are wider than a phone header: let the last one wrap. */
+@media(max-width:520px){.site-header nav{flex-wrap:wrap;row-gap:8px}}
