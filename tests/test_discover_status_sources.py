@@ -297,7 +297,7 @@ class StubNet:
     def cname_chain(self, host):
         return self.cnames.get(host, [])
 
-    def fetch(self, url, *, cap=0):
+    def fetch(self, url, *, cap=0, follow=True):
         self.asked.append(url)
         found = self.pages.get(url)
         if found is None:
@@ -305,7 +305,7 @@ class StubNet:
         status, body, *rest = found
         final = rest[0] if rest else url
         return {"status": status, "final_url": final, "chain": [discover.urlsplit(url).hostname, discover.urlsplit(final).hostname],
-                "body": body if isinstance(body, bytes) else body.encode(), "headers": {}, "error": ""}
+                "body": body if isinstance(body, bytes) else body.encode(), "headers": rest[1] if len(rest) > 1 else {}, "error": ""}
 
 
 FEED = json.dumps({"page": {"id": "abc", "name": "Acme", "updated_at": "2026-10-18T00:00:00Z"}, "status": {"indicator": "none"}})
@@ -447,3 +447,66 @@ def test_a_hand_supplied_status_path_on_the_publishers_own_domain_is_accepted():
     # The main-site rule would reject a generic title there; a curator-supplied /status address is the exception.
     assert discover.looks_like_status_page("Mastercard Developers", "https://developer.mastercard.com/api-status", site_host="mastercard.com", supplied=True)
     assert not discover.looks_like_status_page("Mastercard Developers", "https://developer.mastercard.com/api-status", site_host="mastercard.com")
+
+
+# --- robots.txt before a feed path (same decision as the service: ahn.feed_robots) ---------------------------------
+
+FEED_URL = "https://status.acme.com/api/v2/status.json"
+ROBOTS_URL = "https://status.acme.com/robots.txt"
+
+
+def _probe_with_robots(robots):
+    pages = {FEED_URL: (200, FEED)}
+    if robots is not None:
+        pages[ROBOTS_URL] = robots
+    net = StubNet(pages)
+    return net, discover.probe_candidate(net, "status.acme.com", "supplied", "/", "acme.com")
+
+
+def test_robots_allowing_the_feed_path_lets_it_be_read():
+    net, probe = _probe_with_robots((200, "User-agent: *\nDisallow: /private/\n"))
+    assert probe.kind == "feed" and probe.robots == ""
+    assert net.asked.index(ROBOTS_URL) < net.asked.index(FEED_URL)
+
+
+def test_robots_disallowing_the_feed_path_means_it_is_not_requested():
+    net, probe = _probe_with_robots((200, "User-agent: *\nDisallow: /api/\n"))
+    assert FEED_URL not in net.asked
+    assert probe.kind != "feed" and probe.robots == "robots_blocked:/api/v2/status.json"
+    # a group naming the product token wins over `*`, as in the service
+    net, probe = _probe_with_robots((200, "User-agent: *\nDisallow: /api/\n\nUser-agent: AgentHelpNetwork\nAllow: /api/\n"))
+    assert probe.kind == "feed" and probe.robots == ""
+
+
+def test_missing_robots_txt_allows_the_feed_path():
+    net, probe = _probe_with_robots(None)  # the stub answers 404: no rules
+    assert probe.kind == "feed" and probe.robots == "" and ROBOTS_URL in net.asked
+
+
+def test_unreadable_robots_txt_is_complete_disallow_like_the_service():
+    net, probe = _probe_with_robots((503, ""))
+    assert FEED_URL not in net.asked and probe.robots == "robots_unreadable:/api/v2/status.json"
+    net, probe = _probe_with_robots((403, ""))  # another 4xx: "unavailable", every path allowed (RFC 9309 2.3.1.3)
+    assert probe.kind == "feed" and probe.robots == ""
+
+
+def test_robots_txt_is_read_once_per_host():
+    net = StubNet({ROBOTS_URL: (200, "User-agent: *\nAllow: /\n")})
+    assert discover.robots_verdict(net, "status.acme.com", "/summary.json") == ""
+    assert discover.robots_verdict(net, "status.acme.com", "/index.json") == ""
+    assert net.asked.count(ROBOTS_URL) == 1
+
+
+def test_a_blocked_feed_shows_in_the_exclusion_reason():
+    net = StubNet({ROBOTS_URL: (200, "User-agent: *\nDisallow: /\n")})
+    result = discover.discover_host(net, "acme.com", {}, {}, supplied=[("https://status.acme.com/", "")])
+    disposition, _, _, reason = discover.decide("acme.com", result["probes"])
+    assert disposition == "excluded" and "robots_blocked:/api/v2/status.json" in reason
+
+
+def test_robots_txt_redirecting_apex_to_www_is_followed_once_like_the_service():
+    net = StubNet({"https://acme.com/robots.txt": (301, "", "https://acme.com/robots.txt", {"location": "https://www.acme.com/robots.txt"}),
+                   "https://www.acme.com/robots.txt": (200, "User-agent: *\nDisallow: /api/\n")})
+    assert discover.robots_verdict(net, "acme.com", "/api/v2/status.json") == "robots_blocked"
+    other = StubNet({"https://acme.com/robots.txt": (301, "", "https://acme.com/robots.txt", {"location": "https://elsewhere.example/robots.txt"})})
+    assert discover.robots_verdict(other, "acme.com", "/api/v2/status.json") == "robots_unreadable"

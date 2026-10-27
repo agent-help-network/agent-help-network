@@ -33,7 +33,11 @@ Per host (a plain list, or a CSV with a ``host`` column):
 Etiquette (same as scripts/verify_official_paths.py): at most one HTTPS request per second overall, 10 s timeout,
 the curation User-Agent, redirects followed by hand (https only, every hop checked for a public address and rate
 limited). Only status hosts and publisher documentation pages already in OFFICIAL_PATHS are read; the site's own
-front page is never probed and no robots.txt is fetched.
+front page is never probed. The one other file read is a status host's /robots.txt, and only before a feed path
+(``/api/v2/status.json``, ``/summary.json``, ``/index.json``) is requested: the answer comes from
+``ahn.feed_robots.build`` (RFC 9309, the same decision the service makes before it reads a feed). A feed path the file
+disallows, or that cannot be decided because the file could not be read (5xx, 429, timeout: "complete disallow"), is not
+requested and is recorded as ``robots_blocked`` / ``robots_unreadable`` in candidates.csv; a missing or 4xx robots.txt allows it.
 
 Output under work/status-discovery/<batch>/: candidates.csv (every candidate and what was seen), final.csv (same
 columns as the first status batch: host,name,kind,page,api,indicator,evidence,evidence_url), excluded.csv
@@ -66,6 +70,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from ahn.access_profile import ROBOTS_CAP  # noqa: E402
+from ahn.feed_robots import build as robots_build  # noqa: E402
 from ahn.official_paths import OFFICIAL_PATHS  # noqa: E402
 from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host, policy_host  # noqa: E402
 from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES, parse_status  # noqa: E402
@@ -452,6 +458,53 @@ class Net:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# robots.txt before a feed path (same decision as the service: ahn.feed_robots, RFC 9309)
+
+REDIRECTS = {301, 302, 303, 307, 308}
+
+
+def read_robots(net, host: str) -> tuple:
+    """(status, body, detail) of ``host``'s /robots.txt in the shape ``ahn.access_profile.fetch_public_file`` returns, read
+    once per host per run. Like the service: the only redirect followed is apex -> www; a web page served for the file is
+    ``invalid``; 404/410 is ``absent``; a transport failure is ``error``."""
+    cache = net.__dict__.setdefault("_robots_cache", {})
+    if host not in cache:
+        reply = net.fetch(f"https://{host}/robots.txt", cap=ROBOTS_CAP + 1, follow=False)
+        status = reply["status"]
+        location = None
+        if status in REDIRECTS:
+            location = urlsplit(urljoin(f"https://{host}/robots.txt", reply["headers"].get("location") or "")).hostname
+        if location and location == f"www.{host}":
+            cache[host] = read_robots(net, location)
+        elif reply["error"] or status is None:
+            cache[host] = ("error", None, (reply["error"] or "connect_error")[:32])
+        elif status in {404, 410}:
+            cache[host] = ("absent", None, f"http_{status}")
+        elif status in REDIRECTS:
+            cache[host] = ("redirected", None, f"redirect:{location or status}"[:32])
+        elif status in {401, 403}:
+            cache[host] = ("refused", None, f"http_{status}")
+        elif status != 200:
+            cache[host] = ("error", None, f"http_{status}")
+        elif len(reply["body"]) > ROBOTS_CAP:
+            cache[host] = ("too_large", None, "too_large")
+        elif reply["body"].lstrip()[:12].lower().startswith((b"<!doctype", b"<html", b"<head", b"<body")):
+            cache[host] = ("invalid", None, "html_body")  # a web page for an unknown path is not a policy file
+        else:
+            cache[host] = ("ok", reply["body"], "http_200")
+    return cache[host]
+
+
+def robots_verdict(net, host: str, path: str) -> str:
+    """"" when the feed path may be requested, else ``robots_blocked`` (the file disallows it) or ``robots_unreadable`` (the
+    file could not be read, which RFC 9309 treats as complete disallow). Uses the service's own decision code."""
+    decision = robots_build(host, read_robots(net, host), (path,), datetime.now(timezone.utc))
+    if decision.allows(path):
+        return ""
+    return "robots_unreadable" if decision.robots_status == "error" else "robots_blocked"
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Candidate verification
 
 @dataclass
@@ -468,6 +521,7 @@ class Probe:
     chain: list[str] = field(default_factory=list)
     cname_service: str = ""
     note: str = ""
+    robots: str = ""                # "robots_blocked:<path>" or "robots_unreadable:<path>": a feed path that was not requested
 
 
 def probe_candidate(net: Net, host: str, origin: str, path: str = "/", site_host: str = "") -> Probe:
@@ -478,7 +532,13 @@ def probe_candidate(net: Net, host: str, origin: str, path: str = "/", site_host
         return probe
     chain = net.cname_chain(host)
     probe.cname_service = next((service_for_cname(target) for target in chain if service_for_cname(target)), "") or ""
-    api = net.fetch(f"https://{host}/api/v2/status.json", cap=JSON_CAP) if path == "/" else {"status": None, "chain": [host]}
+    api = {"status": None, "chain": [host]}
+    if path == "/":
+        verdict = robots_verdict(net, host, "/api/v2/status.json")
+        if verdict:
+            probe.robots = f"{verdict}:/api/v2/status.json"
+        else:
+            api = net.fetch(f"https://{host}/api/v2/status.json", cap=JSON_CAP)
     probe.chain = api["chain"]
     if api["status"] == 200:
         final = urlsplit(api["final_url"])
@@ -520,7 +580,10 @@ def probe_candidate(net: Net, host: str, origin: str, path: str = "/", site_host
         probe.page = f"https://{probe.final_host}{final.path or '/'}"
         if path == "/" and probe.final_host != host and final.path in {"", "/"}:
             # A redirect from the candidate to another host often drops the path, so the feed check above missed it: ask the landing host.
-            landed = net.fetch(f"https://{probe.final_host}/api/v2/status.json", cap=JSON_CAP)
+            verdict = robots_verdict(net, probe.final_host, "/api/v2/status.json")
+            if verdict:
+                probe.robots = f"{verdict}:/api/v2/status.json"
+            landed = {"status": None} if verdict else net.fetch(f"https://{probe.final_host}/api/v2/status.json", cap=JSON_CAP)
             try:
                 if landed["status"] == 200 and urlsplit(landed["final_url"]).path == "/api/v2/status.json":
                     body = json.loads(landed["body"])
@@ -648,7 +711,7 @@ def decide(site_host: str, probes: list[tuple[Probe, tuple[str, str, str]]]) -> 
     """(disposition, best probe, its evidence, reason) with disposition final | needs_review | excluded."""
     live = [(p, j) for p, j in probes if p.kind in {"feed", "link", "blocked"}]
     if not live:
-        notes = " | ".join(f"https://{p.host}/ {p.note or p.kind}" for p, _ in probes[:6])
+        notes = " | ".join(f"https://{p.host}/ {p.note or p.kind}" + (f" [{p.robots}]" if p.robots else "") for p, _ in probes[:6])
         return "excluded", None, None, f"no status page found: {notes}"
     best_probe, best_judged = max(live, key=lambda item: rank(item[0], item[1][0]))
     if best_judged[0] in {"A", "B", "C"}:
@@ -664,7 +727,7 @@ def decide(site_host: str, probes: list[tuple[Probe, tuple[str, str, str]]]) -> 
 FINAL_FIELDS = ["host", "name", "kind", "page", "api", "indicator", "evidence", "evidence_url", "scope_flag"]
 EXCLUDED_FIELDS = ["host", "candidate", "reason", "disposition"]
 CANDIDATE_FIELDS = ["host", "candidate_host", "origin", "kind", "page", "api", "indicator", "title", "final_host",
-                    "redirect_chain", "cname_service", "evidence", "evidence_detail", "evidence_url", "note"]
+                    "redirect_chain", "cname_service", "evidence", "evidence_detail", "evidence_url", "note", "robots"]
 
 
 def write_csv(path: Path, fields: list[str], rows: list[dict]) -> None:
@@ -787,7 +850,7 @@ def run_discovery(args) -> int:
                                        "api": probe.api, "indicator": probe.indicator, "title": probe.title, "final_host": probe.final_host,
                                        "redirect_chain": ">".join(probe.chain), "cname_service": probe.cname_service,
                                        "evidence": j[0] if probe.kind in {"feed", "link"} else "", "evidence_detail": j[1],
-                                       "evidence_url": j[2], "note": probe.note})
+                                       "evidence_url": j[2], "note": probe.note, "robots": probe.robots})
             counts[disposition] += 1
             if disposition == "final":
                 evidence_counts[judged[0]] = evidence_counts.get(judged[0], 0) + 1
@@ -835,19 +898,29 @@ def run_classify(args) -> int:
         service, how = fingerprint(chain, page["headers"], body)
         feed_note = ""
         if service in {"Atlassian Statuspage", "incident.io"}:  # incident.io pages also answer in Statuspage's format: check the standard endpoint again
-            api = net.fetch(f"https://{final_host}/api/v2/status.json", cap=JSON_CAP)
-            try:
-                parse_status(json.loads(api["body"]))
-                feed_note = "status.json parses: can become a feed with the existing parser"
-            except (ValueError, TypeError, RecursionError):
-                feed_note = f"status.json not usable (HTTP {api['status'] or api['error']})"
+            verdict = robots_verdict(net, final_host, "/api/v2/status.json")
+            if verdict:
+                feed_note = f"status.json not read ({verdict}: robots.txt)"
+            else:
+                api = net.fetch(f"https://{final_host}/api/v2/status.json", cap=JSON_CAP)
+                try:
+                    parse_status(json.loads(api["body"]))
+                    feed_note = "status.json parses: can become a feed with the existing parser"
+                except (ValueError, TypeError, RecursionError):
+                    feed_note = f"status.json not usable (HTTP {api['status'] or api['error']})"
         if service in JSON_PATHS:  # does the product's documented public JSON answer on this very page?
-            reply = net.fetch(f"https://{final_host}{JSON_PATHS[service]}", cap=FINGERPRINT_CAP)  # Better Stack's index.json carries history and is large
-            usable = reply["status"] == 200 and recognise_json(JSON_PATHS[service], reply["body"]) == service
-            feed_note = f"{JSON_PATHS[service]} answers with the documented shape" if usable else f"{JSON_PATHS[service]} not usable (HTTP {reply['status'] or reply['error']})"
+            verdict = robots_verdict(net, final_host, JSON_PATHS[service])
+            if verdict:
+                feed_note = f"{JSON_PATHS[service]} not read ({verdict}: robots.txt)"
+            else:
+                reply = net.fetch(f"https://{final_host}{JSON_PATHS[service]}", cap=FINGERPRINT_CAP)  # Better Stack's index.json carries history and is large
+                usable = reply["status"] == 200 and recognise_json(JSON_PATHS[service], reply["body"]) == service
+                feed_note = f"{JSON_PATHS[service]} answers with the documented shape" if usable else f"{JSON_PATHS[service]} not usable (HTTP {reply['status'] or reply['error']})"
         if service == "self_built_or_unknown" and page["status"] == 200:
             # No marker in DNS or page: ask for the two public JSON shapes that other products serve, on the page's own host.
             for json_path in ("/summary.json", "/index.json"):
+                if robots_verdict(net, final_host, json_path):
+                    continue
                 probe = net.fetch(f"https://{final_host}{json_path}", cap=JSON_CAP)
                 found = recognise_json(json_path, probe["body"]) if probe["status"] == 200 and urlsplit(probe["final_url"]).hostname == final_host else None
                 if found:
