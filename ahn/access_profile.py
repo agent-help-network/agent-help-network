@@ -872,6 +872,8 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     llms_allowed, llms_block = llms_gate(robots_status, robots_body, robots_detail)
     if llms_allowed:
         llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
+    elif robots_status == "not_public":
+        llms_status, llms_body, llms_detail = "not_public", None, None  # the host itself is not eligible: same state, no request
     else:
         llms_status, llms_body, llms_detail = "not_read", None, llms_block
     # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.

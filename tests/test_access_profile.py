@@ -225,6 +225,8 @@ def test_build_profile_non_ok_statuses_pass_through_with_no_robots_summary():
         assert profile["robots_detail"] is None
         if status == "absent":  # no robots.txt: llms.txt is read (RFC 9309 2.3.1.3)
             assert profile["llms_txt_status"] == "absent" and profile["llms_detail"] is None
+        elif status == "not_public":  # ineligible host: same state for llms.txt, no request
+            assert profile["llms_txt_status"] == "not_public" and profile["llms_detail"] is None
         else:  # a robots.txt we could not read: llms.txt is not requested (D56)
             assert profile["llms_txt_status"] == "not_read" and profile["llms_detail"] == "robots_unreadable"
 
@@ -400,12 +402,17 @@ def test_a_missing_web_page_or_4xx_robots_file_allows_the_read(robots):
 
 
 @pytest.mark.parametrize("robots", [("refused", None, "http_429"), ("refused", None, "http_503"), ("error", None, "timeout"),
-                                    ("redirected", None, "redirect:other.example"), ("too_large", None, "too_large"),
-                                    ("not_public", None, None)])
+                                    ("redirected", None, "redirect:other.example"), ("too_large", None, "too_large")])
 def test_an_unreadable_robots_file_forbids_the_read(robots):
     profile, reader = _profile_for(robots)
     assert _llms_calls(reader) == []
     assert (profile["llms_txt_status"], profile["llms_detail"], profile["llms_sha256"]) == ("not_read", "robots_unreadable", None)
+
+
+def test_a_not_public_host_keeps_not_public_for_llms_txt_without_a_request():
+    profile, reader = _profile_for(("not_public", None, None))
+    assert _llms_calls(reader) == []
+    assert (profile["llms_txt_status"], profile["llms_detail"]) == ("not_public", None)
 
 
 def test_the_gate_judges_the_file_of_the_host_that_answered_robots():
