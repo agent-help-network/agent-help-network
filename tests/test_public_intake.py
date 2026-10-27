@@ -466,7 +466,7 @@ def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the
         return ("ok", b"User-agent: *\nAllow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
     first = get_profile(settings, "retry.org", now=t0, reader=reader)
     assert first["robots_status"] == "error" and first["robots_detail"] == "dns_timeout" and first["freshness"] == "pending"
-    assert calls == [("retry.org", "/robots.txt"), ("www.retry.org", "/robots.txt"), ("retry.org", "/llms.txt")]
+    assert calls == [("retry.org", "/robots.txt"), ("www.retry.org", "/robots.txt")]  # D56: no llms.txt without a readable robots.txt
     # Within the hour the failed attempt is cached; after an hour it is retried and succeeds.
     calls.clear()
     assert get_profile(settings, "retry.org", now=t0 + timedelta(minutes=30), reader=reader)["robots_status"] == "error"

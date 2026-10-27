@@ -117,7 +117,7 @@ ACTIONS = frozenset({"proceed", "use_official_path", "hand_off_to_human", "wait_
 CONFIDENCES = frozenset({"low", "medium", "high"})
 ROBOTS_STATUSES = frozenset({"ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public",
                              "pending"})
-LLMS_STATUSES = frozenset({"present", "absent", "redirected", "refused", "error", "not_public", "pending"})
+LLMS_STATUSES = frozenset({"present", "absent", "redirected", "refused", "error", "not_public", "pending", "not_read"})
 INDICATORS = frozenset({"none", "minor", "major", "critical", "maintenance", "unknown"})
 FRESHNESS = frozenset({"fresh", "stale", "pending"})
 EVIDENCE_LEVELS = frozenset({"no_reports", "single_observation", "multiple_observations", "later_success_observed",

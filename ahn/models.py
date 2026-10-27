@@ -354,7 +354,7 @@ class AccessProfile(StrictModel):
     robots_status: Literal["ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public", "pending"]
     robots: RobotsSummary | None = None
     robots_detail: str | None = None
-    llms_txt_status: Literal["present", "absent", "redirected", "refused", "error", "not_public", "pending"]
+    llms_txt_status: Literal["present", "absent", "redirected", "refused", "error", "not_public", "pending", "not_read"]
     llms_detail: str | None = None
     read_host: str | None = None
     source_urls: dict[str, str]

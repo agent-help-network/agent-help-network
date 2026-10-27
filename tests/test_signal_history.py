@@ -107,7 +107,7 @@ def test_build_profile_hands_over_the_www_attempt_without_extra_requests():
         return ("refused", None, "http_403") if host.startswith("www.") else ("error", None, "connect_timeout")
 
     profile = access_profile.build_profile("x.org", reader=reader)
-    assert calls == [("x.org", "/robots.txt"), ("www.x.org", "/robots.txt"), ("x.org", "/llms.txt")]
+    assert calls == [("x.org", "/robots.txt"), ("www.x.org", "/robots.txt")]  # llms.txt is not requested while robots.txt is unreadable (D56)
     assert profile["robots_status"] == "error" and profile["robots_detail"] == "connect_timeout"
     assert profile["www_attempt"] == {"robots_status": "refused", "robots_detail": "http_403"}
     ok = access_profile.build_profile("x.org", reader=lambda h, p, *, cap_bytes, **_: ("ok", b"User-agent: *\nAllow: /\n", "http_200"))

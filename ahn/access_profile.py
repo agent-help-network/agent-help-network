@@ -5,7 +5,7 @@ IP addresses, at most one redirect followed (a single hop from the host to its o
 for the same path; any other 3xx is recorded as ``redirected`` and not followed), hard byte
 caps, one read attempt per host per cache window (24 hours for a lookup, ERROR_RETRY after a
 transport failure), and never a probe: the two well-known files are the only paths ever
-requested, and the result is reported as DECLARED policy, never as an access guarantee.
+requested (and llms.txt only where that host's robots.txt allows it), and the result is reported as DECLARED policy, never as an access guarantee.
 """
 
 from __future__ import annotations
@@ -835,6 +835,21 @@ def _read(reader, site_host: str, path: str, cap_bytes: int, **options) -> tuple
     return (result[0], result[1], result[2])
 
 
+def llms_gate(robots_status: str, robots_body: bytes | None, robots_detail: str | None) -> tuple[bool, str | None]:
+    """Pure. May /llms.txt be requested on the host whose /robots.txt result this is (D56)? Returns (True, None) or
+    (False, 'robots_disallowed' | 'robots_unreadable'). Same interpreter and failure rules as the status feeds (D50):
+    a readable file decides by its rules (the stricter of the two groupings), an absent file, a web page or a 4xx other
+    than 429 allows (RFC 9309 2.3.1.3), anything else (429, 5xx, transport failure, redirect, over the cap) forbids (2.3.1.4)."""
+    from .feed_robots import classify, decide_paths  # feed_robots imports this module
+    if robots_status == "ok" and robots_body is not None:
+        if decide_paths(robots_body, ["/llms.txt"])["/llms.txt"]["allowed"]:
+            return True, None
+        return False, "robots_disallowed"
+    if classify(robots_status, robots_detail)[1]:
+        return True, None
+    return False, "robots_unreadable"
+
+
 def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP)
     read_host = site_host
@@ -853,7 +868,12 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     # Parsed from the same bytes as the robots rules: content-use preferences cost no extra request.
     # The robots.txt hash travels with the result, so a later rewrite of the row by another reader is detectable.
     content_use = {**parse_content_use(robots_body), "robots_sha256": sha256_hex(robots_body)} if robots is not None else None
-    llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
+    # D56: llms.txt is read only where this host's own robots.txt allows it for us; /robots.txt itself is always read.
+    llms_allowed, llms_block = llms_gate(robots_status, robots_body, robots_detail)
+    if llms_allowed:
+        llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
+    else:
+        llms_status, llms_body, llms_detail = "not_read", None, llms_block
     # A soft-404 page is 'absent' for llms.txt purposes; the detail keeps the evidence.
     llms_txt_status = "present" if llms_status in ("ok", "too_large") else "absent" if llms_status == "invalid" else llms_status
     return {

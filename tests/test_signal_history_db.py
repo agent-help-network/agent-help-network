@@ -100,7 +100,7 @@ def test_a_read_of_a_curated_host_is_recorded_without_any_extra_request(db):
 
 
 class ApexFails:
-    """Apex robots.txt fails; the www alias gives ``www`` (the same requests as any read: apex, www, llms)."""
+    """Apex robots.txt fails; the www alias gives ``www`` (the same requests as any read: apex, www)."""
 
     def __init__(self, www):
         self.www, self.calls = www, []
@@ -124,7 +124,7 @@ def test_an_answer_from_the_www_alias_is_not_a_failure(db, www, expected):
     reader = ApexFails(www)
     profile = get_profile(db, "github.com", now=T0, reader=reader)
     assert profile["robots_status"] == "error"  # the cached profile is unchanged by the history
-    assert [path for _, path in reader.calls] == ["/robots.txt", "/robots.txt", "/llms.txt"]  # no extra request
+    assert [path for _, path in reader.calls] == ["/robots.txt", "/robots.txt"]  # no extra request (llms.txt is not requested without a readable robots.txt, D56)
     rows = q(db, "SELECT robots_status,detail,read_host,a_outcome FROM robots_read_events")
     assert [tuple(row.values()) for row in rows] == [expected]
 

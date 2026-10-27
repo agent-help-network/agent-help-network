@@ -114,10 +114,10 @@ def test_www_fallback_read_never_spends_a_second_redirect_hop(monkeypatch):
     assert access_profile.fetch_public_file("www.example.com", "/robots.txt", cap_bytes=1000, _hop=1) == ("redirected", None, "redirect:www.www.example.com")
     assert calls == ["www.example.com"]
     calls.clear()
-    # End to end: apex refuses, www redirects onward, so the apex refusal stands and only three connections are made.
+    # End to end: apex refuses, www redirects onward, so the apex refusal stands; robots.txt is unreadable, so llms.txt is not requested (D56) and only two connections are made.
     profile = access_profile.build_profile("example.com")
     assert profile["robots_status"] == "refused" and profile["robots_detail"] == "http_503" and profile["read_host"] == "example.com"
-    assert calls == ["example.com", "www.example.com", "example.com"]
+    assert calls == ["example.com", "www.example.com"]
 
 
 def _pool_class(behaviour: dict, calls: list):
