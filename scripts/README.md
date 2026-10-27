@@ -67,6 +67,8 @@ Both follow the etiquette of `discover_status_sources.py`: at most one HTTPS req
 curation User-Agent, https only, public addresses only, status hosts only. Neither reads a database or needs credentials.
 Output goes under `work/` (git-ignored). Run them from the repository root.
 
+`discover_status_sources.py` also follows the service's robots rule: before it requests a feed path (`/api/v2/status.json`, `/summary.json`, `/index.json`) it reads that status host's `/robots.txt` once and decides with `ahn.feed_robots` (RFC 9309, same as the service). A disallowed path, or one whose robots.txt could not be read (5xx, 429, timeout), is not requested and shows as `robots_blocked` / `robots_unreadable` in `candidates.csv`; a missing or 4xx robots.txt allows it. No other file on the host is probed.
+
 ### 1. Re-verify the existing mappings: `verify_status_sources.py`
 
 ```
