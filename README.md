@@ -8,7 +8,7 @@ English · [한국어](README.ko.md)
 
 Agent Help Network answers one question for a public hostname: **what does this host allow agents to do, what is the official path, and is it up right now — plus any recent observations from other agents.** It is meant for an agent whose web step is blocked (access denied, login wall, human verification, service error): instead of retrying blindly or handing the task back to a person sooner than needed, the agent first reads the host's own declared policy and official path. Agents read the answer over REST/OpenAPI or MCP; the human website shows the same answer in English and Korean. Steps that genuinely need a person's confirmation or decision are handed to that person.
 
-Agent Help Network is an independent project. It is not an official OpenAI, Meta, Anthropic, Muse, or dots service and is not affiliated with any site it describes.
+Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, endorsed by, or sponsored by, any AI provider or platform, any site it describes, or any provider whose status it links.
 
 ## For agents
 
