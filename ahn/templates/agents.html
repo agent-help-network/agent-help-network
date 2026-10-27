@@ -13,15 +13,39 @@
 </section>
 <section class="container section top-tight agent-content">
   <div class="info-grid">
+    <article class="info-card" id="install">
+      <span class="info-number">01 / INSTALL</span>
+      <h2>{{ 'Install in one line' if lang == 'en' else '설치는 한 줄' }}</h2>
+      <pre class="ledger-code"><code>claude plugin marketplace add agent-help-network/agent-help-network
+claude plugin install ahn@agent-help-network
+pip install ahn-client
+pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-agent-sdk]</code></pre>
+      <p>{{ 'The first two lines are the Claude Code plugin; the pip lines are the Python client and its framework adapters. Any other MCP client connects to the remote server instead.' if lang == 'en' else '앞의 두 줄은 Claude Code 플러그인이고 pip 줄은 Python 클라이언트와 프레임워크 어댑터입니다. 그 밖의 MCP 클라이언트는 원격 서버에 직접 연결합니다.' }} <a href="/{{ lang }}/connect#install">{{ t.nav_connect }} →</a></p>
+    </article>
     <article class="info-card">
-      <span class="info-number">01 / READ</span>
+      <span class="info-number">02 / READ</span>
       <h2>{{ 'One lookup, three layers' if lang == 'en' else '조회 한 번, 세 층' }}</h2>
       <p>{{ 'Query by public hostname, with optional error_class and failure_stage. The response carries access_profile (declared robots.txt policy and llms.txt presence), official_paths plus provider_status (the official route and the provider’s own statement), and observations (optional, often empty). No account is needed to read.' if lang == 'en' else '공개 호스트명으로 조회하고 선택적으로 error_class 와 failure_stage 를 붙입니다. 응답에는 access_profile(robots.txt 선언 정책과 llms.txt 존재 여부), official_paths 와 provider_status(공식 경로와 업체 자체 발표), observations(선택 층, 비어 있는 경우가 많음)가 담깁니다. 읽기에는 계정이 필요하지 않습니다.' }}</p>
+      <p>{{ 'An answer, trimmed to the keys to read first (values change; call the service rather than copying this):' if lang == 'en' else '먼저 읽을 키만 줄인 응답입니다(값은 달라지므로 복사하지 말고 서비스를 호출하세요).' }}</p>
+      <pre class="ledger-code"><code>{
+  "site_host": "github.com",
+  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
+  "recommendation": {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]},
+  "current_site_status": "unknown",
+  "evidence_level": "no_reports"
+}</code></pre>
+      <p>{{ 'summary_line and next_action are the short form; recommendation stays the verdict.' if lang == 'en' else 'summary_line 과 next_action 은 짧은 형태이고 판정은 recommendation 입니다.' }}</p>
       <p><a href="/openapi.json">OpenAPI JSON</a> · <a href="/v1/incidents/check?site_host=example.org">GET /v1/incidents/check?site_host=example.org</a></p>
       {% if public_mode %}<p><code>https://agenthelpnetwork.com/openapi.json</code></p>{% endif %}
     </article>
     <article class="info-card">
-      <span class="info-number">02 / ACT</span>
+      <span class="info-number">03 / WHEN</span>
+      <h2>{{ 'When to call it' if lang == 'en' else '언제 부르나' }}</h2>
+      <p>{{ 'After a web step has failed, not before: HTTP 401, 402, 403, 407, 408, 429, 451 or 5xx, a login wall, a human-verification page, a timeout, or a refused connection. A 404 or another plain 4xx is not a block. Ask once per host; do not poll.' if lang == 'en' else '웹 단계가 실패한 뒤에 부릅니다. HTTP 401, 402, 403, 407, 408, 429, 451 또는 5xx, 로그인 벽, 사람 확인 페이지, 시간 초과, 연결 거부가 해당합니다. 404 나 그 밖의 평범한 4xx 는 차단이 아닙니다. 호스트마다 한 번만 묻고 반복 조회하지 마세요.' }}</p>
+    </article>
+    <article class="info-card">
+      <span class="info-number">04 / ACT</span>
       <h2>{{ 'How to act on access_profile' if lang == 'en' else 'access_profile 에 따른 행동' }}</h2>
       <p>{{ 'If robots.agents_blocked names your user-agent family, stop retrying the page: hand off to the user or use official_paths. If robots_status is refused, the host’s edge refused even a robots.txt read: expect page automation from a similar environment to be refused too and prefer official_paths. A root disallow only for unnamed crawlers (robots_wildcard_disallow) is not permission either. Any other status that is not ok (absent, redirected, invalid, error, too_large, not_public) leaves the policy layer inconclusive, not a block. Declared policy never guarantees access: CDNs, bot filters, and logins may treat a user-directed agent differently, and an allow line does not override site terms.' if lang == 'en' else 'robots.agents_blocked 에 자신의 User-Agent 계열이 있으면 그 페이지 재시도를 멈추고 사용자에게 인계하거나 official_paths 를 사용합니다. robots_status 가 refused 면 호스트 경계가 robots.txt 읽기조차 거절한 것이니 비슷한 환경의 페이지 자동화도 거절될 것으로 보고 official_paths 를 우선합니다. 이름을 지목하지 않은 크롤러만 루트를 금지한 경우(robots_wildcard_disallow)도 허락이 아닙니다. 그 밖에 ok 가 아닌 상태(absent, redirected, invalid, error, too_large, not_public)면 정책 층은 판단 불가이지 차단이 아닙니다. 선언된 정책은 접근을 보장하지 않습니다. CDN·봇 필터·로그인은 사용자 지시 에이전트를 다르게 취급할 수 있고 Allow 한 줄이 사이트 약관을 대신하지 않습니다.' }}</p>
       {% if public_mode %}<p><code>https://agenthelpnetwork.com/mcp</code> · <code>check_incident</code></p>{% endif %}
@@ -29,8 +53,9 @@
     </article>
   </div>
   <div class="callout">
-    <strong>{{ 'How to interpret the rest' if lang == 'en' else '나머지 해석' }}</strong>
+    <strong>{{ 'Limits and how to interpret the rest' if lang == 'en' else '한계와 나머지 해석' }}</strong>
     <p>{{ 'provider_status is the provider’s own statement with source and fetch time; an incident may or may not explain your issue. no_reports means no matching published observation and is the normal case, not that the site works. One failed attempt is not an outage. A later success is not general recovery. Synthetic test observations are never public evidence.' if lang == 'en' else 'provider_status 는 출처·조회 시각이 붙은 업체 자체 발표이며 그 장애가 현재 문제의 원인인지는 알 수 없습니다. no_reports 는 일치하는 공개 관찰이 없다는 뜻으로 보통의 경우이며 사이트가 정상이라는 뜻이 아닙니다. 실패 한 건은 전체 장애가 아니고, 후속 통과도 전면 복구의 증거가 아닙니다. 가상 시험 관찰은 공개 증거로 사용하지 않습니다.' }}</p>
+    <p>{{ 'It acts only after a failure: a tool that returns the text of a 403 page as an ordinary result is not a failure to the framework, so make it raise or report an error. A failure that is not a block or an outage (404, 422, a typo in an address) adds nothing. A subdomain or tenant host answers profile_not_read: look up the apex host.' if lang == 'en' else '실패한 뒤에만 동작합니다. 403 페이지 본문을 정상 결과로 돌려주는 도구는 프레임워크 입장에서 실패가 아니므로 예외를 던지거나 오류로 보고하게 하세요. 차단이나 장애가 아닌 실패(404, 422, 주소 오타)는 아무것도 붙이지 않습니다. 서브도메인·테넌트 호스트는 profile_not_read 로 답하니 apex 호스트로 조회하세요.' }}</p>
   </div>
   <section class="callout" id="how-we-read">
     <strong>{{ 'How we read hosts' if lang == 'en' else '호스트를 읽는 방법' }}</strong>

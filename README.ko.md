@@ -6,28 +6,129 @@ Agent Help Network 는 공개 호스트명 하나로 묻는다: **이 호스트�
 
 Agent Help Network 는 독립 프로젝트다. 어떤 AI 업체·플랫폼, 설명하는 사이트, 연결한 상태 정보 제공 업체의 공식 서비스도 아니며 그들과 제휴·보증·후원 관계가 없다.
 
-## 에이전트용 빠른 시작
+
+## 설치
 
 읽기는 무료이고 계정이 필요 없다.
+
+```bash
+claude plugin marketplace add agent-help-network/agent-help-network   # Claude Code 플러그인 (소스: plugins/claude-code/ahn)
+claude plugin install ahn@agent-help-network
+pip install ahn-client                                                 # Python 클라이언트 (소스: clients/python)
+pip install "ahn-client[langchain]"                                    # 또는 [crewai], [openai-agents], [claude-agent-sdk]: 프레임워크 어댑터
+```
+
+**클라이언트에 설치:** [연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다. Python 코드(Playwright, Browser Use, 일반 HTTP)에는 PyPI 의 읽기 전용 [`ahn-client`](clients/python/README.md) 패키지를 쓴다. 의존성이 없고 호스트명과 고정된 enum 코드만 보낸다. 0.3.0 부터는 LangChain v1(`[langchain]`), CrewAI(`[crewai]`), OpenAI Agents SDK(`[openai-agents]`), Claude Agent SDK(`[claude-agent-sdk]`)에서 웹 도구가 실패했을 때 한 줄 답을 붙여 주는 선택형 어댑터와 Browser Use 예제도 있다. 이 중 어느 것도 OpenAI, Meta, Anthropic, Muse, dots 의 공식 통합이 아니다.
+
+**플러그인 데모 영상:** [Claude Code 플러그인 동작 영상](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1분 18초, 영어 자막 포함, [자막 파일](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub 은 WebM 을 화면 안에서 재생하지 않아 파일이 열린다. 같은 영상이 [연결 화면](https://agenthelpnetwork.com/ko/connect#demo)에도 들어 있다.
+
+## 실제 응답
+
+호스트명만 보낸다. URL 경로·쿼리·자격 증명·대화 내용은 보내지 않고, 민감한 호스트명은 피한다.
+
+`github.com` 에 대한 응답이다. 2026-10-18 실제 서비스의 응답을 핵심 필드로 줄이고, 캡처 시점의 캐시보다 새로 생긴 필드는 현재 계약대로 채웠다. 규칙 목록은 3개, 경로 표본은 최대 3개로 줄였다. 값은 시간이 지나면 달라지니 이 예시를 복사하지 말고 서비스를 호출한다. 필드 설명은 [API 계약](docs/api-contract.md)([영어판](docs/api-contract.en.md))을 따른다.
+`summary_line` 과 `next_action` 은 짧은 형태이니 먼저 읽는다. 판정이 정해진 뒤에 계산되며 판정인 `recommendation` 과 `next_checks` 를 바꾸지 않는다(D51).
+
+```bash
+curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error_class=site_access"
+```
+
+```json
+{
+  "site_host": "github.com",
+  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
+  "links": {
+    "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
+    "changelog": "https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md"
+  },
+  "current_site_status": "unknown",
+  "evidence_level": "no_reports",
+  "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN",
+  "observations": [],
+  "recommendation": {
+    "action": "use_official_path",
+    "confidence": "medium",
+    "reasons": ["official_path_available"]
+  },
+  "access_profile": {
+    "robots_status": "ok",
+    "robots": {
+      "rules": [
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": false, "root_allowed": true, "disallow_count": 162,
+         "crawl_delay": null, "disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"]},
+        {"agent": "GPTBot", "kind": "training_crawler", "explicit_group": true, "root_allowed": true, "disallow_count": 162,
+         "crawl_delay": 1.0, "disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"]},
+        {"agent": "Bytespider", "kind": "training_crawler", "explicit_group": true, "root_allowed": false, "disallow_count": 1,
+         "crawl_delay": null, "disallow_paths": ["/"]}
+      ],
+      "wildcard_root_allowed": true,
+      "sitemaps": [],
+      "wildcard_crawl_delay": null,
+      "wildcard_disallow_paths": ["/account-login", "/copilot/", "/copilot/c/"],
+      "agents_blocked": ["Bytespider"],
+      "agents_allowed": ["OAI-SearchBot", "PerplexityBot", "Bingbot", "GPTBot", "ClaudeBot", "anthropic-ai"]
+    },
+    "robots_detail": "http_200",
+    "llms_txt_status": "present",
+    "llms_detail": "too_large",
+    "read_host": "github.com",
+    "source_urls": {"robots_txt": "https://github.com/robots.txt", "llms_txt": "https://github.com/llms.txt"},
+    "fetched_at": "2026-10-18T03:53:58.695938Z",
+    "freshness": "fresh"
+  },
+  "official_paths": {
+    "name": "GitHub",
+    "api_docs": "https://docs.github.com/en/rest",
+    "developer_portal": "https://docs.github.com/",
+    "note": null
+  },
+  "provider_status": {
+    "source_name": "GitHub Status",
+    "source_url": "https://www.githubstatus.com/",
+    "indicator": "none",
+    "freshness": "fresh",
+    "error_detail": null
+  },
+  "provider_source_state": "feed_connected",
+  "next_checks": [
+    {"code": "locate_failure_stage"},
+    {"code": "robots_allows_agents"},
+    {"code": "llms_txt_present"},
+    {"code": "official_path_available"},
+    {"code": "provider_clear"},
+    {"code": "reports_unknown"}
+  ]
+}
+```
+
+## 언제 부르나
+
+웹 단계가 실패한 뒤에 부른다. 그 전에 부르지 않는다. 가져오기나 브라우저 단계가 차단이나 장애를 보고할 때 호스트를 조회한다: HTTP 401, 402, 403, 407, 408, 429, 451 또는 5xx, 로그인 벽, 사람 확인 페이지, 시간 초과, 연결 거부. 404 나 그 밖의 평범한 4xx 는 차단이 아니므로 조회하지 않는다. 호스트마다 한 번만 묻고 반복 조회하지 않는다.
+
+| 실행 환경 | 웹 단계가 실패하면 | 설치 |
+| --- | --- | --- |
+| Claude Code | 플러그인이 실패한 `WebFetch` 나 브라우저 단계 뒤에 한 줄을 붙인다([한 줄이 붙는 경우](plugins/claude-code/ahn/README.md#when-a-line-is-added), 영어). | `claude plugin install ahn@agent-help-network` |
+| LangChain v1, CrewAI, OpenAI Agents SDK, Claude Agent SDK | 어댑터가 실패한 도구 결과에 한 줄을 붙인다(CrewAI 는 프롬프트가 아니라 콜백과 로그로 간다). | `pip install "ahn-client[langchain]"`, `[crewai]`, `[openai-agents]`, `[claude-agent-sdk]` |
+| 그 밖의 MCP 클라이언트 | `check_incident` 도구를 부른다. | `https://agenthelpnetwork.com/mcp` |
+| 일반 Python, Playwright, Browser Use, REST | `except` 블록에서 `ahn.check()` 나 REST 엔드포인트를 부른다. | `pip install ahn-client` |
+
+## 한계
+
+- 실패한 뒤에만 동작한다. 403 페이지 본문을 정상 결과로 돌려주는 도구는 프레임워크 입장에서 실패가 아니므로 어댑터가 보지 못한다: 도구가 예외를 던지게(`response.raise_for_status()`) 하거나 오류로 보고하게 한다. Claude Code 플러그인도 "성공"했지만 차단 페이지를 보여 주는 브라우저 단계와 Bash 로 돌린 `curl` 은 조회하지 않는다. 이때는 `ahn-lookup` 스킬이나 MCP 도구를 직접 부른다.
+- 차단이나 장애가 아닌 실패(404, 422, 주소 오타)는 아무것도 붙이지 않고 실행은 원래대로 이어진다.
+- 답은 선언된 정책과 공개 출처이지 접근 보장이 아니며, `no_reports` 는 사이트가 정상이라는 뜻이 아니다([응답의 구성](#응답의-구성) 참고).
+- 호스트를 처음 조회하면 `access_profile.freshness: pending` 이 올 수 있다: `retry_after_seconds` 뒤에 한 번만 다시 묻고 반복 조회하지 않는다. 서브도메인·테넌트 호스트는 `profile_not_read` 로 답하니 apex 호스트로 조회한다.
+- 작업을 대신 시도하거나 대상 페이지를 방문하지 않는다([읽는 것과 절대 하지 않는 것](#읽는-것과-절대-하지-않는-것) 참고).
+
+## REST·MCP 참고
+
+사람은 [전체 에이전트 지침](https://agenthelpnetwork.com/agent-instructions.txt)을 [Human 화면](https://agenthelpnetwork.com/en/human)에서 복사해 에이전트 채팅에 붙여 넣을 수 있다. 공개 사이트의 기본 화면은 에이전트용 안내이고, 우측 상단 `Agent | Human` 전환으로 사람용 검색 화면에 갈 수 있다. 검색 화면은 선언된 정책 표, llms.txt, 공식 경로, 업체 상태, 관찰 순으로 표시한다.
 
 - **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<공개 호스트명>`
   선택: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, 기본 24), 그리고 클라이언트가 이미 아는 값만 붙이는 선택 조회 코드 넷: `http_status` (401, 402, 403, 407, 408, 429, 451 또는 500–599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). 호스트·시간별로 집계할 뿐 답은 바꾸지 않는다([계약](docs/api-contract.md#조회-신호-코드)). 답을 바꾸는 선택 코드가 하나 더 있다: `agent_vendor` (`openai`, `anthropic`, `google`, `perplexity`, `meta`, `mistral`, `amazon`, `microsoft`, `apple`, `duckduckgo`, `diffbot`, `exa`, `other`), 자기 웹 요청이 보내는 `robots.txt` 토큰의 벤더다. 판정이 그 벤더의 토큰을 읽는다. 모르면 생략한다. 집계·저장하지 않고 목록 밖 값은 무시한다([계약](docs/api-contract.md#에이전트-벤더-agent_vendor-d48)).
 - **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — 도구 `check_incident` (읽기 전용·멱등)와 선택적 `report_observation`.
 - **에이전트용 입구:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
-- **클라이언트에 설치:** [연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다. Python 코드(Playwright, Browser Use, 일반 HTTP)에는 PyPI 의 읽기 전용 [`ahn-client`](clients/python/README.md) 패키지를 쓴다. 의존성이 없고 호스트명과 고정된 enum 코드만 보낸다. 0.3.0 부터는 LangChain v1(`[langchain]`), CrewAI(`[crewai]`), OpenAI Agents SDK(`[openai-agents]`), Claude Agent SDK(`[claude-agent-sdk]`)에서 웹 도구가 실패했을 때 한 줄 답을 붙여 주는 선택형 어댑터와 Browser Use 예제도 있다. 이 중 어느 것도 OpenAI, Meta, Anthropic, Muse, dots 의 공식 통합이 아니다.
-
-  ```bash
-  claude plugin marketplace add agent-help-network/agent-help-network   # Claude Code 플러그인 (소스: plugins/claude-code/ahn)
-  claude plugin install ahn@agent-help-network
-  pip install ahn-client                                                 # Python 클라이언트 (소스: clients/python)
-  pip install "ahn-client[langchain]"                                    # 또는 [crewai], [openai-agents], [claude-agent-sdk]: 프레임워크 어댑터
-  ```
-
-  **플러그인 데모 영상:** [Claude Code 플러그인 동작 영상](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1분 18초, 영어 자막 포함, [자막 파일](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub 은 WebM 을 화면 안에서 재생하지 않아 파일이 열린다. 같은 영상이 [연결 화면](https://agenthelpnetwork.com/ko/connect#demo)에도 들어 있다.
-
-호스트명만 보낸다. URL 경로·쿼리·자격 증명·대화 내용은 보내지 않고, 민감한 호스트명은 피한다. 응답 예시(2026-10-18 실제 서비스의 `github.com` 응답을 핵심 필드로 줄이고, 캡처 시점의 캐시보다 새로 생긴 필드는 현재 계약대로 채운 것)는 [영어 README](README.md#for-agents)에 있다. 필드 설명은 [API 계약](docs/api-contract.md)([영어판](docs/api-contract.en.md))을 따른다.
-
-사람은 [전체 에이전트 지침](https://agenthelpnetwork.com/agent-instructions.txt)을 [Human 화면](https://agenthelpnetwork.com/en/human)에서 복사해 에이전트 채팅에 붙여 넣을 수 있다. 공개 사이트의 기본 화면은 에이전트용 안내이고, 우측 상단 `Agent | Human` 전환으로 사람용 검색 화면에 갈 수 있다. 검색 화면은 선언된 정책 표, llms.txt, 공식 경로, 업체 상태, 관찰 순으로 표시한다.
 
 ## 응답의 구성
 
