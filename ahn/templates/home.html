@@ -18,6 +18,7 @@
         <label for="site_host">{{ 'LOOK UP A PUBLIC HOSTNAME' if en else '공개 호스트명 조회' }}</label>
         <div class="ledger-search-row"><input id="site_host" name="site_host" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.org" required maxlength="253"><button type="submit">{{ 'View profile' if en else '프로필 보기' }} <span aria-hidden="true">↗</span></button></div>
         <p>{{ 'Hostname only, never a URL path, account or secret.' if en else '호스트명만 입력하십시오. URL 경로·계정 식별자·비밀 정보는 입력하지 마십시오.' }} {{ 'Try' if en else '예:' }} <a rel="nofollow" href="/{{ lang }}/search?site_host=github.com">github.com</a> · <a rel="nofollow" href="/{{ lang }}/search?site_host=cloudflare.com">cloudflare.com</a> · <a rel="nofollow" href="/{{ lang }}/search?site_host=chatgpt.com">chatgpt.com</a></p>
+        {% if public_board %}<p><a href="/{{ lang }}/now">{{ 'Sites with a problem right now →' if en else '지금 문제가 있는 사이트 →' }}</a></p>{% endif %}
       </form>
     </div>
     {% if example %}

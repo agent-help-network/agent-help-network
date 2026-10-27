@@ -27,6 +27,7 @@
         <a href="/{{ lang }}/agents" {% if page == 'agents' %}aria-current="page"{% endif %}>{{ t.nav_agents }}</a>
         <a href="/{{ lang }}/connect" {% if page == 'connect' %}aria-current="page"{% endif %}>{{ t.nav_connect }}</a>
         <a href="/{{ lang }}/search" {% if page == 'search' %}aria-current="page"{% endif %}>{{ t.nav_search }}</a>
+        {% if public_board %}<a href="/{{ lang }}/now" {% if page == 'now' %}aria-current="page"{% endif %}>{{ 'Site status' if lang == 'en' else '지금 문제' }}</a>{% endif %}
         {% if reporting_enabled or public_mode %}<a href="/{{ lang }}/report" {% if page == 'report' %}aria-current="page"{% endif %}>{{ t.nav_report if reporting_enabled else ('Withdraw' if lang == 'en' else '철회') }}</a>{% endif %}
         <a href="/{{ lang }}/policy" {% if page == 'policy' %}aria-current="page"{% endif %}>{{ t.nav_policy }}</a>
       </nav>
