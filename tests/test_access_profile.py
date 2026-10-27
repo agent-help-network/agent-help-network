@@ -222,8 +222,13 @@ def test_build_profile_non_ok_statuses_pass_through_with_no_robots_summary():
     for status in ("absent", "redirected", "too_large", "error", "not_public", "refused"):
         profile = build_profile("example.com", reader=_stub(robots=(status, None), llms=(status, None)))
         assert profile["robots_status"] == status and profile["robots"] is None
-        assert profile["llms_txt_status"] == ("present" if status == "too_large" else status)
-        assert profile["robots_detail"] is None and profile["llms_detail"] is None
+        assert profile["robots_detail"] is None
+        if status == "absent":  # no robots.txt: llms.txt is read (RFC 9309 2.3.1.3)
+            assert profile["llms_txt_status"] == "absent" and profile["llms_detail"] is None
+        elif status == "not_public":  # ineligible host: same state for llms.txt, no request
+            assert profile["llms_txt_status"] == "not_public" and profile["llms_detail"] is None
+        else:  # a robots.txt we could not read: llms.txt is not requested (D56)
+            assert profile["llms_txt_status"] == "not_read" and profile["llms_detail"] == "robots_unreadable"
 
 
 def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
@@ -248,7 +253,7 @@ def test_build_profile_falls_back_to_www_when_apex_refuses_or_fails():
     # A www host is never prefixed twice.
     only_once = []
     build_profile("www.example.com", reader=lambda h, p, *, cap_bytes, **_: (only_once.append(h), ("error", None, "connect_error"))[1])
-    assert only_once == ["www.example.com", "www.example.com"]
+    assert only_once == ["www.example.com"]  # robots.txt only: llms.txt is not requested after a transport failure (D56)
 
 
 def test_fetch_public_file_maps_http_statuses(monkeypatch):
@@ -339,3 +344,116 @@ def test_read_public_file_rejects_bad_input_and_contains_resolver_failures(monke
         assert time.monotonic() - started < 5
     finally:
         release.set()
+
+
+# ---- D56: llms.txt is read only where the host's own robots.txt allows it ----
+
+import pytest  # noqa: E402
+
+from ahn.access_profile import llms_gate  # noqa: E402
+
+
+def _llms_calls(reader):
+    return [c for c in reader.calls if c[1] == "/llms.txt"]
+
+
+def _profile_for(robots, llms=("ok", b"# Example\n", "http_200"), host="example.com"):
+    reader = _stub(robots=robots, llms=llms)
+    return build_profile(host, reader=reader), reader
+
+
+def test_star_disallow_all_means_llms_txt_is_not_requested():
+    profile, reader = _profile_for(("ok", b"User-agent: *\nDisallow: /\n", "http_200"))
+    assert _llms_calls(reader) == []
+    assert (profile["llms_txt_status"], profile["llms_detail"], profile["llms_sha256"]) == ("not_read", "robots_disallowed", None)
+    assert profile["robots_status"] == "ok"  # /robots.txt itself is always read
+
+
+def test_allow_llms_txt_beats_a_broader_disallow():
+    profile, reader = _profile_for(("ok", b"User-agent: *\nDisallow: /\nAllow: /llms.txt\n", "http_200"))
+    assert len(_llms_calls(reader)) == 1 and profile["llms_txt_status"] == "present"
+
+
+def test_named_group_wins_over_star_in_both_directions():
+    blocked, reader = _profile_for(("ok", b"User-agent: *\nAllow: /\n\nUser-agent: AgentHelpNetwork\nDisallow: /llms.txt\n", "http_200"))
+    assert _llms_calls(reader) == [] and blocked["llms_detail"] == "robots_disallowed"
+    allowed, reader = _profile_for(("ok", b"User-agent: *\nDisallow: /\n\nUser-agent: AgentHelpNetwork\nAllow: /\n", "http_200"))
+    assert len(_llms_calls(reader)) == 1 and allowed["llms_txt_status"] == "present"
+
+
+@pytest.mark.parametrize("rule", ["Disallow: /llms", "Disallow: /llms.txt$", "Disallow: /*.txt", "Disallow: /llms.txt"])
+def test_prefix_wildcard_and_anchored_rules_block_llms_txt(rule):
+    profile, reader = _profile_for(("ok", f"User-agent: *\n{rule}\n".encode(), "http_200"))
+    assert _llms_calls(reader) == [] and profile["llms_txt_status"] == "not_read"
+
+
+def test_where_the_two_groupings_differ_the_stricter_answer_stands_for_llms_txt():
+    body = b"User-agent: *\nCrawl-delay: 10\n\nUser-agent: BadBot\nDisallow: /\n"  # same fixture as test_feed_robots
+    profile, reader = _profile_for(("ok", body, "http_200"))
+    assert _llms_calls(reader) == [] and profile["llms_detail"] == "robots_disallowed"
+
+
+@pytest.mark.parametrize("robots", [("absent", None, "http_404"), ("invalid", None, "html_body"), ("refused", None, "http_403"),
+                                    ("refused", None, "http_401")])
+def test_a_missing_web_page_or_4xx_robots_file_allows_the_read(robots):
+    # the apex answers robots as given; the www fallback (for refused/invalid) gets the same answer from the stub
+    profile, reader = _profile_for(robots)
+    assert len(_llms_calls(reader)) == 1 and profile["llms_txt_status"] == "present"
+
+
+@pytest.mark.parametrize("robots", [("refused", None, "http_429"), ("refused", None, "http_503"), ("error", None, "timeout"),
+                                    ("redirected", None, "redirect:other.example"), ("too_large", None, "too_large")])
+def test_an_unreadable_robots_file_forbids_the_read(robots):
+    profile, reader = _profile_for(robots)
+    assert _llms_calls(reader) == []
+    assert (profile["llms_txt_status"], profile["llms_detail"], profile["llms_sha256"]) == ("not_read", "robots_unreadable", None)
+
+
+def test_a_not_public_host_keeps_not_public_for_llms_txt_without_a_request():
+    profile, reader = _profile_for(("not_public", None, None))
+    assert _llms_calls(reader) == []
+    assert (profile["llms_txt_status"], profile["llms_detail"]) == ("not_public", None)
+
+
+def test_the_gate_judges_the_file_of_the_host_that_answered_robots():
+    calls = []
+
+    def reader(site_host, path, *, cap_bytes, **options):
+        calls.append((site_host, path))
+        if site_host == "example.com":
+            return ("error", None, "timeout")
+        return ("ok", b"User-agent: *\nDisallow: /\n", "http_200") if path == "/robots.txt" else ("ok", b"x", "http_200")
+
+    profile = build_profile("example.com", reader=reader)
+    assert profile["read_host"] == "www.example.com" and profile["llms_txt_status"] == "not_read"
+    assert not [c for c in calls if c[1] == "/llms.txt"]
+
+
+def test_llms_gate_is_pure_and_total():
+    assert llms_gate("ok", b"", "http_200") == (True, None)
+    assert llms_gate("ok", b"User-agent: *\nDisallow: /\n", "http_200") == (False, "robots_disallowed")
+    assert llms_gate("ok", None, None) == (False, "robots_unreadable")
+    assert llms_gate("pending", None, None) == (False, "robots_unreadable")
+
+
+def test_blocking_llms_txt_never_changes_the_recommendation():
+    for body in (b"User-agent: *\nDisallow: /\n", b"User-agent: GPTBot\nDisallow: /\n", b"User-agent: *\nAllow: /\n"):
+        present, _ = _profile_for(("ok", body, "http_200"), llms=("ok", b"x", "http_200"))
+        not_read = {**present, "llms_txt_status": "not_read", "llms_detail": "robots_disallowed"}
+        a, b = recommendation("site_access", None, present, None), recommendation("site_access", None, not_read, None)
+        assert a["action"] == b["action"] and a["confidence"] == b["confidence"]
+        strip = lambda r: [c for c in r["reasons"] if c != "llms_txt_present"]  # noqa: E731
+        assert strip(a) == strip(b)
+
+
+def test_models_and_plugin_accept_not_read():
+    import importlib.util
+    from pathlib import Path
+    from ahn.models import AccessProfile
+    field = AccessProfile.model_fields["llms_txt_status"]
+    assert "not_read" in field.annotation.__args__
+    hook_path = Path(__file__).resolve().parents[1] / "plugins" / "claude-code" / "ahn" / "hooks" / "ahn_lookup.py"
+    spec = importlib.util.spec_from_file_location("ahn_hook_not_read", hook_path)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    assert hook._enum("not_read", hook.LLMS_STATUSES) == "not_read"
