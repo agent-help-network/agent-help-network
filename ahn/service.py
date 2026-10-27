@@ -410,7 +410,8 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
     # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
     # decision yet only a host on the interim list (read by hand on 2026-10-22) keeps its statement on
     # show, and the read that decides is queued; a host whose robots.txt disallows it, or could not be
-    # read, shows none and links to the official page when there is one.
+    # read, shows none and links to the status page; so does a host with no decision yet that is not on the
+    # list (a link, never a reading).
     feed_host = feed_robots.host_and_path(source["api_url"])[0]
     decision = feed_robots.feed_state(conn, source["api_url"])
     if not feed_robots.shown(decision, feed_host):
@@ -418,7 +419,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
         # it lists are shown (information only) once that feed has been read.
         atom = decision == "disallowed" and feed_robots.history_allowed(conn, source["api_url"])
         if not (atom and source["feed_source"] == "history_atom"):
-            blocked_page = (source["source_name"], source["status_page_url"]) if decision in ("disallowed", "unknown") else None
+            blocked_page = (source["source_name"], source["status_page_url"])  # a link only; the feed is not read
             return FeedView(source, None, False, False, decision == "undecided" or atom, blocked_page)
     fetched_at = source["fetched_at"]
     # The age of the last successful statement decides; a later failed read only adds error_detail (D46).

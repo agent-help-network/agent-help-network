@@ -342,10 +342,15 @@ def test_the_interim_list_decides_what_shows_only_until_a_decision_is_stored(db,
     site, source, unlisted_site, unlisted = lookup_world(db, monkeypatch)
     read_before(db, site)
     # No decision yet: a host on the interim list (read by hand on 2026-10-22) keeps its statement on show ...
-    assert look(db, site)["provider_status"]["indicator"] == "minor"
+    listed = look(db, site)
+    assert listed["provider_status"]["indicator"] == "minor"
+    assert listed["official_status_page"] is None and listed["provider_source_state"] == "feed_connected"  # shown: no extra link
     # ... any other host shows none, and the read that decides is queued behind the lookup.
     answer = look(db, unlisted_site)
     assert not answer.get("provider_status")
+    # ... but its status page is linked at once, outside the interim list and before any decision (a link, never a reading).
+    assert answer["official_status_page"] == {"source_name": unlisted.name, "source_url": unlisted.page_url}
+    assert answer["provider_source_state"] == "official_page_only"
     assert ("status_feed", unlisted_site) in {(r["kind"], r["site_host"]) for r in q(db, "SELECT kind,site_host FROM background_reads")}
     # A stored decision replaces the list in both directions.
     read_before(db, unlisted_site)
@@ -356,6 +361,17 @@ def test_the_interim_list_decides_what_shows_only_until_a_decision_is_stored(db,
     assert not answer.get("provider_status") and answer["official_status_page"]["source_url"] == source.page_url
     decide(db, source, fetched=("error", None, "http_503"))  # a file that could not be read shows nothing either
     assert not look(db, site).get("provider_status")
+
+def test_an_undecided_host_links_its_status_page_without_changing_the_judgment(db, real_feed_robots, monkeypatch):
+    site, source, unlisted_site, unlisted = lookup_world(db, monkeypatch)
+    before = look(db, unlisted_site)  # no decision stored, not on the interim list
+    assert not before.get("provider_status") and before["official_status_page"]["source_url"] == unlisted.page_url
+    assert q(db, "SELECT kind FROM background_reads WHERE kind='status_feed' AND site_host=%s", (unlisted_site,))  # the deciding read is still queued
+    decide(db, unlisted, fetched=("ok", b"User-agent: *\nDisallow: /\n", "http_200"))  # now decided: disallowed
+    after = look(db, unlisted_site)
+    assert after["official_status_page"] == before["official_status_page"]
+    for key in ("recommendation", "next_checks", "provider_status"):
+        assert after.get(key) == before.get(key)
 
 
 def test_the_owner_board_counts_allowed_disallowed_and_unknown_feeds(db, world):
