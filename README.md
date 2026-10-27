@@ -10,24 +10,22 @@ Agent Help Network answers one question for a public hostname: **what does this 
 
 Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, endorsed by, or sponsored by, any AI provider or platform, any site it describes, or any provider whose status it links.
 
-## For agents
+## Install
 
 Reading is free and needs no account.
 
-- **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>`
-  Optional: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, default 24), and four optional lookup codes the client already knows: `http_status` (401, 402, 403, 407, 408, 429, 451 or 500–599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). They are counted per host and hour and never change the answer (see the [contract](docs/api-contract.en.md#lookup-signal-codes)). One more optional code does change it: `agent_vendor` (`openai`, `anthropic`, `google`, `perplexity`, `meta`, `mistral`, `amazon`, `microsoft`, `apple`, `duckduckgo`, `diffbot`, `exa`, or `other`), the vendor whose `robots.txt` token your own web requests send. The recommendation then reads that vendor's tokens; leave it out when unsure. It is not counted or stored, and a value outside the list is ignored ([contract](docs/api-contract.en.md#agent-vendor-agent_vendor-d48)).
-- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — tool `check_incident` (read-only, idempotent) and the optional `report_observation`.
-- **Agent entry points:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
-- **Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and enum codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a Browser Use example. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
+```bash
+claude plugin marketplace add agent-help-network/agent-help-network   # Claude Code plugin (source: plugins/claude-code/ahn)
+claude plugin install ahn@agent-help-network
+pip install ahn-client                                                 # Python client (source: clients/python)
+pip install "ahn-client[langchain]"                                    # or [crewai], [openai-agents], [claude-agent-sdk]: framework adapters
+```
 
-  ```bash
-  claude plugin marketplace add agent-help-network/agent-help-network   # Claude Code plugin (source: plugins/claude-code/ahn)
-  claude plugin install ahn@agent-help-network
-  pip install ahn-client                                                 # Python client (source: clients/python)
-  pip install "ahn-client[langchain]"                                    # or [crewai], [openai-agents], [claude-agent-sdk]: framework adapters
-  ```
+**Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and enum codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a Browser Use example. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
 
-  **Plugin demo video:** [watch the Claude Code plugin work](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1 min 18 s, with English captions; [captions file](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub does not play WebM inline, so this opens the file; the same video is embedded on the [connect page](https://agenthelpnetwork.com/en/connect#demo).
+**Plugin demo video:** [watch the Claude Code plugin work](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1 min 18 s, with English captions; [captions file](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub does not play WebM inline, so this opens the file; the same video is embedded on the [connect page](https://agenthelpnetwork.com/en/connect#demo).
+
+## A real response
 
 Send the hostname only — never a URL path, query, credential, or conversation text — and avoid sensitive hostnames.
 
@@ -36,10 +34,17 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 ```
 
 A response for `github.com`, captured from the live service on 2026-10-18 and trimmed to the key fields: `robots.rules` held 22 agent-token entries at capture time (it has one entry per token in `AGENT_USER_AGENTS` in [`ahn/access_profile.py`](ahn/access_profile.py), and that table has grown since, so `agents_blocked` and `agents_allowed` below list only the tokens known then) and is cut to three here, path-sample lists are cut to at most three entries, and each `next_checks` entry also carries an English `text`. `robots_detail`, `llms_detail`, `crawl_delay`, the path samples, `sitemaps`, `wildcard_crawl_delay`, `read_host`, and `provider_status.error_detail` are shown as a fresh read under the current contract returns them (the profile cached at capture time predated them).
+`summary_line` and `next_action` are the short form: read them first. They are computed after the answer is decided and never change `recommendation` or `next_checks`, which stay the verdict (D51; fields in the [contract](docs/api-contract.en.md)).
 
 ```json
 {
   "site_host": "github.com",
+  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
+  "links": {
+    "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
+    "changelog": "https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md"
+  },
   "current_site_status": "unknown",
   "evidence_level": "no_reports",
   "summary_code": "NO_MATCHING_REPORTS_STATUS_UNKNOWN",
@@ -102,7 +107,33 @@ A response for `github.com`, captured from the live service on 2026-10-18 and tr
 
 Values change over time; call the service rather than copying this example. The full field reference is in the [API contract (English)](docs/api-contract.en.md).
 
+## When to call it
+
+Call it after a web step has failed, not before. Look the host up when a fetch or browser step reports a block or an outage: HTTP 401, 402, 403, 407, 408, 429, 451 or 5xx, a login wall, a human-verification page, a timeout, or a refused connection. A 404 or another plain 4xx is not a block and needs no lookup. Ask once per host; do not poll.
+
+| Runtime | What happens on a failed web step | Install |
+| --- | --- | --- |
+| Claude Code | The plugin adds one line after a failed `WebFetch` or browser step ([when a line is added](plugins/claude-code/ahn/README.md#when-a-line-is-added)). | `claude plugin install ahn@agent-help-network` |
+| LangChain v1, CrewAI, OpenAI Agents SDK, Claude Agent SDK | The adapter adds one line to the failed tool result (CrewAI: to your callback and the log, not the prompt). | `pip install "ahn-client[langchain]"`, `[crewai]`, `[openai-agents]` or `[claude-agent-sdk]` |
+| Any other MCP client | You call the `check_incident` tool. | `https://agenthelpnetwork.com/mcp` |
+| Plain Python, Playwright, Browser Use, REST | You call `ahn.check()` or the REST endpoint in your `except` block. | `pip install ahn-client` |
+
+## Limits
+
+- It acts only after a failure. A tool that returns the text of a 403 page as an ordinary result is not a failure to the framework, so no adapter sees it: make the tool raise (`response.raise_for_status()`) or report an error. The Claude Code plugin likewise does not look up a browser step that "succeeds" but shows a block page, or `curl` run through Bash; use the `ahn-lookup` skill or the MCP tool by hand.
+- A failure that is not a block or an outage (404, 422, a typo in an address) adds nothing, and the run goes on as it would have.
+- The answer is declared policy and published sources, not an access guarantee, and `no_reports` does not mean a site works (see [What the answer contains](#what-the-answer-contains)).
+- The first lookup of a host can come back with `access_profile.freshness: pending`: ask once more after `retry_after_seconds`, do not poll. A subdomain or tenant host answers `profile_not_read`: look up the apex host.
+- It never attempts your task or visits the target page (see [What we read and never do](#what-we-read-and-never-do)).
+
+## REST and MCP reference
+
 People can copy the [full agent instructions](https://agenthelpnetwork.com/agent-instructions.txt) from the [Human page](https://agenthelpnetwork.com/en/human) and paste them into an agent chat. The public site opens on the agent guide; the `Agent | Human` switch at the top right leads to the human search page, which shows declared policy, llms.txt, official path, provider status, and observations in that order.
+
+- **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>`
+  Optional: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, default 24), and four optional lookup codes the client already knows: `http_status` (401, 402, 403, 407, 408, 429, 451 or 500–599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). They are counted per host and hour and never change the answer (see the [contract](docs/api-contract.en.md#lookup-signal-codes)). One more optional code does change it: `agent_vendor` (`openai`, `anthropic`, `google`, `perplexity`, `meta`, `mistral`, `amazon`, `microsoft`, `apple`, `duckduckgo`, `diffbot`, `exa`, or `other`), the vendor whose `robots.txt` token your own web requests send. The recommendation then reads that vendor's tokens; leave it out when unsure. It is not counted or stored, and a value outside the list is ignored ([contract](docs/api-contract.en.md#agent-vendor-agent_vendor-d48)).
+- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — tool `check_incident` (read-only, idempotent) and the optional `report_observation`.
+- **Agent entry points:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
 
 ## What the answer contains
 
