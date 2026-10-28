@@ -1869,7 +1869,8 @@ def _due_groups(conn, now: datetime) -> tuple[list[dict], dict]:
 
     rows = conn.execute(
         """SELECT s.site_host,s.source_name,s.status_page_url,s.api_url,
-                  c.indicator,c.fetched_at,c.last_error_at,c.last_error_detail,c.failures
+                  c.indicator,c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
+                  c.feed_source,c.active_incidents
            FROM status_sources s
            LEFT JOIN queried_hosts q ON q.site_host=s.site_host
            LEFT JOIN status_cache c ON c.site_host=s.site_host
