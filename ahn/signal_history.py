@@ -564,9 +564,25 @@ def board_provider(provider_status: dict, now: datetime) -> str | None:
     or incident) must be no older than STALE_INCIDENT_DAYS. So a board line always implies a lookup wait, never the
     other way round, and a statement nobody has touched for a week (a page left at "major" since August) or one with
     no time at all is not shown as a current problem.
-    """
-    from .triage import STALE_INCIDENT_DAYS, incident_stale, page_stale, provider_wait_reason
 
+    D57: a reading of a page's Atom history (source_kind history_atom, no indicator) is listed exactly when the lookup
+    waits on it (triage.history_incident: an open incident updated within the week, a window that is not blind). One
+    with open incidents that is not is counted by why: window_blind, no_update_time (none usable, including one more
+    than an hour ahead), stale_incidents (older than the week), or not_a_wait (a count that is not a whole number).
+    """
+    from .triage import STALE_INCIDENT_DAYS, history_incident, incident_stale, page_stale, provider_wait_reason
+
+    if provider_status.get("source_kind") == "history_atom":
+        if history_incident(provider_status, now):
+            return None
+        if provider_status.get("window_blind") not in (None, False):
+            return "window_blind"
+        incident = _usable_time(provider_status.get("incident_updated_at"), now)
+        if incident is None:
+            return "no_update_time"
+        if now - incident > timedelta(days=STALE_INCIDENT_DAYS):
+            return "stale_incidents"
+        return "not_a_wait"
     reason = provider_wait_reason(provider_status, now)
     if reason == "provider_incident_stale" or (reason is None and incident_stale(provider_status, now)):
         return "stale_incidents"
@@ -593,19 +609,20 @@ def board_provider(provider_status: dict, now: datetime) -> str | None:
 # usable provider time for the board and the lookup (D54).
 
 
-PROVIDER_EXCLUSIONS = ("stale_incidents", "stale_update", "no_update_time", "not_a_wait", "feed_not_shown")
+PROVIDER_EXCLUSIONS = ("stale_incidents", "stale_update", "no_update_time", "not_a_wait", "feed_not_shown", "window_blind")
 
 
 def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None,
                   left_out: list[dict] | None = None) -> dict[str, dict]:
     """Curated hosts whose provider statement belongs on the board (board_provider). The statement is read and built
-    as the lookup answer does: an enabled source, the feed shown under its host's robots.txt decision (D50; a reading
-    from a page's Atom history has no indicator and is never a board line, D52), the D46 freshness rule and the stored
-    scope (service._provider_scope). excluded, when given, counts each fresh problem statement left out, by reason;
+    as the lookup answer does: an enabled source, the feed shown under its host's robots.txt decision (D50), the D46
+    freshness rule and the stored scope (service._provider_scope). A reading from a page's Atom history (D52) is read only
+    when it lists an open incident, and then through service.feed_view, the lookup's own function, so the board shows it
+    only while the lookup shows it (D57). excluded, when given, counts each fresh problem statement left out, by reason;
     left_out, when given, gets each one's host, reason and whether the lookup answer still waits on it (owner only)."""
     from . import feed_robots
     from .background_reads import feed_freshness
-    from .service import _provider_scope
+    from .service import _provider_scope, feed_view
     from .triage import provider_wait_reason
 
     curated = board_hosts()
@@ -614,8 +631,9 @@ def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None,
                   c.last_error_at,c.last_error_detail,c.active_incidents,c.max_incident_impact,c.incident_updated_at,
                   c.active_maintenances,c.affected,c.feed_source
            FROM status_sources s JOIN status_cache c ON c.site_host=s.site_host
-           WHERE s.enabled=true AND c.indicator=ANY(%s) AND c.fetched_at >= %s""",
-        (sorted(PROVIDER_PROBLEMS), now - FEED_FRESH),
+           WHERE s.enabled=true AND c.fetched_at >= %s
+             AND (c.indicator=ANY(%s) OR (c.feed_source='history_atom' AND c.active_incidents > 0))""",
+        (now - FEED_FRESH, sorted(PROVIDER_PROBLEMS)),
     ).fetchall()
     result = {}
     for row in rows:
@@ -625,7 +643,15 @@ def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None,
         if freshness != "fresh":
             continue
         status = None
-        if row["feed_source"] == "history_atom" or not feed_robots.shown(
+        if row["feed_source"] == "history_atom":
+            # D57: the statement exactly as the lookup builds it (shown only where the API is disallowed and the
+            # Atom history allowed, or the API allowed again but not yet read).
+            status = feed_view(conn, row["site_host"], now).provider_status
+            if status is None or status.get("source_kind") != "history_atom" or status.get("freshness") != "fresh":
+                status, reason = None, "feed_not_shown"
+            else:
+                reason = board_provider(status, now)
+        elif not feed_robots.shown(
                 feed_robots.feed_state(conn, row["api_url"]), feed_robots.host_and_path(row["api_url"])[0]):
             reason = "feed_not_shown"
         else:
@@ -643,6 +669,10 @@ def _provider_now(conn, now: datetime, excluded: dict[str, int] | None = None,
                                     "fetched_at": row["fetched_at"], "source_updated_at": row["source_updated_at"],
                                     "updated_at": provider_updated_at(status, now), "basis": status.get("basis"),
                                     "source_name": row["source_name"], "source_url": row["status_page_url"]}
+        if status.get("source_kind") == "history_atom":
+            # D57: no indicator (never made up), the source it came from and the open incident count.
+            result[row["site_host"]].update(indicator=None, source_kind="history_atom",
+                                            active_incidents=status["active_incidents"])
     return result
 
 
@@ -726,6 +756,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
         entry["provider"] = {"indicator": row["indicator"], "source_name": row["source_name"], "source_url": row["source_url"],
                              "fetched_at": _iso(row["fetched_at"]), "source_updated_at": _iso(row["source_updated_at"]),
                              "updated_at": _iso(row["updated_at"]), "basis": row["basis"]}
+        if row.get("source_kind"):
+            entry["provider"].update(source_kind=row["source_kind"], active_incidents=row["active_incidents"])
     order = {"critical": 0, "major": 1, "minor": 2, "maintenance": 4}
     listed = sorted(candidates.values(), key=lambda c: (order.get((c["provider"] or {}).get("indicator"), 3), c["site_host"]))
 

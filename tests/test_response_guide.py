@@ -77,24 +77,47 @@ def pending(retry=120, *, failed=False) -> dict:
 
 # --- the input space ------------------------------------------------------------------------------------------------
 
+# D57: the incident times an Atom reading can carry, and whether each makes the answer wait (with a window that is not
+# blind and at least one open incident): within the week, exactly at its edge, just past it, far older, no time, a time
+# within the hour-ahead slack, and one further ahead (no usable time).
+ATOM_TIMES = ((NOW - timedelta(hours=3), True), (NOW - timedelta(days=7), True), (NOW - timedelta(days=7, seconds=1), False),
+              (NOW - timedelta(days=40), False), (None, False), (NOW + timedelta(minutes=30), True), (NOW + timedelta(hours=2), False))
+
+
 def atom_providers():
-    """D52: a reading taken from a page's Atom history: no indicator, an open-incident count only when there is one."""
-    for incidents, blind, maintenances in itertools.product((0, 1), (False, True), (None, 0)):
+    """D52: a reading taken from a page's Atom history: no indicator, an open-incident count only when there is one.
+    Yields (status, waits): D57 makes the answer wait exactly when an open incident updated within the week is listed in
+    a window that is not blind."""
+    for incidents, blind, maintenances, (updated, fresh_time) in itertools.product((0, 1, 3), (False, True), (None, 0, 2), ATOM_TIMES):
         status = {"source_name": "S", "source_url": STATUS_URL, "indicator": None, "freshness": "fresh", "source_kind": "history_atom"}
         if incidents:
-            status.update(active_incidents=1, incident_updated_at=NOW - timedelta(hours=3))
+            status["active_incidents"] = incidents
+            if updated is not None:
+                status["incident_updated_at"] = updated
+        elif updated is not None:
+            continue  # no open incident carries no incident time
         if blind:
             status["window_blind"] = True
         if maintenances is not None:
             status["active_maintenances"] = maintenances
-        yield status
+        yield status, bool(incidents and not blind and fresh_time)
+    # A stale read of a reading that would wait, and counts that are not whole numbers of 1 or more: never a wait.
+    base = {"source_name": "S", "source_url": STATUS_URL, "indicator": None, "source_kind": "history_atom",
+            "incident_updated_at": NOW - timedelta(hours=3)}
+    yield {**base, "freshness": "stale", "active_incidents": 1}, False
+    for odd in (True, 1.0, "1", -1):
+        yield {**base, "freshness": "fresh", "active_incidents": odd}, False
+    yield {**base, "freshness": "fresh", "active_incidents": 1, "window_blind": "yes"}, False  # anything but false/absent is blind
 
 
 def providers():
     yield None
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "major", "freshness": "stale", "basis": "incident"}
     yield {"source_name": "S", "source_url": STATUS_URL, "indicator": "none", "freshness": "fresh"}
-    yield from atom_providers()
+    # The grid takes a slice of the Atom readings (one maintenance count, at most one incident); the D57 tests walk them all.
+    yield from (status for status, _waits in atom_providers()
+                if status.get("active_maintenances", 0) == 0 and status.get("active_incidents", 1) in (1, 0)
+                and status.get("freshness") == "fresh")
     # D54: a minor page with no incident list (no basis), its update time fresh, over a week old, or missing, from a
     # feed whose time is the page's own and from one whose time is that of its active items (Instatus, Google Gmail).
     for updated in (NOW - timedelta(hours=3), NOW - timedelta(days=30), None):
@@ -165,17 +188,47 @@ def from_table(text: str) -> bool:
     return any(template.fullmatch(text) for template in TEMPLATES)
 
 
-def test_a_reading_from_the_atom_history_never_changes_the_recommendation_or_its_reasons():
-    # D52: information only. Whatever the feed lists, the answer is the one for a host with no provider status at all.
+def test_d57_an_atom_reading_waits_low_only_on_a_fresh_open_incident_and_is_otherwise_the_d52_answer():
+    # Changed on purpose by D57 (this was D52's "never changes the recommendation" test). A reading of the Atom history
+    # that lists an open incident updated within the week, in a window that is not blind, now waits with low confidence
+    # whatever the rest of the answer says (as any provider wait comes first). Every other reading (no open incident,
+    # no usable time, older than the week, a blind window, a stale read, an odd count) still gives exactly the answer
+    # for a host with no provider status at all, including its next_checks and guide: D52's invariant, narrowed.
+    waits_seen = rests_seen = 0
     for case in main_space():
-        if case["provider_status"] is not None or case["regional"]:
+        if case["provider_status"] is not None:
             continue
-        for atom in atom_providers():
+        for atom, waits in atom_providers():
             with_atom = answer(**{**case, "provider_status": atom}, checks=True)
             without = answer(**case, checks=True)
-            assert with_atom["recommendation"] == without["recommendation"], (atom, case)
-            assert with_atom["next_checks"] == without["next_checks"], (atom, case)
-            assert guide(copy.deepcopy(with_atom)) == guide(copy.deepcopy(without)), (atom, case)
+            assert triage.history_incident(atom, NOW) is waits, atom
+            if not waits:
+                rests_seen += 1
+                assert with_atom["recommendation"] == without["recommendation"], (atom, case)
+                assert with_atom["next_checks"] == without["next_checks"], (atom, case)
+                assert guide(copy.deepcopy(with_atom)) == guide(copy.deepcopy(without)), (atom, case)
+                continue
+            waits_seen += 1
+            # No regional scope either: the feed names no components, so provider_regional is ignored.
+            rec = {key: value for key, value in with_atom["recommendation"].items() if key != "agent_vendor"}
+            assert rec == {"action": "wait_provider_incident", "confidence": "low",
+                           "reasons": ["provider_scope", "provider_history_incident"]}, (atom, case)
+            codes = [check["code"] for check in with_atom["next_checks"]]
+            assert codes[-3:-1] == ["provider_scope", "provider_history_incident"], codes
+            assert "provider_unknown" not in codes and "provider_scope_partial" not in codes
+            # Only the provider codes differ from the answer without a provider.
+            assert [c for c in codes if c not in ("provider_scope", "provider_history_incident")] == \
+                [c["code"] for c in without["next_checks"] if c["code"] != "provider_unknown"]
+            extra = guide(copy.deepcopy(with_atom))
+            assert extra["summary_line"] == ROWS["W8"][1] and extra["next_action"]["do"] == "wait_for_provider"
+    assert waits_seen and rests_seen
+
+
+def test_d57_the_atom_wait_is_the_wait_the_board_shares():
+    # The board (D53) lists what provider_wait_reason says waits; D57 adds the Atom reading through that one function.
+    for atom, waits in atom_providers():
+        assert (triage.provider_wait_reason(atom, NOW) == "provider_scope") is waits, atom
+        assert (triage.provider_wait_reason(atom, NOW) is None) is (not waits), atom
 
 
 # --- T2: every answer the triage can give is on a row of the table, and every row is used --------------------------
@@ -204,8 +257,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     assert used == set(ROWS), set(ROWS) - used
 
 
-def test_the_table_has_the_28_rows_and_the_nine_do_values():
-    assert len(ROWS) == 28
+def test_the_table_has_the_29_rows_and_the_nine_do_values():
+    assert len(ROWS) == 29  # W8 came with D57
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
@@ -690,7 +743,7 @@ def test_an_unlisted_combination_falls_to_the_default_row_of_its_action_and_is_l
 def test_every_triage_reason_code_is_known_to_the_table():
     # Reasons the table reads; a new reason in triage that is not here must be read (or named) before the table is complete.
     read = {"provider_scope", "provider_scope_partial", "provider_components_only", "provider_incident_stale", "provider_update_time_unknown",
-            "provider_maintenance_only",
+            "provider_maintenance_only", "provider_history_incident",
             "human_handoff", "account_handoff",
             "profile_pending", "official_path_available", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
             "robots_fetch_refused", "robots_wildcard_disallow", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_unknown",

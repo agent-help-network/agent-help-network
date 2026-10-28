@@ -24,6 +24,7 @@ CHECKS = {
     "provider_scope_partial": "The announced issue may reach only part of the provider: its affected components are all regions or points of presence, or the worst incident is less severe than the page-level indicator. Check whether provider_status.affected names a service you use before waiting.",
     "provider_update_time_unknown": "The provider's status page shows a minor issue, lists no incidents this service can read, and carries no page update time it can use (provider_status.source_updated_at), so a current issue cannot be told from one left on the page for weeks. The answer still waits, with low confidence: check the date of the issue on the provider's status page, and if it is old or names no service you use, continue.",
     "provider_maintenance_only": "The provider has announced no incident: its active status rests only on maintenance in progress (provider_status.basis is maintenance, active_incidents is 0). The page-level indicator may still read minor, major or critical, and this service cannot tell from it whether anything besides the maintenance is wrong, so the answer still waits. Compare the maintenance window and affected services on the provider's status page with your blocked step; with provider_scope_partial, only regions or points of presence are listed as affected.",
+    "provider_history_incident": f"The provider's status API is not read here (its robots.txt disallows it); its public incident-history feed (provider_status.source_kind history_atom) lists an open incident updated within the last {STALE_INCIDENT_DAYS} days (provider_status.incident_updated_at). That feed gives no page status, severity or affected services, so the answer waits with low confidence: check the provider's status page for what is affected, and if it names no service you use, continue.",
     "provider_clear": "The provider reports no active issue. Continue diagnosing this specific attempt; the statement does not prove access from your environment.",
     "provider_unknown": "No live provider status is available here. Check an official status page if one is linked, and keep the current status unknown.",
     "reports_unknown": "No matching published observations were found. This does not establish that the site works or that your issue is isolated.",
@@ -61,7 +62,8 @@ CHECKS_KO = {
     "provider_scope_partial": "발표된 문제의 범위가 업체 일부일 수 있습니다. 영향받는 컴포넌트가 모두 지역·거점(PoP) 그룹이거나, 가장 심한 사건이 페이지 전체 표시보다 가볍습니다. 기다리기 전에 provider_status.affected 에 사용하는 서비스가 있는지 확인하세요.",
     "provider_update_time_unknown": "업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고 쓸 수 있는 페이지 갱신 시각(provider_status.source_updated_at)도 없어, 지금 문제인지 몇 주째 남아 있는 표시인지 구별할 수 없습니다. 대기는 유지하되 확신도는 낮습니다. 업체 상태 페이지에서 그 문제의 날짜를 확인하고, 오래됐거나 사용하는 서비스가 없으면 진행하세요.",
     "provider_maintenance_only": "업체가 발표한 사건은 없습니다. 활성 상태의 근거는 진행 중인 점검뿐입니다(provider_status.basis 가 maintenance, active_incidents 가 0). 페이지 전체 표시는 minor·major·critical 일 수 있고, 이 서비스는 그 표시만으로 점검 말고 다른 문제가 있는지 구별할 수 없어 대기는 유지합니다. 업체 상태 페이지에서 점검 시간대와 영향받는 서비스를 현재 작업과 비교하세요. provider_scope_partial 이 함께 있으면 영향받는 것으로 올라온 것은 지역·거점(PoP)뿐입니다.",
-    "provider_clear": "업체 발표상 활성 문제는 없습니다. 현재 환경에서 접속된다는 증거는 아니므로 이번 시도를 계속 진단하세요.",
+    "provider_history_incident": f"이 서비스는 업체 상태 API 를 읽지 않습니다(그 robots.txt 가 금지). 업체의 공개 사건 이력 피드(provider_status.source_kind history_atom)에 최근 {STALE_INCIDENT_DAYS}일 안에 갱신된 열린 사건이 있습니다(provider_status.incident_updated_at). 그 피드에는 페이지 상태·등급·영향받는 서비스가 없어 대기하되 신뢰도는 낮습니다. 업체 상태 페이지에서 무엇이 영향받는지 확인하고, 사용하는 서비스가 없으면 진행하세요.",
+    "provider_clear":"업체 발표상 활성 문제는 없습니다. 현재 환경에서 접속된다는 증거는 아니므로 이번 시도를 계속 진단하세요.",
     "provider_unknown": "여기에는 실시간 업체 상태가 없습니다. 공식 상태 페이지 링크가 있으면 확인하고 현재 상태는 미상으로 두세요.",
     "reports_unknown": "일치하는 공개 관찰이 없습니다. 사이트가 정상이라거나 이번 문제가 개별적이라는 뜻은 아닙니다.",
     "reports_stale": "오래된 공개 관찰만 있습니다. 현재 작업과 시각을 비교하세요. 현재 접속 가능성의 증거는 아닙니다.",
@@ -204,6 +206,29 @@ def maintenance_only(provider_status: dict | None) -> bool:
     return type(incidents) is int and incidents == 0
 
 
+def history_incident(provider_status: dict | None, now: datetime | None = None) -> bool:
+    """D57: a fresh reading of a page's public Atom history (D52, source_kind history_atom, no indicator) that lists at
+    least one open incident whose latest update (incident_updated_at, the newest <updated> of the open incidents) is a
+    usable provider time no more than STALE_INCIDENT_DAYS old, from a feed whose window is not blind. Such a reading
+    makes the answer wait, with low confidence: the feed has no page indicator, impact or components.
+
+    Everything else stays what it was under D52 (information only, provider_unknown): no open incident (unknown, never
+    healthy), a count that is not a whole number of 1 or more, a missing, unreadable or far-future time (unknown is not
+    anything), an incident older than the week (the D45 rule; its page-above exception cannot be judged without an
+    indicator), and a blind window (window_blind: the feed may be missing incidents, so its view is not trusted)."""
+    if not (provider_status and provider_status.get("source_kind") == "history_atom"
+            and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") is None):
+        return False
+    if provider_status.get("window_blind") not in (None, False):
+        return False
+    incidents = provider_status.get("active_incidents")
+    if type(incidents) is not int or incidents < 1:
+        return False
+    now = now or datetime.now(timezone.utc)
+    updated = usable_provider_time(provider_status.get("incident_updated_at"), now)
+    return updated is not None and now - updated <= timedelta(days=STALE_INCIDENT_DAYS)
+
+
 def page_above_incidents(provider_status: dict) -> bool:
     """A major or critical page indicator higher than the worst active incident (or that worst impact unknown):
     something besides the incidents, such as components flipped by monitoring, holds the page up."""
@@ -217,6 +242,10 @@ def provider_wait_reason(provider_status: dict | None, now: datetime | None = No
     """Whether the provider's statement alone makes the lookup answer wait, and under which reason code: the first rows
     of the recommendation, shared with the public board (signal_history.board_provider) so the two never part.
     None: no fresh active statement, or one that is not a reason to wait (D43, D45, D54)."""
+    if history_incident(provider_status, now):
+        # D57: an open incident listed in the page's Atom history and updated within the week. It has no indicator,
+        # so none of the rows below apply; recommendation() lowers the confidence and says why.
+        return "provider_scope"
     if not (provider_status and provider_status.get("freshness") == "fresh"
             and provider_status.get("indicator") in ACTIVE_INDICATORS):
         return None
@@ -391,6 +420,10 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
     wait_reason = provider_wait_reason(provider_status, now)
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
+    if wait_reason == "provider_scope" and history_incident(provider_status, now):
+        # D57: an announced open incident read from the Atom history: no severity and no components (so no regional
+        # scope either), so less sure.
+        return {"action": "wait_provider_incident", "confidence": "low", "reasons": ["provider_scope", "provider_history_incident"]}
     if wait_reason is not None:
         result = _wait(wait_reason, provider_regional)
         if wait_reason == "provider_scope" and page_time_unknown(provider_status, now):
@@ -493,7 +526,10 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     if official and (official.get("api_docs") or official.get("developer_portal")):
         codes.append("official_path_available")
     codes.extend(host_fact_codes(host_facts))
-    if provider_status and provider_status.get("freshness") == "fresh":
+    if history_incident(provider_status, now):
+        # D57: the Atom history lists a fresh open incident (no indicator, so no scope or maintenance codes).
+        codes.extend(("provider_scope", "provider_history_incident"))
+    elif provider_status and provider_status.get("freshness") == "fresh":
         indicator = provider_status.get("indicator")
         if indicator in ACTIVE_INDICATORS:
             if provider_status.get("basis") == "components_only":

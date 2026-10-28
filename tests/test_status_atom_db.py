@@ -221,7 +221,9 @@ def test_a_later_failure_keeps_the_earlier_reading_on_show_and_the_atom_source_l
 
 # --- what a lookup says ---------------------------------------------------------------------------------------------------
 
-def test_an_open_incident_is_shown_as_information_and_does_not_change_the_recommendation(db, world):
+def test_d57_a_fresh_open_incident_makes_the_answer_wait_with_low_confidence(db, world):
+    # Changed on purpose by D57: under D52 this reading was information only and the verdict stayed the one without
+    # the feed. An open incident updated within the week, in a window that is not blind, now waits (low confidence).
     batch(db, world)
     answer = look(db)
     provider = answer["provider_status"]
@@ -229,11 +231,32 @@ def test_an_open_incident_is_shown_as_information_and_does_not_change_the_recomm
     assert provider["active_incidents"] == 1 and "incident_updated_at" in provider
     assert not {"basis", "max_incident_impact", "affected", "window_blind"} & set(provider)
     assert provider["active_maintenances"] == 0  # the window is trusted: nothing is crowding maintenance out of the feed
-    assert answer["recommendation"]["action"] != "wait_provider_incident"  # information only: the verdict is the one without the feed
-    assert "provider_scope" not in answer["recommendation"]["reasons"]
-    assert "provider_unknown" in [c["code"] for c in answer["next_checks"]]
+    assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "low",
+                                        "reasons": ["provider_scope", "provider_history_incident"]}
+    codes = [c["code"] for c in answer["next_checks"]]
+    assert "provider_history_incident" in codes and "provider_unknown" not in codes
     assert answer["provider_source_state"] == "feed_connected"
-    assert {"summary_line", "next_action"} <= set(answer)  # the response guide still finds its row
+    assert answer["next_action"]["do"] == "wait_for_provider"
+
+
+def test_d57_an_open_incident_older_than_a_week_is_still_information_only(db, world):
+    world.atom = atom((["Identified"], NOW - timedelta(days=30), NOW - timedelta(days=8)))
+    batch(db, world)
+    answer = look(db)
+    assert answer["provider_status"]["active_incidents"] == 1
+    assert answer["recommendation"]["action"] != "wait_provider_incident"
+    assert "provider_unknown" in [c["code"] for c in answer["next_checks"]]
+
+
+def test_d57_an_open_incident_in_a_blind_window_is_still_information_only(db, world):
+    # 25 entries within three days: the window is blind, so the open incident it shows is not trusted for a wait.
+    entries = [(["Investigating"], NOW - timedelta(hours=2), NOW - timedelta(minutes=20))]
+    entries += [(["Resolved"], NOW - timedelta(hours=3 + i), NOW - timedelta(hours=3 + i)) for i in range(24)]
+    world.atom = atom(*entries)
+    batch(db, world)
+    answer = look(db)
+    assert answer["provider_status"]["window_blind"] is True and answer["provider_status"]["active_incidents"] == 1
+    assert answer["recommendation"]["action"] != "wait_provider_incident"
 
 
 def test_no_open_incident_reads_as_unknown_never_as_healthy(db, world):
@@ -254,7 +277,9 @@ def test_a_blind_window_is_marked_and_the_maintenance_count_is_left_out(db, worl
     assert provider["window_blind"] is True and "active_maintenances" not in provider and "active_incidents" not in provider
 
 
-def test_the_same_answer_with_and_without_the_feed_has_the_same_recommendation(db, world):
+def test_without_an_open_incident_the_answer_is_the_one_without_the_feed(db, world):
+    # D52's invariant, narrowed by D57 to readings that list no open incident.
+    world.atom = quiet()
     without = look(db)
     batch(db, world)
     with_atom = look(db)

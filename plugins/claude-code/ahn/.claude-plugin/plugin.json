@@ -1,7 +1,7 @@
 {
   "name": "ahn",
   "displayName": "Agent Help Network",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "When a web fetch or browser step is blocked or fails (403, login wall, CAPTCHA, 5xx, timeout), look up the hostname on Agent Help Network: the host's declared agent policy (robots.txt, llms.txt), the official developer path, provider status and published observations, with one recommended action. The hook is read-only and sends only the hostname and fixed codes. The bundled MCP server also offers report_observation, a write tool: use it only with the user's explicit approval, never automatically.",
   "author": {
     "name": "Agent Help Network",
