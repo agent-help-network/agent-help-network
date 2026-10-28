@@ -29,7 +29,7 @@ from fastapi.responses import Response
 SCHEMA = "ahn-now/1"
 CACHE_SECONDS = 60
 NEXT_UPDATE = timedelta(minutes=5)  # feeds are read by the 5-minute cron; asking sooner returns the same list
-LIST_MAX = 20
+LIST_MAX = 100
 INCIDENT_INDICATORS = ("critical", "major", "minor")
 PATH = "/v1/now"
 LEGEND = {
@@ -105,6 +105,22 @@ def _provider(entry: dict) -> dict:
     return out
 
 
+def _ordered(entries: list[dict]) -> list[dict]:
+    """Grade order as the owner board has it (critical, major, minor, then no level), and inside one grade the
+    provider's own update time, newest first, then host name. Re-sorted here so the owner view keeps its order."""
+    grade = {"critical": 0, "major": 1, "minor": 2}
+
+    def rank(entry: dict) -> int:
+        return grade.get((entry.get("provider") or {}).get("indicator"), 3)
+
+    by_host = sorted(entries, key=lambda entry: entry["site_host"])
+    # ISO timestamps from _iso share one format, so a string compare is a time compare; a line without a provider
+    # update time (AHN check only) sorts after the lines that have one.
+    by_time = sorted(by_host, key=lambda entry: (entry.get("provider") or {}).get("updated_at") or "", reverse=True)
+    # Python's sort keeps equal keys in input order even with reverse=True, so the host name still breaks ties.
+    return sorted(by_time, key=rank)
+
+
 def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
     """The public JSON from the owner board numbers. Only fields named here leave the owner view."""
     from .signal_history import _iso
@@ -112,7 +128,7 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
     problems, maintenance = [], []
     # Without the AHN-check column the board reads every provider line (uncut), so AHN-check-only candidates neither
     # push provider lines out of the owner list's cut nor show through `truncated`.
-    for entry in (board["candidates"] if ahn_check else board["provider_candidates"]):
+    for entry in _ordered(board["candidates"] if ahn_check else board["provider_candidates"]):
         provider = entry.get("provider")
         indicator = provider["indicator"] if provider else None
         if provider and provider.get("basis") == "maintenance":
