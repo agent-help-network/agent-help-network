@@ -647,11 +647,16 @@ def test_atom_history_reads_in_the_policy_match_the_code():
     # D52: where only the status API is disallowed, the page's Atom history is read as an open-announcement signal.
     from ahn import feed_robots, status_atom, status_refresh
     assert status_atom.ATOM_CAP == 128 * 1024 and feed_robots.HISTORY_PATH == status_refresh.HISTORY_PATH == "/history.atom"
+    # D57: an open Atom incident is read on the active interval.
+    from ahn import background_reads
+    assert background_reads.FEED_RETRY_MINUTES == 15
+    assert background_reads.history_incident_open({"feed_source": "history_atom", "active_incidents": 1})
     reads = {"atom": Phrase(
         "where a Statuspage page's robots.txt disallows its status API but allows its public incident-history feed (/history.atom), "
-        "we read that feed instead, at the same frequency and under the same limits (at most 128 KB, no redirect followed)",
+        "we read that feed instead, at the same frequency (every 15 minutes while it lists an open incident) and under the same "
+        "limits (at most 128 KB, no redirect followed)",
         "Statuspage 페이지의 robots.txt 가 상태 API 는 금지하지만 공개 사건 이력 피드(/history.atom)는 허용하면 "
-        "같은 빈도와 같은 제한(최대 128 KB, 리다이렉트를 따르지 않음)으로 그 피드를 대신 읽습니다"),
+        "같은 빈도(열린 사건이 있는 동안은 15분마다)와 같은 제한(최대 128 KB, 리다이렉트를 따르지 않음)으로 그 피드를 대신 읽습니다"),
         "unknown_not_operational": Phrase(
             "we report only whether an announced incident is currently open; when none is listed we report the provider's status as unknown, not as operational",
             "발표된 사건이 지금 열려 있는지만 알리고, 열린 사건이 없으면 정상이 아니라 알 수 없음으로 알립니다")}
