@@ -744,6 +744,14 @@ SOURCES: dict[str, Source] = {
     "hmrc.gov.uk": Source("HMRC API Platform Status", "https://api-platform-status.production.tax.service.gov.uk/", "https://api-platform-status.production.tax.service.gov.uk/api/v2/status.json"),
     "humansecurity.com": Source("HUMAN Status", "https://status.humansecurity.com/", "https://status.humansecurity.com/api/v2/status.json"),
     "ietf.org": Source("IETF System Status", "https://status.ietf.org/", "https://status.ietf.org/summary.json", "instatus"),
+    # Added 2026-10-27 (demand batch): each status link is in the publisher's own site footer; the feed answered and parsed on one read.
+    "deno.com": Source("Deno Status", "https://denostatus.com/", "https://denostatus.com/summary.json", "instatus"),
+    "honeycomb.io": Source("Honeycomb Status", "https://status.honeycomb.io/", "https://status.honeycomb.io/api/v2/status.json"),
+    "ashbyhq.com": Source("Ashby Status", "https://status.ashbyhq.com/", "https://status.ashbyhq.com/api/v2/status.json"),
+    "anaconda.com": Source("Anaconda Status", "https://anaconda.statuspage.io/", "https://anaconda.statuspage.io/api/v2/status.json"),
+    "packagecloud.io": Source("packagecloud Status", "https://www.packagecloudstatus.io/", "https://www.packagecloudstatus.io/api/v2/status.json"),
+    # Same publisher as an existing entry: greenhouse.com's page links support.greenhouse.io (the company's renamed site).
+    "greenhouse.com": Source("Greenhouse Status", "https://status.greenhouse.io/", "https://status.greenhouse.io/api/v2/status.json"),
 }
 # D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
 # Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
@@ -805,6 +813,8 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "deepseek.com": ("DeepSeek Status", "https://status.deepseek.com/"),
     "docusign.com": ("DocuSign Status", "https://health.docusign.com/status"),
     "eventbrite.com": ("Eventbrite Status", "https://www.eventbritestatus.com/"),
+    "eventbrite.co.uk": ("Eventbrite Status", "https://www.eventbritestatus.com/"),  # the UK site's own footer links this page (2026-10-27)
+    "discourse.org": ("Discourse Status", "https://status.discourse.org/"),  # linked from the discourse.org footer; a Status.io page with no compatible feed (2026-10-27)
     "facebook.com": ("Meta Status (business products and platform)", "https://metastatus.com/"),
     "fitbit.com": ("Fitbit Status", "https://status.healthapp.google.com/"),
     "freshworks.com": ("Freshworks Status", "https://status.freshworks.com/"),
