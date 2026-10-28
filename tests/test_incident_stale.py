@@ -228,7 +228,7 @@ def test_the_live_sample(host):
 def test_contract_readme_and_plugin_carry_the_code_and_the_threshold():
     ko = (ROOT / "docs" / "api-contract.md").read_text(encoding="utf-8")
     en = (ROOT / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
-    assert "모두 34개 코드" in ko and "`provider_incident_stale`" in ko and "7일(`STALE_INCIDENT_DAYS`" in ko
+    assert "모두 35개 코드" in ko and "`provider_incident_stale`" in ko and "7일(`STALE_INCIDENT_DAYS`" in ko
     assert "| `provider_incident_stale` |" in en and "**more than** 7 days (`STALE_INCIDENT_DAYS`" in en
     for name in ("README.md", "README.ko.md"):
         assert "provider_incident_stale" in (ROOT / name).read_text(encoding="utf-8")

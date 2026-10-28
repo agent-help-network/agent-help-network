@@ -142,6 +142,15 @@ def feed_freshness(fetched_at: datetime | None, last_error_at: datetime | None,
     return "fresh", failed_later
 
 
+HISTORY_ACTIVE = "minor"  # scheduling only: an active indicator stands in for an open Atom incident, never shown
+
+
+def history_incident_open(row) -> bool:
+    """A stored incident-history reading (feed_source history_atom) with at least one open incident (an integer)."""
+    count = row.get("active_incidents")
+    return row.get("feed_source") == "history_atom" and type(count) is int and count > 0
+
+
 def feed_next_due(row, idle: timedelta) -> datetime | None:
     """When a feed is next due, from its status_cache row (indicator, fetched_at, last_error_at, failures,
     last_error_detail); None when it was never attempted (due now). The lookup path (idle FEED_STALE_HOURS) and
@@ -150,9 +159,14 @@ def feed_next_due(row, idle: timedelta) -> datetime | None:
     fetched_at, error_at = row.get("fetched_at"), row.get("last_error_at")
     if fetched_at is None and error_at is None:
         return None
-    due = [fetched_at + feed_refresh_after(row.get("indicator"), idle)] if fetched_at is not None else []
+    # An incident-history reading (D52) has no indicator; with an open incident it makes the answer wait (D57), so it
+    # is read on the active interval too, and a resolved incident stops the wait within about FEED_RETRY_MINUTES.
+    indicator = row.get("indicator")
+    if history_incident_open(row):
+        indicator = HISTORY_ACTIVE
+    due = [fetched_at + feed_refresh_after(indicator, idle)] if fetched_at is not None else []
     if error_at is not None and (fetched_at is None or error_at >= fetched_at):
-        due.append(error_at + feed_backoff(row.get("failures"), row.get("last_error_detail"), row.get("indicator")))
+        due.append(error_at + feed_backoff(row.get("failures"), row.get("last_error_detail"), indicator))
     elif error_at is not None:
         due.append(error_at + timedelta(minutes=FEED_RETRY_MINUTES))
     return max(due)

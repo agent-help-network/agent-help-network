@@ -34,7 +34,9 @@ INCIDENT_INDICATORS = ("critical", "major", "minor")
 PATH = "/v1/now"
 LEGEND = {
     "provider": "The provider's own status page, quoted with its source and update time. Listed only while that "
-                "statement would make an AHN lookup answer wait and was updated by the provider within 7 days.",
+                "statement would make an AHN lookup answer wait and was updated by the provider within 7 days. A line with "
+                "source_kind history_atom and indicator null is an open incident announced in the page's public incident "
+                "history: the provider gives no severity level there, and none is made up.",
     "ahn_check": "AHN's own robots.txt reads from one datacenter location, updated only when a read happens; not a "
                  "report from agents and not a verdict on the site.",
     "not_listed": "Refused reads (401, 403, 429, 503), agent reports and lookup counts are never listed here.",
@@ -65,11 +67,14 @@ def policy_sentences(ahn_check: bool) -> dict[str, tuple[str, str]]:
         en = ("Only the operator sees them, on a private dashboard; they are not shown on public pages or in lookup answers. "
               "A public page (“Site problems right now”, /en/now, /ko/now and /v1/now) lists curated hosts whose connected "
               "provider status page currently reports a problem: the same provider statement a lookup answer shows, only "
-              "while the provider updated it within the last 7 days, with 7-day totals that name no host. It shows no "
+              "while the provider updated it within the last 7 days, with 7-day totals that name no host. Where we read a "
+              "page's public incident-history feed instead of its status API, a line says only that the provider announced "
+              "an open incident there, with no severity level. It shows no "
               "robots.txt read result, no refused read and nothing about who looked a host up.")
         ko = ("운영자만 비공개 화면에서 보며, 공개 페이지나 조회 응답에는 나오지 않습니다. 공개 페이지(“지금 문제가 있는 사이트”, "
               "/en/now, /ko/now, /v1/now)는 연결된 업체 상태 페이지가 지금 문제를 발표한 큐레이션 호스트를 보여 줍니다. 조회 응답이 "
               "보여 주는 것과 같은 업체 발표이며, 업체가 최근 7일 안에 갱신한 동안만 올리고, 호스트명 없는 7일 합계를 함께 둡니다. "
+              "상태 API 대신 공개 사건 이력 피드를 읽는 페이지는 업체가 그곳에 열린 사건을 발표했다는 것만 등급 없이 보여 줍니다. "
               "robots.txt 읽기 결과, 거절된 읽기, 누가 호스트를 조회했는지는 보여 주지 않습니다.")
     return {"en": (POLICY_BEFORE["en"], en), "ko": (POLICY_BEFORE["ko"], ko)}
 
@@ -80,7 +85,8 @@ def llms_section(ahn_check: bool) -> str:
             "one datacenter; AHN checks are not reports from agents and not a verdict on the site"
             if ahn_check else
             "curated hosts whose own status page reports a problem, quoted with its source and update time, listed only "
-            "while the provider updated it within 7 days")
+            "while the provider updated it within 7 days (a line with `source_kind: history_atom` and `indicator: null` is an "
+            "open incident from the page's public incident history, which gives no severity)")
     return ("## Site problems now\n\n"
             f"- `https://agenthelpnetwork.com{PATH}` (JSON, schema `{SCHEMA}`; do not fetch more often than "
             f"`next_update_after`): {what}. A host missing from the list is not known to be working. Human page: "
@@ -88,9 +94,15 @@ def llms_section(ahn_check: bool) -> str:
 
 
 def _provider(entry: dict) -> dict:
-    return {key: entry["provider"][key]
-            for key in ("indicator", "basis", "updated_at", "source_name", "source_url", "source_updated_at", "fetched_at")
-            if entry["provider"].get(key) is not None}
+    out = {key: entry["provider"][key]
+           for key in ("indicator", "basis", "source_kind", "active_incidents", "updated_at", "source_name", "source_url",
+                       "source_updated_at", "fetched_at")
+           if entry["provider"].get(key) is not None}
+    if entry["provider"].get("source_kind") == "history_atom":
+        # D57: an open incident announced in the page's public incident history, which gives no level: say so with an
+        # explicit null (as the lookup answer does, D52) instead of leaving a reader to guess one.
+        out = {"indicator": None, **out}
+    return out
 
 
 def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:

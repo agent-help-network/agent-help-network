@@ -14,7 +14,7 @@
   </div>
   <div class="scroll"><table><thead><tr><th>호스트</th><th>업체 발표</th><th>AHN 점검(robots.txt 판독)</th><th>시작(UTC)</th></tr></thead><tbody>
     {% for row in board.candidates %}<tr><td>{{ row.site_host }}</td>
-      <td>{% if row.provider %}{{ indicator_ko.get(row.provider.indicator, row.provider.indicator) }} · 읽음 {{ row.provider.fetched_at }}{% else %}—{% endif %}</td>
+      <td>{% if row.provider and row.provider.source_kind == 'history_atom' %}사건 이력: 열린 사건 {{ row.provider.active_incidents }}건(등급 없음) · 읽음 {{ row.provider.fetched_at }}{% elif row.provider %}{{ indicator_ko.get(row.provider.indicator, row.provider.indicator) }} · 읽음 {{ row.provider.fetched_at }}{% else %}—{% endif %}</td>
       <td>{% if row.ahn_check %}{{ kind_ko.get(row.ahn_check.kind, row.ahn_check.kind) }} · 실패 {{ row.ahn_check.failed_reads }}회 · 마지막 판독 {{ row.ahn_check.last_read_at }}{% if row.ahn_check.baseline != 'shown' %} · 우리 위치에서 불안정{% endif %}{% else %}—{% endif %}</td>
       <td>{% if row.ahn_check %}{{ row.ahn_check.since }}{% elif row.provider and row.provider.source_updated_at %}{{ row.provider.source_updated_at }}{% else %}—{% endif %}</td></tr>
     {% else %}<tr><td colspan="4">지금 표시할 후보가 없습니다. 목록에 없다고 사이트가 정상이라는 뜻은 아닙니다.</td></tr>{% endfor %}
