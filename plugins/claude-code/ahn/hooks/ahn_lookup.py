@@ -130,7 +130,8 @@ NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "resp
                          "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no",
                          "official_path_available", "provider_scope", "provider_components_only",
                          "provider_incident_stale", "provider_scope_partial", "provider_update_time_unknown",
-                         "provider_maintenance_only", "provider_clear", "provider_unknown",
+                         "provider_maintenance_only", "provider_history_incident", "provider_clear",
+                         "provider_unknown",
                          "government_registry_listed", "government_suffix_restricted", "government_list_version_missing",
                          "reports_unknown", "reports_stale", "reports_unverified"})
 AGENT_KINDS = frozenset({"user_agent", "search_crawler", "training_crawler"})

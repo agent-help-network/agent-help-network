@@ -65,6 +65,16 @@ def put_status(conn, host, indicator, *, updated, incidents=None, impact=None, i
          maintenances, affected))
 
 
+def put_atom(conn, host, *, incidents, incident_updated, blind=False, fetched=None):
+    """A reading of the page's Atom history as status_refresh._store_history writes it (D52)."""
+    assert register_source(conn, host)
+    conn.execute(
+        """INSERT INTO status_cache (site_host,indicator,source_updated_at,fetched_at,active_incidents,incident_updated_at,
+                                     active_maintenances,feed_source,window_blind)
+           VALUES (%s,'unknown',NULL,%s,%s,%s,NULL,'history_atom',%s)""",
+        (host, fetched or datetime.now(timezone.utc), incidents, incident_updated, blind))
+
+
 def live_shapes(db, now):
     with connect(db) as conn:
         put_status(conn, "cloudflare.com", "major", updated=now - timedelta(days=57), incidents=0, impact="none",
@@ -207,7 +217,7 @@ def test_live_false_problems_are_left_out_and_a_fresh_major_stays(db):
     summary = board(db, now)
     assert [c["site_host"] for c in summary["candidates"]] == [FRESH]
     assert summary["provider_excluded_now"] == {"stale_incidents": 0, "stale_update": 2, "no_update_time": 1,
-                                                "not_a_wait": 0, "feed_not_shown": 0}
+                                                "not_a_wait": 0, "feed_not_shown": 0, "window_blind": 0}
     with TestClient(create_app(settings(**ON))) as client:
         body = client.get("/v1/now").json()
         assert body["schema"] == "ahn-now/1"
@@ -416,3 +426,85 @@ def test_the_lookup_answers_the_left_out_minor_pages_as_the_board_judged_them(db
     assert left_out["kagi.com"] == {"site_host": "kagi.com", "reason": "stale_update", "lookup_waits": False}
     # Left out of the board, all three: a board line still implies a lookup wait (D53), never the other way round.
     assert left_out["gocardless.com"]["lookup_waits"] is True and left_out["mediavine.com"]["lookup_waits"] is True
+
+
+# D57: an open incident read from a page's Atom history ------------------------------------------------------------
+
+def test_d57_an_open_incident_from_the_atom_history_is_listed_without_a_level_and_the_lookup_waits(db, monkeypatch):
+    """brevo.com and sendinblue.com share one page (the same incident on both hosts, as for any shared page);
+    github.com's history lists two open incidents. Shown as the lookup shows them: API disallowed, Atom allowed."""
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "disallowed")
+    monkeypatch.setattr(feed_robots, "history_allowed", lambda _conn, _api_url: True)
+    with connect(db) as conn:
+        put_atom(conn, "github.com", incidents=2, incident_updated=now - timedelta(minutes=30))
+        for host in ("brevo.com", "sendinblue.com"):
+            put_atom(conn, host, incidents=1, incident_updated=now - timedelta(hours=3))
+    summary = board(db, now)
+    assert [c["site_host"] for c in summary["provider_candidates"]] == ["brevo.com", "github.com", "sendinblue.com"]
+    with TestClient(create_app(settings(**ON))) as client:
+        body = client.get("/v1/now").json()
+        assert body["maintenance"] == []
+        line = next(item for item in body["problems"] if item["site_host"] == "github.com")
+        provider = line["provider"]
+        assert "indicator" in provider and provider["indicator"] is None  # said, not left to guess
+        assert provider["source_kind"] == "history_atom" and provider["active_incidents"] == 2
+        assert provider["updated_at"] == signal_history._iso(now - timedelta(minutes=30))
+        assert provider["source_name"] == "GitHub Status" and "basis" not in provider and "source_updated_at" not in provider
+        for host in ("github.com", "brevo.com", "sendinblue.com"):
+            answer = lookup(client, host)
+            assert answer["recommendation"] == {"action": "wait_provider_incident", "confidence": "low",
+                                                "reasons": ["provider_scope", "provider_history_incident"]}, host
+        en, ko = client.get("/en/now").text, client.get("/ko/now").text
+        assert "Provider announced an open incident (its incident history; no severity level given)" in en
+        assert "업체 발표: 진행 중 사건 있음(사건 이력 피드, 등급 정보 없음)" in ko
+        assert "“None”" not in en and "“None”" not in ko
+
+
+def test_d57_atom_readings_the_lookup_does_not_wait_on_are_left_out_by_reason(db, monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "disallowed")
+    monkeypatch.setattr(feed_robots, "history_allowed", lambda _conn, _api_url: True)
+    with connect(db) as conn:
+        put_atom(conn, "github.com", incidents=1, incident_updated=now - timedelta(days=8))           # older than the week
+        put_atom(conn, "atlassian.com", incidents=1, incident_updated=None)                          # no time
+        put_atom(conn, "discord.com", incidents=1, incident_updated=now - timedelta(minutes=5), blind=True)
+        put_atom(conn, "dropbox.com", incidents=1, incident_updated=now + timedelta(hours=3))         # far ahead: no time
+        put_atom(conn, "figma.com", incidents=0, incident_updated=None)                              # nothing open: unknown
+    summary = board(db, now)
+    assert summary["provider_candidates"] == []
+    assert summary["provider_excluded_now"] == {"stale_incidents": 1, "stale_update": 0, "no_update_time": 2,
+                                                "not_a_wait": 0, "feed_not_shown": 0, "window_blind": 1}
+    left_out = {item["site_host"]: item for item in summary["provider_excluded_hosts"]}
+    assert set(left_out) == {"github.com", "atlassian.com", "discord.com", "dropbox.com"}  # figma.com: not a statement
+    assert not any(item["lookup_waits"] for item in left_out.values())
+    with TestClient(create_app(settings(**ON))) as client:
+        assert client.get("/v1/now").json()["problems"] == []
+        for host in ("github.com", "atlassian.com", "discord.com", "dropbox.com", "figma.com"):
+            answer = lookup(client, host)
+            assert answer["provider_status"]["source_kind"] == "history_atom", host
+            assert answer["recommendation"]["action"] != "wait_provider_incident", host
+            assert "provider_unknown" in [c["code"] for c in answer["next_checks"]], host
+
+
+def test_d57_an_atom_reading_the_lookup_hides_is_not_listed(db, monkeypatch):
+    """If the Atom history itself is no longer allowed, the lookup shows no reading; the board does not either."""
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "disallowed")
+    monkeypatch.setattr(feed_robots, "history_allowed", lambda _conn, _api_url: False)
+    with connect(db) as conn:
+        put_atom(conn, "github.com", incidents=1, incident_updated=now - timedelta(minutes=10))
+    summary = board(db, now)
+    assert summary["provider_candidates"] == [] and summary["provider_excluded_now"]["feed_not_shown"] == 1
+    with TestClient(create_app(settings(**ON))) as client:
+        answer = lookup(client, "github.com")
+        assert not answer.get("provider_status") and answer["recommendation"]["action"] != "wait_provider_incident"
+
+
+def test_d57_a_stale_atom_read_is_not_listed(db, monkeypatch):
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(feed_robots, "feed_state", lambda _conn, _api_url: "disallowed")
+    monkeypatch.setattr(feed_robots, "history_allowed", lambda _conn, _api_url: True)
+    with connect(db) as conn:
+        put_atom(conn, "github.com", incidents=1, incident_updated=now - timedelta(hours=3), fetched=now - timedelta(hours=3))
+    assert board(db, now)["provider_candidates"] == []

@@ -119,3 +119,18 @@ def test_the_plugin_skill_says_fresh_can_come_with_a_failure():
     from pathlib import Path
     skill = Path(__file__).resolve().parents[1] / "plugins" / "claude-code" / "ahn" / "skills" / "ahn-lookup" / "SKILL.md"
     assert "`freshness: fresh` plus `error_detail`: latest read failed" in skill.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("incidents,after", [(1, timedelta(minutes=15)), (3, timedelta(minutes=15)), (0, HOUR),
+                                             (None, HOUR), (True, HOUR), ("1", HOUR)])
+def test_an_incident_history_reading_with_an_open_incident_is_read_every_fifteen_minutes(incidents, after):
+    # D57: an open Atom incident makes the answer wait, so a resolution must end that wait as fast as an active
+    # indicator's would. No open incident (or a count that is not a whole number) keeps the idle hour.
+    atom = row(indicator="unknown", fetched_at=T, feed_source="history_atom", active_incidents=incidents)
+    assert feed_next_due(atom, HOUR) == T + after
+    failing = {**atom, "last_error_at": T + timedelta(minutes=15), "failures": 6, "last_error_detail": "timeout"}
+    assert feed_next_due(failing, HOUR) == T + timedelta(minutes=15) + (timedelta(minutes=15) if after < HOUR else HOUR)
+    # A refusal still backs off, open incident or not.
+    assert feed_next_due({**failing, "last_error_detail": "http_429"}, HOUR) == T + timedelta(minutes=15) + timedelta(hours=24)
+    # The same count on an API reading does not change its schedule: the indicator decides there.
+    assert feed_next_due({**atom, "feed_source": None}, HOUR) == T + HOUR

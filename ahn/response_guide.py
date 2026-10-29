@@ -40,6 +40,8 @@ ROWS: dict[str, tuple[str, str]] = {
     # D55: no incident announced, only maintenance in progress (provider_maintenance_only). Same waits, honest about why.
     "W6": ("wait_for_provider", f"The provider has posted no incident, only maintenance in progress on some regions or points of presence. If a service you use is affected, wait; {_WAIT_IN}."),
     "W7": ("wait_for_provider", f"The provider has posted no incident, only maintenance in progress, while its status page shows an issue. Wait instead of retrying in a loop; {_WAIT_IN}."),
+    # D57: an open incident read from the page's Atom history (provider_history_incident): no severity or scope, low confidence.
+    "W8": ("wait_for_provider", f"The provider's incident history lists an open incident but no severity or affected services. If its status page names a service you use, wait; {_WAIT_IN}."),
     "H1": ("hand_off_to_human", "This step needs human verification. Hand it to the user through your normal handoff; do not try to solve or bypass the check."),
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     "O1": ("use_official_path", "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in {n} s."),
@@ -91,6 +93,8 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
     action = recommendation.get("action")
     reasons = set(recommendation.get("reasons") or ())
     if action == "wait_provider_incident":
+        if "provider_history_incident" in reasons:
+            return "W8", True
         if "provider_maintenance_only" in reasons:
             # D55: say that nothing but maintenance is announced. A maintenance page that is not regional keeps W2,
             # which already says so.

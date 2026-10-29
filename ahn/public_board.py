@@ -29,12 +29,14 @@ from fastapi.responses import Response
 SCHEMA = "ahn-now/1"
 CACHE_SECONDS = 60
 NEXT_UPDATE = timedelta(minutes=5)  # feeds are read by the 5-minute cron; asking sooner returns the same list
-LIST_MAX = 20
+LIST_MAX = 100
 INCIDENT_INDICATORS = ("critical", "major", "minor")
 PATH = "/v1/now"
 LEGEND = {
     "provider": "The provider's own status page, quoted with its source and update time. Listed only while that "
-                "statement would make an AHN lookup answer wait and was updated by the provider within 7 days.",
+                "statement would make an AHN lookup answer wait and was updated by the provider within 7 days. A line with "
+                "source_kind history_atom and indicator null is an open incident announced in the page's public incident "
+                "history: the provider gives no severity level there, and none is made up.",
     "ahn_check": "AHN's own robots.txt reads from one datacenter location, updated only when a read happens; not a "
                  "report from agents and not a verdict on the site.",
     "not_listed": "Refused reads (401, 403, 429, 503), agent reports and lookup counts are never listed here.",
@@ -65,11 +67,14 @@ def policy_sentences(ahn_check: bool) -> dict[str, tuple[str, str]]:
         en = ("Only the operator sees them, on a private dashboard; they are not shown on public pages or in lookup answers. "
               "A public page (“Site problems right now”, /en/now, /ko/now and /v1/now) lists curated hosts whose connected "
               "provider status page currently reports a problem: the same provider statement a lookup answer shows, only "
-              "while the provider updated it within the last 7 days, with 7-day totals that name no host. It shows no "
+              "while the provider updated it within the last 7 days, with 7-day totals that name no host. Where we read a "
+              "page's public incident-history feed instead of its status API, a line says only that the provider announced "
+              "an open incident there, with no severity level. It shows no "
               "robots.txt read result, no refused read and nothing about who looked a host up.")
         ko = ("운영자만 비공개 화면에서 보며, 공개 페이지나 조회 응답에는 나오지 않습니다. 공개 페이지(“지금 문제가 있는 사이트”, "
               "/en/now, /ko/now, /v1/now)는 연결된 업체 상태 페이지가 지금 문제를 발표한 큐레이션 호스트를 보여 줍니다. 조회 응답이 "
               "보여 주는 것과 같은 업체 발표이며, 업체가 최근 7일 안에 갱신한 동안만 올리고, 호스트명 없는 7일 합계를 함께 둡니다. "
+              "상태 API 대신 공개 사건 이력 피드를 읽는 페이지는 업체가 그곳에 열린 사건을 발표했다는 것만 등급 없이 보여 줍니다. "
               "robots.txt 읽기 결과, 거절된 읽기, 누가 호스트를 조회했는지는 보여 주지 않습니다.")
     return {"en": (POLICY_BEFORE["en"], en), "ko": (POLICY_BEFORE["ko"], ko)}
 
@@ -80,7 +85,8 @@ def llms_section(ahn_check: bool) -> str:
             "one datacenter; AHN checks are not reports from agents and not a verdict on the site"
             if ahn_check else
             "curated hosts whose own status page reports a problem, quoted with its source and update time, listed only "
-            "while the provider updated it within 7 days")
+            "while the provider updated it within 7 days (a line with `source_kind: history_atom` and `indicator: null` is an "
+            "open incident from the page's public incident history, which gives no severity)")
     return ("## Site problems now\n\n"
             f"- `https://agenthelpnetwork.com{PATH}` (JSON, schema `{SCHEMA}`; do not fetch more often than "
             f"`next_update_after`): {what}. A host missing from the list is not known to be working. Human page: "
@@ -88,9 +94,31 @@ def llms_section(ahn_check: bool) -> str:
 
 
 def _provider(entry: dict) -> dict:
-    return {key: entry["provider"][key]
-            for key in ("indicator", "basis", "updated_at", "source_name", "source_url", "source_updated_at", "fetched_at")
-            if entry["provider"].get(key) is not None}
+    out = {key: entry["provider"][key]
+           for key in ("indicator", "basis", "source_kind", "active_incidents", "updated_at", "source_name", "source_url",
+                       "source_updated_at", "fetched_at")
+           if entry["provider"].get(key) is not None}
+    if entry["provider"].get("source_kind") == "history_atom":
+        # D57: an open incident announced in the page's public incident history, which gives no level: say so with an
+        # explicit null (as the lookup answer does, D52) instead of leaving a reader to guess one.
+        out = {"indicator": None, **out}
+    return out
+
+
+def _ordered(entries: list[dict]) -> list[dict]:
+    """Grade order as the owner board has it (critical, major, minor, then no level), and inside one grade the
+    provider's own update time, newest first, then host name. Re-sorted here so the owner view keeps its order."""
+    grade = {"critical": 0, "major": 1, "minor": 2}
+
+    def rank(entry: dict) -> int:
+        return grade.get((entry.get("provider") or {}).get("indicator"), 3)
+
+    by_host = sorted(entries, key=lambda entry: entry["site_host"])
+    # ISO timestamps from _iso share one format, so a string compare is a time compare; a line without a provider
+    # update time (AHN check only) sorts after the lines that have one.
+    by_time = sorted(by_host, key=lambda entry: (entry.get("provider") or {}).get("updated_at") or "", reverse=True)
+    # Python's sort keeps equal keys in input order even with reverse=True, so the host name still breaks ties.
+    return sorted(by_time, key=rank)
 
 
 def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
@@ -100,7 +128,7 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
     problems, maintenance = [], []
     # Without the AHN-check column the board reads every provider line (uncut), so AHN-check-only candidates neither
     # push provider lines out of the owner list's cut nor show through `truncated`.
-    for entry in (board["candidates"] if ahn_check else board["provider_candidates"]):
+    for entry in _ordered(board["candidates"] if ahn_check else board["provider_candidates"]):
         provider = entry.get("provider")
         indicator = provider["indicator"] if provider else None
         if provider and provider.get("basis") == "maintenance":
