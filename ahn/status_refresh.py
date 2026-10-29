@@ -752,6 +752,9 @@ SOURCES: dict[str, Source] = {
     "packagecloud.io": Source("packagecloud Status", "https://www.packagecloudstatus.io/", "https://www.packagecloudstatus.io/api/v2/status.json"),
     # Same publisher as an existing entry: greenhouse.com's page links support.greenhouse.io (the company's renamed site).
     "greenhouse.com": Source("Greenhouse Status", "https://status.greenhouse.io/", "https://status.greenhouse.io/api/v2/status.json"),
+    # Weekly re-verification 2026-10-27: upgraded from link after the feed parsed.
+    "gcore.com": Source("Gcore Status", "https://status.gcore.com/", "https://status.gcore.com/summary.json", "instatus"),
+    "verisoul.ai": Source("Verisoul Status", "https://status.verisoul.ai/", "https://status.verisoul.ai/index.json", "betterstack"),
 }
 # D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
 # Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
@@ -1093,7 +1096,6 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "adafruit.com": ("Adafruit Status", "https://www.adafruitstatus.com/"),
     "appiancloud.com": ("Appiancloud Status", "https://status.appiancloud.com/"),
     "drcedirect.com": ("Drcedirect Status", "https://status.drcedirect.com/"),
-    "fikfap.com": ("Fikfap Status", "https://status.fikfap.com/"),
     "gimkit.com": ("Gimkit Status", "https://gimkit.crisp.watch/en/"),
     "gwdg.de": ("Gwdg Status", "https://status.gwdg.de/"),
     "ingentaconnect.com": ("Ingentaconnect Status", "https://status.ingentaconnect.com/"),
@@ -1119,13 +1121,11 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "beatport.com": ("Beatport Status", "https://status.beatport.com/"),
     "cimpress.io": ("Cimpress Status", "https://status.cimpress.io/"),
     "clubready.com": ("Clubready Status", "https://status.clubready.com/"),
-    "gcore.com": ("Gcore Status", "https://status.gcore.com/"),
     "kingoftime.jp": ("Kingoftime Status", "https://status.kingoftime.jp/"),
     "klickpin.com": ("Klickpin Status", "https://status.klickpin.com/"),
     "photoshelter.com": ("Photoshelter Status", "https://status.photoshelter.com/"),
     "rcsb.org": ("Rcsb Status", "https://status.rcsb.org/"),
     "uni-muenster.de": ("University of Münster Status", "https://status.uni-muenster.de/"),
-    "verisoul.ai": ("Verisoul Status", "https://status.verisoul.ai/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 # Robots.txt decision before every feed request (D50, ahn/feed_robots.py). The four places that read a feed (the

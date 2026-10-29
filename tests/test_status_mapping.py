@@ -86,6 +86,7 @@ REVERIFIED_INSTATUS_HOSTS = {
     "1rpc.io", "appfolio.com", "aternos.org", "cloudez.io", "code.org", "decodo.com", "discogs.com", "doofinder.com",
     "fetlife.com", "flashbots.net", "freeconvert.com", "gamma.app", "growthbook.io", "mediavine.com", "narvar.com",
     "optable.co", "padlet.com", "polymarket.com", "wistia.com",
+    "gcore.com",  # weekly re-verification, 2026-10-27: upgraded from link after the feed parsed
 }
 REVERIFIED_BETTERSTACK_HOSTS = {
     "dublincore.org", "nirvanahq.com",  # agent-demand collection, 2026-10-20: feed parsed on the first check
@@ -93,6 +94,7 @@ REVERIFIED_BETTERSTACK_HOSTS = {
     "framer.com", "freeipapi.com", "higgsfield.ai", "linkvertise.com", "modrinth.com", "nordvpn.com", "plausible.io",
     "raspberrypi.org", "signupgenius.com", "sportskeeda.com", "studocu.com", "time.com", "trezor.io", "userway.org",
     "wordfence.com",
+    "verisoul.ai",  # weekly re-verification, 2026-10-27: upgraded from link after the feed parsed
 }
 # Tranco ranks 9,001-10,000 (2026-10-20): the page's public feed parsed with the existing parser on the first check.
 RANK_BATCH_6_INSTATUS_HOSTS = {"q10.com"}
