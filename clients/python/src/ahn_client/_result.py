@@ -354,20 +354,39 @@ class Result:
         listed = rules.get("agents_blocked") if isinstance(rules.get("agents_blocked"), list) else []
         return tuple(item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item))
 
+    @property
+    def crawl_delay_seconds(self) -> Optional[float]:
+        """The ``Crawl-delay`` of the host's ``*`` group in robots.txt (``access_profile.robots.wildcard_crawl_delay``), in
+        seconds between requests; None when absent or not a number above 0 and at most 3600. Information about the site's
+        request, not a permission and not part of the verdict."""
+        rules = _dict((self.access_profile or {}).get("robots")) or {}
+        value = rules.get("wildcard_crawl_delay")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 3600:
+            return None
+        return float(value)
+
     def summary(self, site_retry_after: Any = None) -> str:
         """One line, at most 700 characters, built only from validated fields. With a service ``summary_line`` it comes
         first (then the ``next_action`` values it points at and the detail line, as far as it fits); without, the line is the
         one earlier versions gave. ``site_retry_after`` (seconds or a band code) only adds a note when the site asks for a
-        longer wait than the service."""
+        longer wait than the service. When robots.txt asks for a ``Crawl-delay`` the line ends with "robots.txt asks N s
+        between requests"."""
+        delay = self.crawl_delay_seconds
+        if delay is None:
+            return self._summary_line(site_retry_after, MAX_SUMMARY)
+        note = f"robots.txt asks {delay:g} s between requests."
+        return self._summary_line(site_retry_after, MAX_SUMMARY - len(note) - 1) + " " + note
+
+    def _summary_line(self, site_retry_after: Any, limit: int) -> str:
         action_code = self.recommendation if self.recommendation in ACTIONS else None
         if self.summary_line is None:
-            return _summary(self.host, self.raw, self.url, action_code)
+            return _summary(self.host, self.raw, self.url, action_code, limit)
         head = _head(self.host, self.summary_line, self.next_action, site_retry_after, self._merges_site)
-        room = MAX_SUMMARY - len(head) - 1
+        room = limit - len(head) - 1
         if room >= 200:
             return head + " " + _summary(self.host, self.raw, self.url, action_code, room, compact=True)
         # No room for the detail line: keep the closing caution, cut the head.
         tail = " " + SAFETY_TAIL
-        if len(head) + len(tail) <= MAX_SUMMARY:
+        if len(head) + len(tail) <= limit:
             return head + tail
-        return head[:MAX_SUMMARY - len(tail) - 1].rstrip() + "…" + tail
+        return head[:limit - len(tail) - 1].rstrip() + "…" + tail

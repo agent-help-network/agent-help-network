@@ -49,6 +49,25 @@ answer.wait_seconds(site_retry_after)   # max(site's Retry-After, service's wait
 
 Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/playwright_example.py), [`examples/browser_use_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
 
+## Diagnose a response
+
+Playwright's `page.goto`, `page.request`, httpx and requests hand back a 403 or a challenge page as an ordinary response, not as an exception, so `classify(exc)` never sees it. `ahn.diagnose(response)` reads such an object (`status_code` or `status`, `headers`, `text` or `content`; nothing is imported, nothing is installed) and gives the lookup's codes:
+
+```python
+response = page.goto(url)                       # or httpx.get(url), requests.get(url)
+error_class, stage, found = ahn.diagnose(response)
+if error_class:                                 # None: not a block or an outage
+    answer = ahn.check(url, error_class, stage, **found)
+    if answer:
+        print(answer.summary())
+```
+
+- 401 and 407 give `login_auth`; 402, 403 and 451 `site_access`; 408, 429 and 5xx `service_error`. A 403 or 451 with `cf-mitigated: challenge`, or a human-check marker in the first 4,000 characters of the body, is `human_verification`.
+- AWS WAF marks its CAPTCHA and Challenge responses with the header `x-amzn-waf-action` (`captcha` with status 405, `challenge` with status 202; [AWS documentation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html)). With that header a 202 or 405 is `human_verification` and `found["challenge"]` is `header`.
+- A 200 whose body starts with a human-check marker gives `human_verification` too, but only as a hint: the returned value has `.candidate == True`. Decide yourself whether to look up.
+- The body is read on your machine only, for a few marker words, and is never sent, stored or returned; `challenge` comes from headers only. A body that is not an attribute (Playwright's `response.text()`) can be passed as `ahn.diagnose(response, body=text)`.
+- When robots.txt asks for a delay between requests, `Result.summary()` ends with "robots.txt asks N s between requests" (`Result.crawl_delay_seconds`).
+
 ## Framework adapters
 
 When a web tool fails inside an agent framework with a block or an outage (403, 429, a challenge, a login wall, 5xx, a timeout, a refused connection), an adapter reads the hostname of the call's URL, looks it up with `classify()` and `check()`, and adds one line (`Result.summary()`, at most 700 characters) to what the agent sees. Each adapter is an extra: the base install has no dependencies and imports no framework.
@@ -125,6 +144,7 @@ Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1
 - `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0, adapter=None, http_status=None, challenge=None, retry_after=None, via=None, agent_vendor=None) -> Result | None` — asks about the host of a hostname or URL. `adapter` is for integrations: a short lowercase name (such as `langchain`) that is added to the User-Agent and changes nothing else. `http_status`, `challenge`, `retry_after` and `via` (from 0.4.0) are the optional codes in [What it sends](#what-it-sends); a value outside their lists is dropped and the lookup still happens. `agent_vendor` (from 0.5.0) names the vendor of your own fetcher, see [What it sends](#what-it-sends); unlike the codes it raises `ValueError` for a value outside its list, before anything is sent. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
 - `ahn.classify(exc_or_text, host=None) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (408, 429, 5xx, timeout) or `site_access` (402, 403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](https://github.com/agent-help-network/agent-help-network/blob/main/plugins/claude-code/ahn/README.md). `host`, when given, is the hostname the error is about; tokens naming it are ignored, so `login.example.com` is not read as a login wall (from 0.3.0). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
 - `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, `summary_line`, `next_action`, `links`, `remember`, `retry_after_seconds`, `wait_seconds(site_retry_after=None)` (all from 0.6.0) and `summary(site_retry_after=None)`, a one-line text of at most 700 characters, like the line the plugin prints (plus a short sentence for the three D48 robots codes, see below).
+- `ahn.diagnose(response, body=None) -> (error_class | None, failure_stage | None, signals)` — the same codes for a Playwright, httpx or requests response object (see [Diagnose a response](#diagnose-a-response)); the result has `.candidate`.
 - `ahn.signals(exc, *, via=None) -> dict` — the optional codes an exception already holds, ready for `check`: `ahn.check(url, error_class, stage, **ahn.signals(exc))`. It reads the HTTP status the exception carries (httpx and requests `.response.status_code`, aiohttp `.status`), that response's headers, and the exception's module (`httpx`, `requests`, `aiohttp`, `urllib` give `http_fetch`; `playwright`, `selenium`, `pyppeteer`, `browser_use` give `browser`). Pass `via="browser"` or `via="http_fetch"` when you know better. A code it cannot know is left out: the result is `{}` for text, and for an exception without an HTTP status in the lists it holds at most `via`. An empty headers object counts as not seen, so `challenge` and `retry_after` are left out. It never raises. The framework adapters and `ahn_hooks()` do this for you.
 - `ahn.clear_cache()` — forget cached answers.
 
@@ -136,10 +156,10 @@ At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
-User-Agent: ahn-client/0.6.0 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.6.1 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.6.0 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.6.1 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
 - From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
