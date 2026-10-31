@@ -5,6 +5,7 @@ No real host is read (tests/conftest.py stubs every background read)."""
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -15,10 +16,11 @@ if not TEST_URL:
 from fastapi.testclient import TestClient  # noqa: E402
 
 from ahn import background_reads  # noqa: E402
+from ahn import official_paths as official_paths_module  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.main import create_app  # noqa: E402
 from ahn.official_paths import CONSUMER_PATHS, OFFICIAL_PATHS  # noqa: E402
-from ahn.response_guide import CONSUMER_TAIL  # noqa: E402
+from ahn.response_guide import CONSUMER_SEE_TAIL  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 
 HOST = "walgreens.com"
@@ -42,6 +44,18 @@ def no_worker(monkeypatch):
     monkeypatch.setattr(background_reads, "worker_running", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def verified_day(monkeypatch):
+    """The service's today is the day the entry was verified, so these tests do not expire 90 days after it."""
+    day = date.fromisoformat(CONSUMER_PATHS[HOST]["verified_at"])
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(day.year, day.month, day.day, 12, 0, tzinfo=tz or timezone.utc)
+    monkeypatch.setattr(official_paths_module, "datetime", Frozen)
+
+
 def test_the_rest_answer_names_both_paths_and_keeps_the_verdict(db):
     with TestClient(create_app(db)) as client:
         body = client.get("/v1/incidents/check", params={"site_host": HOST, "error_class": "site_access"}).json()
@@ -51,10 +65,10 @@ def test_the_rest_answer_names_both_paths_and_keeps_the_verdict(db):
     assert body["next_action"]["do"] == "use_official_path"
     assert body["next_action"]["url"] == OFFICIAL_PATHS[HOST]["developer_portal"]
     assert body["next_action"]["customer_url"] == CONSUMER_PATHS[HOST]["paths"][0]["url"]
-    assert body["summary_line"].endswith(CONSUMER_TAIL) and len(body["summary_line"]) <= 200
+    assert body["summary_line"].endswith(CONSUMER_SEE_TAIL) and len(body["summary_line"]) <= 200
     # A developer host without a consumer entry answers as before: no new keys.
     assert "consumer" not in plain["official_paths"] and "customer_url" not in plain["next_action"]
-    assert not plain["summary_line"].endswith(CONSUMER_TAIL)
+    assert not plain["summary_line"].endswith(CONSUMER_SEE_TAIL)
 
 
 @pytest.mark.parametrize("lang, lead", [("en", "For a task in your own account"), ("ko", "내 계정으로 하는 일이라면")])

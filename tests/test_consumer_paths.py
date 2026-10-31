@@ -24,7 +24,7 @@ from ahn.access_profile import parse_robots
 from ahn.models import CheckResponse, ConsumerPath, ConsumerPaths, NextAction, OfficialPaths
 from ahn.official_paths import (CONSUMER_KINDS, CONSUMER_MAX_AGE_DAYS, CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS,
                                 OFFICIAL_PATHS, consumer_is_current, customer_url, official_paths)
-from ahn.response_guide import CONSUMER_ROWS, CONSUMER_TAIL, LINE_MAX, ROWS, guide
+from ahn.response_guide import CONSUMER_HAND_TAIL, CONSUMER_ROWS, CONSUMER_SEE_TAIL, LINE_MAX, ROWS, guide
 from ahn.triage import next_checks, recommendation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,9 @@ CONSUMER = {"paths": [{"kind": "customer_help", "url": HELP, "source_url": "http
             "verified_at": "2026-10-31"}
 OFFICIAL = {"name": "Example", "api_docs": None, "developer_portal": "https://developer.example.com/", "note": None}
 WITH_CONSUMER = {**OFFICIAL, "consumer": CONSUMER}
+TAILS = (CONSUMER_SEE_TAIL, CONSUMER_HAND_TAIL)
+# Rows where robots.txt or a refused read blocks pages hand the customer page to the user; the others only point to it.
+HAND_ROWS = frozenset({"O2", "O3", "O4", "O5", "O6"})
 PHONE = re.compile(r"(?:tel:|\+?1?[ (.-]*\d{3}[ ).-]*\d{3}[ .-]*\d{4})")
 
 
@@ -98,7 +101,9 @@ def test_the_first_seed_covers_ten_to_twenty_consumer_hosts_with_a_developer_ent
     for host in CONSUMER_PATHS:
         entry = OFFICIAL_PATHS[host]
         assert entry["api_docs"] or entry["developer_portal"], host  # the wrong answer D61 fixes needs a developer path
-    assert {"walgreens.com", "walmart.com", "amazon.com"} <= set(CONSUMER_PATHS)
+    assert {"walgreens.com", "walmart.com"} <= set(CONSUMER_PATHS)
+    # Its pages answered with a captcha or 403 to the curation agent, so it is listed as left out, not curated.
+    assert "amazon.com" not in CONSUMER_PATHS
 
 
 @pytest.mark.parametrize("host", sorted(CONSUMER_PATHS))
@@ -243,7 +248,8 @@ def test_only_use_official_path_answers_gain_the_customer_branch_and_do_and_url_
             assert after["next_action"]["customer_url"] == HELP
             n = after["next_action"]["retry_after_seconds"]
             assert after["summary_line"] == CONSUMER_ROWS[row].replace("{n}", str(n if n is not None else 0))
-            assert after["summary_line"].endswith(CONSUMER_TAIL) and len(after["summary_line"]) <= LINE_MAX
+            tail = CONSUMER_HAND_TAIL if row in HAND_ROWS else CONSUMER_SEE_TAIL
+            assert after["summary_line"].endswith(tail) and len(after["summary_line"]) <= LINE_MAX
         else:
             assert after == before, case
     assert {"O1", "O2", "O3", "O5", "O6", "O7"} <= seen_rows
@@ -256,7 +262,7 @@ def test_without_a_consumer_entry_the_guide_is_the_table_as_before():
         do, sentence = ROWS[response_guide.select_row(answer(OFFICIAL, **case)["recommendation"], case["profile"], case["provider"],
                                                        "example.com")[0]]
         assert re.fullmatch(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}"), result["summary_line"])
-        assert not result["summary_line"].endswith(CONSUMER_TAIL)
+        assert not result["summary_line"].endswith(TAILS)
 
 
 @pytest.mark.parametrize("n", [0, 5, 120, 3600])
@@ -265,11 +271,33 @@ def test_every_consumer_sentence_is_short_printable_and_names_both_paths(n):
     for row, sentence in CONSUMER_ROWS.items():
         text = sentence.replace("{n}", str(n))
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text), (row, len(text))
-        assert "official path" in text or "developer" in text  # the developer path is still named
-        assert text.endswith(CONSUMER_TAIL) and "next_action.customer_url" in text
+        assert "official path" in text.lower() or "developer" in text  # the developer path is still named
+        assert text.endswith(TAILS) and "next_action.customer_url" in text
+        assert "may not reach" in text  # never asserts that the API cannot reach the account (some use OAuth)
+        for absolute in ("no substitute", "not a substitute", "cannot", "can't", "is not a way"):
+            assert absolute not in text.lower(), (row, absolute)
         assert ("{n}" in sentence) == ("{n}" in ROWS[row][1])  # the same retry placeholder as the plain row
         for banned in ("bypass", "solve", "user agent string", "proxy", "password"):
             assert banned not in text.lower()
+
+
+def test_each_consumer_row_is_pinned_and_blocked_rows_hand_off():
+    see = " The API may not reach the user's own account; the site's page is next_action.customer_url."
+    hand = " The API may not reach the user's own account; hand the user next_action.customer_url."
+    assert (CONSUMER_SEE_TAIL, CONSUMER_HAND_TAIL) == (see, hand)
+    assert CONSUMER_ROWS == {
+        "O1": "Official path listed; use it instead of page automation. robots.txt is pending: look up once more in {n} s." + see,
+        "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + hand,
+        "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + hand,
+        "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + hand,
+        "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + hand,
+        "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + hand,
+        "O7": "An official developer API or portal is listed; prefer it over page automation." + see,
+    }
+    for row, sentence in CONSUMER_ROWS.items():
+        # A blocked row never sends the agent to the same site's pages; only the user is handed the customer page.
+        assert (" see " not in sentence and "hand the user" in sentence) if row in HAND_ROWS else "hand the user" not in sentence
+    assert "use it instead of page automation" in CONSUMER_ROWS["O1"] and "use it instead of page automation" in ROWS["O1"][1]
 
 
 def test_an_unsafe_consumer_url_is_dropped_and_the_plain_row_stays(caplog):
@@ -342,9 +370,19 @@ def test_contracts_and_llms_txt_name_every_new_key(name):
 
 
 def test_the_contracts_state_the_tail_sentence_and_the_decision():
-    tail = CONSUMER_TAIL.strip()
     for name in ("docs/api-contract.en.md", "docs/api-contract.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
-        assert tail in text and "D61" in text and "--consumer-only" in text
+        assert CONSUMER_SEE_TAIL.strip() in text and CONSUMER_HAND_TAIL.strip() in text
+        assert "D61" in text and "--consumer-only" in text
         assert f"{len(CONSUMER_PATHS)}" in text and f"{sum(len(v['paths']) for v in CONSUMER_PATHS.values())}" in text
     assert "| D61 " in (ROOT / "docs/decisions.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("name", ["docs/api-contract.en.md", "docs/api-contract.md", "docs/decisions.md", "ahn/llms.txt", "README.md",
+                                  "README.ko.md", "ahn/templates/search.html", "ahn/templates/human.html"])
+def test_no_page_asserts_that_a_developer_api_cannot_reach_the_users_account(name):
+    # Some developer APIs reach the user's own account through OAuth (see the access bundles), so D61 never says otherwise.
+    text = (ROOT / name).read_text(encoding="utf-8")
+    for absolute in ("no substitute", "not a substitute", "not reachable through them", "is not a way to do",
+                     "대신할 수 없", "일을 할 수 없기 때문", "대체 경로가 아니다"):
+        assert absolute not in text, (name, absolute)

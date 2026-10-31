@@ -94,7 +94,7 @@
         {% if op.get('note') %}<p>{{ op.get('note') }}</p>{% endif %}
         {% if op.get('consumer') %}
         {% set kind_label = {'customer_help': ('Help and contact' if lang == 'en' else '도움말·연락처'), 'official_app': ('Official app' if lang == 'en' else '공식 앱'), 'entry_link': ('Entry page' if lang == 'en' else '진입 페이지')} %}
-        <p><strong>{{ 'For a task in your own account' if lang == 'en' else '내 계정으로 하는 일이라면' }}</strong> · {{ 'the developer API above is not a substitute. The site’s own customer path:' if lang == 'en' else '위의 개발자 API 로 대신할 수 없어요. 사이트가 직접 안내하는 고객 경로:' }}
+        <p><strong>{{ 'For a task in your own account' if lang == 'en' else '내 계정으로 하는 일이라면' }}</strong> · {{ 'the developer API above may not reach it. The site’s own customer path:' if lang == 'en' else '위의 개발자 API 가 닿지 못할 수 있어요. 사이트가 직접 안내하는 고객 경로:' }}
         {% for item in op.get('consumer').get('paths') %}{% if not loop.first %} · {% endif %}<a href="{{ item.get('url') }}" rel="noopener noreferrer">{{ kind_label.get(item.get('kind'), item.get('kind')) }} ↗</a>{% endfor %}</p>
         {% endif %}
         <p>{{ 'Curated from the provider’s public developer pages. Using an official API usually needs the user’s own credentials and the provider’s terms; this listing is not an endorsement or affiliation.' if lang == 'en' else '업체의 공개 개발자 페이지에서 정리했습니다. 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요합니다. 이 목록은 보증이나 제휴가 아닙니다.' }}</p>

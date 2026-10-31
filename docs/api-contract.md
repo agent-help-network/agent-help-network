@@ -406,7 +406,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `retry_after_seconds` 는 같은 조회를 **한 번** 다시 할 때다. 폴링 간격이 아니다. 다시 조회했는데 또 `retry_lookup_once` 가 오면 `no_clear_action` 으로 읽는다.
 - `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
-- `customer_url` 은 `use_official_path` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때만 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업이라면 `url` 의 개발자 API 가 대신할 수 없을 때 쓰는 길이다. `do` 와 `url` 은 그대로다.
+- `customer_url` 은 `use_official_path` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때만 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업에서 `url` 의 개발자 API 가 닿지 못할 때 쓰는 길이다. O2~O6 행에서는 에이전트가 자동화할 페이지가 아니라 사용자에게 넘길 페이지다. `do` 와 `url` 은 그대로다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
@@ -477,7 +477,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 #### 소비자 공식 경로 (`official_paths.consumer`, 2026-10-31, D61)
 
-개발자 API 는 사이트의 데이터 위에 무언가를 만드는 길이다. 그 사이트의 사용자 본인 계정으로 하는 일(처방 리필, 요금 납부, 예약 변경)을 하는 길이 아니다. 그런 API 는 대개 파트너용이고 사용자의 계정에 닿지 않는다. 소비자 서비스가 뚜렷한 일부 호스트에는 `official_paths` 에 `consumer` 가 붙는다. 사이트 자신이 고객에게 안내하는 길이다.
+개발자 API 는 사이트의 데이터 위에 무언가를 만드는 길이다. 그 사이트의 사용자 본인 계정으로 하는 일(처방 리필, 요금 납부, 예약 변경)에는 도움이 안 될 수 있다. 파트너용 API 가 많고, OAuth 로 사용자 계정에 닿는 API 도 있다(`access` 참고). 소비자 서비스가 뚜렷한 일부 호스트에는 `official_paths` 에 `consumer` 가 붙는다. 사이트 자신이 고객에게 안내하는 길이다.
 
 ```json
 "official_paths": {
@@ -499,10 +499,10 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 | `entry_link` | 흔한 고객 작업에 대해 사이트 자신이 링크한 공개 진입 경로. |
 
 - `consumer` 는 큐레이션돼 있고 유효할 때만(90일 안에 확인, `access` 와 같은 규칙) 붙고, 아니면 키 자체가 없다(`null` 아님). `official_paths` 항목이 있는 호스트에만 큐레이션한다. 경로는 6개 이하, 각 `url`·`source_url` 은 200자 이하의 `https` URL 이다.
-- **사이트 자신의 페이지, 직접 읽음, 추측 없음.** `url` 과 `source_url` 은 키의 등록 가능 도메인에 있다. 단 `official_app` 목록은 `source_url` 페이지가 링크한 것이어야 한다. 각 페이지는 그 호스트의 `robots.txt` 가 허용한 뒤 큐레이션 User-Agent 로 `verified_at` 에 읽었다. 읽기를 거절한 호스트는 뺀다. 서비스는 답하는 동안 이 URL 들을 읽지 않는다.
-- **판정은 바뀌지 않는다.** `recommendation` 과 `next_checks` 는 `consumer` 가 있든 없든 같다(테스트로 고정). 서비스는 호출자가 사이트 데이터로 무언가를 만드는지 사용자 계정에서 일하는지 모르므로 하나를 고르지 않는다. `next_action.do` 가 `use_official_path` 이고 `consumer` 가 있으면 `summary_line` 이 둘 다 말하고(같은 뜻의 짧은 문장 + "In the user's own account the API is no substitute; see next_action.customer_url.") `next_action` 에 `customer_url` 이 붙는다(아래). 다른 행동은 그대로다.
-- 검증: `python scripts/verify_official_paths.py --consumer-only [--hosts a.com]` 이 각 호스트의 `robots.txt` 를 먼저 읽어 막힌 곳은 요청하지 않고, 각 페이지를 읽고, `official_app` 목록이 `source_url` 에 링크돼 있는지 확인한다. 순수 규칙은 CI 의 `tests/test_consumer_paths.py` 에서 돈다.
-- 첫 검증 2026-10-31(날짜가 붙은 기록): 13개 호스트(`walgreens.com`, `walmart.com`, `amazon.com`, `target.com`, `chase.com`, `wellsfargo.com`, `capitalone.com`, `americanexpress.com`, `verizon.com`, `usps.com`, `uber.com`, `paypal.com`, `spotify.com`), 경로 32개, 모든 페이지 200. 읽기 거절·금지로 뺀 곳: `tesla.com`·`doordash.com`(robots.txt 403), `instacart.com`(robots.txt 가 큐레이션 에이전트를 막음). 시간 초과이거나 스크립트 없이는 첫 페이지에 도움말 링크가 없어 뺀 곳: `kroger.com`, `bestbuy.com`, `fedex.com`, `att.com`.
+- **사이트 자신의 페이지, 직접 읽음, 추측 없음.** `url` 과 `source_url` 은 키의 등록 가능 도메인에 있다. 단 `official_app` 은 App Store·Google Play 목록이다. 모든 `url` 은 `source_url` 페이지가 링크한 것이고(그 페이지 자신이면 예외), 리다이렉트되는 주소가 아니라 최종 주소로 적는다. 각 페이지는 그 호스트의 `robots.txt` 가 허용한 뒤 큐레이션 User-Agent 로 `verified_at` 에 읽었다. 읽기를 거절한 호스트는 뺀다. 서비스는 답하는 동안 이 URL 들을 읽지 않는다.
+- **판정은 바뀌지 않는다.** `recommendation` 과 `next_checks` 는 `consumer` 가 있든 없든 같다(테스트로 고정). 서비스는 호출자가 사이트 데이터로 무언가를 만드는지 사용자 계정에서 일하는지 모르고, 사용자 계정에 닿는 개발자 API 도 있으므로 하나를 고르지 않는다. `next_action.do` 가 `use_official_path` 이고 `consumer` 가 있으면 `summary_line` 이 둘 다 말하고(같은 뜻의 짧은 문장 + 꼬리 문장) `next_action` 에 `customer_url` 이 붙는다(아래). O1·O7 행은 "The API may not reach the user's own account; the site's page is next_action.customer_url." 로 끝나고, robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행은 "The API may not reach the user's own account; hand the user next_action.customer_url." 로 끝난다. 에이전트가 같은 사이트의 페이지로 돌아가지 않게 하기 위해서다. 다른 행동은 그대로다.
+- 검증: `python scripts/verify_official_paths.py --consumer-only [--hosts a.com]` 은 각 호스트명(리다이렉트 목적지 포함)에 처음 요청하기 전에 그 `robots.txt` 를 읽고, 막힌 곳은 요청하지 않는다. `robots.txt` 가 5xx 이거나 시간 초과면 전부 금지로 보고, 리다이렉트는 따라간다(RFC 9309). 한 호스트명에서 처음 403 이나 봇 확인 화면(제목 또는 보이는 본문으로 판별)이 나오면 그 호스트명의 나머지 요청을 멈춘다. 모든 `url` 은 `source_url` 페이지의 `href`(정규화)로 링크돼 있어야 하고 최종 주소여야 한다. 순수 규칙은 CI 의 `tests/test_consumer_paths.py`, 실제 검증기의 요청 예절은 가짜 fetcher 로 `tests/test_consumer_verifier.py` 에서 돈다.
+- 첫 검증 2026-10-31(날짜가 붙은 기록, 검수 뒤 같은 날 다시 돌림): 12개 호스트(`walgreens.com`, `walmart.com`, `target.com`, `chase.com`, `wellsfargo.com`, `capitalone.com`, `americanexpress.com`, `verizon.com`, `usps.com`, `uber.com`, `paypal.com`, `spotify.com`), 경로 29개, 모든 페이지 200, `failures: 0; rule problems: 0`. 읽기 거절·금지로 뺀 곳: `tesla.com`·`doordash.com`(robots.txt 403), `instacart.com`(robots.txt 가 큐레이션 에이전트를 막음), `amazon.com`(첫 페이지와 연락처 페이지가 큐레이션 에이전트에 captcha 화면을 돌려줬고 도움말 페이지 하나는 403 이 나온 적이 있음). 시간 초과이거나 스크립트 없이는 첫 페이지에 도움말 링크가 없어 뺀 곳: `kroger.com`, `bestbuy.com`, `fedex.com`, `att.com`. PayPal 연락처 페이지 하나는 도움말 페이지가 다른 연락처 주소를 링크하고 있어 뺐다.
 
 ## 뒤에서 읽기 (stale-while-revalidate, 2026-10-19)
 

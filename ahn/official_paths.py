@@ -1852,8 +1852,8 @@ for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so",
 
 
 # The site's own customer path (D61), answered as official_paths.consumer for some table keys. A developer API is the path
-# for building on a site's data; it is not a way to do a task in a person's own account there (refill a prescription, pay a
-# bill, change a booking). For hosts with a clear consumer service this table lists where the site itself sends people:
+# for building on a site's data; it may not reach a person's own account there (refill a prescription, pay a bill, change
+# a booking), though some do through OAuth. For hosts with a clear consumer service this table lists where the site itself sends people:
 #   customer_help  the site's own help centre or contact page (a phone number is never copied: the page is linked instead);
 #   official_app   an App Store or Google Play listing that the site's own page links to;
 #   entry_link     a public entry point the site itself links to for a common customer task.
@@ -1890,12 +1890,8 @@ CONSUMER_PATHS: dict[str, dict] = {
     "walmart.com": {"paths": [
         _help("https://www.walmart.com/help", "https://www.walmart.com/"),
     ], "verified_at": "2026-10-31"},
-    "amazon.com": {"paths": [
-        _help("https://www.amazon.com/gp/help/customer/display.html?nodeId=508510", "https://www.amazon.com/"),
-        _help("https://www.amazon.com/hz/contact-us", "https://www.amazon.com/"),
-    ], "verified_at": "2026-10-31"},
     "target.com": {"paths": [
-        # corporate.target.com "Contact & Help" links contactus.target.com, which redirects here.
+        # corporate.target.com "Contact & Help" links contactus.target.com/ContactUs, which redirects here.
         _help("https://www.target.com/help/contact-us", "https://corporate.target.com/about/contact-help"),
     ], "verified_at": "2026-10-31"},
     "chase.com": {"paths": [
@@ -1929,12 +1925,11 @@ CONSUMER_PATHS: dict[str, dict] = {
     ], "verified_at": "2026-10-31"},
     "uber.com": {"paths": [
         _help("https://help.uber.com/", "https://www.uber.com/"),
-        _app("https://apps.apple.com/us/app/uber/id368677368", "https://help.uber.com/"),
+        _app("https://apps.apple.com/us/app/uber-rides-eats-hotels/id368677368", "https://help.uber.com/"),
         _app("https://play.google.com/store/apps/details?id=com.ubercab", "https://help.uber.com/"),
     ], "verified_at": "2026-10-31"},
     "paypal.com": {"paths": [
         _help("https://www.paypal.com/us/cshelp/personal", "https://www.paypal.com/us/home"),
-        _help("https://www.paypal.com/us/cshelp/contact-us", "https://www.paypal.com/us/cshelp/personal"),
         _app("https://apps.apple.com/us/app/paypal-pay-send-save/id283646709", "https://www.paypal.com/us/digital-wallet"),
         _app("https://play.google.com/store/apps/details?id=com.paypal.android.p2pmobile", "https://www.paypal.com/us/digital-wallet"),
     ], "verified_at": "2026-10-31"},
