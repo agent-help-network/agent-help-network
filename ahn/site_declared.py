@@ -58,16 +58,23 @@ NOTE = ("Files the host publishes for agents at standard locations: its API cata
         "only: not an access rule, not permission, and not a legal reading. Links are reported as published; they were "
         "not opened or checked.")
 _sleep = time.sleep
-# Bidirectional formatting characters (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069): they can make a stored value
-# read differently from what it is, so a value carrying one is dropped like one with a C0/C1 control character.
-_BIDI = frozenset([0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)])
+# Characters a stored value may not carry; a value with one is dropped like one with a C0/C1 control character.
+# Bidirectional formatting (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) and zero-width characters (U+200B-U+200D,
+# U+2060, U+FEFF) make a value read differently from what it is. Surrogates (U+D800-U+DFFF) only reach Python
+# unpaired, from a JSON escape such as "\ud800"; PostgreSQL rejects them in jsonb, as it rejects U+0000, and one such
+# value would fail the whole store. Those two are the only string values jsonb refuses; numbers are never stored
+# from a file, so NaN and Infinity cannot reach it.
+_INVISIBLE = frozenset([0x200B, 0x200C, 0x200D, 0x200E, 0x200F, *range(0x202A, 0x202F), 0x2060, *range(0x2066, 0x206A),
+                        0xFEFF])
 PENDING = "pending"  # the stored marker between the robots row and the standard-file reads (see view)
+STORE_FAILED = "store_failed"  # the stored marker when the parsed result could not be written
 
 
 def _has_control(value: str) -> bool:
-    """True for a C0 control (U+0000-U+001F), DEL, a C1 control (U+0080-U+009F) or a bidirectional formatting
-    character. PostgreSQL jsonb also rejects U+0000, so such a value could otherwise lose the whole stored read."""
-    return any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or ord(char) in _BIDI for char in value)
+    """True for a C0 control (U+0000-U+001F), DEL, a C1 control (U+0080-U+009F), a surrogate, or a bidirectional
+    formatting or zero-width character (_INVISIBLE)."""
+    return any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or 0xD800 <= ord(char) <= 0xDFFF or ord(char) in _INVISIBLE
+               for char in value)
 
 
 def enabled() -> bool:
@@ -346,6 +353,12 @@ def pending_marker(read_at: str) -> dict:
     return {"version": VERSION, "read_at": read_at, PENDING: True}
 
 
+def store_failed_marker(read_at: str) -> dict:
+    """What replaces the pending marker when the parsed result could not be stored: the answer says
+    ``not_read/store_failed`` until the next read, never a pending that would not end."""
+    return {"version": VERSION, "read_at": read_at, STORE_FAILED: True}
+
+
 def view(robots_status: str, stored: dict | None, read_host: str, fetched_at, freshness: str) -> dict | None:
     """access_profile.site_declared, or None when AHN_SITE_DECLARED=0. Not reading is never 'none_declared'.
 
@@ -356,14 +369,16 @@ def view(robots_status: str, stored: dict | None, read_host: str, fetched_at, fr
         return None
     this_read = (isinstance(stored, dict) and stored.get("version") == VERSION and fetched_at is not None
                  and _same_instant(stored.get("read_at"), fetched_at))
-    current = this_read and not stored.get(PENDING)
+    current = this_read and not stored.get(PENDING) and not stored.get(STORE_FAILED)
     if robots_status == "not_public":
         reason = "not_public"  # the host itself is not eligible: nothing was requested
     elif robots_status == "refused":
-        reason = "robots_refused"  # the host refused even robots.txt (401/403): its other files are not requested
+        reason = "robots_refused"  # the host refused even robots.txt (401/403): these three files are not requested
         current = False
     elif robots_status == "error" and fetched_at is None:
         reason = "robots_unreadable"  # no robots.txt answer yet, so no path was allowed
+    elif this_read and stored.get(STORE_FAILED):
+        reason = STORE_FAILED
     elif robots_status == "pending" or fetched_at is None or (this_read and not current):
         reason = "pending"
     elif not current:

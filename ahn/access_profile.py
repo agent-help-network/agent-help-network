@@ -667,16 +667,22 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
 
 MAX_ADDRESSES_TRIED = 3
 CONNECT_BUDGET_FACTOR = 2  # all connection attempts of one read share timeout_connect * this
-# Worst time of one request with the default timeouts: the shared connect budget plus the read timeout.
-REQUEST_WORST_SECONDS = 2.0 * CONNECT_BUDGET_FACTOR + 3.0
-# Worst time of one host's profile read (D59): requests that can each run to REQUEST_WORST_SECONDS are the apex
-# robots.txt and its www fallback, llms.txt, and the three standard files (a redirect hop is a fast answer followed by
-# one such request, so it adds no slow request of its own); plus site_declared's two pauses and, in the background
-# worker, up to five 0.5-second pacing waits. 6 * 7 + 1 + 2.5 = 45.5, rounded up.
-HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
+DNS_TIMEOUT_SECONDS = 2.0
+TIMEOUT_CONNECT_SECONDS = 2.0  # fetch_public_file's defaults
+TIMEOUT_READ_SECONDS = 3.0
 # Whole-body time limit. The per-receive read timeout alone lets a host that trickles one byte at a
 # time hold a reader indefinitely; past this budget the read ends as read_timeout.
 BODY_READ_BUDGET = 10.0
+# Worst time of one request with the default limits: DNS, the shared connect budget, the wait for the response headers
+# (one read timeout), the body budget, and the one receive that may still be running when the budget runs out
+# (read_capped checks the budget between receives). 2 + 4 + 3 + 10 + 3 = 22 seconds.
+REQUEST_WORST_SECONDS = (DNS_TIMEOUT_SECONDS + TIMEOUT_CONNECT_SECONDS * CONNECT_BUDGET_FACTOR + TIMEOUT_READ_SECONDS
+                         + BODY_READ_BUDGET + TIMEOUT_READ_SECONDS)
+# Worst time of one host's profile read (D59): requests that can each run to REQUEST_WORST_SECONDS are the apex
+# robots.txt and its www fallback, llms.txt, and the three standard files (a redirect hop is a fast answer followed by
+# one such request, so it adds no slow request of its own); plus site_declared's two pauses and, in the background
+# worker, up to five 0.5-second pacing waits: 6 * 22 + 1 + 2.5 = 135.5, rounded up to 136.
+HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
 _clock = time.monotonic  # patched in tests
 
 
@@ -744,8 +750,9 @@ ERROR_RETRY = timedelta(hours=1)
 
 
 def fetch_public_file(
-    site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0, timeout_read: float = 3.0,
-    _hop: int = 0, accept: str = "text/plain,*/*;q=0.5", headers_out: dict | None = None,
+    site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
+    timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0, accept: str = "text/plain,*/*;q=0.5",
+    headers_out: dict | None = None,
 ) -> tuple[str, bytes | None, str | None]:
     """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures.
 
@@ -759,7 +766,7 @@ def fetch_public_file(
         return ("error", None, "invalid_input")
     try:
         try:
-            addresses = _resolve(site_host, 2.0)
+            addresses = _resolve(site_host, DNS_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
             return ("error", None, "dns_timeout")
         except (OSError, socket.gaierror):
@@ -837,8 +844,8 @@ def fetch_public_file(
         return ("error", None, _transport_label(exc))
 
 
-def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0,
-                     timeout_read: float = 3.0, _hop: int = 0) -> tuple[str, bytes | None]:
+def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
+                     timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0) -> tuple[str, bytes | None]:
     status, body, _detail = fetch_public_file(site_host, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
                                               timeout_read=timeout_read, _hop=_hop)
     return (status, body)
@@ -1088,4 +1095,11 @@ def _store_site_declared(settings, site_host: str, declared: dict, reader, now: 
                 (Jsonb(stored), site_host, now)).fetchone()
     except Exception as exc:  # the profile is already stored; this layer must never fail the read
         LOG.warning("site_declared_store_failed host=%s error=%s", site_host, type(exc).__name__)
+    try:  # replace the pending marker, so the answer says store_failed instead of a pending that would not end
+        with connect(settings) as conn:
+            return conn.execute(
+                f"UPDATE host_access_profile SET site_declared=%s WHERE site_host=%s AND fetched_at=%s RETURNING {_ROW_COLUMNS}",
+                (Jsonb(site_declared.store_failed_marker(now.isoformat())), site_host, now)).fetchone()
+    except Exception as exc:
+        LOG.warning("site_declared_marker_failed host=%s error=%s", site_host, type(exc).__name__)
         return None

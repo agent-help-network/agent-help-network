@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ahn import auto_review, background_reads, profile_warm, status_refresh
+from ahn import access_profile, auto_review, background_reads, profile_warm, status_refresh
 from ahn.db import connect, migrate
 from ahn.official_paths import OFFICIAL_PATHS
 from ahn.service import aggregate_eligible_host
@@ -17,6 +17,9 @@ from ahn.settings import Settings
 
 TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
 SEEDS = ["seed-a.com", "seed-b.com", "seed-c.org", "seed-d.net", "seed-e.io"]
+# Ordering tests are not about the time budget: the real one (120 s) is below one worst-case host read (136 s),
+# so it starts only the first host. The budget itself is pinned in the two time-budget tests below.
+ROOMY = 10_000.0
 QUEUE_IDLE = {"claimed": 0, "done": 0, "failed": 0, "dropped": 0, "remaining": 0}
 SYNC_IDLE = {"curated": 0, "added": 0, "changed": 0, "removed": 0}
 ROBOTS = b"User-agent: GPTBot\nDisallow: /\n"
@@ -120,7 +123,7 @@ def test_warm_profiles_reads_batches_in_order_and_never_rereads_fresh_hosts(warm
     now = datetime.now(timezone.utc)
     reader = Reader()
 
-    first = profile_warm.warm_profiles(settings, batch=2, reader=reader, now=now)
+    first = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=reader, now=now)
     assert first == {"candidates": 3, "read": 2, "ok": 2, "errors": 0}
     assert reader.hosts == SEEDS[:2]
     assert pauses == [profile_warm.PAUSE_SECONDS]
@@ -131,22 +134,22 @@ def test_warm_profiles_reads_batches_in_order_and_never_rereads_fresh_hosts(warm
     assert row["robots"]["agents_blocked"] == ["GPTBot"]
 
     reader.calls.clear()
-    second = profile_warm.warm_profiles(settings, batch=2, reader=reader, now=now + timedelta(minutes=5))
+    second = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=reader, now=now + timedelta(minutes=5))
     assert second == {"candidates": 1, "read": 2, "ok": 2, "errors": 0}
     assert reader.hosts == SEEDS[2:4]  # moved on; the first two were not read again
 
     reader.calls.clear()
-    third = profile_warm.warm_profiles(settings, batch=2, reader=reader, now=now + timedelta(minutes=10))
+    third = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=reader, now=now + timedelta(minutes=10))
     assert third == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
     assert reader.hosts == SEEDS[4:]
 
     reader.calls.clear()
-    idle = profile_warm.warm_profiles(settings, batch=2, reader=reader, now=now + timedelta(minutes=15))
+    idle = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=reader, now=now + timedelta(minutes=15))
     assert idle == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
     assert reader.calls == []
 
     # Once the 168h window has passed the same hosts become due again, oldest list position first.
-    later = profile_warm.warm_profiles(settings, batch=2, reader=reader, now=now + timedelta(days=8))
+    later = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=reader, now=now + timedelta(days=8))
     assert later == {"candidates": 3, "read": 2, "ok": 2, "errors": 0}
     assert reader.hosts == SEEDS[:2]
 
@@ -156,12 +159,12 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
     now = datetime.now(timezone.utc)
     failing = Reader(robots=("error", None), llms=("error", None))
 
-    first = profile_warm.warm_profiles(settings, batch=3, reader=failing, now=now)
+    first = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=3, reader=failing, now=now)
     assert first == {"candidates": 2, "read": 3, "ok": 0, "errors": 3, "causes": {"no_detail": 3}}
 
     failing.calls.clear()
     healthy = Reader()
-    second = profile_warm.warm_profiles(settings, batch=3, reader=healthy, now=now + timedelta(minutes=5))
+    second = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=3, reader=healthy, now=now + timedelta(minutes=5))
     assert healthy.hosts == SEEDS[3:]  # failed hosts wait for the next window, not the next cron run
     assert second == {"candidates": 0, "read": 2, "ok": 2, "errors": 0}
     with connect(settings) as conn:
@@ -170,9 +173,9 @@ def test_warm_profiles_counts_read_errors_and_does_not_retry_them_within_the_win
 
     # Transport failures are tried again after WARM_ERROR_RETRY (the lookup path retries sooner, after ERROR_RETRY).
     healthy.calls.clear()
-    early = profile_warm.warm_profiles(settings, batch=3, reader=healthy, now=now + timedelta(hours=1, minutes=1))
+    early = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=3, reader=healthy, now=now + timedelta(hours=1, minutes=1))
     assert healthy.calls == [] and early == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
-    third = profile_warm.warm_profiles(settings, batch=3, reader=healthy,
+    third = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=3, reader=healthy,
                                        now=now + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
     assert healthy.hosts == SEEDS[:3]
     assert third == {"candidates": 0, "read": 3, "ok": 3, "errors": 0}
@@ -184,22 +187,22 @@ def test_warm_profiles_reads_hosts_never_attempted_before_retrying_failed_ones(w
     settings, _ = warm_settings
     now = datetime.now(timezone.utc)
     dead = Reader(robots=("error", None, "dns_failed"), llms=("error", None, "dns_failed"))
-    first = profile_warm.warm_profiles(settings, batch=2, reader=dead, now=now)
+    first = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=dead, now=now)
     assert first == {"candidates": 3, "read": 2, "ok": 0, "errors": 2, "causes": {"dns_failed": 2}}
 
     healthy = Reader()
     # An hour later the dead hosts would have been due again (ERROR_RETRY) and, being first in the file, taken the batch.
-    later = profile_warm.warm_profiles(settings, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=5))
+    later = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=5))
     assert healthy.hosts == SEEDS[2:4]
     assert later == {"candidates": 1, "read": 2, "ok": 2, "errors": 0}
 
     healthy.calls.clear()
-    last = profile_warm.warm_profiles(settings, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=10))
+    last = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=healthy, now=now + timedelta(hours=1, minutes=10))
     assert healthy.hosts == SEEDS[4:]  # the backlog is down to the failed hosts, which keep waiting
     assert last == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
 
     healthy.calls.clear()
-    retried = profile_warm.warm_profiles(settings, batch=5, reader=healthy,
+    retried = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=healthy,
                                          now=now + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
     assert healthy.hosts == SEEDS[:2]
 
@@ -207,12 +210,12 @@ def test_warm_profiles_reads_hosts_never_attempted_before_retrying_failed_ones(w
 def test_warm_profiles_puts_expired_answers_before_failed_retries(warm_settings):
     settings, _ = warm_settings
     now = datetime.now(timezone.utc)
-    profile_warm.warm_profiles(settings, batch=5, reader=Reader(), now=now)
+    profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=Reader(), now=now)
     # seed-a, first in the file, later hit a transport failure; the other four answers are simply a week old by now.
     with connect(settings) as conn:
         conn.execute("UPDATE host_access_profile SET last_error_at=%s WHERE site_host=%s", (now + timedelta(hours=1), SEEDS[0]))
     healthy = Reader()
-    result = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(days=8))
+    result = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=healthy, now=now + timedelta(days=8))
     assert healthy.hosts == SEEDS[1:] + [SEEDS[0]]
     assert result == {"candidates": 0, "read": 5, "ok": 5, "errors": 0}
 
@@ -230,7 +233,7 @@ def test_warm_profiles_names_the_cause_of_each_failure_without_host_names(warm_s
                 return ("error", None, label)
             return self.robots if path == "/robots.txt" else self.llms
 
-    result = profile_warm.warm_profiles(settings, batch=5, reader=Mixed(), now=datetime.now(timezone.utc))
+    result = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=Mixed(), now=datetime.now(timezone.utc))
     assert result["errors"] == 3 and result["ok"] == 2
     assert result["causes"] == {"dns_failed": 2, "connect_timeout": 1}
     assert profile_warm.format_causes(result["causes"]) == "dns_failed:2,connect_timeout:1"
@@ -241,16 +244,16 @@ def test_warm_profiles_retries_a_transport_failure_that_followed_an_earlier_answ
     settings, _ = warm_settings
     now = datetime.now(timezone.utc)
     healthy = Reader()
-    profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now)
+    profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=healthy, now=now)
     assert stored_hosts(settings) == set(SEEDS)
     # A request-path read later hit a transport failure: the answer stays, only the failure timestamp moves.
     with connect(settings) as conn:
         conn.execute("UPDATE host_access_profile SET last_error_at=%s, robots_detail='dns_timeout' WHERE site_host=%s",
                      (now + timedelta(minutes=30), SEEDS[2]))
     healthy.calls.clear()
-    too_soon = profile_warm.warm_profiles(settings, batch=5, reader=healthy, now=now + timedelta(hours=1))
+    too_soon = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=healthy, now=now + timedelta(hours=1))
     assert healthy.calls == [] and too_soon == {"candidates": 0, "read": 0, "ok": 0, "errors": 0}
-    due = profile_warm.warm_profiles(settings, batch=5, reader=healthy,
+    due = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=healthy,
                                      now=now + timedelta(minutes=30) + profile_warm.WARM_ERROR_RETRY + timedelta(minutes=1))
     assert healthy.hosts == [SEEDS[2]] and due == {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
     with connect(settings) as conn:
@@ -262,10 +265,10 @@ def test_warm_profiles_treats_a_refusal_as_an_answer_not_a_retry(warm_settings):
     settings, _ = warm_settings
     now = datetime.now(timezone.utc)
     refusing = Reader(robots=("refused", None, "http_503"), llms=("refused", None, "http_503"))
-    first = profile_warm.warm_profiles(settings, batch=2, reader=refusing, now=now)
+    first = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=2, reader=refusing, now=now)
     assert first == {"candidates": 3, "read": 2, "ok": 0, "errors": 0}
     refusing.calls.clear()
-    again = profile_warm.warm_profiles(settings, batch=5, reader=refusing, now=now + timedelta(hours=2))
+    again = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=5, reader=refusing, now=now + timedelta(hours=2))
     assert refusing.hosts and SEEDS[0] not in refusing.hosts and SEEDS[1] not in refusing.hosts
     assert again["read"] == 3
     with connect(settings) as conn:
@@ -277,7 +280,7 @@ def test_warm_profiles_swallows_an_exception_for_one_host_and_continues(warm_set
     settings, _ = warm_settings
     reader = Reader(raise_for={SEEDS[1]})
 
-    result = profile_warm.warm_profiles(settings, batch=3, reader=reader, now=datetime.now(timezone.utc))
+    result = profile_warm.warm_profiles(settings, time_budget=ROOMY, batch=3, reader=reader, now=datetime.now(timezone.utc))
 
     assert result == {"candidates": 2, "read": 2, "ok": 2, "errors": 1, "causes": {"exception:RuntimeError": 1}}
     assert reader.hosts == SEEDS[:3]
@@ -290,10 +293,34 @@ def test_warm_profiles_stops_starting_new_hosts_after_the_time_budget(warm_setti
     monkeypatch.setattr(profile_warm, "_clock", lambda: next(ticks))
     reader = Reader()
 
-    result = profile_warm.warm_profiles(settings, batch=5, reader=reader, now=datetime.now(timezone.utc), time_budget=150)
+    budget = profile_warm.HOST_WORST_SECONDS + 150
+    result = profile_warm.warm_profiles(settings, batch=5, reader=reader, now=datetime.now(timezone.utc), time_budget=budget)
 
     assert reader.hosts == SEEDS[:2]  # started at 0, second host checked at 100 (ok), third at 200 (over budget)
     assert result == {"candidates": 3, "read": 2, "ok": 2, "errors": 0}
+
+
+def test_the_worst_case_threshold_is_derived_and_applies_from_the_second_host(warm_settings, monkeypatch):
+    # The worst case comes from the reader's own limits: DNS 2 + connect 2*2 + headers 3 + body 10 + last receive 3.
+    assert access_profile.REQUEST_WORST_SECONDS == 22.0
+    assert profile_warm.HOST_WORST_SECONDS == access_profile.HOST_READ_WORST_SECONDS == 6 * 22.0 + 4.0
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    # One second short of a worst-case host after 100 seconds: the first host still starts, the second does not.
+    ticks = iter(range(0, 1000, 100))
+    monkeypatch.setattr(profile_warm, "_clock", lambda: next(ticks))
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=profile_warm.HOST_WORST_SECONDS + 99)
+    assert len(reader.hosts) == 1
+    # A short budget still lets the first host start (a long queue drain must not starve the seed pre-read) ...
+    ticks = iter(range(0, 1000, 100))
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=1)
+    assert len(reader.hosts) == 1
+    # ... and no budget at all starts none.
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=0)
+    assert reader.hosts == []
 
 
 def test_warm_profiles_with_zero_batch_reads_nothing_and_reports_the_backlog(warm_settings):

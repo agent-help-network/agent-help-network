@@ -96,7 +96,29 @@ def test_a_file_with_nul_and_control_characters_is_stored(settings):
     assert shown["tdm"]["rules"] == [{"location": "/", "tdm_reservation": 0}] and shown["tdm"]["root_reservation"] == 0
 
 
-def test_a_failed_store_is_logged_and_the_answer_says_pending(settings, monkeypatch, caplog):
+def test_unpaired_surrogates_are_dropped_and_the_rest_is_stored(settings):
+    # jsonb rejects an unpaired surrogate (a JSON escape such as \ud800) as it rejects U+0000: before the fix the
+    # whole UPDATE failed and the host stayed pending for good.
+    catalog = ('{"specVersion": "1.0", "entries": [{"identifier": "urn:a\\ud800", "type": "application/mcp-server-card+json",'
+               ' "url": "https://example.com/c\\udfff"}, {"identifier": "urn:ok\\u200b", "type": "application/mcp-server-card+json",'
+               ' "url": "https://example.com/card"}]}').encode()
+
+    def read(host, path, **_kw):
+        files = {"/robots.txt": b"User-agent: *\nAllow: /\n", site_declared.AI_CATALOG_PATH: catalog,
+                 site_declared.API_CATALOG_PATH: CATALOG}
+        return ("ok", files[path], "http_200") if path in files else ("absent", None, "http_404")
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    shown = access_profile.get_profile(settings, "example.com", now=now, reader=read)["site_declared"]
+    assert shown["mcp_discovery"]["status"] == "declared"
+    assert shown["mcp_discovery"]["servers"] == [{"identifier": None, "card_url": "https://example.com/card"}]
+    assert shown["api_catalog"]["status"] == "declared"
+    with connect(settings) as conn:
+        row = conn.execute("SELECT site_declared FROM host_access_profile WHERE site_host='example.com'").fetchone()
+    assert not row["site_declared"].get(site_declared.PENDING)
+
+
+def test_a_failed_store_is_logged_and_the_answer_says_store_failed(settings, monkeypatch, caplog):
     now = datetime.now(timezone.utc).replace(microsecond=0)
 
     def broken(*_args, **_kwargs):
@@ -105,8 +127,16 @@ def test_a_failed_store_is_logged_and_the_answer_says_pending(settings, monkeypa
     monkeypatch.setattr(site_declared, "read_all", broken)
     with caplog.at_level("WARNING", logger="ahn.access_profile"):
         profile = access_profile.get_profile(settings, "example.com", now=now, reader=_reader([]))
-    assert {profile["site_declared"][key]["reason"] for key in ("api_catalog", "tdm", "mcp_discovery")} == {"pending"}
+    sections = [profile["site_declared"][key] for key in ("api_catalog", "tdm", "mcp_discovery")]
+    assert {(section["status"], section["reason"]) for section in sections} == {("not_read", "store_failed")}
     assert "site_declared_store_failed host=example.com error=ValueError" in caplog.text and "boom" not in caplog.text
+    AccessProfile(**profile, note="n")
+    # The stored marker replaces the pending one, so a later answer from the cache does not say pending either.
+    with connect(settings) as conn:
+        row = conn.execute("SELECT site_declared FROM host_access_profile WHERE site_host='example.com'").fetchone()
+    assert row["site_declared"].get(site_declared.STORE_FAILED) and not row["site_declared"].get(site_declared.PENDING)
+    cached = access_profile.get_profile(settings, "example.com", now=now + timedelta(minutes=5), reader=_reader([]))
+    assert cached["site_declared"]["tdm"]["reason"] == "store_failed"
 
 
 def test_a_refused_robots_txt_stops_the_standard_file_reads(settings):

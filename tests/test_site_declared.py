@@ -240,7 +240,8 @@ def test_read_all_labels_each_answer_kind():
 
 
 def test_values_with_control_characters_are_dropped_not_cleaned():
-    bad = ["a\u0000b", "a\u001bb", "a\u007fb", "a\u0085b", "a\u202eb", "a\u2066b", "a\u200fb"]
+    bad = ["a\u0000b", "a\u001bb", "a\u007fb", "a\u0085b", "a\u202eb", "a\u2066b", "a\u200fb",
+           "a\ud800b", "a\udfffb", "a\u200bb", "a\u200db", "a\u2060b", "a\ufeffb"]
     for value in bad:
         catalog = {"specVersion": "1.0", "entries": [
             {"identifier": "urn:" + value, "type": "application/mcp-server-card+json", "url": "https://e.com/" + value},
@@ -251,7 +252,7 @@ def test_values_with_control_characters_are_dropped_not_cleaned():
         assert [rule["location"] for rule in rules["rules"]] == ["/ok"], value
         api = parse_api_catalog(json.dumps({"linkset": [{"anchor": "https://e.com/" + value, "service-doc": [{"href": "https://e.com/d"}]}]}).encode(), "https://e.com/")
         assert api["apis"][0]["anchor"] is None, value
-        assert "\u0000" not in json.dumps([parsed, rules, api])
+        assert "\u0000" not in json.dumps([parsed, rules, api]) and "\\ud800" not in json.dumps([parsed, rules, api])
     # Ordinary whitespace inside a name is collapsed, not a reason to drop it.
     named = {"entries": [{"identifier": "urn:x", "type": "application/mcp-server-card+json", "data": {"name": "Demo\tServer\n"}}]}
     assert parse_ai_catalog(json.dumps(named).encode(), "https://e.com/")["servers"][0]["name"] == "Demo Server"
