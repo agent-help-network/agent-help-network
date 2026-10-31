@@ -392,6 +392,9 @@ PAYLOADS = [row for status, headers, _ in TABLE for row in (post_tool_use(status
     (403, "challenge", "header"), (403, "captcha", "header"), (451, "captcha", "header"), (403, "block", "none"),
     (429, "challenge", "none"), (503, "captcha", "none"), (200, "challenge", "none"), (None, "challenge", "none"),
     (True, "challenge", "none"), ("403", "challenge", "none"),
+    # exact values only: a substring or a longer word is not the marker
+    (403, "challenged", "none"), (202, "nochallenge", "none"), (405, "captchas", "none"), (405, "a captcha", "none"),
+    (202, "challenge,block", "none"), (451, "xcaptcha", "none"),
 ])
 def test_aws_waf_challenge_agrees_and_depends_on_the_status(status, value, expected):
     headers = {"X-Amzn-Waf-Action": value}

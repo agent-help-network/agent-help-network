@@ -1,4 +1,7 @@
-"""ahn-client 0.6.1: ``diagnose(response)`` turns a response object into the lookup's codes, and the body stays local.
+"""``ahn.diagnose(response)`` turns a response object into the lookup's codes, and the body stays local.
+
+A 4xx/5xx gives an error_class; a 200 gives error_class None (with ``.hint`` when its title looks like a human check); an AWS WAF
+``x-amzn-waf-action`` is a challenge only as an exact value for its status (challenge on 202, captcha on 405, either on 403/451).
 
 Pure: no network. Fake objects stand in for Playwright, httpx and requests responses (the client never imports them).
 """
@@ -83,6 +86,17 @@ def test_aws_waf_marker_makes_202_and_405_a_challenge(status, value):
     error_class, stage, found = ahn.diagnose(Playwrightish(status, {"X-Amzn-Waf-Action": value}))
     assert (error_class, stage) == ("human_verification", "response_observed")
     assert found == {"challenge": "header", "via": "browser"}  # 202 and 405 are not lookup statuses, so no http_status
+
+
+@pytest.mark.parametrize("status,value", [(403, "challenged"), (202, "nochallenge"), (405, "captchas"), (405, "a captcha"),
+                                          (202, "challenge,block"), (403, "xchallenge"), (202, "captcha"), (405, "challenge")])
+def test_aws_waf_marker_is_an_exact_match_not_a_substring(status, value):
+    error_class, _, found = ahn.diagnose(Httpxish(status, {"x-amzn-waf-action": value}))
+    assert found.get("challenge") != "header"
+    if status == 403:
+        assert error_class == "site_access"
+    else:
+        assert error_class is None
 
 
 def test_aws_waf_marker_on_a_403():

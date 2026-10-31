@@ -1231,9 +1231,11 @@ def test_examples_parse_and_name_the_browser_use_adapter():
     examples = ROOT / "clients" / "python" / "examples"
     for path in sorted(examples.glob("*.py")):
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    text = (examples / "browser_use_actions_example.py").read_text(encoding="utf-8")
+    text = (examples / "browser_use_hook_example.py").read_text(encoding="utf-8")
     assert 'ADAPTER = "browser-use"' in text and "adapter=ADAPTER" in text
-    assert "@tools.action(" in text and "on_step_end" in text
+    assert "on_step_end" in text and "@tools.action" not in text  # the action lives in examples/browser-use/
+    action = (ROOT / "examples" / "browser-use" / "ahn_browser_use.py").read_text(encoding="utf-8")
+    assert 'ADAPTER = "browser-use"' in action and "adapter=ADAPTER" in action and "@tools.action(" in action
 
 
 # --- hosts that are never looked up -----------------------------------------------------------------------
@@ -1296,14 +1298,10 @@ def test_a_backslash_has_two_readings_so_no_host_is_looked_up(value, transport):
 def load_browser_use_example(monkeypatch):
     package = types.ModuleType("browser_use")
 
-    class Tools:
-        def action(self, description, **kwargs):
-            return lambda function: function
-
-    package.Tools, package.Agent, package.ActionResult = Tools, object, object
+    package.Agent = object
     monkeypatch.setitem(sys.modules, "browser_use", package)
-    spec = importlib.util.spec_from_file_location("browser_use_actions_example_under_test",
-                                                  ROOT / "clients" / "python" / "examples" / "browser_use_actions_example.py")
+    spec = importlib.util.spec_from_file_location("browser_use_hook_example_under_test",
+                                                  ROOT / "clients" / "python" / "examples" / "browser_use_hook_example.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

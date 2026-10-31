@@ -135,7 +135,7 @@ Registers a [`PostToolUseFailure`](https://code.claude.com/docs/en/agent-sdk/hoo
 
 ### Browser Use: example
 
-[`examples/browser_use_actions_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_actions_example.py) adds a custom action the model calls on a block page (`@tools.action`) and an `on_step_end` hook that reports a block page's answer to the developer. Browser Use documents no way for a hook to add text to the model's context, so only the action reaches the model.
+[`examples/browser-use/`](https://github.com/agent-help-network/agent-help-network/tree/main/examples/browser-use) registers a custom action the model calls on a block page (`@tools.action`) and turns each `next_action.do` into the text the model reads, including the one repeat lookup after `retry_lookup_once`. [`examples/browser_use_hook_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_hook_example.py) is the smaller `on_step_end` hook that reports a block page's answer to the developer only: Browser Use documents no way for a hook to add text to the model's context.
 
 Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1` and `AHN_CLIENT_SKIP_HOSTS` apply to the adapters too.
 
