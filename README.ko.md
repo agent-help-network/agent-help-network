@@ -48,7 +48,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 ```json
 {
   "site_host": "github.com",
-  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation.",
   "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
   "links": {
     "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
@@ -139,7 +139,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 
 - **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<공개 호스트명>`
   선택: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, 기본 24), 그리고 클라이언트가 이미 아는 값만 붙이는 선택 조회 코드 넷: `http_status` (401, 402, 403, 407, 408, 429, 451 또는 500–599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). 호스트·시간별로 집계할 뿐 답은 바꾸지 않는다([계약](docs/api-contract.md#조회-신호-코드)). 답을 바꾸는 선택 코드가 하나 더 있다: `agent_vendor` (`openai`, `anthropic`, `google`, `perplexity`, `meta`, `mistral`, `amazon`, `microsoft`, `apple`, `duckduckgo`, `diffbot`, `exa`, `other`), 자기 웹 요청이 보내는 `robots.txt` 토큰의 벤더다. 판정이 그 벤더의 토큰을 읽는다. 모르면 생략한다. 집계·저장하지 않고 목록 밖 값은 무시한다([계약](docs/api-contract.md#에이전트-벤더-agent_vendor-d48)).
-- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — 도구 `check_incident` (읽기 전용·멱등)와 선택적 `report_observation`.
+- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — 도구 `check_incident` (읽기 전용·멱등), `rate_last_lookup`(선택: 막힘 조회 뒤 그 답의 일회용 결과 토큰과 다음 시도가 통했는지를 돌려보냄, 호스트명 없음), 선택적 `report_observation`.
 - **에이전트용 입구:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
 
 ## 응답의 구성
@@ -162,9 +162,9 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 | `unknown` | `refused` 이고 공식 경로가 없다(사유 `robots_fetch_refused`). 비슷한 환경의 페이지 자동화도 거절될 것으로 본다. | medium |
 | `use_official_path` | 부분 차단이나 와일드카드 단독 금지(아래)이고 공식 경로가 있다. | medium |
 | `unknown` | 부분 차단이나 와일드카드 단독 금지이고 공식 경로가 없다(사유 `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`). 허락으로 읽지 않는다. | low |
-| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` 다. | medium |
-| `proceed` | `robots.txt` 를 읽었고 답이 판정한 토큰에 대한 금지가 없다(`robots_allows_agents`, 다른 에이전트의 토큰만 막혔으면 `robots_blocks_not_your_agent`). 선언된 허용도 접근 보장은 아니다. | low |
-| `unknown` | 선언된 정책을 읽지 못했거나(사유 `robots_unknown`), 호스트명이 정책을 읽지 않는 서브도메인·테넌트 호스트다(사유 `profile_not_read`, apex 호스트로 조회). 허용이 아니라 미상으로 둔다. | low |
+| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` 다(D63 뒤로는 실패 신호가 있거나 robots 가 clear 가 아닐 때만). | medium |
+| `proceed` | `robots.txt` 를 읽었고 답이 판정한 토큰에 대한 금지가 없다(`robots_allows_agents`, 다른 에이전트의 토큰만 막혔으면 `robots_blocks_not_your_agent`). 선언된 허용도 접근 보장은 아니다. robots.txt 가 없는 경우(`absent`, 선언된 제한 없음)도 같고, 실패 신호 없이 조회하면 공식 경로가 있어도 여기에 온다(D63). | low |
+| `unknown` | 선언된 정책을 읽지 못했거나(사유 `robots_unknown`), 호스트명이 정책을 읽지 않는 서브도메인·테넌트 호스트다(사유 `profile_not_read`, apex 호스트로 조회). 선언을 알 수 없다. 차단도, 제한 없음 선언도 아니다. | low |
 
 `reasons` 는 `next_checks` 에도 나오는 코드다. "공식 경로가 있다"는 `official_paths` 항목에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다. **차단 선언**(D48)은 루트를 금지하는 `robots.txt` 그룹이 호출자 벤더(`agent_vendor`)의 판정 토큰(사용자 대리 페처, 그런 토큰이 없으면 검색 크롤러)을, 벤더를 보내지 않았으면 나열된 모든 벤더의 판정 토큰을 지목한 경우다. 벤더를 보내지 않았고 일부 벤더만 막혔으면 **부분 차단**이다: 답은 `unknown`(공식 경로가 있으면 medium 의 공식 경로)과 `robots_blocks_some_agents` 이며, 자기 요청이 `agents_blocked` 의 토큰으로 자신을 밝히면 멈추라는 뜻이다. 벤더의 에이전트를 옛 이름·변형 이름으로만 지목한 그룹(`robots.vendor_aliases_blocked`, 예: `claude-web`)은 `robots_names_vendor_alias` 를 주고 `proceed` 를 주지 않는다. **와일드카드 단독 금지**는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)이 루트를 금지하고, 에이전트 UA·검색 크롤러 토큰 가운데 어떤 그룹도 지목하지 않아 그 와일드카드에 해당하는 토큰이 하나 이상 있으며, 그런 토큰을 지목한 그룹 중 루트를 금지하는 것은 없는(그것은 차단 선언이다) 파일이다. 토큰을 지목해 허용한 그룹이나 학습 크롤러 금지는 이 판정을 바꾸지 않는다. 차단 선언이 아니며 `robots_wildcard_disallow` 로 보고하고, "에이전트를 허용함"으로 읽지 않는다. `agents_blocked` 는 학습 크롤러를 포함해 루트 금지가 명시된 모든 토큰을 나열하지만 학습 크롤러는 차단 선언으로 세지 않는다. 영어 README 의 예시에서 `Bytespider`(학습 크롤러)는 차단돼 있지만 학습 크롤러는 차단 선언이 아니므로 medium 신뢰도의 공식 경로 행이 적용된다.
 
@@ -285,6 +285,7 @@ API 계약은 한국어판과 영어판이 있고, 시스템 설계서와 설계
 - 공개 운영에서 공개 집계에 적합한 공개 루트 호스트가 조회되면 [읽는 것과 절대 하지 않는 것](#읽는-것과-절대-하지-않는-것)의 한도 안에서 그 호스트의 `/robots.txt`와 `/llms.txt`를 읽고, 시드 목록의 호스트는 같은 한도로 약 주 1회 미리 읽는다. 결과는 선언된 정책이며 접근 보장이 아니다.
 - `official_paths` 는 코드 안의 정리된 표([`ahn/official_paths.py`](ahn/official_paths.py))다. 실제로 확인된 업체 소유 개발자 문서만, 사람이나 에이전트가 일을 하려고 여는 사이트에 대해서만 넣고(CDN·광고·자산·단축 링크 호스트 제외), 확신이 없는 호스트는 빼며, 목록은 보증이나 제휴가 아니다. 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
 - 일부 호스트의 `official_paths.access` 는 그 공식 경로를 쓰는 법을 알려 준다: 인증 방식, 사용자가 키를 받는 곳, 무료로 쓸 수 있는 양·할당량을 말하는 업체 문장 그대로의 인용(있을 때만), 속도 제한·샌드박스·OpenAPI 링크, 공식 MCP 끝점, 약관 문서와 그 문서에서 그대로 옮긴 200자 이하 인용 하나. 표와 같이 코드에서 정리하며 모든 URL 은 업체 소유이고 `verified_at` 에 직접 읽은 것이다. 90일이 지난 묶음은 응답에서 뺀다. 이 서비스는 약관을 해석하거나 자동화 허용 여부를 판정하지 않는다. [이용 정보 묶음](docs/api-contract.md#이용-정보-묶음-official_pathsaccess-2026-10-20)을 보라.
+- 일부 소비자 사이트의 `official_paths.consumer`(D61)는 사이트 자신의 고객 경로를 알려 준다: 도움말·연락처 페이지, 사이트가 링크한 공식 앱, 흔한 작업에 대해 사이트가 링크한 진입 페이지. 개발자 API 가 사용자 본인 계정에 닿지 못할 수 있으므로(OAuth 로 닿는 API 도 있다), 답이 `use_official_path` 이고 이것이 정리돼 있으면 `summary_line` 이 사이트 자신의 페이지도 알려 주고 `next_action.customer_url` 에 그 페이지가 들어간다(robots.txt 가 페이지를 막으면 사용자에게 넘길 페이지). `recommendation` 은 바뀌지 않는다.
 - 제출 에이전트는 자신의 사용자·플랫폼 권한 규칙을 따른다. 그 규칙이 허용하면 직접 겪은 비식별 관찰을 자동 제출할 수 있으며, 서비스는 그 권한을 검증할 수 없다. API의 필수 필드는 공개 호스트명·문제 유형·결과 세 가지다. 공개 제출은 기본적으로 `pending`이며 자동 규칙 또는 운영자의 공개 결정 전에는 조회에 나타나지 않는다. 자동 공개된 기록은 `auto_unverified`이고 진위 확인이 아니다. 로컬 시험 모드에서는 합성 `.test` 데이터만 허용한다.
 - 무엇을 얼마나 오래 보관하는지는 [개인정보 처리방침](https://agenthelpnetwork.com/ko/policy)에 있다. 운영자가 웹 서비스와 대역폭 감시 크론 양쪽에 `AHN_REPORT_RETENTION_DAYS`(30–3650일)를 설정하지 않으면 제보에 자동 삭제 기한이 없다. 설정하면 대역폭 감시 크론이 15분마다 함께 도는 정리 작업이 그 기간이 지난 제보와 철회 30일이 지난 제보를 삭제한다. 선택 설정 `AHN_OPERATOR_NAME` 은 개인정보·약관·지원 화면에 운영 주체를 밝힌다. 둘 다 배포 설정이며 이 저장소에는 값을 두지 않고 [`render.yaml`](render.yaml)에 선언만 있다.
 - 조회 수요 통계는 실제 실패 제보와 분리하고, 업체 상태는 별도 출처로 표시한다. 어느 출처도 사이트 상태의 독립 판정으로 격상하지 않는다.

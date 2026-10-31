@@ -159,7 +159,14 @@ def main_space():
             yield dict(error_class=error_class, provider_status=prov, access_profile=profile, official=official, regional=regional, vendor=vendor)
 
 
+OFFICIAL_N = {**OFFICIAL, "access": {"auth": [{"method": "api_key", "source_url": STATUS_URL}, {"method": "none", "source_url": STATUS_URL}]}}
+OFFICIAL_K = {**OFFICIAL, "access": {"auth": [{"method": "api_key", "source_url": STATUS_URL}]}}
+
+
 def edge_cases():
+    # D63: the two auth splits of O7 (no sign-up option / key needed) need an `access` entry on the official path.
+    for official in (OFFICIAL_N, OFFICIAL_K):
+        yield dict(error_class="site_access", official=official, access_profile=robots("User-agent: *\nAllow: /\n"))
     for error_class, official in itertools.product(ERROR_CLASSES, (None, OFFICIAL)):
         yield dict(site_host="app.example.com", error_class=error_class, official=official, not_read=True)
         yield dict(error_class=error_class, official=official)
@@ -180,8 +187,13 @@ def lines(n: int) -> dict:
     return {row: sentence.replace("{n}", str(n)) for row, (_do, sentence) in ROWS.items()}
 
 
+EXTRA_TABLES = (response_guide.PROCEED_OFFICIAL_ROWS, response_guide.PROCEED_CONSUMER_ROWS, response_guide.CONSUMER_ROWS)
+# D63: the tables beside ROWS are held to the same length, character and forbidden-phrase checks.
 ALL_LINES = {text for n in (0, 5, 120, 300, 3600) for text in lines(n).values()}
-TEMPLATES = [re.compile(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}")) for _do, sentence in ROWS.values()]
+ALL_LINES |= {text.replace("{n}", str(n)) for n in (0, 5, 120, 300, 3600) for table in EXTRA_TABLES for text in table.values()}
+TEMPLATES = [re.compile(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}"))
+             for sentence in [sentence for _do, sentence in ROWS.values()] + list(response_guide.PROCEED_OFFICIAL_ROWS.values())
+             + list(response_guide.PROCEED_CONSUMER_ROWS.values()) + list(response_guide.CONSUMER_ROWS.values())]
 
 
 def from_table(text: str) -> bool:
@@ -205,7 +217,10 @@ def test_d57_an_atom_reading_waits_low_only_on_a_fresh_open_incident_and_is_othe
             if not waits:
                 rests_seen += 1
                 assert with_atom["recommendation"] == without["recommendation"], (atom, case)
-                assert with_atom["next_checks"] == without["next_checks"], (atom, case)
+                # D63: a fresh Atom reading says why indicator is null (same code, other sentence).
+                assert [c["code"] for c in with_atom["next_checks"]] == [c["code"] for c in without["next_checks"]], (atom, case)
+                assert [c for c in with_atom["next_checks"] if c["code"] != "provider_unknown"] == \
+                    [c for c in without["next_checks"] if c["code"] != "provider_unknown"], (atom, case)
                 assert guide(copy.deepcopy(with_atom)) == guide(copy.deepcopy(without)), (atom, case)
                 continue
             waits_seen += 1
@@ -238,7 +253,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     count = 0
     for case in space():
         result = answer(**case)
-        row, listed = select_row(result["recommendation"], result["access_profile"], result["provider_status"], result["site_host"])
+        row, listed = select_row(result["recommendation"], result["access_profile"], result["provider_status"], result["site_host"],
+                                 result["official_paths"])
         assert listed, (row, result["recommendation"], case)
         used.add(row)
         count += 1
@@ -257,8 +273,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     assert used == set(ROWS), set(ROWS) - used
 
 
-def test_the_table_has_the_29_rows_and_the_nine_do_values():
-    assert len(ROWS) == 29  # W8 came with D57
+def test_the_table_has_the_34_rows_and_the_nine_do_values():
+    assert len(ROWS) == 34  # W8 came with D57; P1-V, P2-V, P3, O7-N and O7-K with D63
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
@@ -282,6 +298,16 @@ def test_every_sentence_is_short_printable_ascii_on_one_line(n):
         assert "{" not in text and "}" not in text
 
 
+@pytest.mark.parametrize("n", [0, 5, 300, 3600])
+def test_the_tables_beside_rows_are_short_printable_ascii_on_one_line(n):
+    for table in EXTRA_TABLES:
+        for row, text in table.items():
+            text = text.replace("{n}", str(n))
+            assert 1 <= len(text) <= 200, (row, len(text))
+            assert PRINTABLE.fullmatch(text), row
+            assert "{" not in text and "}" not in text
+
+
 def test_no_sentence_helps_get_around_a_control():
     for text in ALL_LINES:
         assert not re.search(r"proxy|solver|rotate|residential|stealth|spoof|disguise|headless|evade|circumvent", text, re.I), text
@@ -300,7 +326,8 @@ def test_a_sentence_never_says_more_than_its_action():
             assert "is allowed" not in low and "permits" not in low, row
         if do != "proceed":
             assert "continue with" not in low, row
-        assert "guarantee" in low if do == "proceed" else True
+        # D63: P2 names where a caller finds out whether its own token is blocked instead of saying "guarantee".
+        assert ("guarantee" in low or "agents_blocked" in low) if do == "proceed" else True
 
 
 # --- T4: nothing from a site or a provider reaches the answer -------------------------------------------------------
@@ -326,7 +353,7 @@ def test_site_and_provider_text_never_reaches_the_sentence_or_the_action():
                 assert needle not in dump, (needle, case)
         # a hostile URL in a curated field is dropped, never repeated
         result = answer(official={"name": "x", "api_docs": bad, "developer_portal": None, "note": None},
-                        access_profile=robots("User-agent: *\nAllow: /\n"))
+                        access_profile=robots("User-agent: *\nAllow: /\n"), error_class="site_access")
         assert guide(result)["next_action"]["url"] is None
 
 
@@ -334,8 +361,9 @@ def test_site_and_provider_text_never_reaches_the_sentence_or_the_action():
 
 def test_url_comes_only_from_the_allowed_sources_and_must_be_a_short_https_url():
     ok = robots("User-agent: *\nAllow: /\n")
-    assert guide(answer(official=OFFICIAL, access_profile=ok))["next_action"]["url"] == OFFICIAL["api_docs"]
-    assert guide(answer(official=PORTAL_ONLY, access_profile=ok))["next_action"]["url"] == PORTAL_ONLY["developer_portal"]
+    # D63: a lookup that reports no failure is proceed (no url); these walk the use_official_path url sources.
+    assert guide(answer(official=OFFICIAL, access_profile=ok, error_class="site_access"))["next_action"]["url"] == OFFICIAL["api_docs"]
+    assert guide(answer(official=PORTAL_ONLY, access_profile=ok, error_class="site_access"))["next_action"]["url"] == PORTAL_ONLY["developer_portal"]
     waiting = guide(answer(provider_status=provider("major"), official=OFFICIAL, access_profile=ok))
     assert waiting["next_action"]["do"] == "wait_for_provider" and waiting["next_action"]["url"] == STATUS_URL
     only_page = answer(provider_status=provider("major", url=None), official=OFFICIAL, official_page={"source_name": "x", "source_url": PAGE_URL})
@@ -406,7 +434,7 @@ def test_a_low_wait_on_a_minor_page_with_no_time_is_w5_not_the_plain_w1():
 
 def test_an_invalid_api_docs_url_is_not_replaced_by_the_portal():
     bad = {"name": "x", "api_docs": "http://developer.example.com/", "developer_portal": "https://portal.example.com/", "note": None}
-    result = answer(official=bad, access_profile=robots("User-agent: *\nAllow: /\n"))
+    result = answer(official=bad, access_profile=robots("User-agent: *\nAllow: /\n"), error_class="site_access")
     assert guide(result)["next_action"]["do"] == "use_official_path" and guide(result)["next_action"]["url"] is None
 
 
@@ -544,7 +572,7 @@ def call_tool(monkeypatch, payload: dict):
 
 
 def test_mcp_result_is_a_summary_block_then_the_same_json(monkeypatch):
-    payload = rest_answer(True, official=OFFICIAL, access_profile=robots("User-agent: *\nAllow: /\n"))
+    payload = rest_answer(True, official=OFFICIAL, access_profile=robots("User-agent: *\nAllow: /\n"), error_class="site_access")
     result = call_tool(monkeypatch, payload)
     first, last = result.content[0].text, result.content[-1].text
     assert len(result.content) == 2

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, feed_robots, gov_registry, lookup_signals, status_scope
+from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -440,8 +440,12 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None):
+          agent_vendor: str | None = None, issue_feedback: bool = False):
     """Answer a lookup from the database alone.
+
+    ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
+    MCP check_incident tool calls) passes True, and that route sends the answer with ``Cache-Control: no-store``. Any
+    other caller (the search page, the incident detail) never gets a one-time ``feedback_token`` (D58).
 
     Nothing on this path contacts the target host or a status provider: reads that are missing or
     out of date are queued (ahn/background_reads.py) and the cached value is returned as it is,
@@ -619,12 +623,14 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "official_paths": official,
             "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                                              provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
-                                             vendor_aware=settings.vendor_aware_block),
+                                             vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
+                                             proceed_without_failure=settings.proceed_without_failure),
             "failure_stage": failure_stage,
             "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                        profile_not_read=profile_not_read, host_facts=host_facts,
                                        provider_partial=provider_partial, now=now, agent_vendor=agent_vendor,
-                                       vendor_aware=settings.vendor_aware_block),
+                                       vendor_aware=settings.vendor_aware_block,
+                                       proceed_without_failure=settings.proceed_without_failure),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
@@ -632,9 +638,19 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
             try:
-                result.update(response_guide.guide(result))
+                result.update(response_guide.guide(result, settings.proceed_without_failure))
             except Exception:
                 LOG.warning("response_guide_unavailable")
+        if (issue_feedback and settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
+                and eligible and host not in lookup_signals.EXAMPLE_HOSTS and (not public or registered)):
+            # D58: added last, after the answer is decided; a signed value, so nothing is written here. A lookup that is not
+            # counted (operator network, X-AHN-Test) still gets a token so the flow can be tried, but its feedback is not counted.
+            try:
+                result["feedback_token"] = feedback.feedback_field(settings.key_pepper, host, result["recommendation"]["action"],
+                                                             signal.client_kind if signal is not None else "rest_other",
+                                                             signal is not None, now)
+            except Exception:
+                LOG.warning("feedback_token_unavailable")
         if signal is not None:
             count_row = _record_signal(conn, settings, host, error_class, failure_stage, signal,
                                           result["recommendation"]["action"], public=public, registered=registered,
@@ -670,11 +686,13 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
     official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
-                             vendor_aware=settings.vendor_aware_block)
+                             vendor_aware=settings.vendor_aware_block,
+                             proceed_without_failure=settings.proceed_without_failure)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
                                    "provider_status": provider_status, "official_paths": official,
                                    "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
-                                                            if official_page else None)})
+                                                            if official_page else None)},
+                                  settings.proceed_without_failure)
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
     return {

@@ -520,7 +520,7 @@ def test_the_verdict_fields_do_not_depend_on_registry_facts(db, monkeypatch):
             assert with_facts["summary_code"] == without["summary_code"] and with_facts["evidence_level"] == without["evidence_level"]
             plain = [c for c in with_facts["next_checks"] if not c["code"].startswith("government_")]
             assert plain == without["next_checks"]
-            ignored = {"next_checks", "generated_at", "lookup_activity"}   # the lookup counter moves with every call
+            ignored = {"next_checks", "generated_at", "lookup_activity", "feedback_token"}   # the lookup counter moves with every call; the token is new per answer
             assert {k: v for k, v in with_facts.items() if k not in ignored | {"host_facts"}} == \
                    {k: v for k, v in without.items() if k not in ignored}
 

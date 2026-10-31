@@ -223,7 +223,7 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
         assert after["provider_source_state"] == "feed_connected"
         assert after["lookup_activity"]["volume_band"] == "5-9"
         assert after["current_site_status"] == "unknown"
-        assert [item["code"] for item in after["next_checks"]] == ["locate_failure_stage", "official_path_available", "provider_clear", "reports_unknown"]
+        assert [item["code"] for item in after["next_checks"]] == ["official_path_available", "provider_clear", "reports_unknown"]  # Changed on purpose by D63: no failure signal sent
         assert after["official_paths"]["api_docs"].startswith("https://docs.github.com/")
         assert after["access_profile"] is None
         assert after["recommendation"] == {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]}
@@ -308,7 +308,8 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     # D48: only OpenAI's user-directed token is blocked, so a lookup that names no vendor gets the conditional answer.
     assert first["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["robots_blocks_some_agents"]}
     codes = [item["code"] for item in first["next_checks"]]
-    assert codes[:2] == ["locate_failure_stage", "robots_blocks_some_agents"] and "reports_unknown" in codes
+    # Changed on purpose by D63: no failure signal was sent, so locate_failure_stage is not asked.
+    assert codes[:1] == ["robots_blocks_some_agents"] and "locate_failure_stage" not in codes and "reports_unknown" in codes
     assert first["evidence_level"] == "no_reports"
     # Second lookup within a day reuses the cache: no new reads.
     second = client.get("/v1/incidents/check", params={"site_host": "newsite.org", "error_class": "human_verification"}).json()
@@ -399,6 +400,42 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     assert client.get("/v1/incidents", params={"site_host": "aliasexample.org"}).json()["incidents"] == []
 
 
+
+def test_only_the_counted_lookup_route_issues_a_feedback_token_and_never_cacheably(public_client, monkeypatch):
+    """D58 (B3): the one-time feedback_token comes only from GET /v1/incidents/check, always with no-store. The incident
+    detail (API and page), the incident list and the search page answer the same host without one."""
+    from ahn import feedback
+    settings, client = public_client
+    issued = []
+    original = feedback.feedback_field
+    monkeypatch.setattr(feedback, "feedback_field", lambda *a, **k: issued.append(a) or original(*a, **k))
+    host = "detailsite.org"
+    receipt = post_public(client, sample(site_host=host)).json()
+    with connect(settings) as conn:  # the operator's manual publish (ahn.cli publish-observation)
+        conn.execute("UPDATE observations SET review_state='published' WHERE id=%s", (receipt["observation_id"],))
+        conn.execute("UPDATE incidents SET visibility='published' WHERE id=%s", (receipt["incident_id"],))
+    caller = {"CF-Connecting-IP": "198.51.100.200"}
+    lookup = client.get("/v1/incidents/check", params={"site_host": host, "error_class": "site_access"}, headers=caller)
+    assert "feedback_token" in lookup.json() and lookup.headers["cache-control"] == "no-store" and len(issued) == 1
+    routes = {
+        "detail api": f"/v1/incidents/{receipt['incident_id']}",
+        "detail page": f"/en/incidents/{receipt['incident_id']}",
+        "detail page ko": f"/ko/incidents/{receipt['incident_id']}",
+        "incident list": f"/v1/incidents?site_host={host}&error_class=site_access",
+        "search page": f"/en/search?site_host={host}&error_class=site_access",
+    }
+    for name, url in routes.items():
+        response = client.get(url, headers=caller)
+        assert response.status_code == 200, name
+        assert "feedback_token" not in response.text, name
+    assert len(issued) == 1  # no other route asked for a token
+    # Every response that does carry one is uncacheable, whichever codes the lookup sent.
+    for params in ({"error_class": "login_auth"}, {"error_class": "human_verification", "http_status": "403"}):
+        response = client.get("/v1/incidents/check", params={"site_host": host, **params}, headers=caller)
+        assert "feedback_token" in response.json() and response.headers["cache-control"] == "no-store"
+    plain = client.get("/v1/incidents/check", params={"site_host": host}, headers=caller)
+    assert "feedback_token" not in plain.json()
+
 def test_agent_vendor_chooses_the_robots_answer_end_to_end_and_is_never_stored(public_client, monkeypatch):
     """D48 through the REST endpoint: the vendor's own answer, the lenient check, the echo, a profile cached before
     D48, the switch, and no column for the parameter anywhere in the lookup signal tables."""
@@ -420,7 +457,7 @@ def test_agent_vendor_chooses_the_robots_answer_end_to_end_and_is_never_stored(p
     openai = ask(agent_vendor="openai")
     assert openai["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"],
                                         "agent_vendor": "openai"}
-    assert [c["code"] for c in openai["next_checks"]][1] == "robots_blocks_agents"
+    assert [c["code"] for c in openai["next_checks"]][0] == "robots_blocks_agents"  # Changed on purpose by D63
     # Amazonbot is Amazon's search crawler, not its user-directed fetcher (Amzn-User): not Amazon's agent's block.
     amazon = ask(agent_vendor="amazon")
     assert amazon["recommendation"] == {"action": "proceed", "confidence": "low", "reasons": ["robots_blocks_not_your_agent"],

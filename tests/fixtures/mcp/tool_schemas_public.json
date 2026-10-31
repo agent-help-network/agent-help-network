@@ -1,0 +1,2573 @@
+{
+ "check_incident": {
+  "annotations": {
+   "destructive_hint": false,
+   "idempotent_hint": true,
+   "open_world_hint": true,
+   "read_only_hint": true,
+   "title": "Check host access profile"
+  },
+  "input_schema": {
+   "properties": {
+    "agent_vendor": {
+     "default": null,
+     "enum": [
+      "openai",
+      "anthropic",
+      "google",
+      "perplexity",
+      "meta",
+      "mistral",
+      "amazon",
+      "microsoft",
+      "apple",
+      "duckduckgo",
+      "diffbot",
+      "exa",
+      "other"
+     ],
+     "title": "Agent Vendor",
+     "type": "string"
+    },
+    "challenge": {
+     "default": null,
+     "enum": [
+      "header",
+      "none"
+     ],
+     "title": "Challenge",
+     "type": "string"
+    },
+    "error_class": {
+     "default": "",
+     "title": "Error Class",
+     "type": "string"
+    },
+    "failure_stage": {
+     "default": "",
+     "title": "Failure Stage",
+     "type": "string"
+    },
+    "http_status": {
+     "default": null,
+     "description": "HTTP status the site returned: 401, 402, 403, 407, 408, 429, 451 or 500-599. Leave out if unknown.",
+     "title": "Http Status",
+     "type": "integer"
+    },
+    "retry_after": {
+     "default": null,
+     "enum": [
+      "none",
+      "lt_60",
+      "60_3600",
+      "gt_3600"
+     ],
+     "title": "Retry After",
+     "type": "string"
+    },
+    "site_host": {
+     "title": "Site Host",
+     "type": "string"
+    },
+    "task_step": {
+     "default": "",
+     "title": "Task Step",
+     "type": "string"
+    },
+    "via": {
+     "default": null,
+     "enum": [
+      "http_fetch",
+      "browser",
+      "unknown"
+     ],
+     "title": "Via",
+     "type": "string"
+    }
+   },
+   "required": [
+    "site_host"
+   ],
+   "title": "check_incidentArguments",
+   "type": "object"
+  },
+  "output_schema": {
+   "$defs": {
+    "AccessAuth": {
+     "additionalProperties": true,
+     "properties": {
+      "method": {
+       "enum": [
+        "none",
+        "api_key",
+        "oauth1",
+        "oauth2",
+        "device_code",
+        "pat"
+       ],
+       "title": "Method",
+       "type": "string"
+      },
+      "source_url": {
+       "pattern": "^https://[^\\s]+$",
+       "title": "Source Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "method",
+      "source_url"
+     ],
+     "title": "AccessAuth",
+     "type": "object"
+    },
+    "AccessMcp": {
+     "additionalProperties": true,
+     "properties": {
+      "doc_url": {
+       "pattern": "^https://[^\\s]+$",
+       "title": "Doc Url",
+       "type": "string"
+      },
+      "endpoint": {
+       "pattern": "^https://[^\\s]+$",
+       "title": "Endpoint",
+       "type": "string"
+      }
+     },
+     "required": [
+      "endpoint",
+      "doc_url"
+     ],
+     "title": "AccessMcp",
+     "type": "object"
+    },
+    "AccessProfile": {
+     "additionalProperties": true,
+     "properties": {
+      "content_use": {
+       "anyOf": [
+        {
+         "discriminator": {
+          "mapping": {
+           "declared": "#/$defs/ContentUseDeclared",
+           "none_declared": "#/$defs/ContentUseCompact",
+           "not_read": "#/$defs/ContentUseCompact"
+          },
+          "propertyName": "status"
+         },
+         "oneOf": [
+          {
+           "$ref": "#/$defs/ContentUseDeclared"
+          },
+          {
+           "$ref": "#/$defs/ContentUseCompact"
+          }
+         ]
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Content Use"
+      },
+      "fetched_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Fetched At"
+      },
+      "freshness": {
+       "enum": [
+        "fresh",
+        "stale",
+        "pending"
+       ],
+       "title": "Freshness",
+       "type": "string"
+      },
+      "llms_detail": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Llms Detail"
+      },
+      "llms_txt_status": {
+       "enum": [
+        "present",
+        "absent",
+        "redirected",
+        "refused",
+        "error",
+        "not_public",
+        "pending",
+        "not_read"
+       ],
+       "title": "Llms Txt Status",
+       "type": "string"
+      },
+      "note": {
+       "title": "Note",
+       "type": "string"
+      },
+      "read_host": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Read Host"
+      },
+      "retry_after_seconds": {
+       "anyOf": [
+        {
+         "maximum": 3600,
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Retry After Seconds"
+      },
+      "robots": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/RobotsSummary"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "robots_detail": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Robots Detail"
+      },
+      "robots_status": {
+       "enum": [
+        "ok",
+        "absent",
+        "redirected",
+        "refused",
+        "invalid",
+        "error",
+        "too_large",
+        "not_public",
+        "pending"
+       ],
+       "title": "Robots Status",
+       "type": "string"
+      },
+      "source_urls": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "title": "Source Urls",
+       "type": "object"
+      }
+     },
+     "required": [
+      "robots_status",
+      "llms_txt_status",
+      "source_urls",
+      "freshness",
+      "note"
+     ],
+     "title": "AccessProfile",
+     "type": "object"
+    },
+    "AccessQuote": {
+     "additionalProperties": true,
+     "properties": {
+      "quote": {
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Quote",
+       "type": "string"
+      },
+      "source_url": {
+       "pattern": "^https://[^\\s]+$",
+       "title": "Source Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "quote",
+      "source_url"
+     ],
+     "title": "AccessQuote",
+     "type": "object"
+    },
+    "AccessTerms": {
+     "additionalProperties": true,
+     "properties": {
+      "quote": {
+       "maxLength": 200,
+       "minLength": 1,
+       "title": "Quote",
+       "type": "string"
+      },
+      "url": {
+       "pattern": "^https://[^\\s]+$",
+       "title": "Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "url",
+      "quote"
+     ],
+     "title": "AccessTerms",
+     "type": "object"
+    },
+    "AgentRule": {
+     "additionalProperties": true,
+     "properties": {
+      "agent": {
+       "title": "Agent",
+       "type": "string"
+      },
+      "crawl_delay": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Crawl Delay"
+      },
+      "disallow_count": {
+       "minimum": 0,
+       "title": "Disallow Count",
+       "type": "integer"
+      },
+      "disallow_paths": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Disallow Paths",
+       "type": "array"
+      },
+      "explicit_group": {
+       "title": "Explicit Group",
+       "type": "boolean"
+      },
+      "kind": {
+       "enum": [
+        "user_agent",
+        "search_crawler",
+        "training_crawler"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "root_allowed": {
+       "title": "Root Allowed",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "agent",
+      "kind",
+      "explicit_group",
+      "root_allowed",
+      "disallow_count"
+     ],
+     "title": "AgentRule",
+     "type": "object"
+    },
+    "AgentVendor": {
+     "description": "D48 lookup parameter: the vendor whose documented robots.txt token the caller's own web requests send\n(access_profile.AGENT_VENDORS, plus other). Not the model vendor, and unrelated to the report field agent_family.",
+     "enum": [
+      "openai",
+      "anthropic",
+      "google",
+      "perplexity",
+      "meta",
+      "mistral",
+      "amazon",
+      "microsoft",
+      "apple",
+      "duckduckgo",
+      "diffbot",
+      "exa",
+      "other"
+     ],
+     "title": "AgentVendor",
+     "type": "string"
+    },
+    "AttemptActor": {
+     "enum": [
+      "agent",
+      "human"
+     ],
+     "title": "AttemptActor",
+     "type": "string"
+    },
+    "AttemptEnv": {
+     "enum": [
+      "agent_cloud_browser",
+      "human_in_agent_browser",
+      "human_own_browser",
+      "unknown"
+     ],
+     "title": "AttemptEnv",
+     "type": "string"
+    },
+    "CheckObservation": {
+     "additionalProperties": true,
+     "properties": {
+      "attempt_actor": {
+       "$ref": "#/$defs/AttemptActor"
+      },
+      "attempt_env": {
+       "$ref": "#/$defs/AttemptEnv"
+      },
+      "error_class": {
+       "$ref": "#/$defs/ErrorClass"
+      },
+      "observed_at": {
+       "format": "date-time",
+       "title": "Observed At",
+       "type": "string"
+      },
+      "outcome": {
+       "$ref": "#/$defs/Outcome"
+      },
+      "synthetic": {
+       "title": "Synthetic",
+       "type": "boolean"
+      },
+      "task_step": {
+       "title": "Task Step",
+       "type": "string"
+      }
+     },
+     "required": [
+      "observed_at",
+      "attempt_actor",
+      "attempt_env",
+      "outcome",
+      "error_class",
+      "task_step",
+      "synthetic"
+     ],
+     "title": "CheckObservation",
+     "type": "object"
+    },
+    "ConsumerPath": {
+     "additionalProperties": true,
+     "properties": {
+      "kind": {
+       "enum": [
+        "customer_help",
+        "official_app",
+        "entry_link"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "source_url": {
+       "maxLength": 200,
+       "pattern": "^https://[^\\s]+$",
+       "title": "Source Url",
+       "type": "string"
+      },
+      "url": {
+       "maxLength": 200,
+       "pattern": "^https://[^\\s]+$",
+       "title": "Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind",
+      "url",
+      "source_url"
+     ],
+     "title": "ConsumerPath",
+     "type": "object"
+    },
+    "ConsumerPaths": {
+     "additionalProperties": true,
+     "properties": {
+      "paths": {
+       "items": {
+        "$ref": "#/$defs/ConsumerPath"
+       },
+       "maxItems": 6,
+       "minItems": 1,
+       "title": "Paths",
+       "type": "array"
+      },
+      "verified_at": {
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+       "title": "Verified At",
+       "type": "string"
+      }
+     },
+     "required": [
+      "paths",
+      "verified_at"
+     ],
+     "title": "ConsumerPaths",
+     "type": "object"
+    },
+    "ContentSignals": {
+     "additionalProperties": true,
+     "description": "Cloudflare Content Signals, normalized; `use` is Cloudflare's experimental fourth signal.",
+     "properties": {
+      "ai_input": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Ai Input",
+       "type": "string"
+      },
+      "ai_train": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Ai Train",
+       "type": "string"
+      },
+      "search": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Search",
+       "type": "string"
+      },
+      "use": {
+       "anyOf": [
+        {
+         "enum": [
+          "immediate",
+          "reference",
+          "full"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Use"
+      }
+     },
+     "required": [
+      "search",
+      "ai_input",
+      "ai_train"
+     ],
+     "title": "ContentSignals",
+     "type": "object"
+    },
+    "ContentUsage": {
+     "additionalProperties": true,
+     "description": "IETF AIPREF preferences (draft-ietf-aipref-vocab-08 categories), y/n normalized to yes/no.",
+     "properties": {
+      "ai_use": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Ai Use",
+       "type": "string"
+      },
+      "search": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Search",
+       "type": "string"
+      },
+      "train_ai": {
+       "enum": [
+        "yes",
+        "no",
+        "unset"
+       ],
+       "title": "Train Ai",
+       "type": "string"
+      }
+     },
+     "required": [
+      "train_ai",
+      "ai_use",
+      "search"
+     ],
+     "title": "ContentUsage",
+     "type": "object"
+    },
+    "ContentUseCompact": {
+     "additionalProperties": true,
+     "description": "Nothing declared, or the file could not be read: the short shape, without the note and vocabulary strings.",
+     "properties": {
+      "fetched_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Fetched At"
+      },
+      "freshness": {
+       "enum": [
+        "fresh",
+        "stale",
+        "pending"
+       ],
+       "title": "Freshness",
+       "type": "string"
+      },
+      "reason": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Reason"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "status": {
+       "enum": [
+        "none_declared",
+        "not_read"
+       ],
+       "title": "Status",
+       "type": "string"
+      }
+     },
+     "required": [
+      "status",
+      "source_url",
+      "freshness"
+     ],
+     "title": "ContentUseCompact",
+     "type": "object"
+    },
+    "ContentUseDeclared": {
+     "additionalProperties": true,
+     "properties": {
+      "ai_input_declared_no": {
+       "default": false,
+       "title": "Ai Input Declared No",
+       "type": "boolean"
+      },
+      "ai_input_no_agents": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Ai Input No Agents",
+       "type": "array"
+      },
+      "fetched_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Fetched At"
+      },
+      "formats": {
+       "items": {
+        "enum": [
+         "cloudflare_content_signal",
+         "ietf_aipref"
+        ],
+        "type": "string"
+       },
+       "title": "Formats",
+       "type": "array"
+      },
+      "freshness": {
+       "enum": [
+        "fresh",
+        "stale",
+        "pending"
+       ],
+       "title": "Freshness",
+       "type": "string"
+      },
+      "ignored_keys": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Ignored Keys",
+       "type": "array"
+      },
+      "named_groups": {
+       "items": {
+        "$ref": "#/$defs/ContentUseGroup"
+       },
+       "title": "Named Groups",
+       "type": "array"
+      },
+      "named_groups_total": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Named Groups Total",
+       "type": "integer"
+      },
+      "note": {
+       "title": "Note",
+       "type": "string"
+      },
+      "path_specific_samples": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Path Specific Samples",
+       "type": "array"
+      },
+      "reason": {
+       "default": null,
+       "title": "Reason",
+       "type": "null"
+      },
+      "scope": {
+       "anyOf": [
+        {
+         "enum": [
+          "all_paths",
+          "path_specific"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Scope"
+      },
+      "signals": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ContentSignals"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "status": {
+       "const": "declared",
+       "title": "Status",
+       "type": "string"
+      },
+      "usage": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ContentUsage"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "vendor_default_hint": {
+       "default": false,
+       "title": "Vendor Default Hint",
+       "type": "boolean"
+      },
+      "vocab": {
+       "title": "Vocab",
+       "type": "string"
+      }
+     },
+     "required": [
+      "status",
+      "formats",
+      "vocab",
+      "source_url",
+      "freshness",
+      "note"
+     ],
+     "title": "ContentUseDeclared",
+     "type": "object"
+    },
+    "ContentUseGroup": {
+     "additionalProperties": true,
+     "properties": {
+      "agents": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Agents",
+       "type": "array"
+      },
+      "other_agents": {
+       "default": 0,
+       "minimum": 0,
+       "title": "Other Agents",
+       "type": "integer"
+      },
+      "path_specific_samples": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Path Specific Samples",
+       "type": "array"
+      },
+      "signals": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ContentSignals"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "usage": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ContentUsage"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      }
+     },
+     "required": [
+      "agents"
+     ],
+     "title": "ContentUseGroup",
+     "type": "object"
+    },
+    "ErrorClass": {
+     "enum": [
+      "site_access",
+      "login_auth",
+      "human_verification",
+      "service_error"
+     ],
+     "title": "ErrorClass",
+     "type": "string"
+    },
+    "FailureStage": {
+     "enum": [
+      "before_target_response",
+      "response_observed",
+      "access_denial_observed",
+      "unknown"
+     ],
+     "title": "FailureStage",
+     "type": "string"
+    },
+    "Feedback": {
+     "additionalProperties": true,
+     "description": "D58: a one-time token for saying, later, whether the next attempt worked (POST /v1/feedback, MCP rate_last_lookup).",
+     "properties": {
+      "expires_in_seconds": {
+       "maximum": 3600,
+       "minimum": 1,
+       "title": "Expires In Seconds",
+       "type": "integer"
+      },
+      "outcomes": {
+       "items": {
+        "$ref": "#/$defs/FeedbackOutcome"
+       },
+       "title": "Outcomes",
+       "type": "array"
+      },
+      "paths": {
+       "items": {
+        "$ref": "#/$defs/FeedbackPath"
+       },
+       "title": "Paths",
+       "type": "array"
+      },
+      "token": {
+       "maxLength": 530,
+       "title": "Token",
+       "type": "string"
+      }
+     },
+     "required": [
+      "token",
+      "expires_in_seconds",
+      "outcomes",
+      "paths"
+     ],
+     "title": "Feedback",
+     "type": "object"
+    },
+    "FeedbackOutcome": {
+     "description": "D58: what happened on the caller's next attempt after a blocked lookup. \"Not tried\" is never sent: no answer is that.",
+     "enum": [
+      "succeeded",
+      "still_blocked",
+      "handed_off",
+      "gave_up"
+     ],
+     "title": "FeedbackOutcome",
+     "type": "string"
+    },
+    "FeedbackPath": {
+     "description": "D58: which way the attempt that the outcome is about went.",
+     "enum": [
+      "official_path",
+      "same_site",
+      "unknown"
+     ],
+     "title": "FeedbackPath",
+     "type": "string"
+    },
+    "GovernmentRegistry": {
+     "additionalProperties": true,
+     "description": "Which public government domain list names this domain, as of which version. A fact about the domain, not a judgement.",
+     "properties": {
+      "attribution": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Attribution"
+      },
+      "domain_type": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Domain Type"
+      },
+      "fetched_at": {
+       "format": "date-time",
+       "title": "Fetched At",
+       "type": "string"
+      },
+      "license": {
+       "title": "License",
+       "type": "string"
+      },
+      "list_version": {
+       "title": "List Version",
+       "type": "string"
+      },
+      "organization": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Organization"
+      },
+      "registry": {
+       "enum": [
+        "us_dotgov",
+        "uk_govuk"
+       ],
+       "title": "Registry",
+       "type": "string"
+      },
+      "registry_name": {
+       "title": "Registry Name",
+       "type": "string"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "state": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "State"
+      },
+      "status": {
+       "enum": [
+        "listed",
+        "not_in_list_version"
+       ],
+       "title": "Status",
+       "type": "string"
+      },
+      "suborganization": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Suborganization"
+      }
+     },
+     "required": [
+      "status",
+      "registry",
+      "registry_name",
+      "list_version",
+      "source_url",
+      "license",
+      "fetched_at"
+     ],
+     "title": "GovernmentRegistry",
+     "type": "object"
+    },
+    "HostFacts": {
+     "additionalProperties": true,
+     "properties": {
+      "government_registry": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/GovernmentRegistry"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "note": {
+       "title": "Note",
+       "type": "string"
+      },
+      "suffix_rule": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/SuffixRule"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      }
+     },
+     "required": [
+      "note"
+     ],
+     "title": "HostFacts",
+     "type": "object"
+    },
+    "Links": {
+     "additionalProperties": true,
+     "properties": {
+      "changelog": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Changelog"
+      },
+      "feedback": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Feedback"
+      }
+     },
+     "title": "Links",
+     "type": "object"
+    },
+    "LookupActivity": {
+     "additionalProperties": true,
+     "properties": {
+      "period_days": {
+       "const": 7,
+       "title": "Period Days",
+       "type": "integer"
+      },
+      "trend": {
+       "anyOf": [
+        {
+         "const": "increased",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Trend"
+      },
+      "unit": {
+       "const": "requests_not_agents",
+       "default": "requests_not_agents",
+       "title": "Unit",
+       "type": "string"
+      },
+      "volume_band": {
+       "enum": [
+        "1-4",
+        "5-9",
+        "10-49",
+        "50+"
+       ],
+       "title": "Volume Band",
+       "type": "string"
+      }
+     },
+     "required": [
+      "period_days",
+      "volume_band"
+     ],
+     "title": "LookupActivity",
+     "type": "object"
+    },
+    "NextAction": {
+     "additionalProperties": true,
+     "description": "D51: what to do now, computed from the recommendation (never a second verdict).",
+     "properties": {
+      "customer_url": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Customer Url"
+      },
+      "do": {
+       "enum": [
+        "wait_for_provider",
+        "hand_off_to_human",
+        "use_official_path",
+        "stop_automation",
+        "proceed",
+        "retry_lookup_once",
+        "stop_if_listed",
+        "lookup_apex_host",
+        "no_clear_action"
+       ],
+       "title": "Do",
+       "type": "string"
+      },
+      "lookup_host": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Lookup Host"
+      },
+      "retry_after_seconds": {
+       "anyOf": [
+        {
+         "maximum": 3600,
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Retry After Seconds"
+      },
+      "stop_if_you_are": {
+       "anyOf": [
+        {
+         "items": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+         },
+         "maxItems": 16,
+         "minItems": 1,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Stop If You Are"
+      },
+      "url": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Url"
+      }
+     },
+     "required": [
+      "do"
+     ],
+     "title": "NextAction",
+     "type": "object"
+    },
+    "NextCheck": {
+     "additionalProperties": true,
+     "properties": {
+      "code": {
+       "enum": [
+        "locate_failure_stage",
+        "human_handoff",
+        "account_handoff",
+        "before_target_response",
+        "response_observed",
+        "access_denial_observed",
+        "provider_scope",
+        "provider_components_only",
+        "provider_incident_stale",
+        "provider_scope_partial",
+        "provider_update_time_unknown",
+        "provider_maintenance_only",
+        "provider_history_incident",
+        "provider_clear",
+        "provider_unknown",
+        "reports_unknown",
+        "reports_stale",
+        "reports_unverified",
+        "robots_blocks_agents",
+        "robots_blocks_some_agents",
+        "robots_names_vendor_alias",
+        "robots_blocks_not_your_agent",
+        "robots_allows_agents",
+        "robots_wildcard_disallow",
+        "robots_grouping_differs_by_parser",
+        "robots_unknown",
+        "robots_fetch_refused",
+        "profile_not_read",
+        "profile_pending",
+        "llms_txt_present",
+        "content_use_ai_input_declared_no",
+        "official_path_available",
+        "government_registry_listed",
+        "government_suffix_restricted",
+        "government_list_version_missing"
+       ],
+       "title": "Code",
+       "type": "string"
+      },
+      "text": {
+       "title": "Text",
+       "type": "string"
+      }
+     },
+     "required": [
+      "code",
+      "text"
+     ],
+     "title": "NextCheck",
+     "type": "object"
+    },
+    "OfficialAccess": {
+     "additionalProperties": true,
+     "properties": {
+      "auth": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/AccessAuth"
+         },
+         "minItems": 1,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Auth"
+      },
+      "data_export_url": {
+       "anyOf": [
+        {
+         "maxLength": 300,
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Data Export Url"
+      },
+      "docs_repo": {
+       "anyOf": [
+        {
+         "maxLength": 300,
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Docs Repo"
+      },
+      "feeds": {
+       "anyOf": [
+        {
+         "items": {
+          "maxLength": 300,
+          "pattern": "^https://[^\\s]+$",
+          "type": "string"
+         },
+         "maxItems": 3,
+         "minItems": 1,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Feeds"
+      },
+      "free_tier": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/AccessQuote"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "key_signup_url": {
+       "anyOf": [
+        {
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Key Signup Url"
+      },
+      "llms_full_url": {
+       "anyOf": [
+        {
+         "maxLength": 300,
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Llms Full Url"
+      },
+      "official_mcp": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/AccessMcp"
+         },
+         "minItems": 1,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Official Mcp"
+      },
+      "openapi_url": {
+       "anyOf": [
+        {
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Openapi Url"
+      },
+      "rate_limits_url": {
+       "anyOf": [
+        {
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rate Limits Url"
+      },
+      "sandbox_url": {
+       "anyOf": [
+        {
+         "pattern": "^https://[^\\s]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Sandbox Url"
+      },
+      "terms": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/AccessTerms"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "verified_at": {
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+       "title": "Verified At",
+       "type": "string"
+      }
+     },
+     "required": [
+      "verified_at"
+     ],
+     "title": "OfficialAccess",
+     "type": "object"
+    },
+    "OfficialPaths": {
+     "additionalProperties": true,
+     "properties": {
+      "access": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/OfficialAccess"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "api_docs": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Api Docs"
+      },
+      "consumer": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ConsumerPaths"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "developer_portal": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Developer Portal"
+      },
+      "name": {
+       "title": "Name",
+       "type": "string"
+      },
+      "note": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Note"
+      }
+     },
+     "required": [
+      "name"
+     ],
+     "title": "OfficialPaths",
+     "type": "object"
+    },
+    "OfficialStatusPage": {
+     "additionalProperties": true,
+     "properties": {
+      "source_name": {
+       "title": "Source Name",
+       "type": "string"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "source_name",
+      "source_url"
+     ],
+     "title": "OfficialStatusPage",
+     "type": "object"
+    },
+    "Outcome": {
+     "enum": [
+      "passed",
+      "blocked",
+      "error",
+      "abandoned"
+     ],
+     "title": "Outcome",
+     "type": "string"
+    },
+    "ProviderStatus": {
+     "additionalProperties": true,
+     "properties": {
+      "active_incidents": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Active Incidents"
+      },
+      "active_maintenances": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Active Maintenances"
+      },
+      "affected": {
+       "anyOf": [
+        {
+         "items": {
+          "maxLength": 80,
+          "minLength": 1,
+          "type": "string"
+         },
+         "maxItems": 3,
+         "minItems": 1,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Affected"
+      },
+      "basis": {
+       "anyOf": [
+        {
+         "enum": [
+          "incident",
+          "maintenance",
+          "components_only"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Basis"
+      },
+      "error_detail": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Error Detail"
+      },
+      "fetched_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Fetched At"
+      },
+      "freshness": {
+       "enum": [
+        "pending",
+        "fresh",
+        "stale"
+       ],
+       "title": "Freshness",
+       "type": "string"
+      },
+      "incident_updated_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Incident Updated At"
+      },
+      "indicator": {
+       "anyOf": [
+        {
+         "enum": [
+          "none",
+          "minor",
+          "major",
+          "critical",
+          "maintenance",
+          "unknown"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Indicator"
+      },
+      "max_incident_impact": {
+       "anyOf": [
+        {
+         "enum": [
+          "none",
+          "minor",
+          "major",
+          "critical"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Max Incident Impact"
+      },
+      "source_kind": {
+       "anyOf": [
+        {
+         "const": "history_atom",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Source Kind"
+      },
+      "source_name": {
+       "title": "Source Name",
+       "type": "string"
+      },
+      "source_time": {
+       "anyOf": [
+        {
+         "const": "active_items",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Source Time"
+      },
+      "source_updated_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Source Updated At"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "window_blind": {
+       "anyOf": [
+        {
+         "const": true,
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Window Blind"
+      }
+     },
+     "required": [
+      "source_name",
+      "source_url",
+      "indicator",
+      "fetched_at",
+      "source_updated_at",
+      "freshness"
+     ],
+     "title": "ProviderStatus",
+     "type": "object"
+    },
+    "Recommendation": {
+     "additionalProperties": true,
+     "properties": {
+      "action": {
+       "enum": [
+        "proceed",
+        "use_official_path",
+        "hand_off_to_human",
+        "wait_provider_incident",
+        "stop_declared_block",
+        "unknown"
+       ],
+       "title": "Action",
+       "type": "string"
+      },
+      "agent_vendor": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/AgentVendor"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "confidence": {
+       "enum": [
+        "low",
+        "medium",
+        "high"
+       ],
+       "title": "Confidence",
+       "type": "string"
+      },
+      "reasons": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Reasons",
+       "type": "array"
+      }
+     },
+     "required": [
+      "action",
+      "confidence"
+     ],
+     "title": "Recommendation",
+     "type": "object"
+    },
+    "RobotsSummary": {
+     "additionalProperties": true,
+     "properties": {
+      "agents_allowed": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Agents Allowed",
+       "type": "array"
+      },
+      "agents_blocked": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Agents Blocked",
+       "type": "array"
+      },
+      "grouping_differs_by_parser": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Grouping Differs By Parser",
+       "type": "array"
+      },
+      "rules": {
+       "items": {
+        "$ref": "#/$defs/AgentRule"
+       },
+       "title": "Rules",
+       "type": "array"
+      },
+      "sitemap": {
+       "default": false,
+       "title": "Sitemap",
+       "type": "boolean"
+      },
+      "sitemaps": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Sitemaps",
+       "type": "array"
+      },
+      "vendor_aliases_blocked": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Vendor Aliases Blocked"
+      },
+      "wildcard_crawl_delay": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Wildcard Crawl Delay"
+      },
+      "wildcard_disallow_paths": {
+       "items": {
+        "type": "string"
+       },
+       "title": "Wildcard Disallow Paths",
+       "type": "array"
+      },
+      "wildcard_root_allowed": {
+       "title": "Wildcard Root Allowed",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "rules",
+      "wildcard_root_allowed"
+     ],
+     "title": "RobotsSummary",
+     "type": "object"
+    },
+    "SuffixRule": {
+     "additionalProperties": true,
+     "properties": {
+      "rule": {
+       "const": "registration_limited_to_government",
+       "title": "Rule",
+       "type": "string"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "suffix": {
+       "title": "Suffix",
+       "type": "string"
+      },
+      "text": {
+       "title": "Text",
+       "type": "string"
+      }
+     },
+     "required": [
+      "suffix",
+      "rule",
+      "text",
+      "source_url"
+     ],
+     "title": "SuffixRule",
+     "type": "object"
+    }
+   },
+   "additionalProperties": true,
+   "properties": {
+    "access_profile": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/AccessProfile"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "current_site_status": {
+     "const": "unknown",
+     "title": "Current Site Status",
+     "type": "string"
+    },
+    "data_horizon_hours": {
+     "const": 168,
+     "title": "Data Horizon Hours",
+     "type": "integer"
+    },
+    "evidence_level": {
+     "enum": [
+      "no_reports",
+      "single_observation",
+      "multiple_observations",
+      "later_success_observed",
+      "stale_reports"
+     ],
+     "title": "Evidence Level",
+     "type": "string"
+    },
+    "failure_stage": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/FailureStage"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "failures": {
+     "minimum": 0,
+     "title": "Failures",
+     "type": "integer"
+    },
+    "feedback_token": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/Feedback"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "generated_at": {
+     "format": "date-time",
+     "title": "Generated At",
+     "type": "string"
+    },
+    "host_facts": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/HostFacts"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "links": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/Links"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "lookup_activity": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/LookupActivity"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "next_action": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/NextAction"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "next_checks": {
+     "items": {
+      "$ref": "#/$defs/NextCheck"
+     },
+     "title": "Next Checks",
+     "type": "array"
+    },
+    "observations": {
+     "items": {
+      "$ref": "#/$defs/CheckObservation"
+     },
+     "title": "Observations",
+     "type": "array"
+    },
+    "official_paths": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/OfficialPaths"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "official_status_page": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/OfficialStatusPage"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "provider_discovery_attempted_at": {
+     "anyOf": [
+      {
+       "format": "date-time",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Provider Discovery Attempted At"
+    },
+    "provider_source_state": {
+     "enum": [
+      "feed_connected",
+      "official_page_only",
+      "not_verified_by_current_methods"
+     ],
+     "title": "Provider Source State",
+     "type": "string"
+    },
+    "provider_status": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/ProviderStatus"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "recommendation": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/Recommendation"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "reporting_sources": {
+     "minimum": 0,
+     "title": "Reporting Sources",
+     "type": "integer"
+    },
+    "site_host": {
+     "title": "Site Host",
+     "type": "string"
+    },
+    "successes": {
+     "minimum": 0,
+     "title": "Successes",
+     "type": "integer"
+    },
+    "summary": {
+     "title": "Summary",
+     "type": "string"
+    },
+    "summary_code": {
+     "title": "Summary Code",
+     "type": "string"
+    },
+    "summary_line": {
+     "anyOf": [
+      {
+       "maxLength": 200,
+       "minLength": 1,
+       "pattern": "^[ -~]+$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Summary Line"
+    },
+    "synthetic": {
+     "title": "Synthetic",
+     "type": "boolean"
+    },
+    "window_hours": {
+     "maximum": 168,
+     "minimum": 1,
+     "title": "Window Hours",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "site_host",
+    "generated_at",
+    "synthetic",
+    "window_hours",
+    "data_horizon_hours",
+    "current_site_status",
+    "evidence_level",
+    "summary_code",
+    "summary",
+    "failures",
+    "successes",
+    "reporting_sources",
+    "observations",
+    "provider_source_state"
+   ],
+   "title": "CheckResponse",
+   "type": "object"
+  }
+ },
+ "rate_last_lookup": {
+  "annotations": {
+   "destructive_hint": false,
+   "idempotent_hint": true,
+   "open_world_hint": false,
+   "read_only_hint": false,
+   "title": "Rate the last lookup"
+  },
+  "input_schema": {
+   "properties": {
+    "outcome": {
+     "enum": [
+      "succeeded",
+      "still_blocked",
+      "handed_off",
+      "gave_up"
+     ],
+     "title": "Outcome",
+     "type": "string"
+    },
+    "path": {
+     "default": "unknown",
+     "enum": [
+      "official_path",
+      "same_site",
+      "unknown"
+     ],
+     "title": "Path",
+     "type": "string"
+    },
+    "token": {
+     "description": "The feedback_token.token value from the check_incident answer, unchanged.",
+     "maxLength": 530,
+     "pattern": "^[A-Za-z0-9_-]{16,480}\\.[A-Za-z0-9_-]{43}$",
+     "title": "Token",
+     "type": "string"
+    }
+   },
+   "required": [
+    "token",
+    "outcome"
+   ],
+   "title": "rate_last_lookupArguments",
+   "type": "object"
+  },
+  "output_schema": {
+   "additionalProperties": true,
+   "properties": {
+    "accepted": {
+     "const": true,
+     "title": "Accepted",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "accepted"
+   ],
+   "title": "FeedbackReceipt",
+   "type": "object"
+  }
+ },
+ "report_observation": {
+  "annotations": {
+   "destructive_hint": false,
+   "idempotent_hint": false,
+   "open_world_hint": true,
+   "read_only_hint": false,
+   "title": "Report an authorized observation"
+  },
+  "input_schema": {
+   "$defs": {
+    "AgentFamily": {
+     "enum": [
+      "dots",
+      "muse",
+      "other"
+     ],
+     "title": "AgentFamily",
+     "type": "string"
+    },
+    "AttemptActor": {
+     "enum": [
+      "agent",
+      "human"
+     ],
+     "title": "AttemptActor",
+     "type": "string"
+    },
+    "AttemptEnv": {
+     "enum": [
+      "agent_cloud_browser",
+      "human_in_agent_browser",
+      "human_own_browser",
+      "unknown"
+     ],
+     "title": "AttemptEnv",
+     "type": "string"
+    },
+    "ChallengeKind": {
+     "enum": [
+      "interactive_check",
+      "loop",
+      "block_page",
+      "unknown",
+      "none"
+     ],
+     "title": "ChallengeKind",
+     "type": "string"
+    },
+    "ChallengeVendor": {
+     "enum": [
+      "cloudflare",
+      "recaptcha",
+      "hcaptcha",
+      "unknown",
+      "none"
+     ],
+     "title": "ChallengeVendor",
+     "type": "string"
+    },
+    "ErrorClass": {
+     "enum": [
+      "site_access",
+      "login_auth",
+      "human_verification",
+      "service_error"
+     ],
+     "title": "ErrorClass",
+     "type": "string"
+    },
+    "ObservationIn": {
+     "additionalProperties": false,
+     "properties": {
+      "agent_family": {
+       "$ref": "#/$defs/AgentFamily",
+       "default": "other"
+      },
+      "attempt_actor": {
+       "$ref": "#/$defs/AttemptActor",
+       "default": "agent"
+      },
+      "attempt_env": {
+       "$ref": "#/$defs/AttemptEnv",
+       "default": "unknown"
+      },
+      "challenge_kind": {
+       "$ref": "#/$defs/ChallengeKind",
+       "default": "none"
+      },
+      "challenge_vendor": {
+       "$ref": "#/$defs/ChallengeVendor",
+       "default": "none"
+      },
+      "consent_confirmed": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Consent Confirmed"
+      },
+      "error_class": {
+       "$ref": "#/$defs/ErrorClass"
+      },
+      "idempotency_key": {
+       "format": "uuid",
+       "title": "Idempotency Key",
+       "type": "string"
+      },
+      "observed_at": {
+       "format": "date-time",
+       "title": "Observed At",
+       "type": "string"
+      },
+      "outcome": {
+       "$ref": "#/$defs/Outcome"
+      },
+      "schema_version": {
+       "default": 1,
+       "title": "Schema Version",
+       "type": "integer"
+      },
+      "site_host": {
+       "title": "Site Host",
+       "type": "string"
+      },
+      "synthetic": {
+       "default": false,
+       "title": "Synthetic",
+       "type": "boolean"
+      },
+      "task_step": {
+       "default": "other",
+       "title": "Task Step",
+       "type": "string"
+      }
+     },
+     "required": [
+      "outcome",
+      "site_host",
+      "error_class"
+     ],
+     "title": "ObservationIn",
+     "type": "object"
+    },
+    "Outcome": {
+     "enum": [
+      "passed",
+      "blocked",
+      "error",
+      "abandoned"
+     ],
+     "title": "Outcome",
+     "type": "string"
+    }
+   },
+   "properties": {
+    "observation": {
+     "$ref": "#/$defs/ObservationIn"
+    }
+   },
+   "required": [
+    "observation"
+   ],
+   "title": "report_observationArguments",
+   "type": "object"
+  },
+  "output_schema": {
+   "additionalProperties": true,
+   "properties": {
+    "incident_id": {
+     "format": "uuid",
+     "title": "Incident Id",
+     "type": "string"
+    },
+    "observation_id": {
+     "format": "uuid",
+     "title": "Observation Id",
+     "type": "string"
+    },
+    "review_state": {
+     "title": "Review State",
+     "type": "string"
+    },
+    "synthetic": {
+     "title": "Synthetic",
+     "type": "boolean"
+    },
+    "withdrawal_token": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Withdrawal Token"
+    }
+   },
+   "required": [
+    "observation_id",
+    "incident_id",
+    "review_state",
+    "synthetic"
+   ],
+   "title": "Receipt",
+   "type": "object"
+  }
+ }
+}

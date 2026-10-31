@@ -70,6 +70,7 @@ def comparable(response):
     # The seven-day volume band counts every lookup, with or without codes (D11 era behaviour, unchanged here), so it
     # moves as this test sends lookups. Everything else must stay equal.
     body.pop("lookup_activity", None)
+    body.pop("feedback_token", None)  # a fresh one-time token per answer (D58); it never changes the rest
     return body
 
 
@@ -272,6 +273,7 @@ def test_the_answer_is_identical_with_and_without_the_codes(db, client, case):
         for body, host in ((with_codes, twin_a), (without, twin_b)):
             assert body.pop("site_host") == host
             body.pop("generated_at")
+            body.pop("feedback_token", None)  # a fresh one-time token per answer, naming its own host (D58)
         assert with_codes == without, (case, codes, step)
     assert with_codes["lookup_activity"]["volume_band"] == "10-49"  # the volume really moved through the bands
     assert rows(db)

@@ -54,7 +54,7 @@ def codes(checks) -> list[str]:
 
 
 def checks_for(status, **kwargs) -> list[dict]:
-    return next_checks(None, status, "no_reports", now=NOW, **kwargs)
+    return next_checks("site_access", status, "no_reports", now=NOW, **kwargs)
 
 
 def no_provider(error_class=None) -> dict:
@@ -337,7 +337,7 @@ def test_the_vendor_switch_does_not_change_d54():
     for status in (page(**ITEMS), page(updated=None), page()):
         assert (recommendation(None, status, None, None, now=NOW, vendor_aware=False)
                 == recommendation(None, status, None, None, now=NOW))
-        assert codes(next_checks(None, status, "no_reports", now=NOW, vendor_aware=False)) == codes(checks_for(status))
+        assert codes(next_checks("site_access", status, "no_reports", now=NOW, vendor_aware=False)) == codes(checks_for(status))
 
 
 # --- the board and the lookup say the same thing about a host ------------------------------------------------------

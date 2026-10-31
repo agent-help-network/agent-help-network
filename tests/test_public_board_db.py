@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from ahn import feed_robots, public_board, signal_history, triage  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
-from ahn.main import create_app  # noqa: E402
+from ahn.main import POLICY_UPDATED, create_app  # noqa: E402
 from ahn.service import _provider_scope  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 from ahn.status_refresh import register_source  # noqa: E402
@@ -318,7 +318,8 @@ def test_policy_llms_and_sitemap_describe_the_board_only_while_on(db):
             text = client.get(f"/{lang}/policy").text
             old, new = public_board.policy_sentences(False)[lang]
             assert str(escape(old)) not in text and str(escape(new)) in text
-        assert "Last updated October 27, 2026" in client.get("/en/policy").text
+        shown = max(POLICY_UPDATED, ON["public_board_since"])  # the board date moves "Last updated" only when it is later
+        assert f"Last updated {shown:%B} {shown.day}, {shown.year}" in client.get("/en/policy").text
         llms = client.get("/llms.txt").text
         assert "## Site problems now" in llms and "/v1/now" in llms and "robots.txt AHN could not read" not in llms
         assert "https://agenthelpnetwork.com/ko/now" in client.get("/sitemap.xml").text

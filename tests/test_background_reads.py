@@ -242,7 +242,8 @@ def test_pending_profile_recommendation_follows_the_unreadable_policy_path():
 
 def test_pending_next_check_text_in_both_languages():
     codes = [item["code"] for item in next_checks(None, None, "no_reports", None, PENDING, None)]
-    assert codes == ["locate_failure_stage", "profile_pending", "provider_unknown", "reports_unknown"]
+    # Changed on purpose by D63: no failure signal was sent, so locate_failure_stage is not asked.
+    assert codes == ["profile_pending", "provider_unknown", "reports_unknown"]
     assert "retry_after_seconds" in CHECKS["profile_pending"] and "Do not poll repeatedly" in CHECKS["profile_pending"]
     assert "retry_after_seconds" in CHECKS_KO["profile_pending"] and "반복 폴링은 하지 마세요" in CHECKS_KO["profile_pending"]
 
