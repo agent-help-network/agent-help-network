@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ t.nav_contribute }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container page-head">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.nav_contribute }}</p>
+  {% if lang == 'en' %}
+  <h1>Help keep the data right.</h1>
+  <p class="lead small-lead">The official developer paths, status-page mappings and access notes behind our answers are collected by hand from public pages, and pages change. If you use this data and notice something wrong or missing, we would be glad to hear it. Send whatever is easy for you. Nothing is expected in return, and the data stays under CC BY 4.0 for everyone, whether or not they ever write to us.</p>
+  {% else %}
+  <h1>데이터를 바르게 유지하도록 도와주세요.</h1>
+  <p class="lead small-lead">우리 답의 바탕인 공식 개발자 경로, 상태 페이지 매핑, 이용 정보는 공개 페이지를 보고 손으로 모은 것이라 페이지가 바뀌면 낡아요. 이 데이터를 쓰다가 틀린 곳이나 빠진 곳을 보셨다면 알려 주시면 고맙겠어요. 편한 방법으로 보내 주세요. 보답으로 바라는 것은 없고, 데이터는 우리에게 연락하든 안 하든 누구에게나 CC BY 4.0 그대로예요.</p>
+  {% endif %}
+</section>
+<section class="container section top-tight agent-content">
+  <div class="info-grid">
+    <article class="info-card" id="kinds">
+      <span class="info-number">01 / {{ 'WHAT' if lang == 'en' else '무엇을' }}</span>
+      <h2>{{ 'Three kinds of data we can use' if lang == 'en' else '쓸 수 있는 데이터 세 가지' }}</h2>
+      {% if lang == 'en' %}
+      <p><strong>Official developer path.</strong> The publisher&rsquo;s own API documentation or developer portal for a host.</p>
+      <p><strong>Status-page mapping.</strong> The publisher&rsquo;s own status page for a host, and its feed address when it has a standard one.</p>
+      <p><strong>Access information bundle.</strong> How to use the official path: the sign-in method, where a key comes from, a sentence stating a free quota, links to rate limits, a sandbox, an OpenAPI file or an official MCP server, and the terms page with one short verbatim quote.</p>
+      {% else %}
+      <p><strong>공식 개발자 경로.</strong> 어떤 호스트에 대해 운영 주체가 직접 공개한 API 문서나 개발자 포털이에요.</p>
+      <p><strong>상태 페이지 매핑.</strong> 어떤 호스트에 대해 운영 주체가 직접 운영하는 상태 페이지와, 표준 피드가 있으면 그 주소예요.</p>
+      <p><strong>이용 정보 묶음.</strong> 공식 경로를 쓰는 방법이에요: 인증 방식, 키를 받는 곳, 무료 사용량을 말하는 문장, 속도 제한·샌드박스·OpenAPI 파일·공식 MCP 서버 링크, 약관 페이지와 원문 짧은 인용 하나.</p>
+      {% endif %}
+    </article>
+    <article class="info-card" id="evidence">
+      <span class="info-number">02 / {{ 'EVIDENCE' if lang == 'en' else '근거' }}</span>
+      <h2>{{ 'What helps us check it' if lang == 'en' else '확인에 도움이 되는 것' }}</h2>
+      {% if lang == 'en' %}
+      <p>The public address of the page where you saw it (the publisher&rsquo;s own page), and roughly when you looked, in UTC. With those two we can read the page again ourselves, which is how every entry gets checked.</p>
+      <p>A short note is welcome if something is not obvious, for example which of two pages is the current one.</p>
+      {% else %}
+      <p>그것을 본 공개 페이지 주소(운영 주체의 페이지)와, 대략 언제 보셨는지(UTC)를 알려 주세요. 이 둘이 있으면 우리가 그 페이지를 직접 다시 읽을 수 있고, 모든 항목은 그렇게 확인해요.</p>
+      <p>헷갈릴 만한 점이 있으면 짧은 메모도 환영해요. 예를 들어 두 페이지 중 어느 쪽이 최신인지 같은 거요.</p>
+      {% endif %}
+    </article>
+    <article class="info-card" id="example">
+      <span class="info-number">03 / {{ 'EXAMPLE' if lang == 'en' else '예시' }}</span>
+      <h2>{{ 'One example' if lang == 'en' else '예시 하나' }}</h2>
+      <p>{{ 'A made-up host, in the same shape as a record of the offline bundle, one JSON object per line (shown wrapped here):' if lang == 'en' else '가상의 호스트이고, 오프라인 번들 레코드와 같은 모양으로 한 줄에 JSON 객체 하나예요(여기서는 줄바꿈해서 보여 줘요).' }}</p>
+      <pre class="ledger-code"><code>{"schema_version": 1, "kind": "official_path",
+ "observed_at": "2026-10-31T09:30:00Z",
+ "source_url": "https://docs.example.com/api",
+ "payload": {"site_host": "example.com", "name": "Example API",
+             "api_docs": "https://docs.example.com/api",
+             "developer_portal": null, "note": null},
+ "credit": "a-handle-if-you-like"}</code></pre>
+      <p>{{ 'The field details are in contrib/README.md. The credit line can be left out.' if lang == 'en' else '필드 설명은 contrib/README.md 에 있어요. credit 줄은 빼셔도 돼요.' }}</p>
+    </article>
+    <article class="info-card" id="flow">
+      <span class="info-number">04 / {{ 'WHAT HAPPENS' if lang == 'en' else '처리 흐름' }}</span>
+      <h2>{{ 'What we do with it' if lang == 'en' else '받은 뒤 하는 일' }}</h2>
+      {% if lang == 'en' %}
+      <p>We read the public source again ourselves and apply what matches it, following the same curation rules as the rest of the table (publisher-owned pages, short verbatim quotes, no guesses). If we cannot confirm something we leave it out and say why in the issue or pull request.</p>
+      <p>If you would like your name in the commit or change record, tell us how you want it written (a handle is fine). Otherwise we leave names out of it. A pull request shows your git author name as git always does.</p>
+      {% else %}
+      <p>우리가 공개 원본을 다시 직접 읽고, 맞는 것을 반영해요. 표의 나머지와 같은 큐레이션 기준을 따라요(운영 주체 소유 페이지, 원문 짧은 인용, 추측 없음). 확인하지 못한 것은 넣지 않고 이슈나 풀 리퀘스트에 이유를 적어요.</p>
+      <p>커밋이나 변경 기록에 이름을 남기고 싶으시면 어떻게 적을지 알려 주세요(핸들이어도 돼요). 아니면 이름은 적지 않아요. 풀 리퀘스트는 git 이 늘 그렇듯 작성자 이름이 보여요.</p>
+      {% endif %}
+    </article>
+    <article class="info-card" id="send">
+      <span class="info-number">05 / {{ 'WAYS TO SEND' if lang == 'en' else '보내는 방법' }}</span>
+      <h2>{{ 'Pick the one that suits you' if lang == 'en' else '편한 쪽으로 보내세요' }}</h2>
+      {% if lang == 'en' %}
+      <p><strong>An issue form.</strong> A short form with the host, the kind, the source address and your note: <a href="https://github.com/agent-help-network/agent-help-network/issues/new?template=data-contribution.yml" rel="noopener">open the form</a>.</p>
+      <p><strong>A pull request.</strong> Add a JSON Lines file under <a href="https://github.com/agent-help-network/agent-help-network/tree/main/contrib" rel="noopener">contrib/</a> in the shape above. <code>python scripts/check_contrib.py</code> checks the shape on your machine and makes no network request; the same check runs in CI. <a href="https://github.com/agent-help-network/agent-help-network/blob/main/contrib/README.md" rel="noopener">contrib/README.md</a> has the details.</p>
+      {% if reporting_enabled %}<p><strong>From an agent.</strong> If your own rules allow sharing, the MCP tool <code>report_observation</code> sends a de-identified firsthand observation of a block or an outage you ran into. That is separate from correcting the tables above, which the form or a pull request is for.</p>{% endif %}
+      {% else %}
+      <p><strong>이슈 양식.</strong> 호스트, 종류, 근거 주소, 메모를 적는 짧은 양식이에요: <a href="https://github.com/agent-help-network/agent-help-network/issues/new?template=data-contribution.yml" rel="noopener">양식 열기</a>.</p>
+      <p><strong>풀 리퀘스트.</strong> 위 모양으로 <a href="https://github.com/agent-help-network/agent-help-network/tree/main/contrib" rel="noopener">contrib/</a> 아래에 JSON Lines 파일을 더해 주세요. <code>python scripts/check_contrib.py</code> 가 내 컴퓨터에서 모양을 검사하고 네트워크 요청은 보내지 않아요. 같은 검사가 CI 에서도 돌아요. 자세한 내용은 <a href="https://github.com/agent-help-network/agent-help-network/blob/main/contrib/README.md" rel="noopener">contrib/README.md</a> 에 있어요.</p>
+      {% if reporting_enabled %}<p><strong>에이전트라면.</strong> 에이전트 자신의 규칙이 공유를 허용한다면, MCP 도구 <code>report_observation</code> 으로 겪은 막힘이나 장애를 비식별 직접 관찰로 보낼 수 있어요. 이것은 위 표를 고치는 일과는 별개이고, 표를 고치는 길은 양식이나 풀 리퀘스트예요.</p>{% endif %}
+      {% endif %}
+    </article>
+  </div>
+  <div class="callout" id="not-accepted">
+    <strong>{{ 'What we cannot take' if lang == 'en' else '받을 수 없는 것' }}</strong>
+    {% if lang == 'en' %}
+    <p>Public hostnames and public pages only. Please leave out personal URLs, anything you saw behind a login, private or personal information, keys, tokens, cookies, other people&rsquo;s conversations, and addresses with a query string. If it is not on a public page that we can read as well, we cannot check it, so we cannot use it.</p>
+    {% else %}
+    <p>공개 호스트명과 공개 페이지만 받아요. 개인 URL, 로그인 뒤에서 본 내용, 비공개·개인 정보, 키·토큰·쿠키, 다른 사람의 대화, 쿼리 문자열이 붙은 주소는 빼 주세요. 우리도 읽을 수 있는 공개 페이지에 없으면 확인할 수 없어서 쓸 수 없어요.</p>
+    {% endif %}
+  </div>
+  <p class="agent-footnote">{{ 'The code stays Apache-2.0 and the bundle stays CC BY 4.0. Facts you send about public pages join the dataset once we have checked them, under that same license; quoted publisher text remains the publisher’s. Questions: ' if lang == 'en' else '코드는 Apache-2.0, 번들은 CC BY 4.0 그대로예요. 공개 페이지에 대해 보내 주신 사실은 우리가 확인한 뒤 같은 라이선스로 데이터에 합쳐지고, 업체 문서 인용은 계속 업체의 것이에요. 문의: ' }}<a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a></p>
+</section>
+{% endblock %}

@@ -469,7 +469,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - 다운로드 상한: 클라이언트마다(비밀키로 날짜별 변환한 IP 값으로 메모리에서만 셈) UTC 하루 전체 다운로드 3회, 넘으면 `429 {"error": "bundle_client_limit"}`. 모든 전체 다운로드를 합쳐 UTC 하루 25 MiB 이며, 재시작해도 초기화되지 않게 DB 에서 센다. 넘으면 `429 {"error": "bundle_daily_limit"}`. 둘 다 다음 UTC 날까지 `Retry-After` 를 붙인다. `304`·`HEAD` 는 세지 않는다.
 - 파일 상한: 레코드 20,000개, 압축 8 MiB, 압축 해제 128 MiB. 하나라도 넘으면 빌드가 실패하고 이전 파일이 남는다. 큐레이션 시드 호스트 전부에 일부러 무겁게 만든 가상 `robots.txt` 해석 결과를 넣어 재면 레코드 약 3,600개에 압축 약 0.84 MB(서명 포함 1.1 MB)다.
 
-**형식.** 모든 줄이 내보내기 v1 봉투다(`schema_version` 1, [내보내기 v1](#내보내기-v1-운영자-cli-2026-10-19)과 같은 필드. 모르는 kind·필드는 무시할 것). 첫 줄은 머리 레코드 `kind: "bundle_meta"` 이고, payload 에 `title`, `creator`(운영자 표시명, 라이선스 권리자), `generated_at`, `valid_until`, `record_count`(머리 다음 레코드 수), 종류별 `counts`, `license: "CC-BY-4.0"`, `license_url`, `notice`, `attribution`, `third_party_quotes`, `status_source_note`, `schema_url`(이 절의 영문판), `includes`, `excludes` 가 있다. 나머지 레코드는 종류, 그다음 호스트명 순으로 정렬한다.
+**형식.** 모든 줄이 내보내기 v1 봉투다(`schema_version` 1, [내보내기 v1](#내보내기-v1-운영자-cli-2026-10-19)과 같은 필드. 모르는 kind·필드는 무시할 것). 첫 줄은 머리 레코드 `kind: "bundle_meta"` 이고, payload 에 `title`, `creator`(운영자 표시명, 라이선스 권리자), `generated_at`, `valid_until`, `record_count`(머리 다음 레코드 수), 종류별 `counts`, `license: "CC-BY-4.0"`, `license_url`, `notice`, `attribution`, `third_party_quotes`, `status_source_note`, `schema_url`(이 절의 영문판), `contribute_url`(고친 정보나 보탤 정보를 보내는 방법을 안내하는 페이지. 나중에 더했으므로 옛 파일에는 없다), `includes`, `excludes` 가 있다. 나머지 레코드는 종류, 그다음 호스트명 순으로 정렬한다.
 
 | kind | 내용 | 출처 |
 |---|---|---|
@@ -486,6 +486,8 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 **쓰는 법.** 모든 레코드에 확인할 곳이 있다: `source_url`, 판독이면 `content_sha256`. `access_profile` 은 판독 시점에 호스트가 선언한 정책일 뿐 접근 보장이 아니다. 서명은 운영자 CLI 와 같게 `AHN_EXPORT_SIGNING_KEY` 가 설정됐을 때만 하고, 아니면 `signature` 는 `null` 이며 HTTPS 로 받은 SHA-256 파일이 무결성 확인 수단이다. `sha256sum -c ahn-bundle-<시각>.jsonl.gz.sha256` 으로 확인하고 `gzip -dc` 로 읽는다.
 
 **라이선스.** 번들은 `creator`(`AHN_OPERATOR_NAME`)에 적힌 운영자가 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ko) 으로 제공하고, 코드는 그대로 Apache-2.0 이다. 머리 레코드의 `notice` 가 표시 문구(`Agent Help Network offline bundle © <연도> by <creator> is licensed under CC BY 4.0. To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/`)이고, `attribution` 은 생성 시각이 든 출처 표기 문구다. 재사용·미러할 때는 creator 와 Agent Help Network 를 표기하고 라이선스를 링크하며, 데이터를 바꿨으면 그렇다고 밝힌다. **업체 문서 인용은 대상이 아니다:** `official_path` 의 `access.free_tier.quote`·`access.terms.quote` 는 업체 페이지를 그대로 옮긴 짧은 인용으로 제3자 저작물이며, 이 라이선스가 허락하지 않는다(파일의 `third_party_quotes` 에도 적는다). 라이선스는 여기서 엮은 데이터셋에 적용된다. 각 레코드는 읽은 공개 원본을 가리키며 사이트의 원본 파일은 담지 않는다.
+
+**데이터 돌려보내기.** 고친 공식 개발자 경로·상태 페이지 매핑·이용 정보 묶음이나 빠진 항목이 있으면 [`/ko/contribute`](https://agenthelpnetwork.com/ko/contribute) 에 보내는 방법이 있다(이슈 양식, 또는 [`contrib/`](../contrib/README.md) 아래에 같은 레코드 모양의 JSON Lines 파일을 넣는 풀 리퀘스트. `scripts/check_contrib.py` 는 모양만 검사하고 요청을 보내지 않는다). 파일을 쓰는 쪽에 요구하는 것은 없고 위 라이선스도 그대로다. 반영 전에 공개 원본을 우리가 다시 읽는다.
 
 **운영자.** `python -m ahn.cli bundle --out 파일` 은 DB 에서 번들을 만들어 공개 없이 확인할 수 있게 쓰고, `--store` 는 크론과 같은 DB 잠금을 잡고 웹 서비스가 주는 저장 파일을 바꾼다. 둘 다 `AHN_OPERATOR_NAME` 이 필요하다.
 

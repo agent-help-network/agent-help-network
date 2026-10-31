@@ -33,6 +33,10 @@ The full suite needs Python 3.12 (the version CI uses) and PostgreSQL 17 with a 
 
 Tests must not reach real hosts. The lookup path itself reads only the database; third-party reads happen in [`ahn/background_reads.py`](ahn/background_reads.py). [`tests/conftest.py`](tests/conftest.py) blanks the access-profile layer on the lookup path by default (it stubs `ahn.service.cached_profile` to return no cached row and nothing due) and makes the background reader's three external calls (`read_profile_file`, `refresh_feed`, `discover`) raise unless a test replaces them with a stub. It does not intercept `ahn.access_profile` or `ahn.profile_warm`, so tests that exercise those must pass a stub `reader=` and never call the real fetcher.
 
+## Data contributions
+
+Corrected or missing official developer paths, status-page mappings and access bundles can come in without touching Python: use the [data contribution issue form](https://github.com/agent-help-network/agent-help-network/issues/new?template=data-contribution.yml), or add a JSON Lines file under [`contrib/`](contrib/README.md) in a pull request. `python scripts/check_contrib.py` checks the shape (no network); the maintainers re-read the public source before anything is applied. The public page is [/en/contribute](https://agenthelpnetwork.com/en/contribute).
+
 ## Pull requests
 
 - Open a pull request against `main`. The `pytest` check must pass before merge; `main` is protected by a ruleset that requires it. Merging to `main` deploys to production.

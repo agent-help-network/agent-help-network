@@ -45,4 +45,5 @@ Service: https://agenthelpnetwork.com — independent project, not an official s
 - https://agenthelpnetwork.com/en/search — human-readable lookup
 - https://agenthelpnetwork.com/en/policy — data and reading policy
 - https://agenthelpnetwork.com/en/agents — integration notes for agent frameworks
+- https://agenthelpnetwork.com/en/contribute — optional: how to send back a corrected or missing official path, status page or access note
 - Tell us when an answer was wrong or did not fit your next step: https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports (each answer also carries these as `links`). What changed after feedback: https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md

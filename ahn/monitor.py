@@ -102,7 +102,7 @@ def _snapshot(settings: Settings) -> dict:
                  AND route_code IN ('/{lang}/','/{lang}/human','/{lang}/search',
                                     '/{lang}/agents','/{lang}/connect','/{lang}/report',
                                     '/{lang}/policy','/{lang}/disclaimer','/{lang}/terms',
-                                    '/{lang}/support','/{lang}/incidents/{incident_id}')
+                                    '/{lang}/support','/{lang}/contribute','/{lang}/incidents/{incident_id}')
                GROUP BY source,medium,campaign,referrer
                ORDER BY requests DESC,source LIMIT 20""",
             (start,),
