@@ -5,7 +5,7 @@ before D53, and nothing here runs. The board is built from ``signal_history.boar
 owner sees, and adds no request to any site and no row to any table: it reads the database only, and at most once
 per CACHE_SECONDS per web process.
 
-What it lists (D-1020-9):
+What it lists:
 
 * Provider statements: curated hosts whose own status page currently makes the lookup answer wait, and only while
   that statement carries an update time no older than a week (``signal_history.board_provider``). The word "outage"

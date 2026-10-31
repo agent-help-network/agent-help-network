@@ -24,6 +24,8 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
+from .db import as_utc
+
 SCOPE_CAP = 32_768  # bytes per list, the same cap as the status.json feed
 INCIDENTS_PATH = "incidents/unresolved.json"
 MAINTENANCES_PATH = "scheduled-maintenances/active.json"
@@ -221,7 +223,8 @@ def scope_paused(row, now: datetime) -> bool:
     """True while the lists of a feed rest after failures (status_cache scope_failures, scope_failed_at, scope_error)."""
     if not row or not row.get("scope_failures") or row.get("scope_failed_at") is None:
         return False
-    return now < row["scope_failed_at"] + scope_backoff(row["scope_failures"], row.get("scope_error"))
+    # Counted in UTC (the session already is; this is the guard): a DST-zone "+ 24 hours" moves the wall clock.
+    return as_utc(now) < as_utc(row["scope_failed_at"]) + scope_backoff(row["scope_failures"], row.get("scope_error"))
 
 
 def basis(indicator: str | None, active_incidents: int | None, active_maintenances: int | None) -> str | None:
