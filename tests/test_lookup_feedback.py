@@ -410,12 +410,13 @@ def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_
     # The notices the description keeps: what the service reads, and that the lookup changes nothing.
     assert "it may fetch the host's public robots.txt, llms.txt and status feed" in description
     assert "never changes the target site or your data" in description
+    assert "lookups and the codes you send are counted anonymously per host and hour" in description  # as the privacy policy says
 
 
 def test_the_advertised_schemas_and_annotations_match_the_snapshot():
     """A text change must not change what a directory scan sees: every input schema, output schema and annotation set of the
-    public tool list equals tests/fixtures/mcp/tool_schemas_public.json. A deliberate schema change updates that file in the same PR."""
-    tools = tools_in("1", "0")
+    public tool list with reporting on equals tests/fixtures/mcp/tool_schemas_public.json. A deliberate schema change updates that file in the same PR."""
+    tools = tools_in("1", "1")  # the live configuration: public, reporting on
     current = {name: {"input_schema": value[0], "annotations": value[1], "output_schema": value[3]} for name, value in tools.items()}
     snapshot = json.loads((ROOT / "tests" / "fixtures" / "mcp" / "tool_schemas_public.json").read_text(encoding="utf-8"))
     assert current == snapshot

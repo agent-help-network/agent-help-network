@@ -2273,5 +2273,219 @@
    "title": "FeedbackReceipt",
    "type": "object"
   }
+ },
+ "report_observation": {
+  "annotations": {
+   "destructive_hint": false,
+   "idempotent_hint": false,
+   "open_world_hint": true,
+   "read_only_hint": false,
+   "title": "Report an authorized observation"
+  },
+  "input_schema": {
+   "$defs": {
+    "AgentFamily": {
+     "enum": [
+      "dots",
+      "muse",
+      "other"
+     ],
+     "title": "AgentFamily",
+     "type": "string"
+    },
+    "AttemptActor": {
+     "enum": [
+      "agent",
+      "human"
+     ],
+     "title": "AttemptActor",
+     "type": "string"
+    },
+    "AttemptEnv": {
+     "enum": [
+      "agent_cloud_browser",
+      "human_in_agent_browser",
+      "human_own_browser",
+      "unknown"
+     ],
+     "title": "AttemptEnv",
+     "type": "string"
+    },
+    "ChallengeKind": {
+     "enum": [
+      "interactive_check",
+      "loop",
+      "block_page",
+      "unknown",
+      "none"
+     ],
+     "title": "ChallengeKind",
+     "type": "string"
+    },
+    "ChallengeVendor": {
+     "enum": [
+      "cloudflare",
+      "recaptcha",
+      "hcaptcha",
+      "unknown",
+      "none"
+     ],
+     "title": "ChallengeVendor",
+     "type": "string"
+    },
+    "ErrorClass": {
+     "enum": [
+      "site_access",
+      "login_auth",
+      "human_verification",
+      "service_error"
+     ],
+     "title": "ErrorClass",
+     "type": "string"
+    },
+    "ObservationIn": {
+     "additionalProperties": false,
+     "properties": {
+      "agent_family": {
+       "$ref": "#/$defs/AgentFamily",
+       "default": "other"
+      },
+      "attempt_actor": {
+       "$ref": "#/$defs/AttemptActor",
+       "default": "agent"
+      },
+      "attempt_env": {
+       "$ref": "#/$defs/AttemptEnv",
+       "default": "unknown"
+      },
+      "challenge_kind": {
+       "$ref": "#/$defs/ChallengeKind",
+       "default": "none"
+      },
+      "challenge_vendor": {
+       "$ref": "#/$defs/ChallengeVendor",
+       "default": "none"
+      },
+      "consent_confirmed": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Consent Confirmed"
+      },
+      "error_class": {
+       "$ref": "#/$defs/ErrorClass"
+      },
+      "idempotency_key": {
+       "format": "uuid",
+       "title": "Idempotency Key",
+       "type": "string"
+      },
+      "observed_at": {
+       "format": "date-time",
+       "title": "Observed At",
+       "type": "string"
+      },
+      "outcome": {
+       "$ref": "#/$defs/Outcome"
+      },
+      "schema_version": {
+       "default": 1,
+       "title": "Schema Version",
+       "type": "integer"
+      },
+      "site_host": {
+       "title": "Site Host",
+       "type": "string"
+      },
+      "synthetic": {
+       "default": false,
+       "title": "Synthetic",
+       "type": "boolean"
+      },
+      "task_step": {
+       "default": "other",
+       "title": "Task Step",
+       "type": "string"
+      }
+     },
+     "required": [
+      "outcome",
+      "site_host",
+      "error_class"
+     ],
+     "title": "ObservationIn",
+     "type": "object"
+    },
+    "Outcome": {
+     "enum": [
+      "passed",
+      "blocked",
+      "error",
+      "abandoned"
+     ],
+     "title": "Outcome",
+     "type": "string"
+    }
+   },
+   "properties": {
+    "observation": {
+     "$ref": "#/$defs/ObservationIn"
+    }
+   },
+   "required": [
+    "observation"
+   ],
+   "title": "report_observationArguments",
+   "type": "object"
+  },
+  "output_schema": {
+   "additionalProperties": true,
+   "properties": {
+    "incident_id": {
+     "format": "uuid",
+     "title": "Incident Id",
+     "type": "string"
+    },
+    "observation_id": {
+     "format": "uuid",
+     "title": "Observation Id",
+     "type": "string"
+    },
+    "review_state": {
+     "title": "Review State",
+     "type": "string"
+    },
+    "synthetic": {
+     "title": "Synthetic",
+     "type": "boolean"
+    },
+    "withdrawal_token": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Withdrawal Token"
+    }
+   },
+   "required": [
+    "observation_id",
+    "incident_id",
+    "review_state",
+    "synthetic"
+   ],
+   "title": "Receipt",
+   "type": "object"
+  }
  }
 }
