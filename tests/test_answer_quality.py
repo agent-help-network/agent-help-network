@@ -151,6 +151,84 @@ def test_access_bundle_is_read_from_the_official_paths_of_the_answer():
     assert c["access_bundle"] is True
 
 
+# --------------------------------------------------------------------------- M4c
+
+def consumer(action, *, customer=None, official=None, profile=None):
+    body = answer(action, official=official, profile=profile)
+    if customer:
+        body["next_action"] = {"do": action, "customer_url": customer}
+    return aq.classify_answer(body)
+
+
+BLOCKED_PROFILE = {"robots_status": "ok", "freshness": "fresh", "robots": {"rules": [
+    {"agent": "GPTBot", "kind": "user_agent", "explicit_group": True, "root_allowed": False}]}}
+OPEN_PROFILE = {"robots_status": "ok", "freshness": "fresh", "robots": {"rules": [
+    {"agent": "GPTBot", "kind": "user_agent", "explicit_group": True, "root_allowed": True}]}}
+
+
+def test_m4c_customer_url_counts_even_with_a_developer_path():
+    c = consumer("use_official_path", customer="https://x.com/help", official=OFFICIAL)
+    assert c["m4c"] is True and c["customer_url"] == "https://x.com/help"
+
+
+@pytest.mark.parametrize("action", ["hand_off_to_human", "stop_declared_block", "wait_provider_incident"])
+def test_m4c_counts_the_three_hand_off_stop_wait_actions(action):
+    assert consumer(action)["m4c"] is True
+
+
+def test_m4c_proceed_counts_without_an_explicit_robots_block():
+    assert consumer("proceed")["m4c"] is True
+    assert consumer("proceed", profile=OPEN_PROFILE)["m4c"] is True
+
+
+def test_m4c_proceed_with_an_explicit_robots_block_does_not_count():
+    assert consumer("proceed", profile=BLOCKED_PROFILE)["m4c"] is False
+
+
+def test_m4c_developer_path_alone_and_unknown_do_not_count_but_m4_still_does():
+    c = consumer("use_official_path", official=OFFICIAL)
+    assert c["m4c"] is False and c["actionable"] is True and c["customer_url"] is None
+    assert consumer("unknown")["m4c"] is False
+
+
+def test_consumer_path_flag_reads_official_paths_consumer():
+    assert consumer("unknown", official={**OFFICIAL, "consumer": {"paths": []}})["consumer_path"] is True
+    assert consumer("unknown", official=OFFICIAL)["consumer_path"] is False
+
+
+def test_live_metrics_sum_m4c_and_consumer_path_coverage():
+    results = {
+        "a.com": {"ok": True, "action": "x", "actionable": True, "profile_pending": False, "no_data": False, "official_path": True,
+                  "access_bundle": False, "m4c": True, "consumer_path": True},
+        "b.com": {"ok": True, "action": "x", "actionable": True, "profile_pending": False, "no_data": False, "official_path": True,
+                  "access_bundle": False, "m4c": False, "consumer_path": False},
+        "c.com": {"ok": False, "error": "http_500"},
+    }
+    m = aq.live_metrics(results)
+    assert m["m4c"] == {"count": 1, "pct": 50.0} and m["consumer_path_coverage"] == {"count": 1, "pct": 50.0}
+    assert m["actionable"]["count"] == 2
+
+
+def test_compare_reports_m4c_losses_and_gains_and_ignores_v1_rows():
+    def r(host, m4c):
+        x = row(host)
+        if m4c is not None:
+            x["live"]["m4c"] = m4c
+        return x
+    before = result_with([r("a.com", True), r("b.com", False), r("c.com", None)])
+    now = result_with([r("a.com", False), r("b.com", True), r("c.com", False)])
+    change = aq.compare(now, before)
+    worse = {w["host"]: w["reasons"] for w in change["worse_hosts"]}
+    assert worse == {"a.com": ["no_longer_consumer_actionable"]}
+    assert change["consumer_better_hosts"] == ["b.com"]
+
+
+def test_schema_version_is_2_and_a_v1_file_is_still_a_previous_run(tmp_path):
+    assert aq.SCHEMA_VERSION == 2
+    (tmp_path / "2026-10-15.json").write_text(json.dumps({"schema_version": 1, "run_date": "2026-10-15"}), encoding="utf-8")
+    assert aq.previous_result(tmp_path, "2026-10-22")["run_date"] == "2026-10-15"
+
+
 # --------------------------------------------------------------------------- live run with a fake server
 
 class FakeServer:
