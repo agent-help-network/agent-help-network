@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -134,3 +135,38 @@ def test_an_incident_history_reading_with_an_open_incident_is_read_every_fifteen
     assert feed_next_due({**failing, "last_error_detail": "http_429"}, HOUR) == T + timedelta(minutes=15) + timedelta(hours=24)
     # The same count on an API reading does not change its schedule: the indicator decides there.
     assert feed_next_due({**atom, "feed_source": None}, HOUR) == T + HOUR
+
+
+# --- elapsed time, not wall clock: stored timestamps can arrive in a DST zone ---------------------------------------------
+
+NEW_YORK = ZoneInfo("America/New_York")
+# Instants around the US fall-back (2026-11-01 02:00 EDT -> 01:00 EST) and spring-forward, a midnight and a year end.
+INSTANTS = [datetime(2026, 10, 31, 2, 7, 41, tzinfo=timezone.utc), datetime(2026, 10, 31, 6, 7, 41, tzinfo=timezone.utc),
+            datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc), datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc),
+            datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc), datetime(2026, 3, 8, 7, 30, tzinfo=timezone.utc),
+            datetime(2026, 10, 31, 23, 59, 59, tzinfo=timezone.utc), datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc)]
+
+
+@pytest.mark.parametrize("instant", INSTANTS, ids=lambda i: i.isoformat())
+def test_a_switched_off_feed_is_asked_again_exactly_a_day_later_whatever_zone_the_timestamp_comes_in(instant):
+    local = instant.astimezone(NEW_YORK)  # what psycopg returns when the database session runs in a DST zone
+    due = feed_next_due(row(last_error_at=local, failures=1, last_error_detail="feed_disabled"), HOUR)
+    assert due == instant + timedelta(hours=24)
+
+
+@pytest.mark.parametrize("instant", INSTANTS, ids=lambda i: i.isoformat())
+def test_a_success_and_a_failure_are_counted_in_elapsed_time_in_a_dst_zone(instant):
+    local = instant.astimezone(NEW_YORK)
+    assert feed_next_due(row(indicator="none", fetched_at=local), HOUR) == instant + HOUR
+    assert feed_next_due(row(last_error_at=local, failures=2, last_error_detail="http_403"), HOUR) == instant + timedelta(hours=2)
+
+
+@pytest.mark.parametrize("instant", INSTANTS, ids=lambda i: i.isoformat())
+def test_a_robots_decision_expires_after_its_ttl_in_elapsed_time_in_a_dst_zone(instant):
+    from ahn import feed_robots
+
+    local = instant.astimezone(NEW_YORK)
+    failed = feed_robots.Decision("page.example", "error", "http_503", local, {})
+    assert failed.expires_at() == instant + feed_robots.ERROR_TTL
+    kept = feed_robots.Decision("page.example", "ok", "http_200", local, {}, error_at=local, error_detail="http_503")
+    assert kept.expires_at() == max(instant + kept.ttl(), instant + feed_robots.ERROR_TTL)
