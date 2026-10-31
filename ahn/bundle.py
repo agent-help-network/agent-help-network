@@ -414,12 +414,11 @@ def refresh_if_due(database_url: str, *, now: datetime | None = None, force: boo
 
     Switch off: delete the stored row, so nothing is left to serve if the web switch is turned on alone.
     """
-    import psycopg
     from psycopg.rows import dict_row
 
-    from .db import conninfo
+    from .db import connect_url
 
-    with psycopg.connect(conninfo(database_url), row_factory=dict_row) as conn:
+    with connect_url(database_url, row_factory=dict_row) as conn:
         if not enabled():
             deleted = conn.execute("DELETE FROM public_bundle").rowcount
             return {"skipped": "switch_off", "deleted": deleted}

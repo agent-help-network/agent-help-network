@@ -170,3 +170,21 @@ def test_a_robots_decision_expires_after_its_ttl_in_elapsed_time_in_a_dst_zone(i
     assert failed.expires_at() == instant + feed_robots.ERROR_TTL
     kept = feed_robots.Decision("page.example", "ok", "http_200", local, {}, error_at=local, error_detail="http_503")
     assert kept.expires_at() == max(instant + kept.ttl(), instant + feed_robots.ERROR_TTL)
+
+
+def test_a_robots_failure_that_outlasts_the_decision_sets_the_expiry_in_a_dst_zone():
+    from ahn import feed_robots
+
+    error_at = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)
+    probe = feed_robots.Decision("page.example", "ok", "http_200", error_at, {})
+    decision = feed_robots.Decision("page.example", "ok", "http_200", error_at - probe.ttl(), {}, error_at=error_at, error_detail="http_503")
+    local = feed_robots.Decision("page.example", "ok", "http_200", decision.checked_at.astimezone(NEW_YORK), {},
+                                 error_at=error_at.astimezone(NEW_YORK), error_detail="http_503")
+    # The error is the later of the two clocks, so it decides: an error TTL after it, 06:30Z with the one-hour error TTL.
+    assert feed_robots.ERROR_TTL == timedelta(hours=1)
+    assert decision.expires_at() == local.expires_at() == datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc)
+
+
+def test_naive_stored_times_are_refused_not_read_as_local_time():
+    with pytest.raises(ValueError):
+        feed_next_due(row(fetched_at=datetime(2026, 10, 21, 12, 0)), HOUR)

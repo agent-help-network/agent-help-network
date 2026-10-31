@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 from psycopg.types.json import Jsonb
 
 from .access_profile import ROBOTS_CAP, USER_AGENT, _path_matches, fetch_public_file, split_groups
-from .db import connect
+from .db import as_utc, connect
 from .provenance import sha256_hex
 
 PARSER_VERSION = "ahn-feed-robots/1; RFC 9309, longest match, Allow wins a tie"
@@ -96,8 +96,8 @@ class Decision:
     def expires_at(self) -> datetime:
         """When the next read is due. After a failed read that left an `ok` answer in force, an hour after the failure."""
         # Count in UTC: a stored timestamp can arrive in a DST zone, where "+ 24 hours" would move the wall clock.
-        due = self.checked_at.astimezone(timezone.utc) + self.ttl()
-        return max(due, self.error_at.astimezone(timezone.utc) + ERROR_TTL) if self.error_at else due
+        due = as_utc(self.checked_at) + self.ttl()
+        return max(due, as_utc(self.error_at) + ERROR_TTL) if self.error_at else due
 
     def current(self, paths, now: datetime) -> bool:
         """Usable without a new read: same parser, every wanted path answered, inside the cache window (and, while a
