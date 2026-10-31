@@ -188,6 +188,27 @@ def test_file_rules(tmp_path):
     assert CHECK.check_file(tmp_path / "latin.jsonl", now=NOW)[0]
 
 
+def test_addresses_inside_the_access_bundle_get_the_same_query_checks():
+    base = {"auth": [{"method": "api_key", "source_url": "https://docs.example.com/api/auth"}],
+            "key_signup_url": "https://docs.example.com/keys", "verified_at": "2026-10-31"}
+    bad = {
+        "key_signup_url": "https://docs.example.com/keys?token=abc123",
+        "openapi_url": "https://docs.example.com/openapi.json?key=abc123",
+        "rate_limits_url": "https://docs.example.com/limits?sig=abc",
+        "terms": {"url": "https://docs.example.com/terms?session=xyz", "quote": "Terms apply."},
+        "auth": [{"method": "api_key", "source_url": "https://docs.example.com/auth?api_key=abc"}],
+        "free_tier": {"quote": "Free tier available.", "source_url": "https://docs.example.com/pricing?key=abc"},
+        "official_mcp": [{"endpoint": "https://mcp.example.com/sse?token=abc", "doc_url": "https://docs.example.com/mcp"}],
+    }
+    for field, value in bad.items():
+        errors, _ = check(in_payload(PATH, access={**base, field: value}))
+        assert any("key, token or session" in item for item in errors), (field, errors)
+    # an ordinary query is a warning there too, and a fragment anchor is fine
+    errors, warnings = check(in_payload(PATH, access={**base, "key_signup_url": "https://docs.example.com/keys?lang=en"}))
+    assert not any("query" in item for item in errors) and any("query string" in item for item in warnings)
+    assert check(in_payload(ACCESS, access={**base, "key_signup_url": "https://docs.example.com/keys#new"})) == ([], [])
+
+
 def test_the_check_makes_no_network_request(monkeypatch):
     import socket
 
@@ -280,15 +301,23 @@ def test_fragments_pass_and_query_strings_warn():
         assert check(changed(PATH, source_url="https://docs.example.com/api" + secret))[0], secret
 
 
+def test_a_full_width_address_is_caught_only_after_normalising():
+    # Full-width letters and dot are outside the plain address pattern; only the NFKC pass turns them into one.
+    errors, _ = check(in_payload(PATH, note="mail \uff53\uff4f\uff4d\uff45\uff4f\uff4e\uff45\uff20\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff4f\uff52\uff47"))
+    assert any("email" in item for item in errors)
+    assert not CHECK.EMAIL.search("\uff53\uff4f\uff4d\uff45\uff4f\uff4e\uff45\uff20\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff4f\uff52\uff47")
+
+
 def test_scanning_is_fast_and_long_text_is_refused_before_any_pattern_runs():
     import time
 
     for text in ("a" * 256_000, "a@" * 100_000, "a." * 100_000, ("a" * 60 + " (at) ") * 20_000):
         started = time.perf_counter()
         errors, _ = check(in_payload(PATH, note=text))
-        assert errors and time.perf_counter() - started < 1.0
+        assert any("over 2000" in item for item in errors) and time.perf_counter() - started < 1.0
     started = time.perf_counter()
-    assert check(in_payload(PATH, zz="a" * 256_000))[0]                    # an unknown key is scanned too, after the limit
+    errors, _ = check(in_payload(PATH, zz="a" * 256_000))                  # an unknown key is scanned too, after the limit
+    assert any("over 2000" in item for item in errors)
     assert time.perf_counter() - started < 1.0
     assert check(in_payload(PATH, note="x" * 300)) == ([], [])             # ordinary text near the limits still passes
 
@@ -413,6 +442,17 @@ def test_everything_a_contributor_reads_is_an_invitation_not_a_requirement():
     for name, text in {"page": pages["en"], "issue form": form, "contrib/README.md": contrib}.items():
         found = PRESSURE_EN.search(text)
         assert not found, (name, found and found.group(0))
+    # the footnote on the agents page that points here, in both languages
+    for lang in ("en", "ko"):
+        html = client.get(f"/{lang}/agents").text
+        notes = [_plain(m) for m in re.findall(r'<p class="agent-footnote">(.*?)</p>', html, re.S) if f'href="/{lang}/contribute"' in m]
+        assert len(notes) == 1, lang
+        if lang == "en":
+            assert not PRESSURE_EN.search(notes[0]), notes[0]
+        else:
+            assert "합니다" in notes[0] or "습니다" in notes[0]       # the page's own register
+            for word in PRESSURE_KO:
+                assert word not in notes[0], word
     for word in PRESSURE_KO:
         assert word not in pages["ko"], word
     assert "Nothing is expected in return" in pages["en"] and "바라는 것은 없고" in pages["ko"]

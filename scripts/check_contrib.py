@@ -81,6 +81,9 @@ def _verifier():
 VERIFIER = _verifier()
 
 
+SECRET_QUERY = "must not carry a key, token or session value in its query string or fragment"
+
+
 def url_problem(value) -> str | None:
     """A plain https URL on a public hostname: no credentials or port. A query string is only a warning (url_warning)."""
     if not isinstance(value, str) or not value.startswith("https://") or any(ch.isspace() for ch in value):
@@ -99,7 +102,7 @@ def url_problem(value) -> str | None:
             continue
         names = {name.lower() for name, _ in parse_qsl(part, keep_blank_values=True)}
         if names & SECRET_PARAMS:
-            return "must not carry a key, token or session value in its query string or fragment"
+            return SECRET_QUERY
     return None
 
 
@@ -151,6 +154,22 @@ def _scan(value, where: str, errors: list[str], depth: int = 0) -> bool:
         if BIDI.search(value):
             errors.append(f"{where}: contains a direction-control character")
     return over
+
+
+def _urls(value, where: str, depth: int = 0) -> list[tuple[str, str]]:
+    """Every https:// string inside a nested value, with where it sits (the access bundle has them at several depths)."""
+    if depth > MAX_DEPTH + 1:
+        return []
+    if isinstance(value, str):
+        return [(where, value)] if value.startswith("https://") else []
+    found: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found += _urls(item, f"{where}.{key}", depth + 1)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found += _urls(item, f"{where}[{index}]", depth + 1)
+    return found
 
 
 def _text(payload: dict, field: str, errors: list[str]) -> None:
@@ -246,6 +265,12 @@ def check_record(record, *, now: datetime | None = None) -> tuple[list[str], lis
             for text in VERIFIER.access_problems(host or "invalid.test", payload["access"], today=now.date()):
                 label = text.split(": ", 1)[-1]
                 (warnings if "publisher-owned" in label else errors).append(f"payload.{label}")
+            # The bundle rules do not look at query strings; the same two checks as every other address apply here.
+            for where, url in _urls(payload["access"], "payload.access"):
+                if SECRET_QUERY in (url_problem(url) or ""):
+                    errors.append(f"{where} {SECRET_QUERY}")
+                elif url_warning(url):
+                    warnings.append(f"{where} {url_warning(url)}")
     else:
         if not payload.get("source_name"):
             errors.append("payload.source_name is needed (the name of the status page)")
