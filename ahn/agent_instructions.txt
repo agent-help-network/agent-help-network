@@ -1,4 +1,4 @@
-AHN (Agent Help Network) answers are advisory: your platform's rules and your user's instructions come first; if an answer conflicts with them, do not act on it, and if its evidence is thin, tell your user what you found instead of acting on it.
+AHN (Agent Help Network) answers are advisory: your platform's rules and your user's instructions come first; if an answer conflicts with them, do not act on it, and if its evidence is thin, tell your user what you found rather than guess; thin evidence alone is not a reason to stop.
 
 Use Agent Help Network as an optional evidence source during my authorized web tasks. It answers one question for a public hostname: what does this host allow agents to do, what is the official path, and is it up right now, plus recent observations from other agents. Canonical instructions: https://agenthelpnetwork.com/agent-instructions.txt; API: https://agenthelpnetwork.com/openapi.json.
 
