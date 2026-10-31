@@ -221,11 +221,40 @@ def test_read_all_labels_missing_files_redirects_and_failures_without_calling_th
                      AI_CATALOG_PATH: ("error", None, "connect_timeout")})
     stored = read_all("www.example.com", _gates("User-agent: *\nAllow: /\n"), reader, hop=1, read_at="x")
     assert stored["api_catalog"] == {"status": "not_read", "reason": "redirected"}
-    assert stored["tdm"] == {"status": "none_declared", "reason": "soft_404"}
+    assert stored["tdm"] == {"status": "not_read", "reason": "html_body"}  # a page, maybe a challenge: not an absence
     assert stored["mcp_discovery"] == {"status": "not_read", "reason": "connect_timeout"}
     assert {call[4] for call in reader.calls} == {1}  # the www fallback spent the one hop
     boom = read_all("example.com", _gates(""), lambda *a, **k: 1 / 0, hop=0, read_at="x")
     assert boom["api_catalog"] == {"status": "not_read", "reason": "reader_error"}
+
+
+def test_read_all_labels_each_answer_kind():
+    # Only 404 and 410 ("absent") mean no file; a refusal, an oversized file and a web page are not readings.
+    cases = {("refused", None, "http_403"): {"status": "not_read", "reason": "http_403"},
+             ("too_large", None, "too_large"): {"status": "not_read", "reason": "too_large"},
+             ("absent", None, "http_410"): {"status": "none_declared", "reason": "absent"},
+             ("invalid", None, "html_body"): {"status": "not_read", "reason": "html_body"}}
+    for answer, expected in cases.items():
+        stored = read_all("example.com", _gates(""), Reader({API_CATALOG_PATH: answer}), hop=0, read_at="x")
+        assert stored["api_catalog"] == expected, answer
+
+
+def test_values_with_control_characters_are_dropped_not_cleaned():
+    bad = ["a\u0000b", "a\u001bb", "a\u007fb", "a\u0085b", "a\u202eb", "a\u2066b", "a\u200fb"]
+    for value in bad:
+        catalog = {"specVersion": "1.0", "entries": [
+            {"identifier": "urn:" + value, "type": "application/mcp-server-card+json", "url": "https://e.com/" + value},
+            {"identifier": "urn:ok", "type": "application/mcp-server-card+json", "data": {"name": value, "remotes": [{"url": "https://e.com/m"}]}}]}
+        parsed = parse_ai_catalog(json.dumps(catalog).encode(), "https://e.com/")
+        assert parsed["servers"] == [{"identifier": "urn:ok", "inline_card": True, "remote_urls": ["https://e.com/m"]}], value
+        rules = parse_tdmrep(json.dumps([{"location": "/" + value, "tdm-reservation": 1}, {"location": "/ok", "tdm-reservation": 0}]).encode(), "https://e.com/")
+        assert [rule["location"] for rule in rules["rules"]] == ["/ok"], value
+        api = parse_api_catalog(json.dumps({"linkset": [{"anchor": "https://e.com/" + value, "service-doc": [{"href": "https://e.com/d"}]}]}).encode(), "https://e.com/")
+        assert api["apis"][0]["anchor"] is None, value
+        assert "\u0000" not in json.dumps([parsed, rules, api])
+    # Ordinary whitespace inside a name is collapsed, not a reason to drop it.
+    named = {"entries": [{"identifier": "urn:x", "type": "application/mcp-server-card+json", "data": {"name": "Demo\tServer\n"}}]}
+    assert parse_ai_catalog(json.dumps(named).encode(), "https://e.com/")["servers"][0]["name"] == "Demo Server"
 
 
 def test_reads_pause_between_requests(monkeypatch):
@@ -264,8 +293,10 @@ def test_build_profile_passes_gates_and_tdm_headers_already_seen():
     assert declared["gates"][AI_CATALOG_PATH] == (False, "robots_disallowed") and declared["gates"][API_CATALOG_PATH] == (True, None)
     # build_profile itself requests only robots.txt and llms.txt; the standard files follow the stored row.
     assert [call[1] for call in reader.calls] == ["/robots.txt", "/llms.txt"]
-    refused = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("error", None, "connect_error"))
-    assert refused["_site_declared"] is None
+    failed = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("error", None, "connect_error"))
+    assert failed["_site_declared"] is None
+    refused = build_profile("example.com", reader=lambda h, p, *, cap_bytes, **_: ("refused", None, "http_403"))
+    assert refused["robots_status"] == "refused" and refused["_site_declared"] is None
 
 
 def test_fetch_public_file_keeps_only_tdm_headers():
@@ -286,6 +317,7 @@ def test_view_of_a_current_read_validates_and_marks_mcp_experimental():
     assert shown["api_catalog"]["source_url"] == "https://example.com/.well-known/api-catalog"
     assert shown["tdm"]["status"] == "declared" and shown["tdm"]["headers"] == [
         {"path": API_CATALOG_PATH, "tdm_reservation": 1}]  # a header declares even where tdmrep.json is missing
+    assert (shown["tdm"]["file_status"], shown["tdm"]["file_reason"]) == ("none_declared", "absent") and "reason" not in shown["tdm"]
     assert shown["mcp_discovery"]["experimental"] is True and shown["note"] == site_declared.NOTE
     dumped = SiteDeclared(**shown).model_dump(mode="json")
     assert dumped["mcp_discovery"]["servers"][0]["card_url"] == "https://example.com/mcp/server-card"
@@ -302,6 +334,14 @@ def test_view_never_shows_a_result_from_another_read():
     assert view("ok", {**stored, "version": "old"}, "example.com", NOW, "fresh")["tdm"]["reason"] == "read_before_site_declared"
     assert view("not_public", None, "example.com", NOW, "fresh")["tdm"]["reason"] == "not_public"
     assert view("error", None, "example.com", None, "stale")["tdm"]["reason"] == "robots_unreadable"
+    # Between the robots row and the file reads (and after a failed store) the row holds a pending marker.
+    marker = site_declared.pending_marker(NOW.isoformat())
+    assert {view("ok", marker, "example.com", NOW, "fresh")[key]["reason"] for key in ("api_catalog", "tdm", "mcp_discovery")} == {"pending"}
+    assert view("ok", marker, "example.com", later, "fresh")["tdm"]["reason"] == "read_before_site_declared"
+    # A host that refused robots.txt itself is not asked for its other files.
+    refused = view("refused", None, "example.com", NOW, "fresh")
+    assert {refused[key]["reason"] for key in ("api_catalog", "tdm", "mcp_discovery")} == {"robots_refused"}
+    assert view("refused", stored, "example.com", NOW, "fresh")["api_catalog"]["reason"] == "robots_refused"
     pending = pending_profile("example.com", 5)["site_declared"]
     assert pending["api_catalog"] == {"status": "not_read", "source_url": "https://example.com/.well-known/api-catalog",
                                       "reason": "pending"}

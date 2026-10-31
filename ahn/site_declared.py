@@ -58,6 +58,16 @@ NOTE = ("Files the host publishes for agents at standard locations: its API cata
         "only: not an access rule, not permission, and not a legal reading. Links are reported as published; they were "
         "not opened or checked.")
 _sleep = time.sleep
+# Bidirectional formatting characters (U+200E, U+200F, U+202A-U+202E, U+2066-U+2069): they can make a stored value
+# read differently from what it is, so a value carrying one is dropped like one with a C0/C1 control character.
+_BIDI = frozenset([0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)])
+PENDING = "pending"  # the stored marker between the robots row and the standard-file reads (see view)
+
+
+def _has_control(value: str) -> bool:
+    """True for a C0 control (U+0000-U+001F), DEL, a C1 control (U+0080-U+009F) or a bidirectional formatting
+    character. PostgreSQL jsonb also rejects U+0000, so such a value could otherwise lose the whole stored read."""
+    return any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or ord(char) in _BIDI for char in value)
 
 
 def enabled() -> bool:
@@ -82,7 +92,7 @@ def _url(value, base: str) -> str | None:
     if not isinstance(value, str):
         return None
     value = value.strip()
-    if not value or len(value) > MAX_URL_CHARS or any(ord(char) < 0x21 or ord(char) == 0x7f for char in value):
+    if not value or len(value) > MAX_URL_CHARS or " " in value or _has_control(value):
         return None
     try:
         absolute = urljoin(base, value)
@@ -95,7 +105,9 @@ def _url(value, base: str) -> str | None:
 
 
 def _text(value) -> str | None:
-    if not isinstance(value, str):
+    """A short published string with its spaces collapsed, or None (not a string, empty, or carrying a control
+    character: dropped, not cleaned, so nothing altered is ever shown as the host's own text)."""
+    if not isinstance(value, str) or _has_control(value.replace("\t", " ").replace("\n", " ").replace("\r", " ")):
         return None
     value = " ".join(value.split())
     return value[:MAX_TEXT_CHARS] if value else None
@@ -181,9 +193,10 @@ def parse_tdmrep(body: bytes, base: str) -> dict:
         return {"status": "not_read", "reason": "invalid_format"}
     rules: list[dict] = []
     for rule in document[:500]:
-        if not isinstance(rule, dict) or not isinstance(rule.get("location"), str) or not rule["location"].strip():
-            continue
-        entry = {"location": rule["location"].strip()[:MAX_TEXT_CHARS], "tdm_reservation": _reservation(rule.get("tdm-reservation"))}
+        location = rule.get("location") if isinstance(rule, dict) else None
+        if not isinstance(location, str) or not location.strip() or _has_control(location):
+            continue  # a rule without a usable location (or with a control character in it) is skipped
+        entry = {"location": location.strip()[:MAX_TEXT_CHARS], "tdm_reservation": _reservation(rule.get("tdm-reservation"))}
         policy = _url(rule.get("tdm-policy"), base)
         if policy:
             entry["tdm_policy"] = policy
@@ -267,10 +280,10 @@ def _result(path: str, status: str, body: bytes | None, detail: str | None, base
     """One file's stored result from one fetch_public_file answer."""
     if status == "ok" and body is not None:
         return PARSERS[path](body, base)
-    if status == "absent":
+    if status == "absent":  # 404 or 410: the only answers that mean the host has no such file
         return {"status": "none_declared", "reason": "absent"}
-    if status == "invalid":  # a web page served for the path: a soft 404, no file
-        return {"status": "none_declared", "reason": "soft_404"}
+    if status == "invalid":  # a web page for the path: a soft 404 or a bot challenge, so not a reading either way
+        return {"status": "not_read", "reason": (detail or "html_body")[:32]}
     if status == "redirected":
         return {"status": "not_read", "reason": "redirected"}
     return {"status": "not_read", "reason": (detail or status or "error")[:32]}
@@ -327,20 +340,31 @@ def _same_instant(stamp, fetched_at) -> bool:
         return False
 
 
+def pending_marker(read_at: str) -> dict:
+    """What the profile row stores for site_declared when it is written, before the standard files are read: the
+    answer says ``pending`` until read_all's result replaces it (or, if storing that result failed, until the next read)."""
+    return {"version": VERSION, "read_at": read_at, PENDING: True}
+
+
 def view(robots_status: str, stored: dict | None, read_host: str, fetched_at, freshness: str) -> dict | None:
     """access_profile.site_declared, or None when AHN_SITE_DECLARED=0. Not reading is never 'none_declared'.
 
     A stored result counts only when this version wrote it for the read the row now describes (``read_at`` equals the
-    row's fetched_at); otherwise every file reads as not_read (pending, or read_before_site_declared)."""
+    row's fetched_at); a pending marker for that read says ``pending``; anything else (a row read before this field
+    existed) says ``read_before_site_declared``."""
     if not enabled():
         return None
-    current = (isinstance(stored, dict) and stored.get("version") == VERSION and fetched_at is not None
-               and _same_instant(stored.get("read_at"), fetched_at))
+    this_read = (isinstance(stored, dict) and stored.get("version") == VERSION and fetched_at is not None
+                 and _same_instant(stored.get("read_at"), fetched_at))
+    current = this_read and not stored.get(PENDING)
     if robots_status == "not_public":
         reason = "not_public"  # the host itself is not eligible: nothing was requested
+    elif robots_status == "refused":
+        reason = "robots_refused"  # the host refused even robots.txt (401/403): its other files are not requested
+        current = False
     elif robots_status == "error" and fetched_at is None:
         reason = "robots_unreadable"  # no robots.txt answer yet, so no path was allowed
-    elif robots_status == "pending" or fetched_at is None:
+    elif robots_status == "pending" or fetched_at is None or (this_read and not current):
         reason = "pending"
     elif not current:
         reason = "read_before_site_declared"
@@ -356,9 +380,12 @@ def view(robots_status: str, stored: dict | None, read_host: str, fetched_at, fr
     if headers:
         out["tdm"]["headers"] = headers
         if out["tdm"]["status"] in ("none_declared", "not_read") and current:
-            # A header is a declaration even where the file is missing (TDMRep 6.2 and 6.7).
+            # A header is a declaration even where the file is missing (TDMRep 6.2 and 6.7); what the file read
+            # itself found stays visible next to it.
+            out["tdm"]["file_status"] = out["tdm"]["status"]
+            if out["tdm"].get("reason"):
+                out["tdm"]["file_reason"] = out["tdm"].pop("reason")
             out["tdm"]["status"] = "declared"
-            out["tdm"].pop("reason", None)
     out.update({"fetched_at": fetched_at, "freshness": freshness})
     if any(out[KEYS[path]]["status"] == "declared" for path in paths()):
         out["note"] = NOTE

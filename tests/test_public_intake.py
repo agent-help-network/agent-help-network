@@ -482,8 +482,8 @@ def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the
     refused = get_profile(settings, "edge.org", now=t0, reader=refusing)
     assert refused["robots_status"] == "refused" and refused["robots_detail"] == "http_403" and refused["freshness"] == "fresh"
     get_profile(settings, "edge.org", now=t0 + timedelta(hours=5), reader=refusing)
-    # then the D59 standard files (a robots.txt answered with 403 allows, RFC 9309 2.3.1.3)
-    assert calls == ["/robots.txt", "/robots.txt", "/llms.txt", *site_declared_paths()]  # apex robots, www fallback robots, llms — read once only
+    # A host that refused robots.txt itself is not asked for the D59 standard files (robots_refused).
+    assert calls == ["/robots.txt", "/robots.txt", "/llms.txt"]  # apex robots, www fallback robots, llms — read once only
     with connect(settings) as conn:
         row = conn.execute("SELECT robots_status,robots_detail,llms_detail FROM host_access_profile WHERE site_host='edge.org'").fetchone()
     assert row == {"robots_status": "refused", "robots_detail": "http_403", "llms_detail": "http_403"}

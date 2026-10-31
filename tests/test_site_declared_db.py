@@ -78,6 +78,50 @@ def test_a_failed_robots_read_keeps_the_previous_site_declared_and_a_new_read_ne
                                                      "source_url": "https://example.com/.well-known/api-catalog"}
 
 
+def test_a_file_with_nul_and_control_characters_is_stored(settings):
+    # jsonb rejects U+0000: before the fix the whole UPDATE failed silently and the answer kept saying not_read.
+    nul = ('{"specVersion": "1.0", "entries": [{"identifier": "urn:a\\u0000b", "type": "application/mcp-server-card+json",'
+           ' "url": "https://example.com/card"}, {"identifier": "urn:ok", "type": "application/mcp-server-card+json",'
+           ' "url": "https://example.com/c\\u202e"}]}').encode()
+    rules = b'[{"location": "/\\u0000", "tdm-reservation": 1}, {"location": "/", "tdm-reservation": 0}]'
+
+    def read(host, path, **_kw):
+        files = {"/robots.txt": b"User-agent: *\nAllow: /\n", site_declared.AI_CATALOG_PATH: nul, site_declared.TDMREP_PATH: rules}
+        return ("ok", files[path], "http_200") if path in files else ("absent", None, "http_404")
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    shown = access_profile.get_profile(settings, "example.com", now=now, reader=read)["site_declared"]
+    assert shown["mcp_discovery"]["servers"] == [{"identifier": None, "card_url": "https://example.com/card"}]
+    assert shown["mcp_discovery"]["servers_total"] == 1  # the entry with an unusable URL is skipped
+    assert shown["tdm"]["rules"] == [{"location": "/", "tdm_reservation": 0}] and shown["tdm"]["root_reservation"] == 0
+
+
+def test_a_failed_store_is_logged_and_the_answer_says_pending(settings, monkeypatch, caplog):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(site_declared, "read_all", broken)
+    with caplog.at_level("WARNING", logger="ahn.access_profile"):
+        profile = access_profile.get_profile(settings, "example.com", now=now, reader=_reader([]))
+    assert {profile["site_declared"][key]["reason"] for key in ("api_catalog", "tdm", "mcp_discovery")} == {"pending"}
+    assert "site_declared_store_failed host=example.com error=ValueError" in caplog.text and "boom" not in caplog.text
+
+
+def test_a_refused_robots_txt_stops_the_standard_file_reads(settings):
+    calls: list[str] = []
+
+    def refusing(host, path, **_kw):
+        calls.append(path)
+        return ("refused", None, "http_403")
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    shown = access_profile.get_profile(settings, "example.com", now=now, reader=refusing)["site_declared"]
+    assert not any(path.startswith("/.well-known/") for path in calls)
+    assert shown["api_catalog"]["reason"] == "robots_refused"
+
+
 def test_the_update_only_lands_on_the_read_it_belongs_to(settings):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     access_profile.get_profile(settings, "example.com", now=now, reader=_reader([]))

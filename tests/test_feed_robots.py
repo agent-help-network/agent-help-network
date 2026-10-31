@@ -394,6 +394,7 @@ LIBRARY_MODULES = {
 VERB_SITES = {
     ("access_profile.py", "_as_profile", "get"): 3,
     ("access_profile.py", "_merge_use", "get"): 1,
+    ("access_profile.py", "_pending_site_declared", "get"): 1,
     ("access_profile.py", "_says_no_ai_input", "get"): 2,
     ("access_profile.py", "_signals_shape", "get"): 4,
     ("access_profile.py", "_usage_shape", "get"): 3,

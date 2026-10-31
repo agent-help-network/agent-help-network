@@ -397,6 +397,9 @@ class TdmReservation(StrictModel):
     root_reservation: Literal[0, 1] | None = Field(default=None, exclude_if=_omit_none)  # left out: unset for "/"
     any_reserved: bool | None = Field(default=None, exclude_if=_omit_none)
     headers: list[TdmHeader] | None = Field(default=None, exclude_if=_omit_none)
+    # Only when a header made status 'declared' although tdmrep.json itself was not declared: that file read's result.
+    file_status: Literal["none_declared", "not_read"] | None = Field(default=None, exclude_if=_omit_none)
+    file_reason: str | None = Field(default=None, exclude_if=_omit_none)
 
 
 class McpCatalogServer(StrictModel):

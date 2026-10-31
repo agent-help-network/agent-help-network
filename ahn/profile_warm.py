@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .access_profile import get_profile
+from .access_profile import HOST_READ_WORST_SECONDS, get_profile
 from .db import connect
 from .models import valid_host
 from .service import aggregate_eligible_host
@@ -32,6 +32,8 @@ PAUSE_SECONDS = 0.5
 # path) keeps its own, shorter ERROR_RETRY, so a host someone asks about is still retried within the hour.
 WARM_ERROR_RETRY = timedelta(hours=24)
 TIME_BUDGET_SECONDS = 120.0  # keep the 5-minute review cron from overrunning its own schedule
+# A host is started only while at least one worst-case host read still fits in the budget (D59 made a read longer).
+HOST_WORST_SECONDS = HOST_READ_WORST_SECONDS
 _clock = time.monotonic
 
 
@@ -60,7 +62,7 @@ def warm_profiles(
 ) -> dict:
     """Read up to ``batch`` seed hosts that have no profile row or whose last attempt is older than ``max_age_hours``.
 
-    No new host is started once ``time_budget`` seconds have passed; the rest stay due. Returns
+    No new host is started once less than HOST_WORST_SECONDS of ``time_budget`` is left; the rest stay due. Returns
     candidates (due hosts left unprocessed), read (profiles returned), ok (robots_status 'ok')
     and errors (robots_status 'error', or a host whose read raised). When errors is not 0, causes
     counts them by label: the stored robots_detail (dns_failed, connect_timeout, ...) or
@@ -99,9 +101,10 @@ def warm_profiles(
     processed = 0
     causes: dict[str, int] = {}
     for index, host in enumerate(chosen):
+        elapsed = _clock() - started if index else 0.0
+        if time_budget - elapsed < HOST_WORST_SECONDS:
+            break  # not enough budget left for one more host at its worst; it stays due
         if index:
-            if _clock() - started > time_budget:
-                break
             time.sleep(PAUSE_SECONDS)
         processed += 1
         try:

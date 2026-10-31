@@ -343,8 +343,9 @@ def test_retry_after_follows_the_queue_position(db, monkeypatch):
         conn.execute("DELETE FROM background_reads")
         background_reads.enqueue(conn, [("access_profile", f"ahead{index}-example.org") for index in range(30)])
         conn.execute("UPDATE background_reads SET requested_at=now() - interval '1 minute' WHERE site_host LIKE 'ahead%%'")
-    # 30 jobs ahead, two threads at about JOB_SECONDS each: (30 + 1) * 2 / 2 = 31 seconds.
-    assert service.check(db, "behind-example.org")["access_profile"]["retry_after_seconds"] == 31
+    # 30 jobs ahead, two threads at about JOB_SECONDS each: (30 + 1) * JOB_SECONDS / 2 seconds.
+    assert background_reads.JOB_SECONDS == 4.0
+    assert service.check(db, "behind-example.org")["access_profile"]["retry_after_seconds"] == 62
     with connect(db) as conn:
         background_reads.enqueue(conn, [("access_profile", "later-example.org")])
         conn.execute("UPDATE background_reads SET not_before=now() + interval '1 hour' WHERE site_host='later-example.org'")

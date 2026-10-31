@@ -13,6 +13,7 @@ from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import json
+import logging
 import re
 import socket
 import ssl
@@ -26,6 +27,8 @@ from psycopg.types.json import Jsonb
 
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
+
+LOG = logging.getLogger(__name__)
 
 # A declared block is judged on a vendor's governing tokens (D48, GOVERNING_TOKENS below): its user_agent tokens, or its
 # search_crawler tokens when it documents no user_agent token. A training_crawler token is reported but never blocks.
@@ -664,6 +667,13 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
 
 MAX_ADDRESSES_TRIED = 3
 CONNECT_BUDGET_FACTOR = 2  # all connection attempts of one read share timeout_connect * this
+# Worst time of one request with the default timeouts: the shared connect budget plus the read timeout.
+REQUEST_WORST_SECONDS = 2.0 * CONNECT_BUDGET_FACTOR + 3.0
+# Worst time of one host's profile read (D59): requests that can each run to REQUEST_WORST_SECONDS are the apex
+# robots.txt and its www fallback, llms.txt, and the three standard files (a redirect hop is a fast answer followed by
+# one such request, so it adds no slow request of its own); plus site_declared's two pauses and, in the background
+# worker, up to five 0.5-second pacing waits. 6 * 7 + 1 + 2.5 = 45.5, rounded up.
+HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
 # Whole-body time limit. The per-receive read timeout alone lets a host that trickles one byte at a
 # time hold a reader indefinitely; past this budget the read ends as read_timeout.
 BODY_READ_BUDGET = 10.0
@@ -913,8 +923,8 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
 
 def _declared_inputs(site_host, read_host, robots_status, robots_body, robots_detail, seen) -> dict | None:
     from . import site_declared
-    if not site_declared.enabled() or robots_status in ("error", "not_public", "pending"):
-        return None
+    if not site_declared.enabled() or robots_status in ("error", "not_public", "pending", "refused"):
+        return None  # refused: the edge refused even robots.txt (401/403); its other files are not requested
     headers = [header for path, raw in seen
                if (header := site_declared.tdm_header(path, raw, f"https://{read_host}{path}")) is not None]
     return {"read_host": read_host, "hop": 1 if read_host != site_host else 0, "headers": headers,
@@ -1028,18 +1038,21 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 # Provenance travels with the definitive answer it describes; a later transport failure keeps both.
                 row = conn.execute(
                     f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
-                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use,
+                                                         site_declared)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
                         robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host,
                         origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
-                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use
+                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use,
+                        site_declared=EXCLUDED.site_declared
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
                      profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"],
                      operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
-                     Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None),
+                     Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None,
+                     _pending_site_declared(profile, now)),
                 ).fetchone()
             from .signal_history import record_read
             record_read(conn, site_host, profile, now, trigger)
@@ -1049,6 +1062,15 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
             # answer does not wait for them too. Still inside the host lock, once per profile read.
             row = _store_site_declared(settings, site_host, declared, reader, now) or row
         return _as_profile(site_host, row, now, max_age)
+
+
+def _pending_site_declared(profile: dict, now: datetime):
+    """D59: the marker stored with a new profile row whose standard files are about to be read, else NULL (nothing
+    will be read: refused, not public, or AHN_SITE_DECLARED=0), which also drops a previous read's result."""
+    if profile.get("_site_declared") is None:
+        return None
+    from .site_declared import pending_marker
+    return Jsonb(pending_marker(now.isoformat()))
 
 
 def _store_site_declared(settings, site_host: str, declared: dict, reader, now: datetime):
@@ -1064,5 +1086,6 @@ def _store_site_declared(settings, site_host: str, declared: dict, reader, now: 
             return conn.execute(
                 f"UPDATE host_access_profile SET site_declared=%s WHERE site_host=%s AND fetched_at=%s RETURNING {_ROW_COLUMNS}",
                 (Jsonb(stored), site_host, now)).fetchone()
-    except Exception:  # the profile is already stored; this layer must never fail the read
+    except Exception as exc:  # the profile is already stored; this layer must never fail the read
+        LOG.warning("site_declared_store_failed host=%s error=%s", site_host, type(exc).__name__)
         return None
