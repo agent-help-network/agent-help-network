@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1
+
+- `ahn.diagnose(response, body=None)`: a Playwright, httpx or requests response (any object with `status_code` or `status`,
+  `headers` and optionally `text` or `content`) gives `(error_class, failure_stage, signals)` for `ahn.check`, by the same status
+  and header rules as `classify` and `signals`. The first 4,000 characters of a body are tested on your machine for a few
+  human-check markers and the body is never sent, stored or returned. No library is imported or required.
+- AWS WAF: a 202 or 405 with `x-amzn-waf-action: challenge|captcha` is `human_verification` with `challenge=header`
+  (https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html). A 403 or 451 is
+  `human_verification` when a header or the body points to a human check.
+- A 200 whose body starts with a human-check marker is `human_verification` with `.candidate` True: a hint, not a finding.
+- `Result.summary()` ends with "robots.txt asks N s between requests." when the host's robots.txt asks for a delay
+  (`Result.crawl_delay_seconds`).
+
 ## 0.6.0
 
 - `Result` keeps the service's own guidance (D51) instead of rebuilding it from the six `recommendation` values:
