@@ -315,6 +315,35 @@ def test_a_docs_repo_on_github_must_sit_in_the_publishers_organisation():
     assert problems(with_field(docs_repo="https://github.com/someone-else/stripe-docs"))
 
 
+@pytest.mark.parametrize("url", [
+    "https://github.com/stripe/../attacker/x", "https://github.com/stripe/%2e%2e/attacker", "https://github.com/stripe/%252e%252E/attacker",
+    "https://github.com/stripe/./x/../../attacker", "https://www.github.com/attacker/x", "https://gist.github.com/attacker/x",
+    "https://raw.githubusercontent.com/stripe/../attacker/x", "https://gist.githubusercontent.com/attacker/x",
+    # rejected before this change as well:
+    "https://github.com/Stripe-attacker/x", "https://github.com/stripe-attacker/x", "https://github.com.evil.com/stripe/x",
+    "https://github.com./attacker/x", "https://evil.com/stripe/openapi",
+])
+def test_github_urls_outside_the_publishers_organisation_are_refused(url):
+    assert problems(with_field(docs_repo=url), host="stripe.com")
+
+
+def test_github_urls_inside_the_organisation_and_dotted_names_still_pass():
+    for url in ("https://github.com/stripe/openapi", "https://github.com/Stripe/openapi", "https://www.github.com/stripe/openapi",
+                "https://raw.githubusercontent.com/stripe/openapi/master/spec.json", "https://github.com/stripe/a.b/c"):
+        assert problems(with_field(docs_repo=url)) == [], url
+
+
+def test_the_bundle_allow_list_matches_the_model_and_the_verifier():
+    from ahn import bundle
+    assert set(bundle.ACCESS_KEYS) == set(OfficialAccess.model_fields) == set(VERIFIER.ACCESS_FIELDS)
+
+
+def test_feed_marker_accepts_rss_atom_and_rdf_only():
+    for body in (b'<?xml version="1.0"?><rss version="2.0">', b"<feed xmlns='http://www.w3.org/2005/Atom'>", b"<rdf:RDF xmlns:rdf='x'>"):
+        assert VERIFIER.FEED_MARK.search(body)
+    assert not VERIFIER.FEED_MARK.search(b"<html><title>feed</title></html>")
+
+
 def test_feeds_hold_one_to_three_distinct_publisher_urls():
     one = "https://docs.stripe.com/a.rss"
     assert problems(with_field(feeds=[one])) == []
