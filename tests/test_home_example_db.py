@@ -75,17 +75,17 @@ def test_cached_host_gives_a_card_from_stored_rows_and_nothing_is_written(monkey
     refuse_network(monkeypatch)
     before = counts(settings)
     card = service.home_example(settings)
-    # The default host is a retail site with a curated customer page, so the card leads with that page (D63 proceed answer).
+    # The default host is a retail site with a curated customer page; since D65 a proceed answer has no url, so the card shows none.
     assert card["site_host"] == "target.com" and card["do"] == "proceed"
-    assert card["url"] == "www.target.com/help/contact-us" and card["confidence"]
+    assert card["url"] is None and card["confidence"]
     assert card["summary_line"] == PROCEED_CONSUMER_ROWS["P1"]
     assert card["robots_status"] == "ok" and card["status"] is None and len(card["read_on"]) == 10
     assert card["summary_line"].isascii()
     with TestClient(create_app(settings)) as client:
         en = client.get("/en/").text
         ko = client.get("/ko/").text
-    assert 'class="home-live"' in en and "proceed" in en and "www.target.com/help/contact-us" in en
-    assert 'class="home-live"' in ko and "proceed" in ko and "www.target.com/help/contact-us" in ko
+    assert 'class="home-live"' in en and "proceed" in en and "next_action.url" not in en
+    assert 'class="home-live"' in ko and "proceed" in ko and "next_action.url" not in ko
     assert counts(settings) == before
 
 

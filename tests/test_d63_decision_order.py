@@ -216,14 +216,14 @@ def test_t21_t22_t23_the_listed_api_row_follows_its_sign_up_option():
 def test_t24_t34_proceed_carries_the_customer_page_and_the_mcp_text_does_not_repeat_it():
     result = answer(WITH_CONSUMER, ALLOWS)
     out = guide(result)
-    assert out["next_action"]["do"] == "proceed" and out["next_action"]["url"] == out["next_action"]["customer_url"] == HELP
+    assert out["next_action"]["do"] == "proceed" and out["next_action"]["url"] is None and out["next_action"]["customer_url"] == HELP  # D65
     assert out["summary_line"] == PROCEED_CONSUMER_ROWS["P1"] and "developer API" not in out["summary_line"]
     response = CheckResponse.model_validate({**envelope(result), **out})
     lines = mcp_adapter.check_result(response).content[0].text.splitlines()
-    assert lines == [out["summary_line"], "URL: " + HELP, mcp_adapter.PROCEED_NOTE]
+    assert lines == [out["summary_line"], "Customer path: " + HELP, mcp_adapter.PROCEED_NOTE]
     only = guide(answer(CONSUMER_ONLY, ABSENT))
     assert only["summary_line"] == PROCEED_CONSUMER_ROWS["P3"]
-    assert only["next_action"]["url"] == only["next_action"]["customer_url"] == HELP
+    assert only["next_action"]["url"] is None and only["next_action"]["customer_url"] == HELP
 
 
 def test_t35_blocked_rows_keep_the_developer_path_and_hand_the_customer_page_over():
@@ -351,4 +351,4 @@ def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app
         official = {**OFFICIAL, "consumer": {**CONSUMER, "paths": paths}}
         assert customer_url(official) == expected
         out = guide(answer(official, ALLOWS))
-        assert out["next_action"]["url"] == out["next_action"]["customer_url"] == expected
+        assert out["next_action"]["url"] is None and out["next_action"]["customer_url"] == expected  # D65

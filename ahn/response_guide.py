@@ -135,8 +135,8 @@ PROCEED_CONSUMER_ROWS: dict[str, str] = {
     "P2-V": "robots.txt blocks other agents, not your vendor's. Continue modestly; not an access guarantee." + PROCEED_CONSUMER_TAIL,
     "P3": "This site publishes no robots.txt: no declared restriction. Continue modestly; not an access guarantee." + PROCEED_CONSUMER_TAIL,
 }
-# Rows where a curated consumer path is also next_action.url (the others keep the developer path, or none on proceed).
-CUSTOMER_FIRST_ROWS = frozenset({"O1", "O7", "O7-N", "O7-K", "P1", "P1-V", "P2", "P2-V", "P3"})
+# Rows where a curated consumer path is also next_action.url (the others keep the developer path). D65: a proceed row gives no url, so "continue" and "go here" do not compete; customer_url still names the page.
+CUSTOMER_FIRST_ROWS = frozenset({"O1", "O7", "O7-N", "O7-K"})
 # Rows whose retry_after_seconds is the pending profile's own value (a read is queued).
 RETRY_ROWS = frozenset({"O1", "U1", "U2"})
 # The last row of each action: where a combination the table does not list falls to (logged; tests forbid it).
