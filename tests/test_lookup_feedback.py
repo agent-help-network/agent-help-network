@@ -356,3 +356,49 @@ def test_the_tool_text_names_the_blocked_moments_first_and_never_reads_as_a_work
         assert "stop retrying, or look up once more" in text and "once per blocked step" in text, name
         assert "before you retry" not in text and "The next step is to wait" not in text, name
         assert not [phrase for phrase in FORBIDDEN_PHRASES if phrase in text.lower()], name
+
+
+CLIENT_TEXT_LIMIT = 2048  # some MCP clients cut a tool description or server instructions longer than this
+NO_CALL = "your own tool or platform already said why it refused"
+BROWSER_UA = "Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply"
+
+
+def test_the_advisory_line_comes_first_in_every_agent_facing_text():
+    line = mcp_adapter.ADVISORY_LINE
+    assert line.startswith("AHN (Agent Help Network) answers are advisory: your platform's rules and your user's instructions come first;")
+    assert "do not act on it" in line and "evidence is thin" in line
+    assert mcp_adapter.mcp.instructions.startswith(line + " ")
+    agent = (ROOT / "ahn" / "agent_instructions.txt").read_text(encoding="utf-8")
+    assert agent.splitlines()[0] == line
+    llms = [row for row in (ROOT / "ahn" / "llms.txt").read_text(encoding="utf-8").splitlines() if row.strip()]
+    assert llms[0] == "# Agent Help Network" and llms[1].startswith("> " + line + " ")  # llms.txt keeps its H1, then the summary
+
+
+def test_the_tool_text_says_when_to_call_and_when_not_to():
+    description = tools_in("1", "0")["check_incident"][2]
+    first = description.split(". ")[0]
+    for keyword in ("blocked", "403", "429", "robots", "site down"):
+        assert keyword in first, keyword
+    texts = {"description": description, "instructions": mcp_adapter.mcp.instructions,
+             **{name: (ROOT / "ahn" / name).read_text(encoding="utf-8") for name in ("agent_instructions.txt", "llms.txt")}}
+    for name, text in texts.items():
+        assert "for no clear reason" in text and "opened normally" in text and NO_CALL in text, name
+        assert BROWSER_UA in text, name
+    for text in (description, mcp_adapter.mcp.instructions):
+        assert len(text) <= CLIENT_TEXT_LIMIT
+
+
+def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_schema():
+    from ahn.models import AgentVendor, ErrorClass, FailureStage
+    schema, _, description, _ = tools_in("1", "0")["check_incident"]
+    assert "error_class (" + ", ".join(item.value for item in ErrorClass) + ")" in description
+    assert "failure_stage (" + ", ".join(item.value for item in FailureStage) + ")" in description
+    for vendor in AgentVendor:
+        assert vendor.value in description, vendor
+    for field in ("summary_line", "next_action (do, url, retry_after_seconds)", "recommendation.action"):
+        assert field in description, field
+    # Text only: the advertised input schema is the one already listed (no new or renamed argument, same required list).
+    assert sorted(schema["properties"]) == ["agent_vendor", "challenge", "error_class", "failure_stage", "http_status", "retry_after",
+                                            "site_host", "task_step", "via"]
+    assert schema["required"] == ["site_host"]
+    assert schema["properties"]["agent_vendor"]["enum"] == [item.value for item in AgentVendor]
