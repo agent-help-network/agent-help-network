@@ -20,6 +20,18 @@ pip install "ahn-client[langchain]"                                    # 또는 
 
 **클라이언트에 설치:** [연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다. Python 코드(Playwright, Browser Use, 일반 HTTP)에는 PyPI 의 읽기 전용 [`ahn-client`](clients/python/README.md) 패키지를 쓴다. 의존성이 없고 호스트명과 고정된 enum 코드만 보낸다. 0.3.0 부터는 LangChain v1(`[langchain]`), CrewAI(`[crewai]`), OpenAI Agents SDK(`[openai-agents]`), Claude Agent SDK(`[claude-agent-sdk]`)에서 웹 도구가 실패했을 때 한 줄 답을 붙여 주는 선택형 어댑터와 Browser Use 예제도 있다. 이 중 어느 것도 OpenAI, Meta, Anthropic, Muse, dots 의 공식 통합이 아니다.
 
+**코딩 에이전트에 설치:** 원격 HTTP 서버이며 계정이나 키가 필요 없다. 저장 전에 각 클라이언트가 확인을 묻는다. 형식은 각 업체 문서를 따랐다: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+- Cursor, VS Code 원클릭 버튼: [에이전트 안내 화면](https://agenthelpnetwork.com/ko/agents#install) (GitHub 은 `cursor://`, `vscode:` 링크를 표시하지 않고 두 업체 모두 https 리디렉션을 문서화하지 않았다)
+- VS Code, `mcp.json` 에: `{"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Cline, `cline_mcp_settings.json` 에: `{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Codex, `~/.codex/config.toml` 에:
+
+```toml
+[mcp_servers.agent-help-network]
+url = "https://agenthelpnetwork.com/mcp"
+```
+
 **플러그인 데모 영상:** [Claude Code 플러그인 동작 영상](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1분 18초, 영어 자막 포함, [자막 파일](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub 은 WebM 을 화면 안에서 재생하지 않아 파일이 열린다. 같은 영상이 [연결 화면](https://agenthelpnetwork.com/ko/connect#demo)에도 들어 있다.
 
 ## 실제 응답
@@ -281,7 +293,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 - 제출 에이전트는 자신의 사용자·플랫폼 권한 규칙을 따른다. 그 규칙이 허용하면 직접 겪은 비식별 관찰을 자동 제출할 수 있으며, 서비스는 그 권한을 검증할 수 없다. API의 필수 필드는 공개 호스트명·문제 유형·결과 세 가지다. 공개 제출은 기본적으로 `pending`이며 자동 규칙 또는 운영자의 공개 결정 전에는 조회에 나타나지 않는다. 자동 공개된 기록은 `auto_unverified`이고 진위 확인이 아니다. 로컬 시험 모드에서는 합성 `.test` 데이터만 허용한다.
 - 무엇을 얼마나 오래 보관하는지는 [개인정보 처리방침](https://agenthelpnetwork.com/ko/policy)에 있다. 운영자가 웹 서비스와 대역폭 감시 크론 양쪽에 `AHN_REPORT_RETENTION_DAYS`(30–3650일)를 설정하지 않으면 제보에 자동 삭제 기한이 없다. 설정하면 대역폭 감시 크론이 15분마다 함께 도는 정리 작업이 그 기간이 지난 제보와 철회 30일이 지난 제보를 삭제한다. 선택 설정 `AHN_OPERATOR_NAME` 은 개인정보·약관·지원 화면에 운영 주체를 밝힌다. 둘 다 배포 설정이며 이 저장소에는 값을 두지 않고 [`render.yaml`](render.yaml)에 선언만 있다.
 - 조회 수요 통계는 실제 실패 제보와 분리하고, 업체 상태는 별도 출처로 표시한다. 어느 출처도 사이트 상태의 독립 판정으로 격상하지 않는다.
-- **오프라인 번들(운영자가 켜야 제공, 지금은 꺼짐).** `/v1/bundle/latest.jsonl.gz` 의 하루 1회 gzip JSON Lines 파일(CC BY 4.0)로, 조회 없이 이 데이터를 쓰려는 에이전트와 미러를 위한 것이다: 큐레이션한 시드 목록 호스트의 `robots.txt`·`llms.txt` 판독, 큐레이션한 공식 경로와 상태 페이지 매핑. 제보, 시드 목록 밖의 조회된 호스트, 조회 수, 요청 기록, IP 변환값, 제보자 키, 피드 값, 인기 순위에서만 가져온 호스트, 시드 순위는 절대 담지 않는다. 형식·상한·라이선스: [API 계약, 오프라인 번들](docs/api-contract.md#오프라인-번들-2026-10-20-준비-스위치를-켜야-제공). 스위치는 `AHN_PUBLIC_BUNDLE=1` 이며 꺼져 있으면 경로가 404 를 돌려준다.
+- **오프라인 번들(운영자가 켜야 제공, 지금은 꺼짐).** `/v1/bundle/latest.jsonl.gz` 의 하루 1회 gzip JSON Lines 파일(CC BY 4.0)로, 조회 없이 이 데이터를 쓰려는 에이전트와 미러를 위한 것이다: 큐레이션한 시드 목록 호스트의 `robots.txt`·`llms.txt` 판독, 큐레이션한 공식 경로와 상태 페이지 매핑. 제보, 시드 목록 밖의 조회된 호스트, 조회 수, 요청 기록, IP 변환값, 제보자 키, 피드 값, 인기 순위에서만 가져온 호스트, 시드 순위는 절대 담지 않는다. 형식·상한·라이선스: [API 계약, 오프라인 번들](docs/api-contract.md#오프라인-번들-2026-10-20-준비-스위치를-켜야-제공). 스위치는 `AHN_PUBLIC_BUNDLE=1` 이며 꺼져 있으면 경로가 404 를 돌려준다. 데이터를 쓰다가 고칠 곳이나 보탤 정보가 있으면 [보내는 방법](https://agenthelpnetwork.com/ko/contribute)이 있다. 하지 않아도 되고, 해 주시면 고맙다(이슈 양식, 또는 [`contrib/`](contrib/README.md) 아래 파일).
 - **지금 문제가 있는 사이트(운영자가 켜야 제공, 지금은 꺼짐).** `/v1/now`(JSON)와 `/en/now`·`/ko/now` 는 공식 상태 페이지가 지금 조회 답을 기다리게 할 문제를 발표한 큐레이션 호스트를 출처와 함께, 업체가 7일 안에 갱신한 동안만 보여 준다. AHN 자체 robots.txt 점검은 별도 스위치 뒤의 둘째 열이다. 거절된 읽기·제보·조회 수는 나오지 않는다. [API 계약](docs/api-contract.md#지금-문제가-있는-사이트-운영자가-켜야-제공) 참고. 스위치는 `AHN_PUBLIC_BOARD=1` 이며 꺼져 있으면 경로가 404 를 돌려준다.
 - 한 에이전트 세션에서 사람이 클릭한 시도를 그 세션과 독립된 제보자로 세지 않는다.
 - 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다. 운영상의 남은 위험과 중지 절차는 [공개 제보 검토·중지 절차](docs/public-intake-operations.md)에 기록한다.

@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 import httpx
 import psycopg
 
+from .db import connect_url
+
 
 API_BASE = "https://api.render.com/v1"
 METRICS = {
@@ -81,7 +83,7 @@ def collect_render_metrics(database_url: str, api_key: str, resource_id: str,
                 when, value, unit = latest_sample(response.json(), resource_id)
                 if when < start:
                     raise ValueError("Render metric sample is stale")
-                with psycopg.connect(database_url) as conn:
+                with connect_url(database_url) as conn:
                     conn.execute(
                         """INSERT INTO render_metric_samples (metric,sample_at,value,unit)
                            VALUES (%s,%s,%s,%s) ON CONFLICT (metric,sample_at)
@@ -129,7 +131,7 @@ def cut_source_minutes(database_url: str) -> None:
     cut independent of the database session's time zone.
     """
     try:
-        with psycopg.connect(database_url) as conn:
+        with connect_url(database_url) as conn:
             conn.execute("UPDATE lookup_sources_daily SET last_at = date_trunc('hour', last_at, 'UTC')"
                          " WHERE last_at < now() - interval '61 minutes' AND last_at <> date_trunc('hour', last_at, 'UTC')")
     except psycopg.Error as exc:
@@ -139,7 +141,7 @@ def cut_source_minutes(database_url: str) -> None:
 def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     """Keep daily pseudonyms short-lived even if Render's metrics API is down."""
     cut_source_minutes(database_url)
-    with psycopg.connect(database_url) as conn:
+    with connect_url(database_url) as conn:
         prune_reports(conn, report_retention_days)
         conn.execute("DELETE FROM traffic_client_daily WHERE day < CURRENT_DATE - 13")
         conn.execute("DELETE FROM traffic_attribution_daily WHERE day < CURRENT_DATE - 89")
@@ -158,7 +160,7 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     # the migration, the missing tables must neither undo the deletions above nor stop the bandwidth guard.
     # A provider period that is still open (the provider still reports the problem) is kept until it ends.
     try:
-        with psycopg.connect(database_url) as conn:
+        with connect_url(database_url) as conn:
             conn.execute("DELETE FROM robots_read_events WHERE read_at < now() - interval '14 days'")
             conn.execute("DELETE FROM provider_status_events WHERE at < now() - interval '90 days'")
             conn.execute("DELETE FROM outage_episodes WHERE last_event_at < now() - interval '90 days'"
@@ -171,7 +173,7 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     # and SOURCES_RETENTION_DAYS; tests/test_lookup_signals.py and the policy-coverage test check that.
     # Own transaction for the same reason as above.
     try:
-        with psycopg.connect(database_url) as conn:
+        with connect_url(database_url) as conn:
             conn.execute("DELETE FROM lookup_signals_hourly WHERE hour < now() - interval '35 days'")
             conn.execute("DELETE FROM lookup_sources_daily WHERE day < (now() AT TIME ZONE 'UTC')::date - 1")
     except psycopg.Error as exc:
@@ -180,7 +182,7 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     # the 89 days before; the literal matches adoption.RETENTION_DAYS, checked by the policy-coverage test).
     # Own transaction for the same reason as above.
     try:
-        with psycopg.connect(database_url) as conn:
+        with connect_url(database_url) as conn:
             conn.execute("DELETE FROM lookup_outcome_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"lookup_outcome_prune failed={type(exc).__name__}")

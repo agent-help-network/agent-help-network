@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 
 from ._classify import ERROR_CLASSES, FAILURE_STAGES
 from ._hosts import eligible_host
-from ._result import Result
+from ._result import Result, _retry_after
 from ._signals import AGENT_VENDORS, valid_signals
 
 __all__ = ["check", "clear_cache", "lookup_url"]
@@ -150,6 +150,11 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
             if result is not None and result.retry_after_seconds is not None:
                 # A "being read" answer is kept only until the service expects to have the files.
                 ttl = min(ttl, result.retry_after_seconds)
+            pending = _retry_after(result.access_profile) if result is not None else None
+            if pending is not None:
+                # The profile's own "being read" value also bounds the cache, whatever next_action says (a hand-off
+                # carries no retry_after_seconds, but the one repeat lookup it asks for must still reach the service).
+                ttl = min(ttl, pending)
             _cache[key] = (now + ttl, result)
         return result
     except Exception:

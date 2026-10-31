@@ -1,0 +1,53 @@
+name: Data contribution
+description: Send a corrected or missing official developer path, status-page mapping or access information bundle.
+title: "data: <host> - <kind>"
+labels: ["data-contribution"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping keep the data right. Send whatever is easy for you; nothing is expected in return and the data stays under CC BY 4.0 for everyone.
+
+        We read the public source again ourselves before anything is applied. We cannot take personal URLs, anything behind a login, private or personal information, keys, tokens, cookies or other people's conversations. Prefer a pull request with a file under `contrib/`? See [contrib/README.md](https://github.com/agent-help-network/agent-help-network/blob/main/contrib/README.md).
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: The public hostname the data is about, lowercase, no scheme or path.
+      placeholder: example.com
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Official developer path (API docs or developer portal)
+        - Status-page mapping (the publisher's own status page or feed)
+        - Access information bundle (auth, key sign-up, free quota, limits, OpenAPI, official MCP, terms)
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source address
+      description: The public https page where you saw it, on the publisher's own site where possible, if you have one. With a source we can apply it sooner; without one we look for it ourselves. Login-only pages cannot be used.
+      placeholder: https://docs.example.com/api
+    validations:
+      required: false
+  - type: input
+    id: checked_at
+    attributes:
+      label: When you checked (UTC)
+      description: Roughly when you looked at that page. If you leave it blank we use the time you opened this issue.
+      placeholder: 2026-10-31 09:30
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What you would like the data to say (for example the status page address, or the sentence about the free quota), and anything not obvious. Please leave out personal information.
+  - type: input
+    id: credit
+    attributes:
+      label: Name for the change record (optional)
+      description: A name or handle if you would like to be named. If you leave it blank we leave names out.

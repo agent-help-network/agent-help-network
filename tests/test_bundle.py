@@ -82,6 +82,7 @@ def test_meta_record_heads_the_file():
     assert "not licensed under CC BY 4.0" in payload["third_party_quotes"]
     assert "Tranco" in payload["status_source_note"] and "no rank" in payload["status_source_note"]
     assert payload["schema_url"].endswith("docs/api-contract.en.md#offline-bundle")
+    assert payload["contribute_url"] == "https://agenthelpnetwork.com/en/contribute"
     assert payload["includes"] == list(bundle.KINDS) and payload["excludes"] == list(bundle.EXCLUDED)
     assert meta["source_url"] == "https://agenthelpnetwork.com/v1/bundle/latest.jsonl.gz"
     assert meta["record_id"] == "ahn:agenthelpnetwork.com:bundle_meta:agenthelpnetwork.com:2026-10-20T06:00:00Z"
