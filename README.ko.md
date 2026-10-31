@@ -139,7 +139,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 
 - **REST:** `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<공개 호스트명>`
   선택: `error_class` (`site_access`, `login_auth`, `human_verification`, `service_error`), `failure_stage` (`before_target_response`, `response_observed`, `access_denial_observed`, `unknown`), `task_step`, `window_hours` (1–168, 기본 24), 그리고 클라이언트가 이미 아는 값만 붙이는 선택 조회 코드 넷: `http_status` (401, 402, 403, 407, 408, 429, 451 또는 500–599), `challenge` (`header`, `none`), `retry_after` (`none`, `lt_60`, `60_3600`, `gt_3600`), `via` (`http_fetch`, `browser`, `unknown`). 호스트·시간별로 집계할 뿐 답은 바꾸지 않는다([계약](docs/api-contract.md#조회-신호-코드)). 답을 바꾸는 선택 코드가 하나 더 있다: `agent_vendor` (`openai`, `anthropic`, `google`, `perplexity`, `meta`, `mistral`, `amazon`, `microsoft`, `apple`, `duckduckgo`, `diffbot`, `exa`, `other`), 자기 웹 요청이 보내는 `robots.txt` 토큰의 벤더다. 판정이 그 벤더의 토큰을 읽는다. 모르면 생략한다. 집계·저장하지 않고 목록 밖 값은 무시한다([계약](docs/api-contract.md#에이전트-벤더-agent_vendor-d48)).
-- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — 도구 `check_incident` (읽기 전용·멱등)와 선택적 `report_observation`.
+- **MCP** (streamable HTTP): `https://agenthelpnetwork.com/mcp` — 도구 `check_incident` (읽기 전용·멱등), `rate_last_lookup`(선택: 막힘 조회 뒤 그 답의 일회용 결과 토큰과 다음 시도가 통했는지를 돌려보냄, 호스트명 없음), 선택적 `report_observation`.
 - **에이전트용 입구:** [/llms.txt](https://agenthelpnetwork.com/llms.txt) · [/agent-instructions.txt](https://agenthelpnetwork.com/agent-instructions.txt) · [/openapi.json](https://agenthelpnetwork.com/openapi.json)
 
 ## 응답의 구성

@@ -86,7 +86,7 @@
 
 ## OpenAPI 및 MCP
 
-`/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`와 `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
+`/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
 MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
 
@@ -144,6 +144,40 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 **어떤 응답도 달라지지 않는다.** 이 코드가 있든 없든 `recommendation`, `next_checks`, `evidence_level`, `observations` 와 다른 모든 필드는 같다. 이 코드는 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않는다(D11). 아직 응답 어디에도 나오지 않는다. 나중에 더하면 선택 층으로, 대략적인 구간만, 서로 다른 클라이언트 세 곳 이상일 때만 나온다.
 
 MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들지 않고 대상 사이트나 호출자의 데이터를 바꾸지 않는다. 조회는 익명으로 집계되고(호스트 등록·일별 호스트 조회 수, 조회 자체의 짧은 트랜잭션. 그림자 모드로 선택 조회 신호 코드의 시간별 호스트 집계도 있다. [조회 신호 코드](#조회-신호-코드) 참고), 서비스가 캐시를 채우려고 호스트의 공개 `robots.txt`·`llms.txt`·상태 피드를 읽을 수 있으며 이 읽기는 조회가 기다리는 동안이 아니라 뒤에서 한다. 주석은 `readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`(공개 웹을 설명함)다. 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
+
+### 결과 회신 (`feedback_token`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
+
+막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 이 조회(와 이를 부르는 MCP `check_incident`)에만 붙을 수 있으며 사건 상세(`GET /v1/incidents/{id}`)와 사이트 자체 페이지에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다).
+
+```json
+"feedback_token": {
+  "token": "<불투명 값>",
+  "expires_in_seconds": 3600,
+  "outcomes": ["succeeded", "still_blocked", "handed_off", "gave_up"],
+  "paths": ["official_path", "same_site", "unknown"]
+}
+```
+
+그 밖에는 키를 생략하며 `null` 로 두지 않는다. 답이 정해진 뒤에 더하므로 `recommendation`, `next_checks` 와 다른 모든 키, 그 순서는 이 키가 있든 없든 같다. 이 키를 담은 응답에는 `Cache-Control: no-store` 를 붙인다. `AHN_LOOKUP_FEEDBACK=0` 이면 모든 답에서 빠지고 MCP 도구 목록에서도 `rate_last_lookup` 이 빠진다. 그 전에 발급된 토큰은 만료 전까지 회신할 수 있다.
+
+조회자는 그 단계를 다시 시도한 뒤 무슨 일이 있었는지와 함께 토큰을 한 번 돌려보낼 수 있다.
+
+`POST /v1/feedback` 에 JSON 본문 `{"token": "<토큰>", "outcome": "succeeded", "path": "official_path"}` 를 보내면 `200 {"accepted": true}` 를 돌려준다. 본문은 이 세 키만 받고 `path` 는 선택이다(기본값 `unknown`). 호스트명은 없다. 어느 조회에 대한 회신인지는 토큰이 말한다.
+
+| 필드 | 값 | 뜻 |
+|---|---|---|
+| `outcome` | `succeeded`, `still_blocked`, `handed_off`, `gave_up` | 다음 시도가 통함, 여전히 막힘, 사용자에게 넘김, 포기. "시도 안 함"은 보내지 않는다. 회신이 없는 것이 그 값이다. |
+| `path` | `official_path`, `same_site`, `unknown` | 답이 가리킨 공식 경로로 시도함, 같은 사이트를 다시 시도함, 말하지 않음. |
+
+오류: 목록 밖의 `outcome`·`path` 는 `field`·`allowed_values` 와 함께 `400 invalid_request`, 그 밖의 본문 문제(토큰 없음, `site_host` 같은 모르는 키)는 `400 invalid_request`, 이 서비스가 발급하지 않은 값(형식 오류·변조·다른 키로 서명·발급된 철자와 다른 표기)은 `400 invalid_feedback_token`, 조회 뒤 3600초 이상 지나면 `410 feedback_token_expired`, 이미 쓴 토큰은 `409 feedback_token_used`(같은 회신을 다시 보내도 달라지는 것이 없다), DB 오류는 `503 service_unavailable`.
+
+토큰은 조회자에게 불투명하다. 서비스 비밀값에서 파생한 키로 HMAC-SHA256 서명한 값이며, 그 조회를 센 공개 루트 호스트명, `recommendation.action`, 클라이언트 종류([조회 신호 코드](#조회-신호-코드)와 같은 분류), 발급 시각, 그 조회를 셌는지, 무작위 값을 담는다. **토큰을 발급할 때는 아무것도 저장하지 않는다.** 토큰이 쓰이면 두 번 쓰이지 않도록 그 토큰의 서명된 내용(무작위 값 포함)의 SHA-256 지문을 만료 시각과 함께, 호스트명 없이 둔다. 지문은 토큰 만료 5분 뒤부터(인스턴스 간 시계 차 여유) 다음 회신이 들어올 때와 15분마다 도는 정리 작업이 삭제한다. 결과는 조회의 발급 시간·호스트명·권고·클라이언트 종류·결과·경로별로 한 번 세며(잠금을 200ms 넘게 기다려야 하면 세기를 건너뛰고 회신은 그대로 받는다), 집계는 35일 보관한다. 시간당 조합은 최대 200개이고 나머지는 호스트명 없는 `(overflow)` 행으로 접는다. 세지 않는 조회(운영자 자신의 네트워크, `X-AHN-Test: 1`)도 흐름을 끝까지 시험할 수 있도록 토큰을 받지만, 그 회신은 받기만 하고 세지 않는다.
+
+**회신은 어떤 답도 바꾸지 않는다.** 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않고(D11), 집계는 공개하지 않으며 어떤 응답에도 나오지 않는다.
+
+MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보내고 `{"accepted": true}` 를 돌려준다. 위 오류 코드는 도구 오류로 돌아온다. 주석은 `readOnlyHint=false`, `destructiveHint=false`(집계에 더하기만 함), `idempotentHint=true`(반복 호출해도 더 달라지지 않음), `openWorldHint=false` 이며 `AHN_LOOKUP_FEEDBACK` 이 `0` 이 아니면 모든 모드에서 나타난다. `token` 입력 스키마는 REST 본문과 같은 패턴·길이 제한을 갖는다.
+
+**응답에 키가 더해질 수 있다.** MCP `tools/list` 가 알리는 각 도구(`check_incident`, `rate_last_lookup` 등)의 `outputSchema` 는 모든 객체에서 추가 속성을 허용한다(`additionalProperties: true`). 그래서 도구 목록을 캐시한 클라이언트도 선택 키가 더해진 뒤의 답을 계속 받아들인다. 서비스 자신은 닫힌 모델로 답을 검사한다.
 
 ### 에이전트 벤더 (`agent_vendor`, D48)
 

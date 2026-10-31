@@ -476,6 +476,44 @@ class Links(StrictModel):
     changelog: str | None = Field(default=None, exclude_if=_omit_none)
 
 
+class FeedbackOutcome(str, Enum):
+    """D58: what happened on the caller's next attempt after a blocked lookup. "Not tried" is never sent: no answer is that."""
+    succeeded = "succeeded"
+    still_blocked = "still_blocked"
+    handed_off = "handed_off"
+    gave_up = "gave_up"
+
+
+class FeedbackPath(str, Enum):
+    """D58: which way the attempt that the outcome is about went."""
+    official_path = "official_path"
+    same_site = "same_site"
+    unknown = "unknown"
+
+
+# Token text as issued by ahn/feedback.py: base64url payload, a dot, base64url MAC. The bound only keeps junk short.
+FEEDBACK_TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,480}\.[A-Za-z0-9_-]{43}$")
+
+
+class Feedback(StrictModel):
+    """D58: a one-time token for saying, later, whether the next attempt worked (POST /v1/feedback, MCP rate_last_lookup)."""
+    token: str = Field(max_length=530)
+    expires_in_seconds: int = Field(ge=1, le=3600)
+    outcomes: list[FeedbackOutcome]
+    paths: list[FeedbackPath]
+
+
+class FeedbackIn(StrictModel):
+    """D58: body of POST /v1/feedback. No hostname: the token says which lookup it answers."""
+    token: str = Field(max_length=530)
+    outcome: FeedbackOutcome
+    path: FeedbackPath = FeedbackPath.unknown
+
+
+class FeedbackReceipt(StrictModel):
+    accepted: Literal[True]
+
+
 class CheckResponse(StrictModel):
     site_host: str
     generated_at: datetime
@@ -506,6 +544,8 @@ class CheckResponse(StrictModel):
     recommendation: Recommendation | None = None
     failure_stage: FailureStage | None = None
     next_checks: list[NextCheck] = Field(default_factory=list)
+    # D58: present only on a blocked lookup (error_class sent) that the service counts; left out (never null) otherwise.
+    feedback_token: Feedback | None = Field(default=None, exclude_if=_omit_none)
 
 
 class Receipt(StrictModel):
