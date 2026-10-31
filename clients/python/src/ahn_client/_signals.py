@@ -5,7 +5,7 @@ headers, a Claude Code hook payload). They are counted per hostname and hour nex
 ``failure_stage``; they never become a report. No path, query, body text or header value is ever read out
 for the request: a header is only tested for a marker or a number and reduced to one of the values below.
 
-The lists and the rules for ``challenge`` and ``retry_after`` are those of plugins/claude-code/ahn/hooks/
+The lists and the rules for ``challenge`` (Cloudflare's ``cf-mitigated`` and AWS WAF's ``x-amzn-waf-action``) and ``retry_after`` are those of plugins/claude-code/ahn/hooks/
 ahn_lookup.py; tests/test_ahn_client_adapters.py runs both on the same input and fails when they differ.
 """
 
@@ -24,6 +24,12 @@ SIGNAL_NAMES = ("http_status", "challenge", "retry_after", "via")
 # this list with the service's own (the values of ahn.models.AgentVendor).
 AGENT_VENDORS = ("openai", "anthropic", "google", "perplexity", "meta", "mistral", "amazon", "microsoft", "apple",
                  "duckduckgo", "diffbot", "exa", "other")
+# AWS WAF marks the answer to a request that lacks a valid token with ``x-amzn-waf-action``: ``challenge`` on a 202 (Challenge
+# action) and ``captcha`` on a 405 (CAPTCHA action); a 403 or 451 carrying either value is read the same way. Any other
+# status (a 429 or 503 included) with the header is not a challenge.
+# https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html
+AWS_WAF_HEADER = "x-amzn-waf-action"
+AWS_WAF_CHALLENGE_VALUES = {202: ("challenge",), 405: ("captcha",), 403: ("challenge", "captcha"), 451: ("challenge", "captcha")}
 RETRY_AFTER_SECONDS = re.compile(r"[0-9]{1,10}")
 MAX_HEADERS = 200
 # The top-level module of an exception class says which kind of client raised it.
@@ -74,12 +80,23 @@ def header_entries(headers: Mapping[Any, Any]) -> List[Tuple[str, List[str], boo
     return entries
 
 
-def challenge_code(headers: Mapping[Any, Any]) -> Optional[str]:
-    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge", "none" when
-    headers were read without it, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
+def aws_waf_challenge(status: Optional[int], entries: List[Tuple[str, List[str], bool]]) -> bool:
+    """True for an AWS WAF challenge answer: ``x-amzn-waf-action`` is ``challenge`` on a 202, ``captcha`` on a 405, either on
+    a 403 or 451. The same header on any other status is not a challenge."""
+    wanted = AWS_WAF_CHALLENGE_VALUES.get(status) if isinstance(status, int) and not isinstance(status, bool) else None
+    return bool(wanted) and any(name == AWS_WAF_HEADER and any(text.strip().lower() in wanted for text in texts)
+                                for name, texts, _ in entries)
+
+
+def challenge_code(headers: Mapping[Any, Any], status: Optional[int] = None) -> Optional[str]:
+    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge" or, given the
+    response ``status``, when AWS WAF's ``x-amzn-waf-action`` marks a challenge (see ``aws_waf_challenge``); "none" when
+    headers were read without a marker, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
     entries = header_entries(headers)
     if not entries:
         return None
+    if aws_waf_challenge(status, entries):
+        return "header"
     unreadable = False
     for name, texts, bad in entries:
         if name == "cf-mitigated":
@@ -126,7 +143,7 @@ def from_headers(status: Optional[int], headers: Optional[Mapping[Any, Any]]) ->
         return found
     found["http_status"] = status
     if headers is not None:
-        challenge = challenge_code(headers)
+        challenge = challenge_code(headers, status)
         if challenge:
             found["challenge"] = challenge
         if status in (429, 503):

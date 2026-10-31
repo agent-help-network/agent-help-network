@@ -510,10 +510,11 @@ def rollup(conn, *, now: datetime | None = None, thresholds: Thresholds | None =
 
 def run(database_url: str) -> str:
     """The cron step: one rollup in its own transaction; returns the log line (counts only, no host names)."""
-    import psycopg
     from psycopg.rows import dict_row
 
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+    from .db import connect_url
+
+    with connect_url(database_url, row_factory=dict_row) as conn:
         counts = rollup(conn)
     return "signal_history " + " ".join(f"{key}={value}" for key, value in counts.items())
 
