@@ -113,6 +113,16 @@ MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검
 # old (D54). The D45 text names incident_updated_at and a maintenance count, which such a feed does not have.
 PAGE_STALE_CHECK = f"The provider's status page shows a minor issue, lists no incidents this service can read, and nothing it lists as active (incidents or maintenance) has been updated for more than {STALE_INCIDENT_DAYS} days (provider_status.source_updated_at, source_time active_items). An issue left without updates is not treated as a reason to wait: if the provider's status page names a service you use as affected, wait for the provider; otherwise continue."
 PAGE_STALE_CHECK_KO = f"업체 상태 페이지가 경미(minor) 문제를 표시하지만 이 서비스가 읽을 수 있는 사건 목록이 없고, 페이지가 진행 중으로 올린 사건·점검이 {STALE_INCIDENT_DAYS}일 넘게 갱신되지 않았습니다(provider_status.source_updated_at, source_time active_items). 갱신 없이 남아 있는 문제는 기다릴 이유로 보지 않습니다. 업체 상태 페이지에 사용하는 서비스가 영향받는다고 나와 있으면 업체를 기다리고, 없으면 진행하세요."
+# Web display only: the Korean search page picks a next-check sentence by its English text first, because several codes
+# have more than one English sentence (the special ones above) and the Korean must say what that sentence says.
+CHECK_TEXT_KO = {
+    **{CHECKS[code]: CHECKS_KO[code] for code in CHECKS if code in CHECKS_KO},
+    MAINTENANCE_CHECK: MAINTENANCE_CHECK_KO,
+    PAGE_STALE_CHECK: PAGE_STALE_CHECK_KO,
+    ROBOTS_ABSENT_CHECK: ROBOTS_ABSENT_CHECK_KO,
+    LLMS_TOO_LARGE_CHECK: LLMS_TOO_LARGE_CHECK_KO,
+    HISTORY_QUIET_CHECK: HISTORY_QUIET_CHECK_KO,
+}
 ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS  # minor, major, critical, maintenance
 WAIT_DESPITE_COMPONENTS_ONLY = frozenset({"major", "critical"})
 # D54: a provider time further ahead than this is treated as no time at all (shared with the public board, D53).

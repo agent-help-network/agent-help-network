@@ -381,6 +381,5 @@ def test_board_and_lookup_agree(indicator, age, shape, api_url):
 def test_the_search_page_shows_the_page_text_in_korean():
     root = Path(__file__).resolve().parents[1]
     template = (root / "ahn" / "templates" / "search.html").read_text(encoding="utf-8")
-    main = (root / "ahn" / "main.py").read_text(encoding="utf-8")
-    assert "'provider_page_stale' if item.code == 'provider_incident_stale'" in template
-    assert '"provider_page_stale": PAGE_STALE_CHECK_KO' in main
+    assert "ko_by_text.get(item.text)" in template
+    assert triage.CHECK_TEXT_KO[PAGE_STALE_CHECK] == PAGE_STALE_CHECK_KO
