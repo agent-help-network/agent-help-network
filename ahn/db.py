@@ -46,9 +46,13 @@ def connect_url(database_url: str, **kwargs):
     conn = psycopg.connect(conninfo(database_url), **kwargs)
     if conn.info.parameter_status("TimeZone") != "UTC":
         autocommit = conn.autocommit
-        conn.autocommit = True
-        conn.execute("SET TimeZone TO 'UTC'")
-        conn.autocommit = autocommit
+        try:
+            conn.autocommit = True
+            conn.execute("SET TimeZone TO 'UTC'")
+            conn.autocommit = autocommit
+        except BaseException:
+            conn.close()  # never hand back a session whose zone is still unknown
+            raise
     return conn
 
 
