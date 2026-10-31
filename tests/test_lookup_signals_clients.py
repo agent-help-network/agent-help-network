@@ -563,7 +563,7 @@ def test_versions_and_the_documents_name_the_codes():
     manifest = json.loads((ROOT / "plugins/claude-code/ahn/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     assert manifest["version"] == market["plugins"][0]["version"] == "0.3.7"
-    assert ahn.__version__ == "0.6.0"
+    assert ahn.__version__ == "0.6.1"
     plugin_readme = (ROOT / "plugins/claude-code/ahn/README.md").read_text(encoding="utf-8")
     client_readme = (ROOT / "clients/python/README.md").read_text(encoding="utf-8")
     assert "version 0.3.7 |" in plugin_readme
@@ -571,7 +571,7 @@ def test_versions_and_the_documents_name_the_codes():
         assert f"`{name}`" in plugin_readme and f"`{name}`" in client_readme
     for value in ("lt_60", "60_3600", "gt_3600", "http_fetch", "browser", "header"):
         assert f"`{value}`" in plugin_readme and f"`{value}`" in client_readme
-    assert "ahn-client/0.6.0" in client_readme and "ahn-client/0.4.0" not in client_readme
+    assert "ahn-client/0.6.1" in client_readme and "ahn-client/0.4.0" not in client_readme
     # Nothing is promised that does not exist yet.
     for text in (plugin_readme, client_readme):
         assert "AHN_HOOK_FEEDBACK" not in text and "feedback token" not in text
