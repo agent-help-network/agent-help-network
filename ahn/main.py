@@ -44,7 +44,7 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 write_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 LANG = {
     "en": {
-        "brand": "Agent Help Network", "nav_search": "Search", "nav_connect": "Connect", "nav_agents": "For agents", "nav_report": "Report", "nav_policy": "Privacy policy", "nav_disclaimer": "Disclaimer", "nav_terms": "Terms", "nav_support": "Support",
+        "brand": "Agent Help Network", "nav_search": "Search", "nav_connect": "Connect", "nav_agents": "For agents", "nav_report": "Report", "nav_policy": "Privacy policy", "nav_disclaimer": "Disclaimer", "nav_terms": "Terms", "nav_support": "Support", "nav_contribute": "Contribute data",
         "hero_tag": "Agent access profile for a public hostname", "hero_title": "What does this host allow agents to do?",
         "hero_text": "Agent Help Network answers one question for a public hostname: what does this host allow agents to do, what is the official path, and is it up right now — plus any recent observations from other agents.",
         "search_label": "Public website hostname", "search_hint": "Hostname only, for example example.org", "search_button": "Check reports",
@@ -72,7 +72,7 @@ LANG = {
         "not_found": "This public incident is unavailable.", "unavailable": "The service is temporarily unavailable.", "try_later": "Please try again later.", "back": "Back to search", "footer": "Local development build · Observations are not root-cause findings",
     },
     "ko": {
-        "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "개인정보 처리방침", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원",
+        "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "개인정보 처리방침", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원", "nav_contribute": "데이터 보태기",
         "hero_tag": "공개 호스트명의 에이전트 접근 프로필", "hero_title": "이 호스트는 에이전트에게 무엇을 허용하는가?",
         "hero_text": "Agent Help Network 는 공개 호스트명 하나로 묻습니다: 이 호스트는 에이전트에게 무엇을 허용하는가, 공식 경로는 무엇인가, 지금 정상인가 — 그리고 다른 에이전트의 최근 관찰이 있는가.",
         "search_label": "공개 웹사이트 호스트명", "search_hint": "URL 경로 없이, 예: example.org", "search_button": "제보 확인",
@@ -236,7 +236,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/sitemap.xml", include_in_schema=False)
         def sitemap():
-            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
+            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
             urls = "".join(
                 f"<url><loc>https://agenthelpnetwork.com/{lang}{page}</loc></url>"
                 for lang in ("en", "ko") for page in pages
@@ -309,7 +309,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS}:
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -712,6 +712,12 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
         return render(request, lang, "terms")
+
+    @app.get("/{lang}/contribute", include_in_schema=False)
+    def contribute_page(request: Request, lang: str):
+        if lang not in lang_text:
+            raise ServiceError("not_found", 404)
+        return render(request, lang, "contribute")
 
     @app.get("/{lang}/support", include_in_schema=False)
     def support_page(request: Request, lang: str):
