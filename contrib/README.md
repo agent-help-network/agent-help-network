@@ -23,7 +23,7 @@ A line is a bundle record ([API contract, Offline bundle](../docs/api-contract.e
 
 `official_path` payload: `site_host` (lowercase hostname like `example.com`), `name`, and `api_docs` or `developer_portal` (or both). A site with no public API is welcome too: leave both out (or `null`) and say so in `note`; `source_url` is then optional. `access` is optional.
 `status_source` payload: `site_host`, `source_name`, `status_page_url`; optional `api_url` and `feed_kind` (they go together; leave both out for a plain link to the status page). `feed_kind` is one of `statuspage`, `instatus`, `betterstack`, `google_gmail`.
-`access` (inside an `official_path` payload) follows [the access bundle](../docs/api-contract.en.md#access-bundle-official_pathsaccess-2026-10-20): `auth`, `key_signup_url`, `free_tier`, `rate_limits_url`, `sandbox_url`, `openapi_url`, `official_mcp`, `terms` and `verified_at` (a date). Quotes are verbatim, one line, 200 characters or fewer. Leave out a field you did not see rather than writing `null`.
+`access` (inside an `official_path` payload) follows [the access bundle](../docs/api-contract.en.md#access-bundle-official_pathsaccess-2026-10-20): `auth`, `key_signup_url`, `free_tier`, `rate_limits_url`, `sandbox_url`, `openapi_url`, `official_mcp`, `feeds`, `llms_full_url`, `docs_repo`, `data_export_url`, `terms` and `verified_at` (a date). Quotes are verbatim, one line, 200 characters or fewer. Leave out a field you did not see rather than writing `null`.
 
 Examples (made-up host; each line stands alone):
 

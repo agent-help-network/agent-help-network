@@ -36,7 +36,7 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 
@@ -192,6 +192,8 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
 # Code hosts where one domain serves many owners. An access-bundle URL on one of them must also sit in the
 # publisher's own organisation (first path segment), declared here per table key with how ownership was checked.
 GITHUB_CONTENT_HOSTS = frozenset({"github.com", "raw.githubusercontent.com"})
+# Other names that also serve many owners' content and so get the same organisation rule (www. and gist. are not the publisher's).
+GITHUB_ALIAS_HOSTS = frozenset({"www.github.com", "gist.github.com", "gist.githubusercontent.com"})
 PUBLISHER_GITHUB_ORGS: dict[str, set[str]] = {
     "github.com": {"github"},  # docs.github.com links github/rest-api-description as the REST API's OpenAPI description
     "stripe.com": {"stripe"},  # docs.stripe.com/sdks links the official SDKs in this organisation
@@ -212,9 +214,13 @@ SIGN_IN = re.compile(r"/(log-?in|sign-?in|sign_in|sso|oauth2?/authorize|authoriz
 NOTE_URL = re.compile(r"https://[^\s)>,;\"']+")
 
 ACCESS_FIELDS = ("auth", "key_signup_url", "free_tier", "rate_limits_url", "sandbox_url", "openapi_url", "official_mcp",
-                 "terms", "verified_at")
-ACCESS_URL_FIELDS = ("key_signup_url", "rate_limits_url", "sandbox_url", "openapi_url")
+                 "feeds", "llms_full_url", "docs_repo", "data_export_url", "terms", "verified_at")
+ACCESS_URL_FIELDS = ("key_signup_url", "rate_limits_url", "sandbox_url", "openapi_url", "llms_full_url", "docs_repo",
+                     "data_export_url")
+ACCESS_FEEDS_MAX = 3
+ACCESS_URL_MAX = 300  # the longest URL an access bundle may carry (the model enforces the same limit)
 BODY_CAP = 20_000_000  # whole OpenAPI documents (several MB) and long terms pages
+FEED_MARK = re.compile(rb"<(?:rss|feed|rdf:RDF)[\s>]", re.IGNORECASE)  # a feed document starts with one of these elements
 OPENAPI_MARK = re.compile(rb"[\"']?(?:openapi|swagger)[\"']?\s*:\s*[\"']?[23]\.")
 _TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " ", "–": "-",
                              "—": "-", "​": "", "‍": "", "﻿": ""})
@@ -235,7 +241,7 @@ def publisher_owned(host: str, url: str) -> bool:
     (github.com, raw.githubusercontent.com) it must instead sit in the publisher's declared organisation."""
     parts = urlsplit(url)
     name = (parts.hostname or "").lower()
-    if name in GITHUB_CONTENT_HOSTS:
+    if name in GITHUB_CONTENT_HOSTS | GITHUB_ALIAS_HOSTS or name.endswith(".githubusercontent.com"):
         org = parts.path.strip("/").split("/", 1)[0].lower()
         return bool(org) and org in PUBLISHER_GITHUB_ORGS.get(host, set())
     return registrable(name) in {registrable(host)} | PUBLISHER_DOMAINS.get(host, set())
@@ -252,6 +258,11 @@ def _url_problem(host: str, url) -> str | None:
             return f"not a public hostname: {url}"
     except ValueError:
         return f"not a public hostname: {url}"
+    path = parts.path
+    for _ in range(3):  # percent-decoding until stable, so %2e%2e and %252e%252e are caught too
+        path = unquote(path)
+    if any(segment in (".", "..") for segment in path.replace("\\", "/").split("/")):
+        return f"path has a . or .. segment: {url}"
     if not publisher_owned(host, url):
         return f"not on a publisher-owned domain or declared GitHub organisation: {url}"
     return None
@@ -317,6 +328,21 @@ def access_problems(host: str, access, today: date | None = None) -> list[str]:
     for field in ACCESS_URL_FIELDS:
         if access.get(field) is not None:
             add(field, _url_problem(host, access[field]))
+    for field in ("feeds", "llms_full_url", "docs_repo", "data_export_url"):
+        for url in ([access[field]] if isinstance(access.get(field), str) else access.get(field) or []):
+            if isinstance(url, str) and len(url) > ACCESS_URL_MAX:
+                add(field, f"URL is {len(url)} characters, over {ACCESS_URL_MAX}")
+    feeds = access.get("feeds")
+    if feeds is not None:
+        if not isinstance(feeds, list):
+            add("feeds", "must be a list")
+        else:
+            if len(feeds) > ACCESS_FEEDS_MAX:
+                add("feeds", f"at most {ACCESS_FEEDS_MAX} feeds")
+            for url in feeds:
+                add("feeds", _url_problem(host, url))
+            if len(feeds) != len(set(feeds)):
+                add("feeds", "a feed is listed twice")
     if access.get("free_tier") is not None:
         shape = _object_problems(access["free_tier"], {"quote", "source_url"})
         add("free_tier", shape[0] if shape else _quote_problem(access["free_tier"]["quote"]))
@@ -351,6 +377,7 @@ def access_urls(access: dict) -> list[tuple[str, str]]:
     checked as text on their documentation page instead."""
     found = [(f"access.auth.{item['method']}", item["source_url"]) for item in access.get("auth") or []]
     found += [(f"access.{field}", access[field]) for field in ACCESS_URL_FIELDS if access.get(field)]
+    found += [("access.feeds", url) for url in access.get("feeds") or []]
     if access.get("free_tier"):
         found.append(("access.free_tier", access["free_tier"]["source_url"]))
     found += [("access.official_mcp", item["doc_url"]) for item in access.get("official_mcp") or []]
@@ -533,10 +560,13 @@ def main() -> int:
                 undeclared.append(f"{host}: {url}")
             allowed |= declared
         is_openapi = any(field == "access.openapi_url" for _, field in users)
-        results[url], body = fetcher.check(url, allowed, orgs=orgs, want_body=url in needles or is_openapi)
+        is_feed = any(field == "access.feeds" for _, field in users)
+        results[url], body = fetcher.check(url, allowed, orgs=orgs, want_body=url in needles or is_openapi or is_feed)
         row = results[url]
         if is_openapi and row["result"] == "ok" and not OPENAPI_MARK.search(body):
             row["result"] = "not_openapi"
+        if is_feed and row["result"] == "ok" and not FEED_MARK.search(body[:4096]):
+            row["result"] = "not_a_feed"
         moved = f" -> {row['final_url']}" if row["final_url"] != url else ""
         print(f"[{index}/{len(urls)}] {row['result']:<14} {row['status']!s:<4} {url}{moved}", flush=True)
         text = page_text(body) if url in needles and row["result"] == "ok" else ""
