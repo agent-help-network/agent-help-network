@@ -62,8 +62,8 @@ if error_class:                                 # None: not a block or an outage
         print(answer.summary())
 ```
 
-- 401 and 407 give `login_auth`; 402, 403 and 451 `site_access`; 408, 429 and 5xx `service_error`. A 403 or 451 with `cf-mitigated: challenge`, or a human-check marker in the first 4,000 characters of the body, is `human_verification`.
-- AWS WAF marks its CAPTCHA and Challenge responses with the header `x-amzn-waf-action` (`captcha` with status 405, `challenge` with status 202; [AWS documentation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html)). With that header a 202 or 405 is `human_verification` and `found["challenge"]` is `header`.
+- 401 and 407 give `login_auth`; 402, 403 and 451 `site_access`; 408, 429 and 5xx `service_error`. A 403 or 451 with `cf-mitigated: challenge` or `x-amzn-waf-action`, or a human-check marker in the first 4,000 characters of the body, is `human_verification`.
+- AWS WAF marks its CAPTCHA and Challenge responses with the header `x-amzn-waf-action` (`captcha` with status 405, `challenge` with status 202; [AWS documentation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html)). With that header a 202 or 405 is `human_verification` and `found["challenge"]` is `header`; on a 403 or 451 the header (`challenge` or `captcha`) counts the same way, and `ahn.signals(exc)` reads it too (from 0.6.2). On a 429, a 503 or any other status it is not a challenge.
 - A 200 whose page `<title>` looks like a human check (for example "Just a moment...") is only a hint: `error_class` stays `None`, so the example above does not look it up, and the returned value has `.candidate == True` and `.hint == "human_verification"`. Decide yourself whether to look up with that class.
 - The body is read on your machine only, for a few marker words, and is never sent, stored or returned; `challenge` comes from headers only. A body that is not an attribute (Playwright's `response.text()`) can be passed as `ahn.diagnose(response, body=text)`.
 - When robots.txt asks for a delay between requests, `Result.summary()` ends with "robots.txt asks N s between requests" (`Result.crawl_delay_seconds`).
@@ -156,10 +156,10 @@ At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
-User-Agent: ahn-client/0.6.1 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.6.2 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.6.1 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.6.2 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
 - From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
@@ -167,7 +167,7 @@ The adapters send `User-Agent: ahn-client/0.6.1 (+langchain; +https://agenthelpn
   | Parameter | Values | Source |
   | :- | :- | :- |
   | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the status the exception or hook payload carries |
-  | `challenge` | `header`, `none` | `header` when a `cf-mitigated` response header contains `challenge`, `none` when there are headers without it; left out when there is no headers object |
+  | `challenge` | `header`, `none` | `header` when a `cf-mitigated` response header contains `challenge`, or (from 0.6.2) an `x-amzn-waf-action` header is `challenge` or `captcha` on a 403 or 451; `none` when there are headers without it; left out when there is no headers object |
   | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | for 429 and 503 with a headers object: the `Retry-After` seconds as a band; a date, a missing or an unreadable header is `none` |
   | `via` | `http_fetch`, `browser`, `unknown` | `http_fetch` for httpx, requests, aiohttp and urllib errors, `browser` for Playwright, Selenium and similar errors, or what you pass; left out when unknown. The Claude Agent SDK adapter reads it from the tool's name like the plugin |
 

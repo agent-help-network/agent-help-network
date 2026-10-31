@@ -20,5 +20,5 @@ from ._client import check, clear_cache
 from ._diagnose import diagnose
 from ._result import NextAction, Result
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 __all__ = ["check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__"]

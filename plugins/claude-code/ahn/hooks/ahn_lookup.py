@@ -299,11 +299,11 @@ def http_status(tool_response) -> int | None:
     return None
 
 
-def challenge_cue(tool_response: dict, host: str) -> bool:
+def challenge_cue(tool_response: dict, host: str, code: int | None = None) -> bool:
     """True when a response header or the page text says the refusal is a bot challenge or CAPTCHA."""
     headers = tool_response.get("headers")
-    # Cloudflare's documented marker of a challenge response.
-    if isinstance(headers, dict) and challenge_code(headers) == "header":
+    # Cloudflare's cf-mitigated or AWS WAF's x-amzn-waf-action (see challenge_code).
+    if isinstance(headers, dict) and challenge_code(headers, code) == "header":
         return True
     for field in BODY_FIELDS:
         value = tool_response.get(field)
@@ -333,7 +333,7 @@ def status_class(code: int, tool_response: dict, host: str) -> str | None:
     if code in (401, 407):
         return "login_auth"
     if code in (403, 451):
-        return "human_verification" if challenge_cue(tool_response, host) else "site_access"
+        return "human_verification" if challenge_cue(tool_response, host, code) else "site_access"
     if code == 402:
         return "site_access"
     if code in (408, 429) or 500 <= code <= 599:
@@ -408,12 +408,30 @@ def header_entries(headers):
     return entries
 
 
-def challenge_code(headers):
-    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge", "none" when
-    headers were read without it, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
+# AWS WAF marks the answer to a request that lacks a valid token with x-amzn-waf-action: "challenge" on a 202 (Challenge
+# action), "captcha" on a 405 (CAPTCHA action); a 403 or 451 with either value is read the same way. The same header on any
+# other status (429 and 503 included) is not a challenge. The same rule as clients/python/src/ahn_client/_signals.py.
+# https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html
+AWS_WAF_HEADER = "x-amzn-waf-action"
+AWS_WAF_CHALLENGE_VALUES = {202: ("challenge",), 405: ("captcha",), 403: ("challenge", "captcha"), 451: ("challenge", "captcha")}
+
+
+def aws_waf_challenge(status, entries):
+    """True for an AWS WAF challenge answer: the header is "challenge" on a 202, "captcha" on a 405, either on a 403 or 451."""
+    wanted = AWS_WAF_CHALLENGE_VALUES.get(status) if isinstance(status, int) and not isinstance(status, bool) else None
+    return bool(wanted) and any(name == AWS_WAF_HEADER and any(text.strip().lower() in wanted for text in texts)
+                                for name, texts, _ in entries)
+
+
+def challenge_code(headers, status=None):
+    """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge" or, given the
+    response status, when AWS WAF's x-amzn-waf-action marks a challenge (aws_waf_challenge); "none" when headers were read
+    without a marker, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
     entries = header_entries(headers)
     if not entries:
         return None
+    if aws_waf_challenge(status, entries):
+        return "header"
     unreadable = False
     for name, texts, bad in entries:
         if name == "cf-mitigated":
@@ -483,7 +501,7 @@ def _signals(payload: dict) -> dict:
             found["http_status"] = code
             headers = response.get("headers")
             if isinstance(headers, dict):
-                challenge = challenge_code(headers)
+                challenge = challenge_code(headers, code)
                 if challenge:
                     found["challenge"] = challenge
                 if code in (429, 503):

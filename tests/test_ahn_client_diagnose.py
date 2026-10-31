@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "clients" / "python" / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import ahn_client as ahn  # noqa: E402
-from ahn_client import _client, _diagnose  # noqa: E402
+from ahn_client import _client, _diagnose, _signals  # noqa: E402
 from ahn_client._result import MAX_SUMMARY, Result  # noqa: E402
 from test_ahn_client import ANSWER, FakeResponse  # noqa: E402
 
@@ -137,6 +137,7 @@ def test_ordinary_200_pages_are_not_even_a_hint(html):
 def test_aws_marker_does_not_turn_other_statuses_into_a_challenge(status, expected):
     error_class, _, found = ahn.diagnose(Httpxish(status, {"x-amzn-waf-action": "challenge"}))
     assert error_class == expected and found["http_status"] == status
+    assert found["challenge"] == "none"  # and `signals(exc)` gives the same code
 
 
 @pytest.mark.parametrize("status", [200, 201, 204, 301, 404, 406])
@@ -144,9 +145,11 @@ def test_aws_marker_with_other_non_error_statuses_is_nothing(status):
     assert ahn.diagnose(Httpxish(status, {"x-amzn-waf-action": "challenge"}))[0] is None
 
 
-def test_only_202_and_405_with_the_marker_are_challenges_without_a_body_cue():
-    assert [s for s in range(100, 600) if ahn.diagnose(Httpxish(s, {"x-amzn-waf-action": "captcha"}))[0] == "human_verification"
-            ] == [202, 403, 405, 451]
+def test_only_matching_statuses_with_the_marker_are_challenges_without_a_body_cue():
+    def statuses(value):
+        return [s for s in range(100, 600) if ahn.diagnose(Httpxish(s, {"x-amzn-waf-action": value}))[0] == "human_verification"]
+    assert statuses("captcha") == [403, 405, 451]
+    assert statuses("challenge") == [202, 403, 451]
 
 
 def test_diagnose_never_raises_and_never_returns_text():
@@ -254,8 +257,8 @@ def test_crawl_delay_when_the_head_alone_is_cut():
 
 
 def test_version_and_exports():
-    assert ahn.__version__ == "0.6.1" and "diagnose" in ahn.__all__
-    assert _diagnose.AWS_WAF_HEADER == "x-amzn-waf-action" and _diagnose.AWS_WAF_VALUES == ("challenge", "captcha")
+    assert ahn.__version__ == "0.6.2" and "diagnose" in ahn.__all__
+    assert _signals.AWS_WAF_HEADER == "x-amzn-waf-action" and set(_signals.AWS_WAF_CHALLENGE_VALUES) == {202, 405, 403, 451}
 
 
 FORBIDDEN = ("user-agent", "spoof", "captcha solv", "solve the captcha", "bypass the", "evade", "fake header", "forge")

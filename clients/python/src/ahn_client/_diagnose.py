@@ -14,13 +14,8 @@ import re
 from typing import Any, Dict, Optional
 
 from ._classify import _attr, classify_text
-from ._signals import from_headers, header_entries, header_pairs, valid_signals, via_for_exception
+from ._signals import aws_waf_challenge, from_headers, header_entries, header_pairs, valid_signals, via_for_exception
 
-# AWS WAF answers a request that lacks a valid token with the header ``x-amzn-waf-action``: value ``challenge`` with status 202
-# (Challenge action) or ``captcha`` with status 405 (CAPTCHA action).
-# https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html
-AWS_WAF_HEADER = "x-amzn-waf-action"
-AWS_WAF_VALUES = ("challenge", "captcha")
 BODY_SCAN_CHARS = 4000
 # Narrower than the status-text rules on purpose: a normal 200 page may mention "cloudflare" or "challenge".
 # The wording is the Claude Code plugin's (HUMAN_VERIFICATION in ahn_lookup.py) without the bare word "challenge".
@@ -57,11 +52,8 @@ def _status(response: Any) -> Optional[int]:
     return None
 
 
-def _aws_waf_challenge(headers: Optional[Dict[Any, Any]]) -> bool:
-    if not headers:
-        return False
-    return any(name == AWS_WAF_HEADER and any(text.strip().lower() in AWS_WAF_VALUES for text in texts)
-               for name, texts, _ in header_entries(headers))
+def _aws_waf_challenge(status: Optional[int], headers: Optional[Dict[Any, Any]]) -> bool:
+    return bool(headers) and aws_waf_challenge(status, header_entries(headers))
 
 
 def _body_head(response: Any, body: Any) -> str:
@@ -94,7 +86,7 @@ def diagnose(response: Any, body: Any = None) -> Diagnosis:
         headers = header_pairs(response)
         found = from_headers(status, headers)
         via = via_for_exception([response])
-        aws = _aws_waf_challenge(headers)
+        aws = _aws_waf_challenge(status, headers)
         if aws:
             found["challenge"] = "header"
         if via:
