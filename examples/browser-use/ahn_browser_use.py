@@ -12,9 +12,9 @@ import asyncio
 import math
 import time
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
-from urllib.parse import urlsplit
 
 import ahn_client as ahn
+from ahn_client._hosts import normalize_host  # the client's own host rule (case, trailing dot, port, www); not copied here
 
 ADAPTER = "browser-use"  # goes into the User-Agent (ahn-client/<version> (+browser-use; ...)) so the service can count this path
 
@@ -49,19 +49,19 @@ def read_answer(answer: Any) -> Tuple[str, Dict[str, Any]]:
     line = answer.summary_line or answer.summary()  # the service's sentence, else the client's own line from validated fields
     source = answer.next_action
     if source is not None:
-        return line, {"do": source.do, "url": source.url, "retry_after_seconds": source.retry_after_seconds,
+        seconds = source.retry_after_seconds
+        if seconds is None and source.do == "retry_lookup_once":
+            seconds = answer.lookup_again_seconds  # the profile's own wait, when next_action carries none
+        return line, {"do": source.do, "url": source.url, "retry_after_seconds": seconds,
                       "stop_if_you_are": list(source.stop_if_you_are), "lookup_host": source.lookup_host}
     do = "no_clear_action" if answer.raw.get("next_action") is not None else DO_FOR_RECOMMENDATION.get(answer.recommendation, "no_clear_action")
     return line, {"do": do, "url": None, "retry_after_seconds": None, "stop_if_you_are": [], "lookup_host": None}
 
 
 def _host_key(url: str) -> str:
-    """The host a page URL names, lower case without one leading ``www.``; the key for the retry bookkeeping (never sent anywhere)."""
-    try:
-        host = (urlsplit(url).hostname or url).lower()
-    except ValueError:
-        host = url.lower()
-    return host[4:] if host.startswith("www.") else host
+    """The key for the retry bookkeeping (never sent anywhere): the host as ahn-client reads it, so ``Example.com``,
+    ``example.com.``, ``example.com:443`` and ``www.example.com`` are one host. Not a public hostname: the page URL, lower case."""
+    return normalize_host(url) or str(url).strip().lower()
 
 
 def instruction(action: Mapping[str, Any], *, repeated_retry: bool = False) -> str:

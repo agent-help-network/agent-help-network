@@ -48,7 +48,7 @@ services:
       - key: AHN_VANTAGE
         value: '{"kind":"datacenter","region":"US","asn":null,"declared":true}'
       # Offline data bundle (ahn/bundle.py): unset or anything but 1 keeps /v1/bundle/* at 404. Set 1 here and on the
-      # review cron together, only after the owner approves publishing.
+      # review cron together, only when publishing is intended.
       - key: AHN_PUBLIC_BUNDLE
         sync: false
       # Required with AHN_PUBLIC_BUNDLE=1: the date (YYYY-MM-DD) the privacy policy shows as last updated.
@@ -84,7 +84,7 @@ services:
     name: agent-help-network-bandwidth-guard
     runtime: python
     plan: 0.5c-512mb
-    # Render publishes bandwidth as one point per hour, about an hour late (docs/security-operations.md),
+    # Render publishes bandwidth as one point per hour, about an hour late (Render metrics API),
     # so a shorter period only trims the wait after a point appears; it does not make the data fresher.
     schedule: "*/15 * * * *"
     buildCommand: pip install -r requirements.txt

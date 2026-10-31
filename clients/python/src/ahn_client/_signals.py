@@ -91,7 +91,12 @@ def aws_waf_challenge(status: Optional[int], entries: List[Tuple[str, List[str],
 def challenge_code(headers: Mapping[Any, Any], status: Optional[int] = None) -> Optional[str]:
     """"header" when a cf-mitigated header (Cloudflare's documented challenge marker) contains "challenge" or, given the
     response ``status``, when AWS WAF's ``x-amzn-waf-action`` marks a challenge (see ``aws_waf_challenge``); "none" when
-    headers were read without a marker, None when there is nothing to go by (no headers, or the marker itself unreadable)."""
+    headers were read without a marker, None when there is nothing to go by (no headers, or the cf-mitigated value unreadable).
+
+    The two markers are not symmetric on an unreadable value (not text, bytes or a whole number): an unreadable
+    ``cf-mitigated`` gives None (it might have been a challenge), an unreadable ``x-amzn-waf-action`` is simply not a
+    marker and gives "none", because the AWS value is only a challenge on an exact match for its status. That is the
+    current behaviour, the same in the plugin hook's copy."""
     entries = header_entries(headers)
     if not entries:
         return None
