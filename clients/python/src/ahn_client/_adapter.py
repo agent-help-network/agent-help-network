@@ -255,8 +255,10 @@ def note_for(error: Any, args: Any = None, *, adapter: str, timeout: float = DEF
         target = failure_target(error, args)
         if target is None:
             return None
-        result = bounded_check(*target, adapter, timeout, failure_signals(error) or None)
-        return result.summary() if result else None
+        codes = failure_signals(error)
+        result = bounded_check(*target, adapter, timeout, codes or None)
+        # The site's Retry-After band stays on this machine: it only lengthens the wait in the line, never the request.
+        return result.summary(codes.get("retry_after")) if result else None
     except Exception:
         return None
 
@@ -267,7 +269,8 @@ async def anote_for(error: Any, args: Any = None, *, adapter: str, timeout: floa
         target = failure_target(error, args)
         if target is None:
             return None
-        result = await abounded_check(*target, adapter, timeout, failure_signals(error) or None)
-        return result.summary() if result else None
+        codes = failure_signals(error)
+        result = await abounded_check(*target, adapter, timeout, codes or None)
+        return result.summary(codes.get("retry_after")) if result else None
     except Exception:
         return None

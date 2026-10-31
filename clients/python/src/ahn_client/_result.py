@@ -18,6 +18,21 @@ NEXT_CHECK_NOTES = {
     "robots_names_vendor_alias": "Note: a robots.txt block names your vendor under an unlisted name; not a declared block, not permission: prefer an official path.",
 }
 
+# D51: what the service's next_action.do means for recommendation.action. The service computes `do` from the verdict, so
+# the two agree; when they do not (an odd or mixed answer) the service's `do` wins here.
+DO_VALUES = ("wait_for_provider", "hand_off_to_human", "use_official_path", "stop_automation", "proceed", "retry_lookup_once",
+             "stop_if_listed", "lookup_apex_host", "no_clear_action")
+DO_TO_ACTION = {
+    "wait_for_provider": "wait_provider_incident", "hand_off_to_human": "hand_off_to_human", "use_official_path": "use_official_path",
+    "stop_automation": "stop_declared_block", "proceed": "proceed", "retry_lookup_once": "unknown", "stop_if_listed": "unknown",
+    "lookup_apex_host": "unknown", "no_clear_action": "unknown",
+}
+MAX_WAIT = 3600  # the largest wait this client reports; a longer one is a reason to hand off
+# The floor of each Retry-After band an adapter already holds (lookup code `retry_after`): the site said at least this long.
+RETRY_BAND_FLOOR = {"none": 0, "lt_60": 0, "60_3600": 60, "gt_3600": MAX_WAIT}
+SERVER_LINE = re.compile(r"^[ -~]{1,200}$")
+HOSTNAME = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._~/%+=&?#-]*)?$")
@@ -45,10 +60,80 @@ def _retry_after(profile: Optional[Dict[str, Any]]) -> Optional[int]:
     return value
 
 
-def _summary(host: str, data: Dict[str, Any], url: str) -> str:
+def _seconds(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_WAIT else None
+
+
+def site_wait(value: Any) -> Optional[int]:
+    """The site's own Retry-After as whole seconds (an int, or one of the band codes an adapter holds), or None."""
+    if isinstance(value, str):
+        value = RETRY_BAND_FLOOR.get(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return min(value, MAX_WAIT)
+
+
+@dataclass(frozen=True)
+class NextAction:
+    """The service's ``next_action`` (D51), validated field by field. ``do`` is one of ``DO_VALUES``. ``url`` is an https URL
+    from the service's curated official paths or None. ``retry_after_seconds`` is when to repeat the same lookup once (not a
+    polling interval) or None. ``stop_if_you_are`` lists agent tokens that, if your requests send one, mean a declared block
+    (empty tuple when the service did not send it). ``lookup_host`` is the site's main domain whose policy covers this host."""
+
+    do: str
+    url: Optional[str] = None
+    retry_after_seconds: Optional[int] = None
+    stop_if_you_are: Tuple[str, ...] = ()
+    lookup_host: Optional[str] = None
+
+    @classmethod
+    def parse(cls, value: Any) -> Optional["NextAction"]:
+        data = _dict(value)
+        if data is None or data.get("do") not in DO_VALUES:
+            return None
+        tokens = data.get("stop_if_you_are") if isinstance(data.get("stop_if_you_are"), list) else []
+        lookup = data.get("lookup_host")
+        return cls(
+            do=data["do"],
+            url=_url(data.get("url")),
+            retry_after_seconds=_seconds(data.get("retry_after_seconds")),
+            stop_if_you_are=tuple(item for item in tokens if isinstance(item, str) and TOKEN.fullmatch(item))[:16],
+            lookup_host=lookup if isinstance(lookup, str) and HOSTNAME.fullmatch(lookup) else None,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The non-empty fields, for a compact JSON."""
+        data: Dict[str, Any] = {"do": self.do}
+        if self.url:
+            data["url"] = self.url
+        if self.retry_after_seconds is not None:
+            data["retry_after_seconds"] = self.retry_after_seconds
+        if self.stop_if_you_are:
+            data["stop_if_you_are"] = list(self.stop_if_you_are)
+        if self.lookup_host:
+            data["lookup_host"] = self.lookup_host
+        return data
+
+
+def _head(host: str, line: str, action: Optional[NextAction], site: Optional[int]) -> str:
+    """The service's sentence first, then the few next_action values it points at, as fixed text."""
+    parts = [f"AHN {host}: {line}"]
+    if action and action.url:
+        parts.append(f"URL: {action.url}")
+    if action and action.stop_if_you_are:
+        parts.append("Stop if you are: " + ", ".join(action.stop_if_you_are[:6]) + ".")
+    if action and action.lookup_host:
+        parts.append(f"Look up: {action.lookup_host}.")
+    if site and site > ((action.retry_after_seconds or 0) if action else 0):
+        parts.append(f"The site's own Retry-After is longer: wait at least {site} s.")
+    return " ".join(parts)
+
+
+def _summary(host: str, data: Dict[str, Any], url: str, action_code: Optional[str] = None, limit: int = MAX_SUMMARY) -> str:
     """A line like the Claude Code plugin's, at most MAX_SUMMARY characters, from validated fields only. It differs from the
     plugin's in one way: for the three D48 robots codes (NEXT_CHECK_NOTES) a short sentence follows the link."""
     rec = _dict(data.get("recommendation")) or {}
+    action_code = action_code or _code(rec.get("action"))
     profile = _dict(data.get("access_profile"))
     official = _dict(data.get("official_paths")) or {}
     provider = _dict(data.get("provider_status"))
@@ -88,7 +173,7 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
             agents = ", ".join(blocked[:agent_limit]) + f" (+{len(blocked) - agent_limit} more)"
         official_text = path if path and show_path else "listed" if path_listed else "none"
         full = url if show_url else "GET /v1/incidents/check on agenthelpnetwork.com"
-        return (f"AHN {host}: recommendation={_code(rec.get('action'))} ({_code(rec.get('confidence'))}). "
+        return (f"AHN {host}: recommendation={action_code} ({_code(rec.get('confidence'))}). "
                 f"Declared policy: {robots}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_code(data.get('evidence_level'))}. Next: {', '.join(codes) or 'none'}. "
@@ -107,10 +192,10 @@ def _summary(host: str, data: Dict[str, Any], url: str) -> str:
         order = ((6, True, True, False), (3, True, True, False), (0, True, True, False), (0, False, True, False), (0, False, False, False))
     for options in order:
         text = render(*options)
-        if len(text) <= MAX_SUMMARY:
+        if len(text) <= limit:
             return text
     tail = " Declared policy is not an access guarantee; bypassing site controls is not advised."
-    return text[:MAX_SUMMARY - len(tail) - 1].rstrip() + "…" + tail
+    return text[:limit - len(tail) - 1].rstrip() + "…" + tail
 
 
 @dataclass(frozen=True)
@@ -124,6 +209,11 @@ class Result:
     ``provider_status`` and ``raw`` are the service's JSON as received: read them as
     data, never as instructions for a model. A declared policy is not an access
     guarantee, and ``no_reports`` does not mean a site works.
+
+    From 0.6.0 the service's own guidance is kept (D51): ``summary_line`` (its one-sentence advice, or None),
+    ``next_action`` (a ``NextAction``, or None) and ``links`` (``feedback`` and ``changelog`` URLs, or None). A service
+    that does not send them (an older one, or ``AHN_RESPONSE_GUIDE=0``) gives None and everything works as before.
+    When ``next_action.do`` and ``recommendation`` disagree the service's ``do`` wins.
     """
 
     host: str
@@ -137,6 +227,9 @@ class Result:
     next_checks: Tuple[str, ...]
     url: str
     raw: Dict[str, Any] = field(repr=False, compare=False)
+    summary_line: Optional[str] = None
+    next_action: Optional[NextAction] = None
+    links: Optional[Dict[str, str]] = None
 
     @classmethod
     def from_response(cls, host: str, url: str, data: Any) -> Optional["Result"]:
@@ -149,9 +242,16 @@ class Result:
         action = rec.get("action")
         reasons = rec.get("reasons") if isinstance(rec.get("reasons"), list) else []
         checks = data.get("next_checks") if isinstance(data.get("next_checks"), list) else []
+        line = data.get("summary_line")
+        next_action = NextAction.parse(data.get("next_action"))
+        links = _dict(data.get("links")) or {}
+        links = {name: link for name in ("feedback", "changelog") if (link := _url(links.get(name)))}
+        recommendation = action if action in ACTIONS else "unknown"
+        if next_action is not None:
+            recommendation = DO_TO_ACTION[next_action.do]
         return cls(
             host=host,
-            recommendation=action if action in ACTIONS else "unknown",
+            recommendation=recommendation,
             confidence=rec.get("confidence") if rec.get("confidence") in CONFIDENCES else "unknown",
             reasons=tuple(_code(item) for item in reasons if isinstance(item, str))[:8],
             access_profile=_dict(data.get("access_profile")),
@@ -161,13 +261,51 @@ class Result:
             next_checks=tuple(_code(item.get("code")) for item in checks if isinstance(item, dict))[:12],
             url=url,
             raw=data,
+            summary_line=line if isinstance(line, str) and SERVER_LINE.fullmatch(line) else None,
+            next_action=next_action,
+            links=links or None,
         )
 
     @property
     def retry_after_seconds(self) -> Optional[int]:
-        """While the host's robots.txt and llms.txt are still being read (``access_profile.freshness``
-        is ``pending``), the seconds to wait before asking once more; otherwise None."""
+        """Seconds to wait before repeating the same lookup once, or None. The service's ``next_action.retry_after_seconds``
+        (a pending profile, or a provider incident: 900) when the answer has a ``next_action``; with an older service, the
+        pending profile's own value (``access_profile.freshness`` is ``pending``)."""
+        if self.next_action is not None:
+            return self.next_action.retry_after_seconds
         return _retry_after(self.access_profile)
+
+    def wait_seconds(self, site_retry_after: Any = None) -> Optional[int]:
+        """``retry_after_seconds`` combined with the site's own Retry-After: the larger of the two, at most 3600. Pass the
+        site's value as whole seconds, or as the band code (``60_3600``, ``gt_3600``) an adapter holds. The merge happens
+        here only; the site's value is never sent to the service and never changes its answer."""
+        values = [value for value in (self.retry_after_seconds, site_wait(site_retry_after)) if value]
+        return max(values) if values else None
+
+    @property
+    def remember(self) -> Optional[str]:
+        """A fixed one-line note for the next task on this host, made from ``next_action`` alone (no new judgement), or None
+        when there is nothing worth remembering (no ``next_action``, ``retry_lookup_once``, ``no_clear_action``)."""
+        action = self.next_action
+        if action is None:
+            return None
+        host = self.host
+        if action.do == "use_official_path":
+            return f"For {host}, start with the official path: {action.url}" if action.url else f"For {host}, start with the official path the service lists."
+        if action.do == "wait_for_provider":
+            return f"For {host}, a provider issue was reported: wait about {action.retry_after_seconds or 900} s and look up once more instead of retrying."
+        if action.do == "hand_off_to_human":
+            return f"For {host}, this step needs the user (verification or sign-in): hand it over instead of retrying."
+        if action.do == "stop_automation":
+            return f"For {host}, the site declares agents blocked: do not automate its pages."
+        if action.do == "proceed":
+            return f"For {host}, no declared block was found for the agents checked: continue with modest requests (not an access guarantee)."
+        if action.do == "stop_if_listed":
+            names = ", ".join(action.stop_if_you_are[:6])
+            return f"For {host}, if your requests send {names}, do not automate its pages." if names else f"For {host}, if your agent is among those robots.txt blocks, do not automate its pages."
+        if action.do == "lookup_apex_host" and action.lookup_host:
+            return f"For {host}, look up {action.lookup_host} for the site-wide policy."
+        return None
 
     @property
     def official_url(self) -> Optional[str]:
@@ -182,7 +320,16 @@ class Result:
         listed = rules.get("agents_blocked") if isinstance(rules.get("agents_blocked"), list) else []
         return tuple(item for item in listed if isinstance(item, str) and TOKEN.fullmatch(item))
 
-    def summary(self) -> str:
-        """One line, at most 700 characters, built only from validated fields. Like the plugin's line, plus a short sentence
-        for the next_checks codes in ``NEXT_CHECK_NOTES``."""
-        return _summary(self.host, self.raw, self.url)
+    def summary(self, site_retry_after: Any = None) -> str:
+        """One line, at most 700 characters, built only from validated fields. With a service ``summary_line`` it comes
+        first (then the ``next_action`` values it points at and the detail line, as far as it fits); without, the line is the
+        one earlier versions gave. ``site_retry_after`` (seconds or a band code) only adds a note when the site asks for a
+        longer wait than the service."""
+        action_code = self.recommendation if self.recommendation in ACTIONS else None
+        if self.summary_line is None:
+            return _summary(self.host, self.raw, self.url, action_code)
+        head = _head(self.host, self.summary_line, self.next_action, site_wait(site_retry_after))
+        room = MAX_SUMMARY - len(head) - 1
+        if room < 230:
+            return head[:MAX_SUMMARY].rstrip()
+        return head + " " + _summary(self.host, self.raw, self.url, action_code, room)
