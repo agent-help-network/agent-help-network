@@ -104,7 +104,7 @@ ENVELOPE_KEYS = frozenset({"schema_version", "kind", "record_id", "origin_operat
 PAYLOAD_KEYS = {
     "bundle_meta": frozenset({"title", "creator", "generated_at", "valid_until", "record_count", "counts", "license",
                               "license_url", "notice", "attribution", "third_party_quotes", "status_source_note",
-                              "schema_url", "includes", "excludes"}),
+                              "schema_url", "contribute_url", "includes", "excludes"}),
     # content_use: robots.txt Content-Signal/Content-Usage preferences, parsed from the same file (migration 021).
     "access_profile": frozenset({"site_host", "read_host", "robots_status", "robots", "robots_detail", "llms_txt_status",
                                  "llms_detail", "llms_txt_url", "llms_sha256", "content_use"}),
@@ -276,7 +276,7 @@ def meta_record(generated_at: datetime, counts: dict[str, int], creator: str) ->
                       f"To view a copy of this license, visit {LICENSE_URL}",
             "attribution": f"Source: {TITLE} by {creator} ({operator}), {export.iso(generated_at)}, CC BY 4.0",
             "third_party_quotes": THIRD_PARTY_QUOTES, "status_source_note": STATUS_SOURCE_NOTE,
-            "schema_url": SCHEMA_URL, "includes": list(KINDS), "excludes": list(EXCLUDED),
+            "schema_url": SCHEMA_URL, "contribute_url": f"https://{operator}/en/contribute", "includes": list(KINDS), "excludes": list(EXCLUDED),
         },
     )
 
@@ -414,12 +414,11 @@ def refresh_if_due(database_url: str, *, now: datetime | None = None, force: boo
 
     Switch off: delete the stored row, so nothing is left to serve if the web switch is turned on alone.
     """
-    import psycopg
     from psycopg.rows import dict_row
 
-    from .db import conninfo
+    from .db import connect_url
 
-    with psycopg.connect(conninfo(database_url), row_factory=dict_row) as conn:
+    with connect_url(database_url, row_factory=dict_row) as conn:
         if not enabled():
             deleted = conn.execute("DELETE FROM public_bundle").rowcount
             return {"skipped": "switch_off", "deleted": deleted}

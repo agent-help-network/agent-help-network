@@ -35,6 +35,6 @@
     </div>
   </header>
   <main id="main">{% block content %}{% endblock %}</main>
-  <footer class="site-footer"><div class="container"><span>{{ t.footer }}</span><div class="footer-links"><a href="/{{ lang }}/disclaimer">{{ t.nav_disclaimer }}</a><a href="/{{ lang }}/policy">{{ t.nav_policy }}</a><a href="/{{ lang }}/terms">{{ t.nav_terms }}</a><a href="/{{ lang }}/support">{{ t.nav_support }}</a><a class="language" href="/{{ other }}{{ suffix }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" lang="{{ other }}" aria-label="{{ '한국어로 보기' if other == 'ko' else 'View in English' }}">{{ '한국어' if other == 'ko' else 'English' }}</a></div></div></footer>
+  <footer class="site-footer"><div class="container"><span>{{ t.footer }}</span><div class="footer-links"><a href="/{{ lang }}/disclaimer">{{ t.nav_disclaimer }}</a><a href="/{{ lang }}/policy">{{ t.nav_policy }}</a><a href="/{{ lang }}/terms">{{ t.nav_terms }}</a><a href="/{{ lang }}/contribute">{{ t.nav_contribute }}</a><a href="/{{ lang }}/support">{{ t.nav_support }}</a><a class="language" href="/{{ other }}{{ suffix }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" lang="{{ other }}" aria-label="{{ '한국어로 보기' if other == 'ko' else 'View in English' }}">{{ '한국어' if other == 'ko' else 'English' }}</a></div></div></footer>
 </body>
 </html>

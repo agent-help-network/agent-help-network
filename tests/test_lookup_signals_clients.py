@@ -168,6 +168,16 @@ TABLE = [
     (502, {}, {"http_status": 502, "via": "http_fetch"}),
     (504, None, {"http_status": 504, "via": "http_fetch"}),
     (599, None, {"http_status": 599, "via": "http_fetch"}),
+    # AWS WAF's x-amzn-waf-action: a challenge on 403 and 451 (the lookup statuses it can reach); on 429 and 503 it is not one.
+    (403, {"x-amzn-waf-action": "challenge"}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
+    (403, {"X-Amzn-Waf-Action": " CAPTCHA "}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
+    (451, {"x-amzn-waf-action": ["allow", "captcha"]}, {"http_status": 451, "challenge": "header", "via": "http_fetch"}),
+    (403, {b"x-amzn-waf-action": b"challenge"}, {"http_status": 403, "challenge": "header", "via": "http_fetch"}),
+    (403, {"x-amzn-waf-action": "block"}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (403, {"x-amzn-waf-action": object()}, {"http_status": 403, "challenge": "none", "via": "http_fetch"}),
+    (429, {"x-amzn-waf-action": "challenge"}, {"http_status": 429, "challenge": "none", "retry_after": "none", "via": "http_fetch"}),
+    (503, {"x-amzn-waf-action": "captcha", "Retry-After": "30"},
+     {"http_status": 503, "challenge": "none", "retry_after": "lt_60", "via": "http_fetch"}),
     # Not looked up at all (the hook sends nothing), and no status code is reported for them.
     (404, {}, {"via": "http_fetch"}),
     (400, None, {"via": "http_fetch"}),
@@ -377,6 +387,38 @@ PAYLOADS = [row for status, headers, _ in TABLE for row in (post_tool_use(status
 ]
 
 
+@pytest.mark.parametrize("status,value,expected", [
+    (202, "challenge", "header"), (202, "captcha", "none"), (405, "captcha", "header"), (405, "challenge", "none"),
+    (403, "challenge", "header"), (403, "captcha", "header"), (451, "captcha", "header"), (403, "block", "none"),
+    (429, "challenge", "none"), (503, "captcha", "none"), (200, "challenge", "none"), (None, "challenge", "none"),
+    (True, "challenge", "none"), ("403", "challenge", "none"),
+    # exact values only: a substring or a longer word is not the marker
+    (403, "challenged", "none"), (202, "nochallenge", "none"), (405, "captchas", "none"), (405, "a captcha", "none"),
+    (202, "challenge,block", "none"), (451, "xcaptcha", "none"),
+])
+def test_aws_waf_challenge_agrees_and_depends_on_the_status(status, value, expected):
+    headers = {"X-Amzn-Waf-Action": value}
+    assert hook.challenge_code(headers, status) == _signals.challenge_code(headers, status) == expected
+    assert hook.AWS_WAF_HEADER == _signals.AWS_WAF_HEADER
+    assert hook.AWS_WAF_CHALLENGE_VALUES == _signals.AWS_WAF_CHALLENGE_VALUES
+
+
+def test_the_aws_header_is_not_read_without_a_status():
+    assert hook.challenge_code({"x-amzn-waf-action": "challenge"}) == _signals.challenge_code({"x-amzn-waf-action": "challenge"}) == "none"
+
+
+@pytest.mark.parametrize("status,value,expected", [
+    (403, "challenge", "human_verification"), (403, "captcha", "human_verification"), (451, "captcha", "human_verification"),
+    (403, "block", "site_access"), (429, "challenge", "service_error"), (503, "captcha", "service_error"),
+])
+def test_the_aws_header_decides_the_hook_error_class_like_diagnose(status, value, expected):
+    payload = post_tool_use(status, {"x-amzn-waf-action": value})
+    assert hook.failure(payload)[1] == expected == _claude_code.failure(payload)[1]
+    response = types.SimpleNamespace(status_code=status, headers={"x-amzn-waf-action": value})
+    assert ahn.diagnose(response)[0] == expected
+    assert ahn.diagnose(response)[2].get("challenge") == hook.signals(payload).get("challenge")
+
+
 @pytest.mark.parametrize("payload", PAYLOADS)
 def test_the_claude_agent_sdk_copy_gives_the_hooks_codes(payload):
     assert _claude_code.signals(payload) == hook.signals(payload)
@@ -562,16 +604,16 @@ def test_the_timeout_stays_two_seconds(monkeypatch):
 def test_versions_and_the_documents_name_the_codes():
     manifest = json.loads((ROOT / "plugins/claude-code/ahn/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.7"
-    assert ahn.__version__ == "0.5.0"
+    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.8"
+    assert ahn.__version__ == "0.6.2"
     plugin_readme = (ROOT / "plugins/claude-code/ahn/README.md").read_text(encoding="utf-8")
     client_readme = (ROOT / "clients/python/README.md").read_text(encoding="utf-8")
-    assert "version 0.3.7 |" in plugin_readme
+    assert "version 0.3.8 |" in plugin_readme
     for name in ("http_status", "challenge", "retry_after", "via"):
         assert f"`{name}`" in plugin_readme and f"`{name}`" in client_readme
     for value in ("lt_60", "60_3600", "gt_3600", "http_fetch", "browser", "header"):
         assert f"`{value}`" in plugin_readme and f"`{value}`" in client_readme
-    assert "ahn-client/0.5.0" in client_readme and "ahn-client/0.4.0" not in client_readme
+    assert "ahn-client/0.6.2" in client_readme and "ahn-client/0.4.0" not in client_readme
     # Nothing is promised that does not exist yet.
     for text in (plugin_readme, client_readme):
         assert "AHN_HOOK_FEEDBACK" not in text and "feedback token" not in text

@@ -38,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg.types.json import Jsonb
 
 from . import access_profile, status_refresh, status_scope
-from .db import connect
+from .db import as_utc, connect
 from .provenance import operator_id, vantage
 
 LOG = logging.getLogger(__name__)
@@ -162,6 +162,11 @@ def feed_next_due(row, idle: timedelta) -> datetime | None:
     fetched_at, error_at = row.get("fetched_at"), row.get("last_error_at")
     if fetched_at is None and error_at is None:
         return None
+    # Timestamps come back in the database session's zone. Adding a timedelta to a zone-aware datetime in a DST zone
+    # moves the wall clock, not the elapsed time (a day across a fall-back is 25 hours), so count in UTC.
+    # The session is UTC already (db.conninfo); this stays as a guard, and a naive value is an error, not local time.
+    fetched_at = as_utc(fetched_at) if fetched_at is not None else None
+    error_at = as_utc(error_at) if error_at is not None else None
     # An incident-history reading (D52) has no indicator; with an open incident it makes the answer wait (D57), so it
     # is read on the active interval too, and a resolved incident stops the wait within about FEED_RETRY_MINUTES.
     indicator = row.get("indicator")

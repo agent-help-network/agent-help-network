@@ -29,10 +29,44 @@ except Exception as exc:
     if error_class:  # None: a 404 or a bad request, not a block or an outage
         answer = ahn.check(url, error_class, stage, **ahn.signals(exc))   # a hostname and enum codes leave your machine
         if answer:
-            print(answer.recommendation, answer.official_url)
+            print(answer.summary())            # the service's own advice first (0.6.0), e.g. "Wait instead of retrying ..."
+            wait = answer.wait_seconds()       # seconds before one more lookup (provider wait or profile being read), or None
+            if answer.next_action and answer.next_action.do == "use_official_path":
+                print(answer.next_action.url)
 ```
 
+Since 0.6.0 the answer keeps what the service already says about what to do now (D51), instead of rebuilding it from the six `recommendation` values:
+
+```python
+answer.summary_line        # the service's one sentence, or None (an older service)
+answer.next_action         # NextAction(do, url, retry_after_seconds, stop_if_you_are, lookup_host), or None
+answer.links               # {"feedback": ..., "changelog": ...}, or None
+answer.remember            # one fixed sentence for the next task on this host, made from next_action alone, or None
+answer.wait_seconds(site_retry_after)   # max(site's Retry-After, service's wait), computed here, at most 3600
+```
+
+`next_action.do` is one of `wait_for_provider`, `hand_off_to_human`, `use_official_path`, `stop_automation`, `proceed`, `retry_lookup_once`, `stop_if_listed`, `lookup_apex_host`, `no_clear_action`. `stop_if_listed` is not a plain `unknown`: if your requests send one of `next_action.stop_if_you_are`, stop retrying pages. `retry_after_seconds` is when to repeat the same lookup **once**, not a polling interval. After a stop, a hand-off or an official path (`stop_automation`, `stop_if_listed`, `hand_off_to_human`, `use_official_path`) `retry_after_seconds` is `None` and `wait_seconds()` returns `None`: there is nothing to wait for. `recommendation` is always the service's verdict. The site's own Retry-After is merged on your machine only, and only for the "come back later" answers (so `stop_if_listed`, which says "stop if you are listed", never carries a site wait; an older service is judged by `recommendation` the same way); `lookup_again_seconds` is the pending profile's own value for the one repeat lookup; it is not sent to the service and does not change its answer. Against an older service, or with `AHN_RESPONSE_GUIDE=0`, the three keys are `None` and `summary()` is the line earlier versions gave.
+
 Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/playwright_example.py), [`examples/browser_use_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
+
+## Diagnose a response
+
+Playwright's `page.goto`, `page.request`, httpx and requests hand back a 403 or a challenge page as an ordinary response, not as an exception, so `classify(exc)` never sees it. `ahn.diagnose(response)` reads such an object (`status_code` or `status`, `headers`, `text` or `content`; nothing is imported, nothing is installed) and gives the lookup's codes:
+
+```python
+response = page.goto(url)                       # or httpx.get(url), requests.get(url)
+error_class, stage, found = ahn.diagnose(response)
+if error_class:                                 # None: not a block or an outage
+    answer = ahn.check(url, error_class, stage, **found)
+    if answer:
+        print(answer.summary())
+```
+
+- 401 and 407 give `login_auth`; 402, 403 and 451 `site_access`; 408, 429 and 5xx `service_error`. A 403 or 451 with `cf-mitigated: challenge` or `x-amzn-waf-action`, or a human-check marker in the first 4,000 characters of the body, is `human_verification`.
+- AWS WAF marks its CAPTCHA and Challenge responses with the header `x-amzn-waf-action` (`captcha` with status 405, `challenge` with status 202; [AWS documentation](https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html)). With that header a 202 or 405 is `human_verification` and `found["challenge"]` is `header`; on a 403 or 451 the header (`challenge` or `captcha`) counts the same way, and `ahn.signals(exc)` reads it too (from 0.6.2). On a 429, a 503 or any other status it is not a challenge.
+- A 200 whose page `<title>` looks like a human check (for example "Just a moment...") is only a hint: `error_class` stays `None`, so the example above does not look it up, and the returned value has `.candidate == True` and `.hint == "human_verification"`. Decide yourself whether to look up with that class.
+- The body is read on your machine only, for a few marker words, and is never sent, stored or returned; `challenge` comes from headers only. A body that is not an attribute (Playwright's `response.text()`) can be passed as `ahn.diagnose(response, body=text)`.
+- When robots.txt asks for a delay between requests, `Result.summary()` ends with "robots.txt asks N s between requests" (`Result.crawl_delay_seconds`).
 
 ## Framework adapters
 
@@ -101,7 +135,7 @@ Registers a [`PostToolUseFailure`](https://code.claude.com/docs/en/agent-sdk/hoo
 
 ### Browser Use: example
 
-[`examples/browser_use_actions_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_actions_example.py) adds a custom action the model calls on a block page (`@tools.action`) and an `on_step_end` hook that reports a block page's answer to the developer. Browser Use documents no way for a hook to add text to the model's context, so only the action reaches the model.
+[`examples/browser-use/`](https://github.com/agent-help-network/agent-help-network/tree/main/examples/browser-use) registers a custom action the model calls on a block page (`@tools.action`) and turns each `next_action.do` into the text the model reads, including the one repeat lookup after `retry_lookup_once`. [`examples/browser_use_hook_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_hook_example.py) is the smaller `on_step_end` hook that reports a block page's answer to the developer only: Browser Use documents no way for a hook to add text to the model's context.
 
 Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1` and `AHN_CLIENT_SKIP_HOSTS` apply to the adapters too.
 
@@ -109,7 +143,8 @@ Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1
 
 - `ahn.check(host_or_url, error_class=None, failure_stage=None, *, timeout=4.0, adapter=None, http_status=None, challenge=None, retry_after=None, via=None, agent_vendor=None) -> Result | None` — asks about the host of a hostname or URL. `adapter` is for integrations: a short lowercase name (such as `langchain`) that is added to the User-Agent and changes nothing else. `http_status`, `challenge`, `retry_after` and `via` (from 0.4.0) are the optional codes in [What it sends](#what-it-sends); a value outside their lists is dropped and the lookup still happens. `agent_vendor` (from 0.5.0) names the vendor of your own fetcher, see [What it sends](#what-it-sends); unlike the codes it raises `ValueError` for a value outside its list, before anything is sent. Returns `None`, without raising, when there is no answer: network error, timeout, unreadable response, or a host that is never looked up (see below).
 - `ahn.classify(exc_or_text, host=None) -> (error_class | None, failure_stage | None)` — maps an exception or a message to `human_verification`, `login_auth` (401, 407), `service_error` (408, 429, 5xx, timeout) or `site_access` (402, 403, 451, refused or unresolvable connection), and to `before_target_response` when no connection to the site was made, or `response_observed` when an HTTP status came back. It reads exception class names and messages as text, so Playwright's `TimeoutError`, `httpx`/`requests`/`aiohttp` errors and similar are recognised without importing those libraries. The rules are those of the [Claude Code plugin](https://github.com/agent-help-network/agent-help-network/blob/main/plugins/claude-code/ahn/README.md). `host`, when given, is the hostname the error is about; tokens naming it are ignored, so `login.example.com` is not read as a login wall (from 0.3.0). From version 0.2.1 there is no default class: an error that is neither a block nor an outage (404, 410, 400, 422 and every other 4xx outside the list above, or a message that names nothing) gives `(None, None)`, and the caller should not look it up, because a mistyped address is not a site that refuses agents.
-- `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, and `summary()`, a one-line text of at most 700 characters, like the line the plugin prints (plus a short sentence for the three D48 robots codes, see below).
+- `Result` — `recommendation` (`proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, `unknown`), `confidence`, `reasons`, `access_profile`, `official_paths`, `provider_status`, `evidence_level`, `next_checks` (check codes), `raw` (the full JSON), `official_url`, `blocked_agents`, `summary_line`, `next_action`, `links`, `remember`, `retry_after_seconds`, `wait_seconds(site_retry_after=None)` (all from 0.6.0) and `summary(site_retry_after=None)`, a one-line text of at most 700 characters, like the line the plugin prints (plus a short sentence for the three D48 robots codes, see below).
+- `ahn.diagnose(response, body=None) -> (error_class | None, failure_stage | None, signals)` (from 0.6.2 on PyPI) — the same codes for a Playwright, httpx or requests response object (see [Diagnose a response](#diagnose-a-response)); the result has `.candidate`.
 - `ahn.signals(exc, *, via=None) -> dict` — the optional codes an exception already holds, ready for `check`: `ahn.check(url, error_class, stage, **ahn.signals(exc))`. It reads the HTTP status the exception carries (httpx and requests `.response.status_code`, aiohttp `.status`), that response's headers, and the exception's module (`httpx`, `requests`, `aiohttp`, `urllib` give `http_fetch`; `playwright`, `selenium`, `pyppeteer`, `browser_use` give `browser`). Pass `via="browser"` or `via="http_fetch"` when you know better. A code it cannot know is left out: the result is `{}` for text, and for an exception without an HTTP status in the lists it holds at most `via`. An empty headers object counts as not seen, so `challenge` and `retry_after` are left out. It never raises. The framework adapters and `ahn_hooks()` do this for you.
 - `ahn.clear_cache()` — forget cached answers.
 
@@ -121,10 +156,10 @@ At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
-User-Agent: ahn-client/0.5.0 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.6.2 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.5.0 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.6.2 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
 - From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
@@ -132,7 +167,7 @@ The adapters send `User-Agent: ahn-client/0.5.0 (+langchain; +https://agenthelpn
   | Parameter | Values | Source |
   | :- | :- | :- |
   | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the status the exception or hook payload carries |
-  | `challenge` | `header`, `none` | `header` when a `cf-mitigated` response header contains `challenge`, `none` when there are headers without it; left out when there is no headers object |
+  | `challenge` | `header`, `none` | `header` when a `cf-mitigated` response header contains `challenge`, or (from 0.6.2) an `x-amzn-waf-action` header is `challenge` or `captcha` on a 403 or 451; `none` when there are headers without it; left out when there is no headers object |
   | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | for 429 and 503 with a headers object: the `Retry-After` seconds as a band; a date, a missing or an unreadable header is `none` |
   | `via` | `http_fetch`, `browser`, `unknown` | `http_fetch` for httpx, requests, aiohttp and urllib errors, `browser` for Playwright, Selenium and similar errors, or what you pass; left out when unknown. The Claude Agent SDK adapter reads it from the tool's name like the plugin |
 
@@ -151,7 +186,7 @@ The adapters send `User-Agent: ahn-client/0.5.0 (+langchain; +https://agenthelpn
 | `AHN_CLIENT_DISABLE=1` | `check` never sends anything |
 | `AHN_CLIENT_SKIP_HOSTS=corp.example.com,other.example.org` | Never look up these hosts or their subdomains |
 
-Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk. From version 0.2.0, an answer whose declared policy is still being read (`access_profile.freshness` is `pending`, next check `profile_pending`) is kept only for its `retry_after_seconds` (`Result.retry_after_seconds`), so the one repeat lookup the service asks for reaches it, and the summary line says when to look once more. Redirects from the service are not followed.
+Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk. From version 0.2.0, an answer whose declared policy is still being read (`access_profile.freshness` is `pending`, next check `profile_pending`) is kept only for the profile's own `retry_after_seconds`, whatever `next_action` says, so the one repeat lookup the service asks for reaches it, and the summary line says when to look once more. Redirects from the service are not followed.
 
 ## Development
 

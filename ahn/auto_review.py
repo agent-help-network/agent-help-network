@@ -10,9 +10,9 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-import psycopg
 from psycopg.rows import dict_row
 
+from .db import connect_url
 from .service import aggregate_eligible_host, policy_host
 
 
@@ -80,7 +80,7 @@ def review_batch(database_url: str, *, now: datetime | None = None, limit: int =
         raise ValueError("limit must be 1-500")
     now = now or datetime.now(timezone.utc)
     result = {"published": 0, "held": 0}
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+    with connect_url(database_url, row_factory=dict_row) as conn:
         acquired = conn.execute("SELECT pg_try_advisory_xact_lock(81260531003) AS ok").fetchone()["ok"]
         if not acquired:
             return result
