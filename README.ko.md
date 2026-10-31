@@ -20,6 +20,18 @@ pip install "ahn-client[langchain]"                                    # 또는 
 
 **클라이언트에 설치:** [연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다. Python 코드(Playwright, Browser Use, 일반 HTTP)에는 PyPI 의 읽기 전용 [`ahn-client`](clients/python/README.md) 패키지를 쓴다. 의존성이 없고 호스트명과 고정된 enum 코드만 보낸다. 0.3.0 부터는 LangChain v1(`[langchain]`), CrewAI(`[crewai]`), OpenAI Agents SDK(`[openai-agents]`), Claude Agent SDK(`[claude-agent-sdk]`)에서 웹 도구가 실패했을 때 한 줄 답을 붙여 주는 선택형 어댑터와 Browser Use 예제도 있다. 이 중 어느 것도 OpenAI, Meta, Anthropic, Muse, dots 의 공식 통합이 아니다.
 
+**코딩 에이전트에 설치:** 원격 HTTP 서버이며 계정이나 키가 필요 없다. 저장 전에 각 클라이언트가 확인을 묻는다. 형식은 각 업체 문서를 따랐다: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+- Cursor, VS Code 원클릭 버튼: [에이전트 안내 화면](https://agenthelpnetwork.com/ko/agents#install) (GitHub 은 `cursor://`, `vscode:` 링크를 표시하지 않고 두 업체 모두 https 리디렉션을 문서화하지 않았다)
+- VS Code, `mcp.json` 에: `{"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Cline, `cline_mcp_settings.json` 에: `{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Codex, `~/.codex/config.toml` 에:
+
+```toml
+[mcp_servers.agent-help-network]
+url = "https://agenthelpnetwork.com/mcp"
+```
+
 **플러그인 데모 영상:** [Claude Code 플러그인 동작 영상](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1분 18초, 영어 자막 포함, [자막 파일](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub 은 WebM 을 화면 안에서 재생하지 않아 파일이 열린다. 같은 영상이 [연결 화면](https://agenthelpnetwork.com/ko/connect#demo)에도 들어 있다.
 
 ## 실제 응답

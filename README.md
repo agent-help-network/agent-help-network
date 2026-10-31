@@ -23,6 +23,18 @@ pip install "ahn-client[langchain]"                                    # or [cre
 
 **Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and enum codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a Browser Use example. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
 
+**Install in your coding agent:** remote HTTP server, no account or key. Each client asks you to confirm before saving. Formats are from each vendor's docs: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+- Cursor and VS Code one-click buttons: the [connect page](https://agenthelpnetwork.com/en/agents#install) (GitHub does not render `cursor://` or `vscode:` links, and the vendors document no https redirect for them)
+- VS Code, in `mcp.json`: `{"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Cline, in `cline_mcp_settings.json`: `{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}`
+- Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.agent-help-network]
+url = "https://agenthelpnetwork.com/mcp"
+```
+
 **Plugin demo video:** [watch the Claude Code plugin work](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.webm) (WebM, 1 min 18 s, with English captions; [captions file](https://cdn.jsdelivr.net/gh/agent-help-network/agent-help-network@1d2c2dd0693259ebd6701277e81b04290958a959/docs/media/agent-help-network-demo-v4.vtt)). GitHub does not play WebM inline, so this opens the file; the same video is embedded on the [connect page](https://agenthelpnetwork.com/en/connect#demo).
 
 ## A real response
