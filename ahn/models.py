@@ -410,6 +410,12 @@ class OfficialAccess(StrictModel):
     sandbox_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
     openapi_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
     official_mcp: list[AccessMcp] | None = Field(**_ABSENT, min_length=1)
+    # Official alternative paths to the same information (D60). Curated links only: the service never reads these URLs,
+    # and they never change `recommendation` or `next_checks`.
+    feeds: list[Annotated[str, Field(pattern=HTTPS_URL, max_length=300)]] | None = Field(**_ABSENT, min_length=1, max_length=3)
+    llms_full_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
+    docs_repo: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
+    data_export_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
     terms: AccessTerms | None = Field(**_ABSENT)
     verified_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
