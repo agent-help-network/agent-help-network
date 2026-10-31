@@ -623,12 +623,14 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "official_paths": official,
             "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                                              provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
-                                             vendor_aware=settings.vendor_aware_block),
+                                             vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
+                                             proceed_without_failure=settings.proceed_without_failure),
             "failure_stage": failure_stage,
             "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                        profile_not_read=profile_not_read, host_facts=host_facts,
                                        provider_partial=provider_partial, now=now, agent_vendor=agent_vendor,
-                                       vendor_aware=settings.vendor_aware_block),
+                                       vendor_aware=settings.vendor_aware_block,
+                                       proceed_without_failure=settings.proceed_without_failure),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
@@ -636,7 +638,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
             try:
-                result.update(response_guide.guide(result))
+                result.update(response_guide.guide(result, settings.proceed_without_failure))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if (issue_feedback and settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
@@ -684,11 +686,13 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
     official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
-                             vendor_aware=settings.vendor_aware_block)
+                             vendor_aware=settings.vendor_aware_block,
+                             proceed_without_failure=settings.proceed_without_failure)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
                                    "provider_status": provider_status, "official_paths": official,
                                    "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
-                                                            if official_page else None)})
+                                                            if official_page else None)},
+                                  settings.proceed_without_failure)
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
     return {

@@ -44,7 +44,7 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.8 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.9 |
 | `.claude-plugin/icon.png` | Listing icon (512 x 512 PNG, same design as the site icon) |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |

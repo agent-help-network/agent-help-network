@@ -60,6 +60,8 @@ class Settings:
     # AHN_LOOKUP_FEEDBACK=0 leaves the one-time feedback token out of blocked-lookup answers (D58). Tokens already issued
     # can still be sent back until they expire. On by default.
     lookup_feedback: bool = True
+    # AHN_PROCEED_WITHOUT_FAILURE=0 restores the answers from before D63: the recommendation, the next_checks codes and texts, the summary line, next_action.url and customer_url. On by default.
+    proceed_without_failure: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -109,4 +111,5 @@ class Settings:
                    response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0",
                    public_board=public_board, public_board_since=public_board_since,
                    public_board_ahn_check=public_board_ahn_check,
-                   lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0")
+                   lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0",
+                   proceed_without_failure=os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", "").strip() != "0")

@@ -48,7 +48,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 ```json
 {
   "site_host": "github.com",
-  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation.",
   "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
   "links": {
     "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
@@ -162,9 +162,9 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 | `unknown` | `refused` 이고 공식 경로가 없다(사유 `robots_fetch_refused`). 비슷한 환경의 페이지 자동화도 거절될 것으로 본다. | medium |
 | `use_official_path` | 부분 차단이나 와일드카드 단독 금지(아래)이고 공식 경로가 있다. | medium |
 | `unknown` | 부분 차단이나 와일드카드 단독 금지이고 공식 경로가 없다(사유 `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`). 허락으로 읽지 않는다. | low |
-| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` 다. | medium |
-| `proceed` | `robots.txt` 를 읽었고 답이 판정한 토큰에 대한 금지가 없다(`robots_allows_agents`, 다른 에이전트의 토큰만 막혔으면 `robots_blocks_not_your_agent`). 선언된 허용도 접근 보장은 아니다. | low |
-| `unknown` | 선언된 정책을 읽지 못했거나(사유 `robots_unknown`), 호스트명이 정책을 읽지 않는 서브도메인·테넌트 호스트다(사유 `profile_not_read`, apex 호스트로 조회). 허용이 아니라 미상으로 둔다. | low |
+| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` 다(D63 뒤로는 실패 신호가 있거나 robots 가 clear 가 아닐 때만). | medium |
+| `proceed` | `robots.txt` 를 읽었고 답이 판정한 토큰에 대한 금지가 없다(`robots_allows_agents`, 다른 에이전트의 토큰만 막혔으면 `robots_blocks_not_your_agent`). 선언된 허용도 접근 보장은 아니다. robots.txt 가 없는 경우(`absent`, 선언된 제한 없음)도 같고, 실패 신호 없이 조회하면 공식 경로가 있어도 여기에 온다(D63). | low |
+| `unknown` | 선언된 정책을 읽지 못했거나(사유 `robots_unknown`), 호스트명이 정책을 읽지 않는 서브도메인·테넌트 호스트다(사유 `profile_not_read`, apex 호스트로 조회). 선언을 알 수 없다. 차단도, 제한 없음 선언도 아니다. | low |
 
 `reasons` 는 `next_checks` 에도 나오는 코드다. "공식 경로가 있다"는 `official_paths` 항목에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다. **차단 선언**(D48)은 루트를 금지하는 `robots.txt` 그룹이 호출자 벤더(`agent_vendor`)의 판정 토큰(사용자 대리 페처, 그런 토큰이 없으면 검색 크롤러)을, 벤더를 보내지 않았으면 나열된 모든 벤더의 판정 토큰을 지목한 경우다. 벤더를 보내지 않았고 일부 벤더만 막혔으면 **부분 차단**이다: 답은 `unknown`(공식 경로가 있으면 medium 의 공식 경로)과 `robots_blocks_some_agents` 이며, 자기 요청이 `agents_blocked` 의 토큰으로 자신을 밝히면 멈추라는 뜻이다. 벤더의 에이전트를 옛 이름·변형 이름으로만 지목한 그룹(`robots.vendor_aliases_blocked`, 예: `claude-web`)은 `robots_names_vendor_alias` 를 주고 `proceed` 를 주지 않는다. **와일드카드 단독 금지**는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)이 루트를 금지하고, 에이전트 UA·검색 크롤러 토큰 가운데 어떤 그룹도 지목하지 않아 그 와일드카드에 해당하는 토큰이 하나 이상 있으며, 그런 토큰을 지목한 그룹 중 루트를 금지하는 것은 없는(그것은 차단 선언이다) 파일이다. 토큰을 지목해 허용한 그룹이나 학습 크롤러 금지는 이 판정을 바꾸지 않는다. 차단 선언이 아니며 `robots_wildcard_disallow` 로 보고하고, "에이전트를 허용함"으로 읽지 않는다. `agents_blocked` 는 학습 크롤러를 포함해 루트 금지가 명시된 모든 토큰을 나열하지만 학습 크롤러는 차단 선언으로 세지 않는다. 영어 README 의 예시에서 `Bytespider`(학습 크롤러)는 차단돼 있지만 학습 크롤러는 차단 선언이 아니므로 medium 신뢰도의 공식 경로 행이 적용된다.
 

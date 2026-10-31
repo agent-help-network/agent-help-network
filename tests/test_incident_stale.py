@@ -148,7 +148,7 @@ def test_components_only_is_unchanged():
         assert recommendation(None, s, None, None, now=NOW + timedelta(days=400)) == expected
         # The partial flag is never set for components_only (no incident to compare), and the row ignores it anyway.
         assert recommendation(None, s, None, None, provider_regional=True, now=NOW) == expected
-        assert codes(next_checks(None, s, "no_reports", now=NOW))[1] == "provider_components_only"
+        assert codes(next_checks("site_access", s, "no_reports", now=NOW))[1] == "provider_components_only"
 
 
 MEDIUM = {"action": "wait_provider_incident", "confidence": "medium"}
@@ -165,7 +165,7 @@ def test_confidence_is_never_lower_with_an_incident_than_without_one():
         s = status("major", impact="minor", updated=NOW - age)
         assert status_scope.scope_partial("major", 1, "minor", False)
         assert recommendation(None, s, None, None, provider_regional=False, now=NOW) == {**MEDIUM, "reasons": [reason]}
-        checks = codes(next_checks(None, s, "no_reports", provider_partial=True, now=NOW))
+        checks = codes(next_checks("site_access", s, "no_reports", provider_partial=True, now=NOW))
         assert checks[1:3] == [reason, "provider_scope_partial"]
 
 
@@ -177,7 +177,7 @@ def test_only_a_regional_scope_lowers_a_wait_to_low():
     stale_above = status("critical", impact="minor")
     assert recommendation(None, stale_above, None, None, provider_regional=True, now=NOW)["confidence"] == "low"
     # The reasons stay codes that next_checks also carries.
-    checks = codes(next_checks(None, fresh, "no_reports", provider_partial=True, now=NOW))
+    checks = codes(next_checks("site_access", fresh, "no_reports", provider_partial=True, now=NOW))
     assert checks[1:3] == ["provider_scope", "provider_scope_partial"]
 
 

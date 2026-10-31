@@ -10,7 +10,7 @@ def test_old_reports_do_not_claim_no_reports_exist():
 
 
 def test_unspecified_failure_starts_with_locating_the_response():
-    checks = next_checks(None, None, "no_reports")
+    checks = next_checks("site_access", None, "no_reports")
     assert checks[0]["code"] == "locate_failure_stage"
     assert "before attributing a site failure" in checks[0]["text"]
 
@@ -42,12 +42,12 @@ def test_maintenance_is_waited_out_like_minor_but_says_it_is_scheduled_maintenan
     maintenance = {"freshness": "fresh", "indicator": "maintenance"}
     assert recommendation("site_access", maintenance, None, None) == recommendation("site_access", minor, None, None)
     assert recommendation("site_access", maintenance, None, None)["action"] == "wait_provider_incident"
-    checks = next_checks(None, maintenance, "no_reports")
+    checks = next_checks("site_access", maintenance, "no_reports")
     assert [item["code"] for item in checks] == ["locate_failure_stage", "provider_scope", "reports_unknown"]
     text = checks[1]["text"]
     assert "scheduled maintenance" in text and "retrying in a loop" in text
     # Existing values keep their text.
-    assert next_checks(None, minor, "no_reports")[1]["text"] == CHECKS["provider_scope"]
+    assert next_checks("site_access", minor, "no_reports")[1]["text"] == CHECKS["provider_scope"]
     assert "scheduled maintenance" not in CHECKS["provider_scope"]
 
 

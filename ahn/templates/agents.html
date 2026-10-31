@@ -39,9 +39,9 @@ url = "https://agenthelpnetwork.com/mcp"</code></pre>
       <p>{{ 'An answer, trimmed to the keys to read first (values change; call the service rather than copying this):' if lang == 'en' else '먼저 읽을 키만 줄인 응답입니다(값은 달라지므로 복사하지 말고 서비스를 호출하세요).' }}</p>
       <pre class="ledger-code"><code>{
   "site_host": "github.com",
-  "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
-  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
-  "recommendation": {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]},
+  "summary_line": "robots.txt does not block any listed agent vendor at the site root. Continue with modest requests; not an access guarantee. A developer API is also listed (official_paths).",
+  "next_action": {"do": "proceed", "url": null, "retry_after_seconds": null},
+  "recommendation": {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents", "official_path_available"]},
   "current_site_status": "unknown",
   "evidence_level": "no_reports"
 }</code></pre>

@@ -342,9 +342,11 @@ def test_switch_off_matches_the_previous_code_on_random_profiles():
         for official in officials:
             for error_class in (None, "site_access", "service_error", "human_verification", "login_auth"):
                 for vendor in (None, "anthropic", "google", "other"):
-                    assert recommendation(error_class, None, prof, official, agent_vendor=vendor, vendor_aware=False) == \
+                    assert recommendation(error_class, None, prof, official, agent_vendor=vendor, vendor_aware=False,
+                                          proceed_without_failure=False) == \
                         _previous_recommendation(error_class, None, prof, official)
-                    assert next_checks(error_class, None, "no_reports", None, prof, official, agent_vendor=vendor, vendor_aware=False) == \
+                    assert next_checks(error_class, None, "no_reports", None, prof, official, agent_vendor=vendor, vendor_aware=False,
+                                      proceed_without_failure=False) == \
                         _previous_next_checks(error_class, None, "no_reports", None, prof, official)
 
 
@@ -463,7 +465,7 @@ def test_agent_vendor_is_never_stored():
 # --- The code before D48, frozen (ahn/triage.py at 1cad565). AHN_VENDOR_AWARE_BLOCK=0 must answer exactly like it. ----
 
 _PREVIOUS_KINDS_FOR_BLOCK = {"user_agent", "search_crawler"}
-_PREVIOUS_CHECKS = {**CHECKS,
+_PREVIOUS_CHECKS = {**CHECKS, "robots_unknown": triage.ROBOTS_UNKNOWN_BEFORE,
                     "robots_blocks_agents": "This host's robots.txt explicitly disallows one or more agent user agents at the site root (see access_profile.robots.agents_blocked). Treat it as the host's declared policy: stop automated retries against pages, prefer an official path, and hand the step to the user where their participation is needed.",
                     "robots_allows_agents": "This host's robots.txt does not disallow the listed agent user agents at the site root. Declared crawler policy is not an access guarantee; CDN challenges and rate limits can still apply, so keep requests modest and honor any Crawl-delay."}
 
