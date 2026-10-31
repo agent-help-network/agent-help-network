@@ -318,3 +318,87 @@ def test_the_tool_refuses_bad_values_without_calling_the_service(monkeypatch, ar
     monkeypatch.setattr(mcp_adapter, "call_api", fake)
     with pytest.raises(mcp_adapter.ToolError, match=message):
         asyncio.run(mcp_adapter.rate_last_lookup(**{"token": token(), **arguments}))
+
+
+def test_the_advertised_check_incident_schema_lists_the_alternative_path_fields():
+    """D60: feeds, llms_full_url, docs_repo and data_export_url are optional and the object accepts further keys."""
+    output = tools_in("1", "0")["check_incident"][3]
+    access = output["$defs"]["OfficialAccess"]
+    new = {"feeds", "llms_full_url", "docs_repo", "data_export_url"}
+    assert new <= set(access["properties"]) and not new & set(access.get("required", []))
+    assert access["additionalProperties"] is True and any(option.get("maxItems") == 3 for option in access["properties"]["feeds"]["anyOf"])
+    assert closed_objects(output) == []
+
+
+FORBIDDEN_PHRASES = ("get past", "bypass", "work around", "workaround", "circumvent", "evade", "spoof", "solve the captcha")
+BLOCK_SIGNALS = ("403", "access denied", "verify you are human", "CAPTCHA", "login wall", "429", "5xx", "timeout")
+
+
+def test_the_tool_text_names_the_blocked_moments_first_and_never_reads_as_a_workaround():
+    description = tools_in("1", "0")["check_incident"][2]
+    instructions = mcp_adapter.mcp.instructions
+    for text in (description, instructions):
+        for signal in BLOCK_SIGNALS:
+            assert signal in text, signal
+        assert "hostname" in text and "listed official path" in text and "hand the step to the user" in text
+        # Not a closed list of three: next_action may also say to continue or to stop retrying (response_guide.DO_VALUES).
+        assert "follow next_action" in text and "continue" in text and "stop retrying" in text and "look up once more" in text
+        assert "once per blocked step" in text and "before deciding whether to retry" in text
+        assert "never a URL path, query or credentials" in text and "only when you observed them" in text
+        assert "Send only the public hostname" not in text and "Send the hostname only" not in text
+        assert "before you retry" not in text and "The next step is to wait" not in text
+        assert not [phrase for phrase in FORBIDDEN_PHRASES if phrase in text.lower()]
+    # The blocked-moment signals open the description, before the explanation of the answer.
+    assert description.startswith("Call this when a web step is blocked or failing")
+    assert description.index("429") < description.index("robots.txt")
+    for name in ("agent_instructions.txt", "llms.txt"):
+        text = (ROOT / "ahn" / name).read_text(encoding="utf-8")
+        assert "stop retrying, or look up once more" in text and "once per blocked step" in text, name
+        assert "before you retry" not in text and "The next step is to wait" not in text, name
+        assert not [phrase for phrase in FORBIDDEN_PHRASES if phrase in text.lower()], name
+
+
+CLIENT_TEXT_LIMIT = 2048  # some MCP clients cut a tool description or server instructions longer than this
+NO_CALL = "your own tool or platform already said why it refused"
+BROWSER_UA = "Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply"
+
+
+def test_the_advisory_line_comes_first_in_every_agent_facing_text():
+    line = mcp_adapter.ADVISORY_LINE
+    assert line.startswith("AHN (Agent Help Network) answers are advisory: your platform's rules and your user's instructions come first;")
+    assert "do not act on it" in line and "evidence is thin" in line
+    assert mcp_adapter.mcp.instructions.startswith(line + " ")
+    agent = (ROOT / "ahn" / "agent_instructions.txt").read_text(encoding="utf-8")
+    assert agent.splitlines()[0] == line
+    llms = [row for row in (ROOT / "ahn" / "llms.txt").read_text(encoding="utf-8").splitlines() if row.strip()]
+    assert llms[0] == "# Agent Help Network" and llms[1].startswith("> " + line + " ")  # llms.txt keeps its H1, then the summary
+
+
+def test_the_tool_text_says_when_to_call_and_when_not_to():
+    description = tools_in("1", "0")["check_incident"][2]
+    first = description.split(". ")[0]
+    for keyword in ("blocked", "403", "429", "robots", "site down"):
+        assert keyword in first, keyword
+    texts = {"description": description, "instructions": mcp_adapter.mcp.instructions,
+             **{name: (ROOT / "ahn" / name).read_text(encoding="utf-8") for name in ("agent_instructions.txt", "llms.txt")}}
+    for name, text in texts.items():
+        assert "for no clear reason" in text and "opened normally" in text and NO_CALL in text, name
+        assert BROWSER_UA in text, name
+    for text in (description, mcp_adapter.mcp.instructions):
+        assert len(text) <= CLIENT_TEXT_LIMIT
+
+
+def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_schema():
+    from ahn.models import AgentVendor, ErrorClass, FailureStage
+    schema, _, description, _ = tools_in("1", "0")["check_incident"]
+    assert "error_class (" + ", ".join(item.value for item in ErrorClass) + ")" in description
+    assert "failure_stage (" + ", ".join(item.value for item in FailureStage) + ")" in description
+    for vendor in AgentVendor:
+        assert vendor.value in description, vendor
+    for field in ("summary_line", "next_action (do, url, retry_after_seconds)", "recommendation.action"):
+        assert field in description, field
+    # Text only: the advertised input schema is the one already listed (no new or renamed argument, same required list).
+    assert sorted(schema["properties"]) == ["agent_vendor", "challenge", "error_class", "failure_stage", "http_status", "retry_after",
+                                            "site_host", "task_step", "via"]
+    assert schema["required"] == ["site_host"]
+    assert schema["properties"]["agent_vendor"]["enum"] == [item.value for item in AgentVendor]

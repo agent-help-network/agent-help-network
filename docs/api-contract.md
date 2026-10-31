@@ -456,13 +456,17 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 | `sandbox_url` | 시험·샌드박스 환경에 관한 업체 문서. 링크만 주며 시험용 값은 옮기지 않는다. |
 | `openapi_url` | 업체 소유 URL 에 있는 기계 판독용 OpenAPI·Swagger 문서. |
 | `official_mcp` | `{endpoint, doc_url}` 목록: `doc_url` 의 업체 문서에 적힌 그대로의 MCP 끝점. 이 서비스는 그 끝점에 접속하지 않는다. |
+| `feeds` | 업체 소유 도메인의 공식 RSS·Atom 피드 URL 1~3개(소식·릴리스·변경 기록). 페이지 자동화 없이 같은 정보를 얻는 길이다. 선택 필드이며, 서비스는 이 URL 에 요청하지 않는다(큐레이션된 링크일 뿐). |
+| `llms_full_url` | 업체가 직접 내는 `llms-full.txt`(문서 전체를 한 텍스트로)의 업체 소유 URL. 큐레이션된 링크이고 서비스는 읽지 않는다. |
+| `docs_repo` | 업체의 공식 문서 저장소(업체 소유 URL, 또는 `github.com` 의 업체 선언 조직 안). |
+| `data_export_url` | 업체의 공식 데이터 내보내기·덤프 페이지(공개 데이터셋, 일괄 내려받기 등). |
 | `terms` | `{url, quote}`: API 에 관한 업체의 약관·정책 문서와 그 문서에서 그대로 옮긴 문장이나 구절 하나(200자 이하). |
 | `verified_at` | 묶음의 모든 URL 과 인용을 마지막으로 읽은 날짜(UTC). |
 
 - **약관은 링크하고 인용할 뿐 해석하지 않는다.** `terms` 에는 판정·입장·"자동화 허용" 같은 요약이 없다. 인용은 발췌 하나일 뿐 법률 조언도 문서 전체도 아니다. 링크된 문서를 읽어야 한다.
 - **업체 소유, 직접 읽음, 추측 없음.** 모든 URL 은 키의 등록 가능 도메인(표와 같이 공용 접미사 기준), 그 키에 `PUBLISHER_DOMAINS` 로 선언된 도메인, 또는 한 도메인을 여러 주인이 쓰는 `github.com`·`raw.githubusercontent.com` 이라면 `PUBLISHER_GITHUB_ORGS` 에 선언된 업체 자신의 조직 안에 있다(둘 다 `scripts/verify_official_paths.py`). 모든 페이지는 `verified_at` 에 실제로 가져와 읽었다. 읽기를 거절한 페이지(401·403·429·챌린지)는 그 필드를 비우며 거절을 우회하지 않는다.
 - **오래된 묶음은 숨긴다.** `verified_at` 이 90일을 넘은 묶음은 다시 확인할 때까지 응답에서 빠지고, `official_paths` 의 나머지는 그대로 남는다.
-- **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다.
+- **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다. `feeds`·`llms_full_url`·`docs_repo`·`data_export_url` 도 같다(D60): 호출자가 쓰라고 주는 링크일 뿐 서비스는 읽지 않으며, 이 필드를 채워도 `recommendation`·`next_checks` 가 그대로임을 테스트로 고정한다. URL 은 길이 300자 이하의 https 주소이고 `feeds` 는 최대 3개다. `check_incident` 가 알리는 `outputSchema` 에는 네 필드가 선택으로 나타나며, 다른 모든 객체처럼 추가 키를 받는다(D58).
 - 같은 업체·같은 API 의 호스트는 묶음 하나를 같이 쓴다(`chatgpt.com`↔`openai.com`, `notion.com`↔`notion.so`, `twitter.com`↔`x.com`, `wikimedia.org`↔`wikipedia.org`). 묶음 수는 `len(OFFICIAL_ACCESS)` 로 센다.
 - 검증: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` 이 위와 같은 예절로 묶음 안의 모든 문서 URL 을 읽고(모든 경유지가 공개 주소로만 풀려야 함), 각 인용과 MCP 끝점이 페이지의 보이는 텍스트에 그대로 있는지(공백·타이포그래피 따옴표는 맞춰서) 확인하며, `openapi_url` 이 OpenAPI·Swagger 문서인지 본다. MCP 끝점 자체에는 요청하지 않는다. 네트워크 없는 규칙(모양, 방식 목록, 200자 상한, 업체 소유 도메인, 미래 날짜 금지)은 CI 의 `tests/test_official_access.py` 에서도 돈다.
 - 첫 검증 2026-10-20(날짜가 붙은 기록): `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, `cloudflare.com` 묶음. 고유 URL 54개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 28개 모두 확인. 같은 날 `free_tier` 를 무료로 쓸 수 있는 양이나 조건을 말하는 문장으로 좁혀 `stripe.com`·`x.com`·`wikipedia.org` 의 인용(요금 홍보 문구, 요금 방식 문장, 자유 콘텐츠에 관한 문장)을 뺐다. 남은 것은 URL 51개, 인용·끝점 23개다. 읽기 거절로 비운 것: OpenAI 약관과 키 콘솔(`openai.com`, `platform.openai.com`: 403), Reddit 속도 제한 위키(403). 스크립트 없이는 본문이 없어 비운 것: Notion 개발자 약관.

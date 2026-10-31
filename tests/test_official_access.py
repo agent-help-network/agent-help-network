@@ -276,3 +276,124 @@ def test_recommendation_and_next_checks_ignore_access():
                 triage.recommendation(error_class, None, access_profile, with_access)
             assert triage.next_checks(error_class, None, "no_reports", None, access_profile, dict(entry)) == \
                 triage.next_checks(error_class, None, "no_reports", None, access_profile, with_access)
+
+
+# --- Official alternative paths: feeds, llms_full_url, docs_repo, data_export_url (D60) ----------------------------------
+
+ALT = {
+    "feeds": ["https://docs.stripe.com/changelog.rss", "https://stripe.com/newsroom.atom"],
+    "llms_full_url": "https://docs.stripe.com/llms-full.txt",
+    "docs_repo": "https://github.com/stripe/openapi",
+    "data_export_url": "https://docs.stripe.com/data-export",
+}
+
+
+def test_alternative_path_fields_pass_the_rules_and_the_model():
+    access = {**GOOD, **ALT}
+    assert problems(access) == []
+    assert OfficialAccess(**access).model_dump(mode="json") == access
+    # Left out when unknown, never null: a bundle without them serialises without the keys.
+    assert not set(ALT) & set(OfficialAccess(**GOOD).model_dump(mode="json"))
+    assert set(ALT) <= set(VERIFIER.ACCESS_FIELDS) and set(OfficialAccess.model_fields) == set(VERIFIER.ACCESS_FIELDS)
+
+
+@pytest.mark.parametrize("field", ["llms_full_url", "docs_repo", "data_export_url"])
+def test_alternative_url_fields_follow_the_publisher_domain_rule(field):
+    assert problems(with_field(**{field: "http://docs.stripe.com/x"}))  # https only
+    assert problems(with_field(**{field: "https://docs.example.net/x"}))  # not the publisher's domain
+    assert problems(with_field(**{field: "https://docs.stripe.com/" + "a" * 300}))  # over the length limit
+    assert problems(with_field(**{field: ""}))
+    assert problems(with_field(**{field: ["https://docs.stripe.com/x"]}))  # a string, not a list
+    with pytest.raises(ValidationError):
+        OfficialAccess(**{**GOOD, field: "https://docs.stripe.com/" + "a" * 300})
+    with pytest.raises(ValidationError):
+        OfficialAccess(**{**GOOD, field: "ftp://docs.stripe.com/x"})
+
+
+def test_a_docs_repo_on_github_must_sit_in_the_publishers_organisation():
+    assert problems(with_field(docs_repo="https://github.com/stripe/openapi")) == []
+    assert problems(with_field(docs_repo="https://github.com/someone-else/stripe-docs"))
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/stripe/../attacker/x", "https://github.com/stripe/%2e%2e/attacker", "https://github.com/stripe/%252e%252E/attacker",
+    "https://github.com/stripe/./x/../../attacker", "https://github.com/stripe\\..\\attacker", "https://github.com/stripe/x\\..\\..\\attacker/y", "https://www.github.com/attacker/x", "https://gist.github.com/attacker/x",
+    "https://raw.githubusercontent.com/stripe/../attacker/x", "https://gist.githubusercontent.com/attacker/x",
+    # rejected before this change as well:
+    "https://github.com/Stripe-attacker/x", "https://github.com/stripe-attacker/x", "https://github.com.evil.com/stripe/x",
+    "https://github.com./attacker/x", "https://evil.com/stripe/openapi",
+])
+def test_github_urls_outside_the_publishers_organisation_are_refused(url):
+    assert problems(with_field(docs_repo=url), host="stripe.com")
+
+
+@pytest.mark.parametrize("url", ["https://gist.github.com/attacker/x", "https://www.github.com/attacker/x",
+                                 "https://gist.githubusercontent.com/attacker/x", "https://raw.githubusercontent.com/attacker/x"])
+def test_the_github_com_key_refuses_other_owners_on_every_github_name(url):
+    # The URL rule itself, for the github.com key (a whole bundle would also fail on its other stripe.com URLs).
+    assert VERIFIER._url_problem("github.com", url)
+    assert VERIFIER._url_problem("github.com", "https://github.com/github/rest-api-description") is None
+
+
+def test_github_urls_inside_the_organisation_and_dotted_names_still_pass():
+    for url in ("https://github.com/stripe/openapi", "https://github.com/Stripe/openapi", "https://www.github.com/stripe/openapi",
+                "https://raw.githubusercontent.com/stripe/openapi/master/spec.json", "https://github.com/stripe/a.b/c"):
+        assert problems(with_field(docs_repo=url)) == [], url
+
+
+def test_the_bundle_allow_list_matches_the_model_and_the_verifier():
+    from ahn import bundle
+    assert set(bundle.ACCESS_KEYS) == set(OfficialAccess.model_fields) == set(VERIFIER.ACCESS_FIELDS)
+
+
+def test_feed_marker_accepts_rss_atom_and_rdf_only():
+    for body in (b'<?xml version="1.0"?><rss version="2.0">', b"<feed xmlns='http://www.w3.org/2005/Atom'>", b"<rdf:RDF xmlns:rdf='x'>"):
+        assert VERIFIER.FEED_MARK.search(body)
+    assert not VERIFIER.FEED_MARK.search(b"<html><title>feed</title></html>")
+
+
+def test_feeds_hold_one_to_three_distinct_publisher_urls():
+    one = "https://docs.stripe.com/a.rss"
+    assert problems(with_field(feeds=[one])) == []
+    assert problems(with_field(feeds=[one, one]))  # twice
+    assert problems(with_field(feeds=[f"https://docs.stripe.com/{n}.rss" for n in range(4)]))  # more than three
+    assert problems(with_field(feeds=[]))  # leave it out instead of an empty list
+    assert problems(with_field(feeds=one))  # a list, not a string
+    assert problems(with_field(feeds=["https://elsewhere.example.net/a.rss"]))
+    assert problems(with_field(feeds=["http://docs.stripe.com/a.rss"]))
+    assert problems(with_field(feeds=["https://docs.stripe.com/" + "a" * 300]))
+    for bad in ([], [f"https://docs.stripe.com/{n}.rss" for n in range(4)], ["not a url"]):
+        with pytest.raises(ValidationError):
+            OfficialAccess(**{**GOOD, "feeds": bad})
+
+
+def test_the_verifier_lists_the_new_urls_for_its_own_curation_fetch():
+    found = VERIFIER.access_urls({**GOOD, **ALT})
+    fields = [field for field, _ in found]
+    assert {"access.llms_full_url", "access.docs_repo", "access.data_export_url"} <= set(fields)
+    assert [url for field, url in found if field == "access.feeds"] == ALT["feeds"]
+
+
+def test_filling_the_alternative_paths_never_changes_the_advice():
+    """D60: the four fields are links for the caller. recommendation, next_checks and next_action stay the same."""
+    from ahn import response_guide
+    filled = official_paths("github.com", today=on("github.com"))
+    plain = copy.deepcopy(filled)
+    assert not set(ALT) & set(plain["access"])  # the curated table holds none yet
+    filled["access"].update(copy.deepcopy(ALT))
+    assert plain["access"] != filled["access"]
+    profile = {"robots_status": "ok", "robots": {"agents_blocked": ["ChatGPT-User"], "rules": [
+        {"agent": "ChatGPT-User", "kind": "user_agent", "explicit_group": True, "root_allowed": False}]},
+        "freshness": "fresh"}
+    for error_class in (None, "site_access", "login_auth", "human_verification", "service_error"):
+        for access_profile in (None, profile):
+            a = triage.recommendation(error_class, None, access_profile, plain)
+            b = triage.recommendation(error_class, None, access_profile, filled)
+            assert a == b, (error_class, access_profile)
+            assert triage.next_checks(error_class, None, "no_reports", None, access_profile, plain) == \
+                triage.next_checks(error_class, None, "no_reports", None, access_profile, filled)
+            guide_a = response_guide.guide({"site_host": "github.com", "recommendation": a, "access_profile": access_profile,
+                                            "provider_status": None, "official_paths": plain})
+            guide_b = response_guide.guide({"site_host": "github.com", "recommendation": b, "access_profile": access_profile,
+                                            "provider_status": None, "official_paths": filled})
+            assert guide_a == guide_b, (error_class, access_profile)
