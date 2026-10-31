@@ -317,7 +317,7 @@ def test_a_docs_repo_on_github_must_sit_in_the_publishers_organisation():
 
 @pytest.mark.parametrize("url", [
     "https://github.com/stripe/../attacker/x", "https://github.com/stripe/%2e%2e/attacker", "https://github.com/stripe/%252e%252E/attacker",
-    "https://github.com/stripe/./x/../../attacker", "https://www.github.com/attacker/x", "https://gist.github.com/attacker/x",
+    "https://github.com/stripe/./x/../../attacker", "https://github.com/stripe\\..\\attacker", "https://github.com/stripe/x\\..\\..\\attacker/y", "https://www.github.com/attacker/x", "https://gist.github.com/attacker/x",
     "https://raw.githubusercontent.com/stripe/../attacker/x", "https://gist.githubusercontent.com/attacker/x",
     # rejected before this change as well:
     "https://github.com/Stripe-attacker/x", "https://github.com/stripe-attacker/x", "https://github.com.evil.com/stripe/x",
@@ -325,6 +325,14 @@ def test_a_docs_repo_on_github_must_sit_in_the_publishers_organisation():
 ])
 def test_github_urls_outside_the_publishers_organisation_are_refused(url):
     assert problems(with_field(docs_repo=url), host="stripe.com")
+
+
+@pytest.mark.parametrize("url", ["https://gist.github.com/attacker/x", "https://www.github.com/attacker/x",
+                                 "https://gist.githubusercontent.com/attacker/x", "https://raw.githubusercontent.com/attacker/x"])
+def test_the_github_com_key_refuses_other_owners_on_every_github_name(url):
+    # The URL rule itself, for the github.com key (a whole bundle would also fail on its other stripe.com URLs).
+    assert VERIFIER._url_problem("github.com", url)
+    assert VERIFIER._url_problem("github.com", "https://github.com/github/rest-api-description") is None
 
 
 def test_github_urls_inside_the_organisation_and_dotted_names_still_pass():

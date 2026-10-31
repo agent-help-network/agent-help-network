@@ -342,7 +342,7 @@ def test_the_tool_text_names_the_blocked_moments_first_and_never_reads_as_a_work
             assert signal in text, signal
         assert "hostname" in text and "listed official path" in text and "hand the step to the user" in text
         # Not a closed list of three: next_action may also say to continue or to stop retrying (response_guide.DO_VALUES).
-        assert "follow next_action" in text and "continue" in text and "stop retrying" in text
+        assert "follow next_action" in text and "continue" in text and "stop retrying" in text and "look up once more" in text
         assert "once per blocked step" in text and "before deciding whether to retry" in text
         assert "never a URL path, query or credentials" in text and "only when you observed them" in text
         assert "Send only the public hostname" not in text and "Send the hostname only" not in text
@@ -353,6 +353,6 @@ def test_the_tool_text_names_the_blocked_moments_first_and_never_reads_as_a_work
     assert description.index("429") < description.index("robots.txt")
     for name in ("agent_instructions.txt", "llms.txt"):
         text = (ROOT / "ahn" / name).read_text(encoding="utf-8")
-        assert "stop retrying" in text and "once per blocked step" in text, name
+        assert "stop retrying, or look up once more" in text and "once per blocked step" in text, name
         assert "before you retry" not in text and "The next step is to wait" not in text, name
         assert not [phrase for phrase in FORBIDDEN_PHRASES if phrase in text.lower()], name
