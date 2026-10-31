@@ -98,6 +98,7 @@ PREVIOUS_CHECKS = {
 # D63: the same code, a different sentence. robots_allows_agents for a host that publishes no robots.txt (HTTP 404 or 410);
 # llms_txt_present for an llms.txt larger than this service reads; provider_unknown for an Atom incident history, whose
 # feed carries no page status, so indicator stays null by design.
+ROBOTS_UNKNOWN_BEFORE = "No robots.txt policy could be read for this host (absent, redirected, or unreachable within limits). Treat the host's agent policy as unknown rather than permissive."
 ROBOTS_ABSENT_CHECK = "This host publishes no robots.txt (HTTP 404 or 410; access_profile.robots_status is absent), so it declares no restriction for any agent. This is not an access guarantee: CDN challenges, sign-ins and rate limits can still apply, and the site's terms and your platform's rules are separate."
 ROBOTS_ABSENT_CHECK_KO = "이 호스트는 robots.txt 를 게시하지 않습니다(HTTP 404·410, access_profile.robots_status 가 absent). 어떤 에이전트에도 제한을 선언하지 않은 것입니다. 접근 보장은 아니며 CDN 챌린지·로그인·속도 제한은 여전히 적용될 수 있고, 사이트 약관과 플랫폼 규칙은 별개입니다."
 LLMS_TOO_LARGE_CHECK = "This host publishes llms.txt, but it is larger than this service reads (access_profile.llms_detail is too_large), so its content was not checked here. If your task needs it, read only the part you need; it is the host's own guidance for language-model agents."
@@ -602,9 +603,12 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     # D63: the same code with a different sentence. The absent sentence needs the switch: off, the code is robots_unknown.
     if proceed_without_failure and access_profile and access_profile.get("robots_status") == "absent":
         texts = {**texts, "robots_allows_agents": ROBOTS_ABSENT_CHECK}
-    if access_profile and access_profile.get("llms_detail") == "too_large":
-        texts = {**texts, "llms_txt_present": LLMS_TOO_LARGE_CHECK}
-    if (provider_status and provider_status.get("source_kind") == "history_atom" and provider_status.get("freshness") == "fresh"
-            and not history_incident(provider_status, now)):
-        texts = {**texts, "provider_unknown": HISTORY_QUIET_CHECK}
+    if not proceed_without_failure:
+        texts = {**texts, "robots_unknown": ROBOTS_UNKNOWN_BEFORE}  # the switch off gives the sentences from before D63 too
+    else:
+        if access_profile and access_profile.get("llms_detail") == "too_large":
+            texts = {**texts, "llms_txt_present": LLMS_TOO_LARGE_CHECK}
+        if (provider_status and provider_status.get("source_kind") == "history_atom" and provider_status.get("freshness") == "fresh"
+                and not history_incident(provider_status, now)):
+            texts = {**texts, "provider_unknown": HISTORY_QUIET_CHECK}
     return [{"code": code, "text": MAINTENANCE_CHECK if maintenance and code == "provider_scope" else texts[code]} for code in codes]

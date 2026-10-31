@@ -383,7 +383,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 그래서 선언 차단 답(`stop_declared_block`, 또는 `use_official_path` high)은 호출자 자신의 토큰, 벤더가 없으면 모든 벤더의 토큰이 막혀야 나온다. 2026-10-22 표본(robots.txt 판독 161곳)에서 어느 벤더에게도, 벤더 모름에게도 전보다 엄격해진 호스트는 없었다.
 
-**실패 신호(D63).** `error_class` 또는 `failure_stage`(값 무관, `unknown` 포함). 선택 신호 코드 `http_status`·`challenge`·`retry_after`·`via` 는 권고의 실패 신호가 아니며 세기만 한다(D47). **`robots_status: absent`**(HTTP 404·410)는 어떤 에이전트에도 제한을 선언하지 않은 것이다(RFC 9309). 접근 보장은 아니며 사이트 약관·플랫폼 규칙은 별개다. `AHN_PROCEED_WITHOUT_FAILURE=0` 이면 권고와 `next_checks` 코드 목록이 D63 이전으로 돌아간다.
+**실패 신호(D63).** `error_class` 또는 `failure_stage`(값 무관, `unknown` 포함). 선택 신호 코드 `http_status`·`challenge`·`retry_after`·`via` 는 권고의 실패 신호가 아니며 세기만 한다(D47). **`robots_status: absent`**(HTTP 404·410)는 어떤 에이전트에도 제한을 선언하지 않은 것이다(RFC 9309). 접근 보장은 아니며 사이트 약관·플랫폼 규칙은 별개다. `AHN_PROCEED_WITHOUT_FAILURE=0` 이면 권고, `next_checks` 코드와 문장, 요약 문장, `next_action.url`, `customer_url` 이 모두 D63 이전으로 돌아간다.
 
 **이전 규칙**은 `AHN_VENDOR_AWARE_BLOCK=0` 일 때, D48 이전에 읽은 프로필(`robots.vendor_aliases_blocked` 없음)일 때, 그리고 답에 필요한 판정 토큰(벤더가 없으면 모든 벤더의 것, 있으면 그 벤더의 것)이 캐시된 프로필의 `rules` 에 없을 때 그대로 적용된다. 없는 토큰을 허용으로 읽지 않는다. 이전 규칙에서 **차단 선언**(robots 차단)은 `robots_status` 가 `ok` 이고 `user_agent` 또는 `search_crawler` 토큰 하나 이상을 이름으로 지목한 그룹이 루트를 금지하는 경우다. 학습 크롤러의 금지는 `agents_blocked` 에 나오지만 차단 선언으로 세지 않는다. **와일드카드 단독 금지**(robots 주의)는 `robots_status` 가 `ok` 이고 차단 선언이 없으며, 어떤 그룹도 지목하지 않은 `user_agent` 또는 `search_crawler` 토큰 하나 이상이 루트를 금지하는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)을 물려받는 경우다. 다른 토큰을 지목한 그룹(허용된 검색 크롤러, 금지된 학습 크롤러)이 있어도 성립한다. 차단 선언은 아니지만 "에이전트를 허용함"으로도 보고하지 않는다. 자동화를 청하지 않은 것으로 보고 공식 경로를 우선하며 허락으로 읽지 않는다.
 

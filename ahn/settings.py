@@ -60,7 +60,7 @@ class Settings:
     # AHN_LOOKUP_FEEDBACK=0 leaves the one-time feedback token out of blocked-lookup answers (D58). Tokens already issued
     # can still be sent back until they expire. On by default.
     lookup_feedback: bool = True
-    # AHN_PROCEED_WITHOUT_FAILURE=0 restores the recommendation and the next_checks code list from before D63. On by default.
+    # AHN_PROCEED_WITHOUT_FAILURE=0 restores the answers from before D63: the recommendation, the next_checks codes and texts, the summary line, next_action.url and customer_url. On by default.
     proceed_without_failure: bool = True
 
     @classmethod

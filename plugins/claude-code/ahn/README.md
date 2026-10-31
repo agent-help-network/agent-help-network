@@ -93,7 +93,7 @@ User-Agent: ahn-claude-code-plugin/0.2
   | Parameter | Values | Added when | How the hook decides |
   | :- | :- | :- | :- |
   | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the result is a `WebFetch` answer (`PostToolUse`) | `tool_response.code`. A status mentioned in an error text is never sent |
-  | `challenge` | `header`, `none` | the result carries a non-empty `headers` object | `header` when a `cf-mitigated` header (a list value is read element by element, bytes are decoded) contains `challenge`, or, from version 0.3.9, when an `x-amzn-waf-action` header (AWS WAF) is `challenge` or `captcha` on a 403 or 451; else `none`. The AWS header on any other status is not a challenge. The page text is not used for this code |
+  | `challenge` | `header`, `none` | the result carries a non-empty `headers` object | `header` when a `cf-mitigated` header (a list value is read element by element, bytes are decoded) contains `challenge`, or, from version 0.3.8, when an `x-amzn-waf-action` header (AWS WAF) is `challenge` or `captcha` on a 403 or 451; else `none`. The AWS header on any other status is not a challenge. The page text is not used for this code |
   | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | a 429 or 503 whose result carries a `headers` object | the `Retry-After` seconds as a band (under 60, 60 to 3600, over 3600); a date, a missing or an unreadable header is `none` |
   | `via` | `http_fetch`, `browser` | the tool's name says it | `WebFetch` and MCP tools whose server name has `fetch` in it: `http_fetch`; MCP tools whose server name has `browser`, `chrome`, `playwright`, `puppeteer`, `selenium`, `webdriver`, `devtools`, `firefox`, `camoufox` or `stagehand` in it: `browser`; any other tool: left out |
 

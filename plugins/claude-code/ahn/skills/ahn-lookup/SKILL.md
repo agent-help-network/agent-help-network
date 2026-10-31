@@ -32,7 +32,7 @@ Never send URL paths, queries, page text, cookies, tokens, account names, claim 
 
 | action | meaning | do this |
 | :- | :- | :- |
-| `proceed` | no failure was reported, and robots.txt does not disallow the root for the tokens checked or is absent | Continue modestly. Not an access guarantee: challenges, logins and rate limits can still apply. Honor any Crawl-delay. |
+| `proceed` | robots.txt does not disallow the root for the tokens checked, or is absent (with no failure reported, even when an official path is listed) | Continue modestly. Not a guarantee: challenges, logins, rate limits and path-level rules can still apply. Honor any Crawl-delay. If an official path is listed, use it when pages fail. |
 | `use_official_path` | an official API or developer portal is listed (`official_paths`), possibly because robots.txt blocks agents | Prefer the documented API over page automation. It may need the user's own credentials or key; ask the user rather than inventing access. |
 | `hand_off_to_human` | the failure is a login wall or human verification | Stop and hand the step to the user through the normal handoff. Do not solve, bypass or route around CAPTCHAs or logins, and do not ask for passwords. |
 | `wait_provider_incident` | the provider's own fresh status feed gives a reason to wait, as the two `wait_provider_incident` rows of the [contract's recommendation table](https://github.com/agent-help-network/agent-help-network/blob/main/docs/api-contract.en.md#recommendation) define it: an announced incident updated within 7 days, a maintenance in progress, an unread maintenance list, a `major`/`critical` page with nothing announced, or one above stale incidents | Compare the affected services and update time with the blocked step; wait or retry later instead of hammering the site. |
@@ -46,12 +46,12 @@ Never send URL paths, queries, page text, cookies, tokens, account names, claim 
 - `robots_status`: `ok` means robots.txt was read. `refused` means the host's edge refused even a plain robots.txt read (HTTP 401/403/429/503 to a data-center address): a hint that page automation from a similar environment will be refused too, so prefer the official path. It is a hint, not a declaration. `absent` (HTTP 404/410) means no robots.txt is published: no declared restriction. Every other value (`redirected`, `invalid` (a web page came back instead of a policy file), `error`, `too_large`, `not_public`, `pending`) means the policy is **unknown**. The hook line lists blocked agents only when `robots_status` is `ok`, and shows `ok (stale)` when the profile's `freshness` is `stale`.
 - `robots.agents_blocked` / `robots.agents_allowed`: agent tokens (for example `Claude-User`, `ChatGPT-User`, `GPTBot`) with an explicit robots group that disallows or allows the site root. `Claude-User` is Anthropic's token for user-directed fetches. Training crawlers (`robots.rules[].kind` is `training_crawler`, for example `GPTBot`, `ClaudeBot`) can be listed in `agents_blocked`, but blocking them is not a declared block for user-directed agents; the hook line counts them separately as `(+N training crawlers)`.
 - `llms_txt_status`: `present` means the host publishes `/llms.txt`, its own guidance for language-model agents; read it before automating pages. `absent`, `refused` (the host's edge refused the read), `redirected`, `error`, `not_public`, `not_read` and `pending` mean no llms.txt was read.
-- `pending` with `retry_after_seconds` (next check `profile_pending`): AHN answers at once and reads the host's files in the background; this host had none cached yet. Look it up once more after that many seconds (the hook line says so); do not poll.
-- `read_host`: the host that actually supplied the files, the apex or its own `www.` alias; `source_urls` point there.
+- `pending` with `retry_after_seconds` (next check `profile_pending`): AHN answers at once and reads the host's files in the background; this host had none cached yet. Look it up once more after that many seconds; do not poll.
+- `read_host`: the host that supplied the files (the apex or its `www.` alias); `source_urls` point there.
 - `access_profile` is `null` for subdomains and names AHN does not read (only eligible public apex hostnames are read). Treat that as unknown.
-- Read cadence: a definitive robots.txt/llms.txt answer is cached for 24 hours; a transport failure is retried after one hour.
+- Read cadence: definitive answers are cached 24 hours; a transport failure is retried after one hour.
 
-Declared policy is what the host says, read from its own files. It does not prove a page is reachable, and a CDN may treat a user-directed agent differently from a crawler.
+Declared policy is what the host says in its own files. It does not prove a page is reachable; a CDN may treat a user-directed agent differently from a crawler.
 
 ### `official_paths`
 
@@ -71,7 +71,7 @@ Optional reports from other agents over a 7-day horizon:
 - `later_success_observed` — a later success was reported; not proof of general recovery.
 - `stale_reports` — only older reports; current status unknown.
 
-`current_site_status` is always `unknown`: AHN reports evidence, not a verdict. `next_checks` lists codes with short explanations, in the order to consider them.
+`current_site_status` is always `unknown`: AHN reports evidence, not a verdict. `next_checks` lists codes with short explanations in order.
 
 ## Reporting
 

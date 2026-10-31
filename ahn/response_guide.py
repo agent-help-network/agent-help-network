@@ -81,6 +81,18 @@ DO_VALUES = tuple(dict.fromkeys(do for do, _ in ROWS.values()))
 # tail that says the API may not reach it. Where robots.txt or a refused read blocks pages (O2-O6) the tail hands the
 # customer page to the user instead of pointing the agent at the same site's pages; O1 and O7 only point to it.
 # Each whole sentence stays within LINE_MAX.
+# AHN_PROCEED_WITHOUT_FAILURE=0 (D63 off): the sentences and rules of the table before D63. Only what D63 changed is listed.
+ROWS_BEFORE = {
+    "P1": "The site's robots.txt does not block the agent tokens checked for you at the root. Continue with modest requests; declared policy is not an access guarantee.",
+    "P2": "The site's robots.txt blocks some other agents, not the tokens checked for you. Continue with modest requests; this is not an access guarantee.",
+    "U7": "The site's robots.txt could not be read, so its agent policy is unknown, not permissive. No official path is listed; follow your operator's rules.",
+    "U9": "No declared policy or official path is available for this host. Treat its agent policy as unknown, not as permission.",
+}
+CONSUMER_SEE_TAIL_BEFORE = " The API may not reach the user's own account; the site's page is next_action.customer_url."
+CONSUMER_ROWS_BEFORE = {
+    "O1": "Official path listed; use it instead of page automation. robots.txt is pending: look up once more in {n} s." + CONSUMER_SEE_TAIL_BEFORE,
+    "O7": "An official developer API or portal is listed; prefer it over page automation." + CONSUMER_SEE_TAIL_BEFORE,
+}
 CONSUMER_HAND_TAIL = " The API may not reach the user's own account; hand the user next_action.customer_url."
 # D63: where robots.txt does not block pages (O1, O7) the customer page comes first and the developer API is the tail.
 CONSUMER_FIRST_TAIL = " A developer API is also listed (official_paths)."
@@ -139,7 +151,7 @@ def apex_host(site_host: str) -> str | None:
 
 
 def select_row(recommendation: dict, access_profile: dict | None, provider_status: dict | None,
-               site_host: str, official: dict | None = None) -> tuple[str, bool]:
+               site_host: str, official: dict | None = None, *, variants: bool = True) -> tuple[str, bool]:
     """(template id, whether the table lists this combination). First match in table order within the action."""
     action = recommendation.get("action")
     reasons = set(recommendation.get("reasons") or ())
@@ -174,6 +186,8 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
                 return row, True
         if "official_path_available" in reasons and not reasons - {"official_path_available", "robots_blocks_not_your_agent"}:
             # D63: say whether the listed API can be used without signing up (official_paths.access.auth, curated).
+            if not variants:
+                return "O7", True
             auth = {a.get("method") for a in ((official or {}).get("access") or {}).get("auth") or []}
             if "none" in auth:
                 return "O7-N", True
@@ -182,11 +196,11 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
         if "robots_blocks_agents" in reasons:
             return "S1", True
     elif action == "proceed":
-        vendor = bool(recommendation.get("agent_vendor"))
+        vendor = variants and bool(recommendation.get("agent_vendor"))
         if "robots_blocks_not_your_agent" in reasons:
             return ("P2-V" if vendor else "P2"), True
         if "robots_allows_agents" in reasons:
-            if (access_profile or {}).get("robots_status") == "absent":
+            if variants and (access_profile or {}).get("robots_status") == "absent":
                 return "P3", True
             return ("P1-V" if vendor else "P1"), True
     elif action == "unknown":
@@ -236,24 +250,34 @@ def links() -> dict | None:
     return found or None
 
 
-def guide(result: dict) -> dict:
-    """The three added keys for a finished answer: summary_line, next_action and (when any is set) links."""
+def guide(result: dict, proceed_without_failure: bool = True) -> dict:
+    """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
+
+    proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
+    ``customer_url`` are those from before D63."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
-    row, listed = select_row(recommendation, access_profile, provider_status, result["site_host"], result.get("official_paths"))
+    on = proceed_without_failure
+    row, listed = select_row(recommendation, access_profile, provider_status, result["site_host"], result.get("official_paths"),
+                             variants=on)
     if not listed:
         LOG.warning("response_guide_unmapped")  # a code only: no host, no text
     do, sentence = ROWS[row]
+    if not on and row in ROWS_BEFORE:
+        sentence = ROWS_BEFORE[row]
     customer = None
-    if (do == "use_official_path" and row in CONSUMER_ROWS) or do == "proceed":
+    if (do == "use_official_path" and row in CONSUMER_ROWS) or (on and do == "proceed"):
         raw = customer_url(result.get("official_paths"))
         customer = safe_url(raw) if raw else None
         if raw and customer is None:
             LOG.warning("response_guide_url_dropped")
         if customer:
-            sentence = PROCEED_CONSUMER_ROWS[row] if do == "proceed" else CONSUMER_ROWS[row]
-    if do == "proceed" and customer is None and "official_path_available" in (recommendation.get("reasons") or ()):
+            if on:
+                sentence = PROCEED_CONSUMER_ROWS[row] if do == "proceed" else CONSUMER_ROWS[row]
+            else:
+                sentence = CONSUMER_ROWS_BEFORE.get(row, CONSUMER_ROWS[row])
+    if on and do == "proceed" and customer is None and "official_path_available" in (recommendation.get("reasons") or ()):
         sentence = PROCEED_OFFICIAL_ROWS[row]
     retry = None
     if row in RETRY_ROWS:
@@ -262,7 +286,7 @@ def guide(result: dict) -> dict:
         retry = WAIT_SECONDS
     if "{n}" in sentence:
         sentence = sentence.replace("{n}", str(retry if retry is not None else 0))
-    url = customer if customer and row in CUSTOMER_FIRST_ROWS else _url_for(do, result.get("official_paths"), provider_status,
+    url = customer if on and customer and row in CUSTOMER_FIRST_ROWS else _url_for(do, result.get("official_paths"), provider_status,
                                                                               result.get("official_status_page"))
     action = {"do": do, "url": url, "retry_after_seconds": retry}
     if "robots_blocks_some_agents" in (recommendation.get("reasons") or ()) and access_profile:

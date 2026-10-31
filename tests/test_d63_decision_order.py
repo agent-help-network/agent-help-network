@@ -29,6 +29,9 @@ HERE = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("pre_d63_triage", HERE / "_pre_d63_triage.py")
 pre = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre)
+_spec_rg = importlib.util.spec_from_file_location("pre_d63_response_guide", HERE / "_pre_d63_response_guide.py")
+pre_rg = importlib.util.module_from_spec(_spec_rg)
+_spec_rg.loader.exec_module(pre_rg)
 
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
 HELP = "https://www.example.com/help"
@@ -249,19 +252,47 @@ def test_t37_no_proceed_answer_loses_its_customer_page():
 
 
 def test_t25_the_switch_off_matches_the_code_before_d63():
-    rng = random.Random(62)
+    """Recommendation, next_checks (codes and sentences), and the response guide (do, url, customer_url, summary_line)."""
+    rng = random.Random(63)
     pool = [*PROFILES]
     for _ in range(300):
         text = "".join(f"User-agent: {rng.choice(['*', 'Claude-User', 'ChatGPT-User', 'Claude-SearchBot', 'Googlebot'])}\n"
                        f"{rng.choice(['Allow', 'Disallow'])}: {rng.choice(['/', '/a', ''])}\n\n" for _ in range(rng.randint(1, 3)))
         pool.append(robots(text))
+    officials = (None, OFFICIAL, WITH_CONSUMER, OFFICIAL_N, OFFICIAL_K, {**OFFICIAL_N, "consumer": CONSUMER}, CONSUMER_ONLY)
     for profile in pool:
-        for official, ec, vendor, fs in itertools.product((None, OFFICIAL, WITH_CONSUMER), ERROR_CLASSES, (None, "anthropic", "openai", "google"),
+        for official, ec, vendor, fs in itertools.product(officials, ERROR_CLASSES, (None, "anthropic", "openai", "google"),
                                                          (None, "unknown", "response_observed")):
             new = answer(official, profile, ec=ec, fs=fs, vendor=vendor, switch=False)
             old = answer(official, profile, ec=ec, fs=fs, vendor=vendor, mod=pre)
             assert new["recommendation"] == old["recommendation"], (profile, official, ec, fs, vendor)
             assert codes(new) == codes(old), (profile, official, ec, fs, vendor)
+            assert new["next_checks"] == old["next_checks"], (profile, official, ec, fs, vendor)
+            assert guide(new, False) == pre_rg.guide(old), (profile, official, ec, fs, vendor)
+
+
+def test_t25b_the_switch_off_changes_nothing_a_caller_can_see_in_the_guide_for_a_missing_robots_txt():
+    for official in (None, OFFICIAL, WITH_CONSUMER):
+        new = answer(official, ABSENT, switch=False)
+        assert rec(new)[0] in ("unknown", "use_official_path")
+        assert guide(new, False)["summary_line"] == pre_rg.guide(answer(official, ABSENT, mod=pre))["summary_line"]
+    assert "not permissive" in guide(answer(None, ABSENT, switch=False), False)["summary_line"]
+
+
+def test_t38_the_switch_reads_the_environment_and_reaches_the_guide(monkeypatch):
+    from ahn.settings import Settings
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://invalid/unused")
+    monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 32)
+    monkeypatch.delenv("AHN_PROCEED_WITHOUT_FAILURE", raising=False)
+    assert Settings.from_env().proceed_without_failure is True
+    for value, expected in (("0", False), ("1", True), ("", True), ("false", True)):
+        monkeypatch.setenv("AHN_PROCEED_WITHOUT_FAILURE", value)
+        assert Settings.from_env().proceed_without_failure is expected, value
+    result = answer(WITH_CONSUMER, ALLOWS)
+    assert guide(result)["next_action"]["do"] == "proceed" and guide(result, True) == guide(result)
+    result = answer(WITH_CONSUMER, ALLOWS, switch=False)
+    assert guide(result, False)["next_action"]["do"] == "use_official_path"
+    assert guide(result, False)["next_action"]["url"] == OFFICIAL["api_docs"]
 
 
 def test_t27_t27b_every_sentence_fits_and_names_no_host():
@@ -307,3 +338,15 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
                       sort_keys=True, default=str)
     # Hash of the same blob taken from the tree before D63 (the three earlier changes merged, #117 at 33fd2b5).
     assert hashlib.sha256(blob.encode()).hexdigest() == "f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64"
+
+
+def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():
+    from ahn.official_paths import customer_url
+    app = {"kind": "official_app", "url": "https://apps.apple.com/us/app/example/id123456", "source_url": "https://www.example.com/app"}
+    entry = {"kind": "entry_link", "url": "https://www.example.com/start", "source_url": "https://www.example.com/"}
+    help_page = CONSUMER["paths"][0]
+    for paths, expected in (([app, entry, help_page], HELP), ([app, entry], entry["url"]), ([app], app["url"])):
+        official = {**OFFICIAL, "consumer": {**CONSUMER, "paths": paths}}
+        assert customer_url(official) == expected
+        out = guide(answer(official, ALLOWS))
+        assert out["next_action"]["url"] == out["next_action"]["customer_url"] == expected
