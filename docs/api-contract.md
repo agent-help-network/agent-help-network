@@ -147,7 +147,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 ### 결과 회신 (`feedback_token`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
 
-막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 사이트 자체 검색 페이지의 조회에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다).
+막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 이 조회(와 이를 부르는 MCP `check_incident`)에만 붙을 수 있으며 사건 상세(`GET /v1/incidents/{id}`)와 사이트 자체 페이지에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다).
 
 ```json
 "feedback_token": {

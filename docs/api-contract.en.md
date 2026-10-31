@@ -499,7 +499,7 @@ A value outside its list is **ignored, not refused**: the lookup is answered nor
 
 ### Lookup feedback (`feedback_token`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
 
-An answer to a blocked lookup (one that sent `error_class`) ends with a `feedback_token` object when the service counts lookups of that host (an eligible apex host that is not a documentation example host, inside the lookup register in public mode, with lookup metrics on). The site's own search page never gets one. (The name differs from `links.feedback`, the public discussion link.)
+An answer to a blocked lookup (one that sent `error_class`) ends with a `feedback_token` object when the service counts lookups of that host (an eligible apex host that is not a documentation example host, inside the lookup register in public mode, with lookup metrics on). Only this lookup (and MCP `check_incident`, which calls it) can carry one: an incident detail (`GET /v1/incidents/{id}`) and the site's own pages never do. (The name differs from `links.feedback`, the public discussion link.)
 
 ```json
 "feedback_token": {

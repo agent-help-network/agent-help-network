@@ -399,6 +399,42 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     assert client.get("/v1/incidents", params={"site_host": "aliasexample.org"}).json()["incidents"] == []
 
 
+
+def test_only_the_counted_lookup_route_issues_a_feedback_token_and_never_cacheably(public_client, monkeypatch):
+    """D58 (B3): the one-time feedback_token comes only from GET /v1/incidents/check, always with no-store. The incident
+    detail (API and page), the incident list and the search page answer the same host without one."""
+    from ahn import feedback
+    settings, client = public_client
+    issued = []
+    original = feedback.feedback_field
+    monkeypatch.setattr(feedback, "feedback_field", lambda *a, **k: issued.append(a) or original(*a, **k))
+    host = "detailsite.org"
+    receipt = post_public(client, sample(site_host=host)).json()
+    with connect(settings) as conn:  # the operator's manual publish (ahn.cli publish-observation)
+        conn.execute("UPDATE observations SET review_state='published' WHERE id=%s", (receipt["observation_id"],))
+        conn.execute("UPDATE incidents SET visibility='published' WHERE id=%s", (receipt["incident_id"],))
+    caller = {"CF-Connecting-IP": "198.51.100.200"}
+    lookup = client.get("/v1/incidents/check", params={"site_host": host, "error_class": "site_access"}, headers=caller)
+    assert "feedback_token" in lookup.json() and lookup.headers["cache-control"] == "no-store" and len(issued) == 1
+    routes = {
+        "detail api": f"/v1/incidents/{receipt['incident_id']}",
+        "detail page": f"/en/incidents/{receipt['incident_id']}",
+        "detail page ko": f"/ko/incidents/{receipt['incident_id']}",
+        "incident list": f"/v1/incidents?site_host={host}&error_class=site_access",
+        "search page": f"/en/search?site_host={host}&error_class=site_access",
+    }
+    for name, url in routes.items():
+        response = client.get(url, headers=caller)
+        assert response.status_code == 200, name
+        assert "feedback_token" not in response.text, name
+    assert len(issued) == 1  # no other route asked for a token
+    # Every response that does carry one is uncacheable, whichever codes the lookup sent.
+    for params in ({"error_class": "login_auth"}, {"error_class": "human_verification", "http_status": "403"}):
+        response = client.get("/v1/incidents/check", params={"site_host": host, **params}, headers=caller)
+        assert "feedback_token" in response.json() and response.headers["cache-control"] == "no-store"
+    plain = client.get("/v1/incidents/check", params={"site_host": host}, headers=caller)
+    assert "feedback_token" not in plain.json()
+
 def test_agent_vendor_chooses_the_robots_answer_end_to_end_and_is_never_stored(public_client, monkeypatch):
     """D48 through the REST endpoint: the vendor's own answer, the lenient check, the echo, a profile cached before
     D48, the switch, and no column for the parameter anywhere in the lookup signal tables."""

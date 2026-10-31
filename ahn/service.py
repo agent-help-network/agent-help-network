@@ -440,10 +440,12 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None, issue_feedback: bool = True):
+          agent_vendor: str | None = None, issue_feedback: bool = False):
     """Answer a lookup from the database alone.
 
-    ``issue_feedback`` False (the site's own search page) never adds the one-time ``feedback_token`` (D58).
+    ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
+    MCP check_incident tool calls) passes True, and that route sends the answer with ``Cache-Control: no-store``. Any
+    other caller (the search page, the incident detail) never gets a one-time ``feedback_token`` (D58).
 
     Nothing on this path contacts the target host or a status provider: reads that are missing or
     out of date are queued (ahn/background_reads.py) and the cached value is returned as it is,

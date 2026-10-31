@@ -187,7 +187,7 @@ async def rate_last_lookup(token: Annotated[str, WithJsonSchema(FEEDBACK_TOKEN_S
 
 
 # AHN_LOOKUP_FEEDBACK=0, the switch that leaves the token out of answers, also leaves this tool out of tools/list.
-if os.getenv("AHN_LOOKUP_FEEDBACK", "1") != "0":
+if os.getenv("AHN_LOOKUP_FEEDBACK", "").strip() != "0":  # read as in ahn/settings.py
     mcp.tool(
         description="If an earlier check_incident answer gave you a feedback token and you then tried again, say whether it worked. Sends only the token and the outcome code, no hostname. outcome: succeeded (the next attempt worked), still_blocked, handed_off (you handed the step to the user) or gave_up. path: official_path (you used the official path the answer pointed to), same_site (you retried the same site) or unknown. A token works once and expires one hour after the lookup; do not send one for an attempt you did not make. The outcome is counted anonymously per host and hour and does not change any answer.",
         annotations=ToolAnnotations(title="Rate the last lookup", read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False),
@@ -240,6 +240,9 @@ def open_output_schema(schema):
     return schema
 
 
+# This relies on MCP SDK internals (mcp==2.3.0, pinned): MCPServer._tool_manager, Tool.fn_metadata.output_schema (read
+# live by FuncMetadata) and the cached Tool.output_schema property. tests/test_lookup_feedback.py checks the advertised
+# schema through tools/list, so an SDK upgrade that moves these fails there rather than silently.
 for _tool in mcp._tool_manager.list_tools():
     # FuncMetadata reads output_schema live; validation still runs against the closed output model.
     if _tool.fn_metadata.output_schema is not None:
