@@ -1,6 +1,6 @@
 """Lookup feedback: did the next attempt work? (docs/decisions.md D58)
 
-A blocked lookup (one that sent ``error_class``) that the service counts gets a one-time ``feedback`` token in its
+A blocked lookup (one that sent ``error_class``) that the service counts gets a one-time ``feedback_token`` in its
 answer. The caller may send it back later with an outcome code (``POST /v1/feedback`` or the MCP tool
 ``rate_last_lookup``). The request carries no hostname: the token itself says which lookup it answers.
 
@@ -8,7 +8,7 @@ Nothing is stored when a token is issued. The token is a signed, self-contained 
 recommendation action, the client kind, the issue time, whether the lookup was counted, and a random nonce), MACed
 with a key derived from the service pepper. When it is used:
 
-- a SHA-256 fingerprint of the token goes into ``lookup_feedback_used`` with the token's expiry time and no hostname,
+- a SHA-256 fingerprint of the token's signed payload (which holds the nonce) goes into ``lookup_feedback_used`` with the token's expiry time and no hostname,
   so it cannot be used twice. The row is deleted once the token has expired (at the latest at the next cleanup);
 - one is added to ``lookup_feedback_hourly`` for (issue hour, hostname, action, client kind, outcome, path), kept 35
   days, when the lookup was a counted one (not the operator's network, not marked ``X-AHN-Test``) and lookup
@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,8 @@ from hashlib import sha256
 
 from .lookup_signals import CLIENT_KINDS, OVERFLOW, OVERFLOW_HOST
 from .models import FEEDBACK_TOKEN, FeedbackOutcome, FeedbackPath, valid_host
+
+LOG = logging.getLogger(__name__)
 
 TOKEN_VERSION = "f1"
 TOKEN_TTL_SECONDS = 3600
@@ -38,6 +41,9 @@ HOURLY_RETENTION_DAYS = 35
 HOUR_ROW_CAP = 200
 # A token "issued" further than this in the future is refused (clock skew between instances is far smaller).
 FUTURE_SKEW_SECONDS = 60
+# Used-token fingerprints are deleted only this long after their expiry, so a clock a little ahead on one instance can
+# never drop a fingerprint while another instance still accepts its token.
+EXPIRY_GRACE = "5 minutes"
 
 ACTIONS = ("proceed", "use_official_path", "hand_off_to_human", "wait_provider_incident", "stop_declared_block", "unknown")
 OUTCOMES = tuple(item.value for item in FeedbackOutcome)
@@ -58,6 +64,11 @@ class Claims:
     client_kind: str
     issued_at: datetime
     counted: bool
+    digest: str  # SHA-256 of the signed payload: the one-time key of this token
+
+
+def _payload_digest(raw: bytes) -> str:
+    return sha256(raw).hexdigest()
 
 
 def _key(pepper: str) -> bytes:
@@ -82,7 +93,7 @@ def issue(pepper: str, host: str, action: str, client_kind: str, counted: bool, 
 
 
 def feedback_field(pepper: str, host: str, action: str, client_kind: str, counted: bool, now: datetime) -> dict:
-    """The answer's ``feedback`` object."""
+    """The answer's ``feedback_token`` object."""
     return {"token": issue(pepper, host, action, client_kind, counted, now), "expires_in_seconds": TOKEN_TTL_SECONDS,
             "outcomes": list(OUTCOMES), "paths": list(PATHS)}
 
@@ -96,6 +107,10 @@ def verify(pepper: str, token: str, now: datetime) -> Claims:
         raw, sent = _unb64(body), _unb64(mac)
     except (binascii.Error, ValueError):
         raise FeedbackError("invalid_feedback_token", 400) from None
+    # Only the canonical encoding is accepted. Base64 leaves spare bits in the last character that the decoder ignores,
+    # so without this one token would have several spellings, each passing the MAC with a different fingerprint.
+    if _b64(raw) != body or _b64(sent) != mac:
+        raise FeedbackError("invalid_feedback_token", 400)
     if not hmac.compare_digest(hmac.new(_key(pepper), raw, sha256).digest(), sent):
         raise FeedbackError("invalid_feedback_token", 400)
     try:
@@ -109,11 +124,12 @@ def verify(pepper: str, token: str, now: datetime) -> Claims:
         raise FeedbackError("invalid_feedback_token", 400)
     if now >= issued_at + timedelta(seconds=TOKEN_TTL_SECONDS):
         raise FeedbackError("feedback_token_expired", 410)
-    return Claims(host, action, client_kind, issued_at, counted == "1")
+    return Claims(host, action, client_kind, issued_at, counted == "1", _payload_digest(raw))
 
 
 def fingerprint(token: str) -> str:
-    return sha256(token.encode("ascii")).hexdigest()
+    """The used-token key: SHA-256 of the decoded, signed payload (nonce included), not of the token's spelling."""
+    return _payload_digest(_unb64(token.split(".")[0]))
 
 
 def _count(conn, claims: Claims, outcome: str, path: str) -> None:
@@ -138,12 +154,19 @@ def record(conn, pepper: str, token: str, outcome: str, path: str, now: datetime
     claims = verify(pepper, token, now)
     with conn.transaction():
         # Expired fingerprints are useless (verify refuses their tokens anyway): drop them here as well as in the cleanup.
-        conn.execute("DELETE FROM lookup_feedback_used WHERE expires_at < now()")
+        conn.execute(f"DELETE FROM lookup_feedback_used WHERE expires_at < now() - interval '{EXPIRY_GRACE}'")
         made = conn.execute(
             "INSERT INTO lookup_feedback_used (token_digest,expires_at) VALUES (%s,%s) ON CONFLICT (token_digest) DO NOTHING RETURNING 1 AS made",
-            (fingerprint(token), claims.issued_at + timedelta(seconds=TOKEN_TTL_SECONDS))).fetchone()
+            (claims.digest, claims.issued_at + timedelta(seconds=TOKEN_TTL_SECONDS))).fetchone()
         if made is None:
             raise FeedbackError("feedback_token_used", 409)
         if count and claims.counted:
-            _count(conn, claims, outcome, path)
+            try:
+                with conn.transaction():
+                    # As for the D47 counts: never wait on a lock for a count; give up after 200 ms and skip it.
+                    conn.execute("SET LOCAL lock_timeout = '200ms'")
+                    _count(conn, claims, outcome, path)
+                    conn.execute("SET LOCAL lock_timeout = DEFAULT")
+            except Exception:
+                LOG.warning("lookup_feedback_count_unavailable")
     return claims

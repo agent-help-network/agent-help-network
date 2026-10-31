@@ -440,8 +440,10 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None):
+          agent_vendor: str | None = None, issue_feedback: bool = True):
     """Answer a lookup from the database alone.
+
+    ``issue_feedback`` False (the site's own search page) never adds the one-time ``feedback_token`` (D58).
 
     Nothing on this path contacts the target host or a status provider: reads that are missing or
     out of date are queued (ahn/background_reads.py) and the cached value is returned as it is,
@@ -635,12 +637,12 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 result.update(response_guide.guide(result))
             except Exception:
                 LOG.warning("response_guide_unavailable")
-        if (settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
+        if (issue_feedback and settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
                 and eligible and host not in lookup_signals.EXAMPLE_HOSTS and (not public or registered)):
             # D58: added last, after the answer is decided; a signed value, so nothing is written here. A lookup that is not
             # counted (operator network, X-AHN-Test) still gets a token so the flow can be tried, but its feedback is not counted.
             try:
-                result["feedback"] = feedback.feedback_field(settings.key_pepper, host, result["recommendation"]["action"],
+                result["feedback_token"] = feedback.feedback_field(settings.key_pepper, host, result["recommendation"]["action"],
                                                              signal.client_kind if signal is not None else "rest_other",
                                                              signal is not None, now)
             except Exception:

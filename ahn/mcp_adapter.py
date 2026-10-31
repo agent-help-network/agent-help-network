@@ -18,8 +18,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
-from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackOutcome, FeedbackPath,
-                     FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
+from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
+                     FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
 from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
@@ -72,7 +72,7 @@ mcp = MCPServer(
         "When an authorized web task is blocked (access denied, login wall, human verification, service error) or a user asks whether a site is down or blocks agents, call check_incident with the public hostname. "
         "The answer has three layers: access_profile (the host's own declared agent policy from robots.txt and llms.txt), official_paths and provider_status (official developer docs and status feeds), and observations (recent reports from other agents, often empty). "
         "Declared policy is not an access guarantee and no_reports does not establish that a site works. Do not poll without a task need. "
-        "If a blocked lookup's answer carries a feedback token and you then try again, you may report once with rate_last_lookup whether it worked. "
+        "If a blocked lookup's answer carries a feedback_token and you then try again, you may report once with rate_last_lookup whether it worked. "
         "Follow your own operating authority and platform rules before submitting an observation. "
         "Send only public hostnames and structured fields, never personal URLs or credentials."
     ),
@@ -169,12 +169,12 @@ def check_result(response: CheckResponse):
         structured_content=response.model_dump(mode="json", by_alias=True))
 
 
-@mcp.tool(
-    description="If an earlier check_incident answer gave you a feedback token and you then tried again, say whether it worked. Sends only the token and the outcome code, no hostname. outcome: succeeded (the next attempt worked), still_blocked, handed_off (you handed the step to the user) or gave_up. path: official_path (you used the official path the answer pointed to), same_site (you retried the same site) or unknown. A token works once and expires one hour after the lookup; do not send one for an attempt you did not make. The outcome is counted anonymously per host and hour and does not change any answer.",
-    annotations=ToolAnnotations(title="Rate the last lookup", read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False),
-    structured_output=True,
-)
-async def rate_last_lookup(token: str,
+# D58: the token is checked the same way as on the REST side, and the schema says so (pattern and length).
+FEEDBACK_TOKEN_SCHEMA = {"type": "string", "pattern": FEEDBACK_TOKEN.pattern, "maxLength": FeedbackIn.model_fields["token"].metadata[0].max_length,
+                         "description": "The feedback_token.token value from the check_incident answer, unchanged."}
+
+
+async def rate_last_lookup(token: Annotated[str, WithJsonSchema(FEEDBACK_TOKEN_SCHEMA)],
                            outcome: Annotated[str, WithJsonSchema(_enum_schema(FeedbackOutcome))],
                            path: Annotated[str, WithJsonSchema(_enum_schema(FeedbackPath))] = FeedbackPath.unknown.value) -> FeedbackReceipt:
     if not isinstance(token, str) or not FEEDBACK_TOKEN.fullmatch(token):
@@ -184,6 +184,15 @@ async def rate_last_lookup(token: str,
     if path not in FeedbackPath._value2member_map_:
         raise ToolError("path must be one of: " + ", ".join(item.value for item in FeedbackPath))
     return FeedbackReceipt(**await call_api("POST", "/v1/feedback", payload={"token": token, "outcome": outcome, "path": path}))
+
+
+# AHN_LOOKUP_FEEDBACK=0, the switch that leaves the token out of answers, also leaves this tool out of tools/list.
+if os.getenv("AHN_LOOKUP_FEEDBACK", "1") != "0":
+    mcp.tool(
+        description="If an earlier check_incident answer gave you a feedback token and you then tried again, say whether it worked. Sends only the token and the outcome code, no hostname. outcome: succeeded (the next attempt worked), still_blocked, handed_off (you handed the step to the user) or gave_up. path: official_path (you used the official path the answer pointed to), same_site (you retried the same site) or unknown. A token works once and expires one hour after the lookup; do not send one for an attempt you did not make. The outcome is counted anonymously per host and hour and does not change any answer.",
+        annotations=ToolAnnotations(title="Rate the last lookup", read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False),
+        structured_output=True,
+    )(rate_last_lookup)
 
 
 async def report_observation(observation: ObservationIn) -> Receipt:
@@ -210,6 +219,32 @@ if os.environ.get("AHN_PUBLIC_MODE") != "1":
         annotations=ToolAnnotations(title="Update an authorized outcome", read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=True),
         structured_output=True,
     )(update_outcome)
+
+
+def open_output_schema(schema):
+    """The advertised outputSchema with every object open to further keys (additionalProperties true).
+
+    Answers gain optional keys over time (D58 added feedback_token). A client that cached tools/list and validates
+    structuredContent against a closed schema would reject the newer answer, so the advertised schema only promises the
+    keys it lists. The server's own validation of what it returns (the pydantic models, extra=forbid) is unchanged.
+    """
+    if isinstance(schema, dict):
+        opened = {key: open_output_schema(value) for key, value in schema.items()}
+        # (no dict .get here: tests/test_feed_robots.py counts .get calls in modules that import an HTTP client)
+        closed = "additionalProperties" in opened and opened["additionalProperties"] is False
+        if closed or ("type" in opened and opened["type"] == "object" and "properties" in opened):
+            opened["additionalProperties"] = True
+        return opened
+    if isinstance(schema, list):
+        return [open_output_schema(item) for item in schema]
+    return schema
+
+
+for _tool in mcp._tool_manager.list_tools():
+    # FuncMetadata reads output_schema live; validation still runs against the closed output model.
+    if _tool.fn_metadata.output_schema is not None:
+        _tool.fn_metadata.output_schema = open_output_schema(_tool.fn_metadata.output_schema)
+        _tool.__dict__.pop("output_schema", None)  # drop a cached copy, if one was read already
 
 
 def main():

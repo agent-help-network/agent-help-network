@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 10, 30)
+POLICY_UPDATED = date(2026, 11, 1)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -525,7 +525,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             **lookup_signals.lenient_codes(http_status, challenge, retry_after, via))
 
     @app.get("/v1/incidents/check", response_model=CheckResponse)
-    def check_incident(request: Request, site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
+    def check_incident(request: Request, response: Response, site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
                        window_hours: int = Query(24, ge=1, le=168), failure_stage: FailureStage | None = None,
                        http_status: str | None = Query(None, description="Optional signal code: 401, 402, 403, 407, 408, 429, 451 or 500-599. A value outside the list is ignored."),
                        challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
@@ -557,6 +557,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             except Exception:
                 # Analytics failure must not turn a successful lookup into an error.
                 logging.getLogger(__name__).warning("mcp_check_metrics_unavailable")
+        if "feedback_token" in result:
+            response.headers["Cache-Control"] = "no-store"  # a one-time token must never be served from a cache (D58)
         return result
 
     @app.post("/v1/feedback", response_model=FeedbackReceipt)
@@ -687,7 +689,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 if not error:
                     signals = check(settings, site_host, selected_class.value if selected_class else None,
                                     window_hours=168, failure_stage=selected_stage.value if selected_stage else None,
-                                    signal=lookup_signal(request, kind="web"))
+                                    signal=lookup_signal(request, kind="web"), issue_feedback=False)
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,

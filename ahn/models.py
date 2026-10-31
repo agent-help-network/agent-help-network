@@ -545,7 +545,7 @@ class CheckResponse(StrictModel):
     failure_stage: FailureStage | None = None
     next_checks: list[NextCheck] = Field(default_factory=list)
     # D58: present only on a blocked lookup (error_class sent) that the service counts; left out (never null) otherwise.
-    feedback: Feedback | None = Field(default=None, exclude_if=_omit_none)
+    feedback_token: Feedback | None = Field(default=None, exclude_if=_omit_none)
 
 
 class Receipt(StrictModel):

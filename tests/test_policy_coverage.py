@@ -255,7 +255,7 @@ CHECK_RESPONSE_FIELDS = {
     "next_action": Exempt("advice computed from the data above"),
     "links": Exempt("constant links to the service's public feedback pages"),
     # D58: a signed one-time token; described in sections 02 and 03.
-    "feedback": Phrase("one-time feedback token", "일회용 결과 토큰"),
+    "feedback_token": Phrase("one-time feedback token", "일회용 결과 토큰"),
 }
 RECEIPT_FIELDS = {
     "observation_id": Phrase("observation and incident IDs", "관찰·사건 ID"),
@@ -355,9 +355,9 @@ TABLES = {
     # Lookup feedback (migration 031, ahn/feedback.py, D58): outcome counts per hostname and hour of the lookup.
     "lookup_feedback_hourly": Pruned(Phrase("Hourly per-host counts of feedback outcomes, with the recommendation given and the kind of client: {days} days",
                                             "호스트별 시간 단위 결과 회신 집계(그때 준 권고와 클라이언트 종류 포함): {days}일")),
-    # Used-token fingerprints, no hostname: deleted once the token has expired (one hour after its lookup).
+    # Used-token fingerprints, no hostname: deleted five minutes after the token has expired (one hour after its lookup).
     "lookup_feedback_used": UntilExpiry(Phrase("Fingerprints of used feedback tokens, with no hostname", "쓰인 결과 토큰의 지문(호스트명 없음)"),
-                                        Phrase("until the token expires, one hour after its lookup", "조회 1시간 뒤 토큰이 만료될 때까지")),
+                                        Phrase("until five minutes after the token expires, one hour after its lookup", "조회 1시간 뒤 토큰이 만료되고 5분이 지날 때까지")),
     # Adoption measurement (migration 028, ahn/adoption.py, D49): fixed-list categories per day, no hostname, address or digest.
     "lookup_outcome_daily": Pruned(Phrase(
         "Daily counts of answered lookups by client category (plugin, ahn-client, MCP host, script, browser, crawler, the site's own search page, or unknown), the MCP host family or ahn-client integration label where there is one (each read from the User-Agent header, which is not kept), the recommendation given and whether the hostname's declared-policy read was ready, stale, pending or none (no declared-policy layer for that hostname), with no hostname and no address: {days} days",
@@ -458,8 +458,18 @@ def periods_in_prune_analytics() -> dict[str, int]:
 
 
 def expiring_in_prune_analytics() -> set[str]:
-    """Tables prune_analytics empties of expired rows (`expires_at < now()`), not after a fixed period."""
-    return set(re.findall(r"DELETE FROM ([a-z_]+) WHERE expires_at < now\(\)\"", inspect.getsource(platform_metrics.prune_analytics)))
+    """Tables prune_analytics empties of expired rows (`expires_at < now()`, optionally a few minutes later), not after a
+    fixed period."""
+    return set(re.findall(r"DELETE FROM ([a-z_]+) WHERE expires_at < now\(\)(?: - interval '\d+ minutes')?\"",
+                          inspect.getsource(platform_metrics.prune_analytics)))
+
+
+def test_used_feedback_fingerprints_are_kept_the_stated_margin_past_expiry():
+    from ahn import feedback
+    source = inspect.getsource(platform_metrics.prune_analytics) + inspect.getsource(feedback.record)
+    assert feedback.EXPIRY_GRACE == "5 minutes"  # "five minutes" / "5분" in section 06
+    assert "lookup_feedback_used WHERE expires_at < now() - interval '5 minutes'" in source
+    assert "interval '{EXPIRY_GRACE}'" in inspect.getsource(feedback.record)
 
 
 def test_every_table_is_mapped_to_a_retention_statement():
@@ -1089,10 +1099,11 @@ def test_lookup_signal_retention_and_exclusions_match_the_code():
     wording = {
         "en": ("Lookups from the operator's own network and requests marked as tests are left out of these counts",
                "the hourly counts hold no IP address", "never become reports",
-               "the lookup-code counts and feedback outcome counts described under Data we collect are not shown publicly or in answers at present",
-               "only when at least three separate clients contributed"),
+               "the lookup-code counts described under Data we collect are not shown publicly or in answers at present",
+               "only when at least three separate clients contributed", "Feedback outcome counts are not shown publicly or in any answer"),
         "ko": ("운영자 자신의 네트워크에서 온 조회와 시험으로 표시된 요청은 이 집계에서 뺍니다", "시간 단위 집계에는 IP 주소가 없습니다",
-               "제보가 되지 않고", "조회 코드 집계와 결과 회신 집계는 현재 공개 화면이나 답변에 나오지 않으며", "서로 다른 클라이언트 세 곳 이상이 있을 때만"),
+               "제보가 되지 않고", "조회 코드 집계는 현재 공개 화면이나 답변에 나오지 않으며", "서로 다른 클라이언트 세 곳 이상이 있을 때만",
+               "결과 회신 집계는 공개 화면에도 어떤 답변에도 나오지 않습니다"),
     }
     for lang, phrases in wording.items():
         text = policy_text(lang)
@@ -1117,8 +1128,8 @@ def test_lookup_feedback_is_described_with_the_code_limits():
         "path": Phrase("optional path code (official path, same site or unknown)", "선택 경로 코드(공식 경로·같은 사이트·알 수 없음)"),
         "no_host": Phrase("the request carries no hostname, URL or text", "이 요청에는 호스트명·URL·문장이 없습니다"),
         "stateless": Phrase("Nothing is stored when a token is issued", "토큰을 발급할 때는 아무것도 저장하지 않습니다"),
-        "one_time": Phrase("until the token expires one hour after its lookup, so that it cannot be used twice",
-                           "조회 1시간 뒤 토큰이 만료될 때까지 둡니다"),
+        "one_time": Phrase("until shortly after the token expires one hour after its lookup, so that it cannot be used twice",
+                           "조회 1시간 뒤 토큰이 만료되고 조금 지날 때까지 둡니다"),
         "excluded": Phrase("is accepted but not counted", "받기만 하고 세지 않습니다"),
     }
     for reporting in (False, True):

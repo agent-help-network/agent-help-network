@@ -22,7 +22,7 @@ os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 from ahn import feedback, mcp_adapter  # noqa: E402
 from ahn.feedback import FeedbackError, issue, verify  # noqa: E402
 from ahn.main import create_app  # noqa: E402
-from ahn.models import FEEDBACK_TOKEN, CheckResponse  # noqa: E402
+from ahn.models import FEEDBACK_TOKEN, CheckResponse, FeedbackIn  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +45,23 @@ def resign(payload: str, pepper=PEPPER) -> str:
 def payload_of(text: str) -> str:
     body = text.split(".")[0]
     return base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode()
+
+
+ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+
+def respellings(text: str) -> list[str]:
+    """Other spellings of the same token: a different last character of the payload or MAC part that a lenient base64
+    decoder reads as the same bytes (the spare low bits are ignored)."""
+    decode = lambda part: base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))  # noqa: E731
+    body, mac = text.split(".")
+    found = []
+    for index, part in ((0, body), (1, mac)):
+        for char in ALPHABET:
+            other = part[:-1] + char
+            if other != part and decode(other) == decode(part):
+                found.append(other + "." + mac if index == 0 else body + "." + other)
+    return found
 
 
 # --- the token ------------------------------------------------------------------------------------
@@ -76,6 +93,26 @@ def test_a_forged_or_malformed_token_is_refused(bad):
     with pytest.raises(FeedbackError) as caught:
         verify(PEPPER, bad, NOW)
     assert (caught.value.code, caught.value.status) == ("invalid_feedback_token", 400)
+
+
+def test_only_the_spelling_the_service_issued_is_accepted():
+    """B1: base64 leaves spare bits in the last character. Each other spelling of a genuine token decodes to the same
+    signed bytes; it must be refused, or one token could be used once per spelling."""
+    value = token()
+    variants = respellings(value)
+    assert len([v for v in variants if v.split(".")[0] == value.split(".")[0]]) == 3  # the 32-byte MAC has 2 spare bits
+    for variant in variants:
+        with pytest.raises(FeedbackError, match="invalid_feedback_token"):
+            verify(PEPPER, variant, NOW)
+    assert verify(PEPPER, value, NOW).host == "demo-site.io"
+
+
+def test_the_used_token_key_is_the_signed_content_not_the_spelling():
+    value = token()
+    claims = verify(PEPPER, value, NOW)
+    assert claims.digest == feedback.fingerprint(value) == sha256(payload_of(value).encode()).hexdigest()
+    for variant in respellings(value):
+        assert feedback.fingerprint(variant) == claims.digest  # every spelling would land on the same row anyway
 
 
 def test_a_token_signed_with_another_key_is_refused():
@@ -142,7 +179,7 @@ def test_the_answer_field_lists_the_codes_in_the_contract_order():
 
 def test_feedback_is_the_last_key_of_an_answer_and_is_left_out_when_absent():
     fields = list(CheckResponse.model_fields)
-    assert fields[-1] == "feedback" and fields[-3:-1] == ["failure_stage", "next_checks"]
+    assert fields[-1] == "feedback_token" and fields[-3:-1] == ["failure_stage", "next_checks"]
 
 
 # --- REST body rules (validation runs before any database access) ---------------------------------
@@ -190,11 +227,11 @@ def test_the_endpoint_is_in_the_openapi_schema_with_its_three_fields(client):
 
 # --- MCP ------------------------------------------------------------------------------------------
 
-def tools_in(public: str, reporting: str) -> dict:
+def tools_in(public: str, reporting: str, switch: str = "1") -> dict:
     code = ("import asyncio, json; from ahn.mcp_adapter import mcp; "
-            "print(json.dumps({t.name: [t.input_schema, t.annotations.model_dump(), t.description] "
+            "print(json.dumps({t.name: [t.input_schema, t.annotations.model_dump(), t.description, t.output_schema] "
             "for t in asyncio.run(mcp.list_tools())}))")
-    env = {**os.environ, "AHN_PUBLIC_MODE": public, "AHN_REPORTING_ENABLED": reporting}
+    env = {**os.environ, "AHN_PUBLIC_MODE": public, "AHN_REPORTING_ENABLED": reporting, "AHN_LOOKUP_FEEDBACK": switch}
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -203,16 +240,54 @@ def tools_in(public: str, reporting: str) -> dict:
 @pytest.mark.parametrize("public,reporting", [("1", "0"), ("1", "1"), ("0", "0")])
 def test_rate_last_lookup_is_listed_with_honest_annotations(public, reporting):
     tools = tools_in(public, reporting)
-    schema, annotations, description = tools["rate_last_lookup"]
+    schema, annotations, description, _ = tools["rate_last_lookup"]
     assert sorted(schema["properties"]) == ["outcome", "path", "token"] and schema["required"] == ["token", "outcome"]
     assert schema["properties"]["outcome"]["enum"] == ["succeeded", "still_blocked", "handed_off", "gave_up"]
     assert schema["properties"]["path"]["enum"] == ["official_path", "same_site", "unknown"]
+    # The token is described with the REST limits: the same pattern and the same maximum length.
+    assert schema["properties"]["token"]["pattern"] == FEEDBACK_TOKEN.pattern
+    assert schema["properties"]["token"]["maxLength"] == 530 == FeedbackIn.model_fields["token"].metadata[0].max_length
     assert annotations["read_only_hint"] is False and annotations["destructive_hint"] is False
     assert annotations["idempotent_hint"] is True and annotations["open_world_hint"] is False
     assert description.startswith("If an earlier check_incident answer gave you a feedback token and you then tried again, say whether it worked. "
                                   "Sends only the token and the outcome code, no hostname.")
     # The lookup tool itself is unchanged: still read-only.
     assert tools["check_incident"][1]["read_only_hint"] is True
+
+
+def test_the_switch_also_leaves_the_tool_out():
+    for public, reporting in (("1", "0"), ("0", "0")):
+        tools = tools_in(public, reporting, switch="0")
+        assert "rate_last_lookup" not in tools and "check_incident" in tools
+
+
+def closed_objects(schema, where="root"):
+    """Paths of object schemas that refuse keys they do not list."""
+    found = []
+    if isinstance(schema, dict):
+        if schema.get("additionalProperties") is False or (schema.get("type") == "object" and "properties" in schema
+                                                            and schema.get("additionalProperties") is not True):
+            found.append(where)
+        for key, value in schema.items():
+            found += closed_objects(value, f"{where}.{key}")
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            found += closed_objects(value, f"{where}[{index}]")
+    return found
+
+
+def test_the_advertised_output_schemas_accept_additive_fields():
+    """A client that cached tools/list must keep accepting answers after an optional key is added (D58)."""
+    tools = tools_in("1", "0")
+    for name in ("check_incident", "rate_last_lookup"):
+        output = tools[name][3]
+        assert output["additionalProperties"] is True and closed_objects(output) == [], name
+    output = tools["check_incident"][3]
+    assert "feedback_token" in output["properties"] and "feedback_token" not in output.get("required", [])
+    for nested in ("AccessProfile", "OfficialPaths", "NextAction", "Feedback"):
+        assert output["$defs"][nested]["additionalProperties"] is True
+    # The server's own models stay closed: an unknown key in what it returns is still an error.
+    assert CheckResponse.model_config["extra"] == "forbid"
 
 
 def test_the_tool_sends_only_token_outcome_and_path(monkeypatch):
