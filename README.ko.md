@@ -195,16 +195,11 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 
 ## 문서
 
-설계 문서는 대부분 한국어다. API 계약은 영어판도 있다.
+API 계약은 한국어판과 영어판이 있고, 시스템 설계서와 설계 결정은 한국어다.
 
 - [API 계약](docs/api-contract.md) · [API contract (English)](docs/api-contract.en.md)
-- [개발 절차](docs/development-process.md) · [요구사항](docs/requirements.md) · [시스템 설계서](docs/architecture.md) · [작업 순서](docs/build-plan.md)
-- [설계 결정](docs/decisions.md) · [화면 설계](docs/screen-design.md) · [테스트 계획](docs/test-plan.md)
-- [보안·운영](docs/security-operations.md) · [악용 방지](docs/abuse-controls.md) · [통계·모니터](docs/analytics-monitoring.md)
-- [발견·콜드스타트](docs/discovery-and-cold-start.md) · [제한된 근거에서의 제품 검토](docs/product-research-2026-10-06.md) · [자발적 공개 베타](docs/pilot-plan.md)
-- [공개 제보 검토·중지 절차](docs/public-intake-operations.md) · [약관 초안](docs/product-terms-draft.md)
-- [에이전트 간 질문·경험 공유 확장 설계](docs/agent-network-architecture.md)
-- [초기 제안](docs/proposal.md) · [시점 비교](docs/temporal-comparison.md)는 초기 조사 기록이며 일부 시험 상태는 과거 시점이다.
+- [시스템 설계서](docs/architecture.md) · [설계 결정](docs/decisions.md)
+- 약관과 개인정보 처리방침은 사이트의 `/ko/terms`·`/ko/policy`(`/en/terms`·`/en/policy`)에서 제공하며, 원문은 [`ahn/templates/`](ahn/templates/)에 있다.
 - [Python 클라이언트 `ahn-client`](clients/python/README.md) · [Claude Code 플러그인](plugins/claude-code/ahn/README.md) · [MCP Registry 매니페스트](server.json)
 - [기여 안내 (영어)](CONTRIBUTING.md) · [피드백 변경 기록 (영어)](docs/feedback-changelog.md): 받은 제안과 처리 결과 · [보안 정책 (영어)](SECURITY.md)
 
@@ -297,16 +292,16 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 - **오프라인 번들(운영자가 켜야 제공, 지금은 꺼짐).** `/v1/bundle/latest.jsonl.gz` 의 하루 1회 gzip JSON Lines 파일(CC BY 4.0)로, 조회 없이 이 데이터를 쓰려는 에이전트와 미러를 위한 것이다: 큐레이션한 시드 목록 호스트의 `robots.txt`·`llms.txt` 판독, 큐레이션한 공식 경로와 상태 페이지 매핑. 제보, 시드 목록 밖의 조회된 호스트, 조회 수, 요청 기록, IP 변환값, 제보자 키, 피드 값, 인기 순위에서만 가져온 호스트, 시드 순위는 절대 담지 않는다. 형식·상한·라이선스: [API 계약, 오프라인 번들](docs/api-contract.md#오프라인-번들-2026-10-20-준비-스위치를-켜야-제공). 스위치는 `AHN_PUBLIC_BUNDLE=1` 이며 꺼져 있으면 경로가 404 를 돌려준다. 데이터를 쓰다가 고칠 곳이나 보탤 정보가 있으면 [보내는 방법](https://agenthelpnetwork.com/ko/contribute)이 있다. 하지 않아도 되고, 해 주시면 고맙다(이슈 양식, 또는 [`contrib/`](contrib/README.md) 아래 파일).
 - **지금 문제가 있는 사이트(운영자가 켜야 제공, 지금은 꺼짐).** `/v1/now`(JSON)와 `/en/now`·`/ko/now` 는 공식 상태 페이지가 지금 조회 답을 기다리게 할 문제를 발표한 큐레이션 호스트를 출처와 함께, 업체가 7일 안에 갱신한 동안만 보여 준다. AHN 자체 robots.txt 점검은 별도 스위치 뒤의 둘째 열이다. 거절된 읽기·제보·조회 수는 나오지 않는다. [API 계약](docs/api-contract.md#지금-문제가-있는-사이트-운영자가-켜야-제공) 참고. 스위치는 `AHN_PUBLIC_BOARD=1` 이며 꺼져 있으면 경로가 404 를 돌려준다.
 - 한 에이전트 세션에서 사람이 클릭한 시도를 그 세션과 독립된 제보자로 세지 않는다.
-- 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다. 운영상의 남은 위험과 중지 절차는 [공개 제보 검토·중지 절차](docs/public-intake-operations.md)에 기록한다.
+- 임시 Cloudflare 터널은 시험 주소일 뿐 배포 주소가 아니다.
 
 ## 데이터 출처
 
 - **시드 호스트 목록.** [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) 는 호스트 이름만 담는다. 맨 앞은 정리된 공식 경로 표의 호스트이고, 그다음 에이전트가 가장 자주 필요로 하는 호스트([D35](docs/decisions.md)), 정리된 한국 서비스, 앞서 정리한 범주 순이다. 마지막 블록은 Tranco 상위 1,000위에서 고른 호스트를 알파벳순으로 두어, 파일에서 순위가 드러나지 않는다.
 - **Tranco.** 그 마지막 블록은 2026-10-03에 생성된 Tranco 상위 1,000위, 목록 [`Y83KG`](https://tranco-list.eu/list/Y83KG) 의 호스트 이름을 쓴다. 인용: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Korczyński, Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation", NDSS 2019, [doi:10.14722/ndss.2019.23386](https://doi.org/10.14722/ndss.2019.23386). 이 목록은 Cisco Umbrella, Majestic, Farsight, Chrome User Experience Report(CrUX), Cloudflare Radar의 순위를 합친 것이다. 각 제공처 자신의 페이지가 밝힌 라이선스는 Majestic CC BY 3.0, CrUX CC BY 4.0(Google), Cloudflare Radar CC BY-NC 4.0(Cloudflare 개발자 문서, API로 제공되는 데이터 기준)이다. Cisco Umbrella와 Farsight는 라이선스 문구를 찾지 못했다. Tranco는 목록 자체의 이용 조건을 공개하지 않으며, 제공처 라이선스가 합친 목록에 어떻게 적용되는지도 밝히지 않는다. Tranco는 이 제공처들과 제휴 관계가 없고 우리도 마찬가지다.
 
-## 운영 기록
+## 이 저장소의 범위
 
-운영 일지, 검증 기록, 커뮤니티 게시 기록, 호스팅 비용 기록은 운영자의 비공개 저장소에 두며, 이 공개 저장소는 코드와 설계·정책 문서의 정본이다.
+이 공개 저장소는 서비스를 쓰고 연동하고 검토하는 데 필요한 코드와 문서를 담는다. 운영자의 작업 메모는 다른 곳에 둔다.
 
 ## 라이선스
 
@@ -319,4 +314,4 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 - 에이전트 앱 디렉터리 심사는 대기 중이다. 이 저장소는 MCP Registry 등재 외의 승인·커넥터 등재·파트너십을 주장하지 않는다.
 - 계정 없이 구조화된 제보를 비공개로 접수한다. Render에서 5분마다 실행되는 규칙 기반 검토가 일부 제보를 **미확인 관찰**(`auto_unverified`)로 공개하고 나머지는 보류한다. 운영자가 제보나 사이트 상태를 확인했다는 뜻은 아니다.
 - Render의 별도 Cron Job이 웹 서비스 대역폭을 15분마다 확인해 월 경고·중단 문턱(기본 4GB 경고, 10GB 중단)에서 경고·중단을 시도한다. 실제 Render 대역폭 조회와 정상 실행을 확인했고, 중단 분기는 합성 API 응답으로만 시험했다. 공급자 지표의 지연과 API 오류 때문에 **결제 금액의 강제 상한이 아니다**. 이 작업은 LLM 호출이나 운영자의 로컬 컴퓨터를 사용하지 않는다.
-- 에이전트 간 질문·경험 공유([확장 설계](docs/agent-network-architecture.md))는 장기 목표이며 **현재 공개 기능이 아니다**.
+- 에이전트 간 질문·경험 공유는 장기 목표이며 **현재 공개 기능이 아니다**.

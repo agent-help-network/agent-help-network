@@ -21,7 +21,7 @@ pip install ahn-client                                                 # Python 
 pip install "ahn-client[langchain]"                                    # or [crewai], [openai-agents], [claude-agent-sdk]: framework adapters
 ```
 
-**Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and enum codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a Browser Use example. None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
+**Install in a client:** the [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. For Python code (Playwright, Browser Use, plain HTTP) use the read-only [`ahn-client`](clients/python/README.md) package from PyPI, which has no dependencies and sends only a hostname and enum codes. From version 0.3.0 it also has optional adapters that add a one-line answer when a web tool fails inside LangChain v1 (`[langchain]`), CrewAI (`[crewai]`), the OpenAI Agents SDK (`[openai-agents]`) or the Claude Agent SDK (`[claude-agent-sdk]`), and a [Browser Use example](examples/browser-use/README.md). None of these is an official OpenAI, Meta, Anthropic, Muse, or dots integration.
 
 **Install in your coding agent:** remote HTTP server, no account or key. Each client asks you to confirm before saving. Formats are from each vendor's docs: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
@@ -201,14 +201,11 @@ What the service never does:
 
 ## Documentation
 
-Most design documents are in Korean; the API contract also has an English version.
+The API contract has English and Korean versions; the architecture overview and the decision log are in Korean.
 
 - [API contract (English)](docs/api-contract.en.md) · [API 계약 (Korean)](docs/api-contract.md)
-- [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md) · [Requirements](docs/requirements.md) · [Build plan](docs/build-plan.md) · [Development process](docs/development-process.md)
-- [Screen design](docs/screen-design.md) · [Test plan](docs/test-plan.md) · [Security operations](docs/security-operations.md) · [Abuse controls](docs/abuse-controls.md) · [Analytics and monitoring](docs/analytics-monitoring.md)
-- [Discovery and cold start](docs/discovery-and-cold-start.md) · [Product research (2026-10-06)](docs/product-research-2026-10-06.md) · [Voluntary public beta](docs/pilot-plan.md)
-- [Public intake review and pause procedure](docs/public-intake-operations.md) · [Draft terms](docs/product-terms-draft.md)
-- [Initial design proposal](docs/proposal.md) and [temporal comparison](docs/temporal-comparison.md) are early research records; some test states in them are historical.
+- [Architecture](docs/architecture.md) · [Decisions](docs/decisions.md)
+- The terms and the privacy policy are served by the site at `/en/terms` and `/en/policy` (`/ko/terms`, `/ko/policy`); their source is under [`ahn/templates/`](ahn/templates/).
 - [LangChain package `langchain-ahn`](clients/langchain-ahn/README.md) (a lookup tool and the middleware, for LangChain agents)
 - [Python client `ahn-client`](clients/python/README.md) and its framework adapters (LangChain, CrewAI, OpenAI Agents SDK, Claude Agent SDK, Browser Use) · [Claude Code plugin](plugins/claude-code/ahn/README.md) · [MCP Registry manifest](server.json)
 - [Contributing](CONTRIBUTING.md) · [Feedback changelog](docs/feedback-changelog.md) (suggestions received and what happened to them) · [Security policy](SECURITY.md)
@@ -302,16 +299,16 @@ The local development build uses synthetic `.test` observations, and `prototype/
 - **Offline bundle (served only once the operator turns it on; off today).** A daily gzip JSON Lines file at `/v1/bundle/latest.jsonl.gz`, licensed CC BY 4.0, for agents that want this data without a lookup and for mirrors: the `robots.txt`/`llms.txt` reads of the curated seed-list hosts, the curated official paths and the curated status-page mappings. It never holds reports, looked-up hosts outside the seed list, lookup counts, request logs, IP digests, reporter keys, feed values, hosts taken only from a popularity ranking, or seed rank. Format, limits and license: [API contract, Offline bundle](docs/api-contract.en.md#offline-bundle). The switch is `AHN_PUBLIC_BUNDLE=1`; while it is off the paths answer 404. If you use the data and have a correction or an addition, [how to send it](https://agenthelpnetwork.com/en/contribute) is optional and welcome (an issue form, or a file under [`contrib/`](contrib/README.md)).
 - **Site problems right now (served only once the operator turns it on; off today).** `/v1/now` (JSON) and `/en/now`, `/ko/now` list curated hosts whose own status page currently reports a problem that would make a lookup answer wait, quoted with its source, only while the provider updated it within 7 days; AHN's own robots.txt checks are a second column behind their own switch. Refused reads, reports and lookup counts are never shown. See [API contract](docs/api-contract.en.md#site-problems-right-now-served-only-once-the-operator-turns-it-on). The switch is `AHN_PUBLIC_BOARD=1`; while it is off the paths answer 404.
 - A person clicking inside an agent's session is not counted as an independent reporter from that session.
-- Temporary Cloudflare tunnels are test addresses, not deployment addresses. Remaining operational risks and the pause procedure are in the [public intake review and pause procedure](docs/public-intake-operations.md).
+- Temporary Cloudflare tunnels are test addresses, not deployment addresses.
 
 ## Data sources
 
 - **Seed host list.** [`ahn/seed_hosts.txt`](ahn/seed_hosts.txt) holds host names only. It starts with the hosts of the curated official-paths table, then the hosts that AI agents most often need ([D35](docs/decisions.md)), curated Korean services and the earlier curated categories. The last block is chosen from the Tranco top 1,000 and is sorted alphabetically, so the file carries no ranking.
 - **Tranco.** That last block uses host names from the Tranco top 1,000, list [`Y83KG`](https://tranco-list.eu/list/Y83KG), generated 2026-10-03. Cite: Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Korczyński and Wouter Joosen, "Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation", NDSS 2019, [doi:10.14722/ndss.2019.23386](https://doi.org/10.14722/ndss.2019.23386). The list combines the rankings of Cisco Umbrella, Majestic, Farsight, the Chrome User Experience Report (CrUX) and Cloudflare Radar. The providers' own pages state these licenses: Majestic CC BY 3.0, CrUX CC BY 4.0 (Google), Cloudflare Radar CC BY-NC 4.0 (Cloudflare developer documentation, for data available through its API). We found no license text for Cisco Umbrella or Farsight. Tranco publishes no terms of use for the list and does not say how the providers' licenses apply to the combined list. Tranco is not affiliated with these providers, and neither are we.
 
-## Operations records
+## Scope of this repository
 
-Operations records (operations journal, verification logs, community posting history, hosting cost notes) live in a private operator repository; this public repository is the source of truth for code and design and policy documents.
+This public repository holds the code and the documentation needed to use, integrate and review the service; the operator's working notes are kept elsewhere.
 
 ## License
 
@@ -324,4 +321,4 @@ Operations records (operations journal, verification logs, community posting his
 - Reviews by agent-app directories are pending. This repository does not claim any approval, connector listing, or partnership beyond the MCP Registry entry.
 - Public reports are accepted without an account and start in private review. A rule-based review that runs every 5 minutes on Render publishes some as **unverified observations** (`auto_unverified`) and holds the rest; this is not operator verification of the report or of the site.
 - A separate Render cron job checks the web service's bandwidth every 15 minutes and tries to warn at 4 GB and stop at 10 GB per month (defaults). Real bandwidth reads and normal runs have been confirmed; the stop branch has been tested only with synthetic API responses. Provider metric delays and API errors mean it is **not a hard billing cap**. It uses no LLM calls and no operator machine.
-- The longer-term design for agent questions and shared experience ([extension design](docs/agent-network-architecture.md)) is **not a public feature**.
+- A longer-term design for agent questions and shared experience is **not a public feature**.
