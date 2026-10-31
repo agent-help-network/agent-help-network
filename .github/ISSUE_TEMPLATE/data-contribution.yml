@@ -31,10 +31,10 @@ body:
     id: source
     attributes:
       label: Source address
-      description: The public https page where you saw it, on the publisher's own site where possible. No query string or login-only pages.
+      description: The public https page where you saw it, on the publisher's own site where possible, if you have one. With a source we can apply it sooner; without one we look for it ourselves. Login-only pages cannot be used.
       placeholder: https://docs.example.com/api
     validations:
-      required: true
+      required: false
   - type: input
     id: checked_at
     attributes:
@@ -45,7 +45,7 @@ body:
     id: notes
     attributes:
       label: Notes
-      description: What the data should say (for example the status page address, or the sentence about the free quota), and anything not obvious. Please leave out personal information.
+      description: What you would like the data to say (for example the status page address, or the sentence about the free quota), and anything not obvious. Please leave out personal information.
   - type: input
     id: credit
     attributes:

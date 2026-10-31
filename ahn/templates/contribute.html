@@ -55,10 +55,10 @@
       <h2>{{ 'What we do with it' if lang == 'en' else '받은 뒤 하는 일' }}</h2>
       {% if lang == 'en' %}
       <p>We read the public source again ourselves and apply what matches it, following the same curation rules as the rest of the table (publisher-owned pages, short verbatim quotes, no guesses). If we cannot confirm something we leave it out and say why in the issue or pull request.</p>
-      <p>If you would like your name in the commit or change record, tell us how you want it written (a handle is fine). Otherwise we leave names out of it. A pull request shows your git author name as git always does.</p>
+      <p>If you would like your name in the commit or change record, tell us how you want it written (a handle is fine). Otherwise we leave names out of it. A pull request is not merged as it stands: we apply what we confirmed in a separate change of our own and close yours with thanks, so nothing personal in your commit ends up in the project&rsquo;s main history. Your pull request page still shows your git author name, as it always does.</p>
       {% else %}
       <p>우리가 공개 원본을 다시 직접 읽고, 맞는 것을 반영해요. 표의 나머지와 같은 큐레이션 기준을 따라요(운영 주체 소유 페이지, 원문 짧은 인용, 추측 없음). 확인하지 못한 것은 넣지 않고 이슈나 풀 리퀘스트에 이유를 적어요.</p>
-      <p>커밋이나 변경 기록에 이름을 남기고 싶으시면 어떻게 적을지 알려 주세요(핸들이어도 돼요). 아니면 이름은 적지 않아요. 풀 리퀘스트는 git 이 늘 그렇듯 작성자 이름이 보여요.</p>
+      <p>커밋이나 변경 기록에 이름을 남기고 싶으시면 어떻게 적을지 알려 주세요(핸들이어도 돼요). 아니면 이름은 적지 않아요. 풀 리퀘스트는 그대로 병합하지 않아요. 확인한 내용을 우리가 별도 변경으로 반영하고, 보내 주신 풀 리퀘스트는 감사 인사와 함께 닫아요. 그래서 커밋에 담긴 개인 정보가 프로젝트 본류 이력에 남지 않아요. 풀 리퀘스트 페이지에는 git 이 늘 그렇듯 작성자 이름이 보여요.</p>
       {% endif %}
     </article>
     <article class="info-card" id="send">
@@ -78,9 +78,9 @@
   <div class="callout" id="not-accepted">
     <strong>{{ 'What we cannot take' if lang == 'en' else '받을 수 없는 것' }}</strong>
     {% if lang == 'en' %}
-    <p>Public hostnames and public pages only. Please leave out personal URLs, anything you saw behind a login, private or personal information, keys, tokens, cookies, other people&rsquo;s conversations, and addresses with a query string. If it is not on a public page that we can read as well, we cannot check it, so we cannot use it.</p>
+    <p>Public hostnames and public pages only. Please leave out personal URLs, anything you saw behind a login, private or personal information, keys, tokens, cookies, email addresses, and other people&rsquo;s conversations. The format check turns away addresses that carry a port or credentials or are not plain https, email addresses, and anything shaped like a key or token (it can miss some, which is why a person reads every contribution as well). A query string is accepted but flagged for the reviewer, and one that carries a key or token is turned away; a plain page address is better. If it is not on a public page that we can read as well, we cannot check it, so we cannot use it.</p>
     {% else %}
-    <p>공개 호스트명과 공개 페이지만 받아요. 개인 URL, 로그인 뒤에서 본 내용, 비공개·개인 정보, 키·토큰·쿠키, 다른 사람의 대화, 쿼리 문자열이 붙은 주소는 빼 주세요. 우리도 읽을 수 있는 공개 페이지에 없으면 확인할 수 없어서 쓸 수 없어요.</p>
+    <p>공개 호스트명과 공개 페이지만 받아요. 개인 URL, 로그인 뒤에서 본 내용, 비공개·개인 정보, 키·토큰·쿠키, 이메일 주소, 다른 사람의 대화는 빼 주세요. 형식 검사는 포트나 인증 정보가 붙은 주소, https 가 아닌 주소, 이메일 주소, 키·토큰처럼 생긴 값을 돌려보내요(놓치는 것도 있어서 사람이 모든 기여를 한 번 더 읽어요). 쿼리 문자열은 받되 검수자가 보도록 표시하고, 키나 토큰이 실린 것은 돌려보내요. 쿼리 없는 평범한 페이지 주소가 더 좋아요. 우리도 읽을 수 있는 공개 페이지에 없으면 확인할 수 없어서 쓸 수 없어요.</p>
     {% endif %}
   </div>
   <p class="agent-footnote">{{ 'The code stays Apache-2.0 and the bundle stays CC BY 4.0. Facts you send about public pages join the dataset once we have checked them, under that same license; quoted publisher text remains the publisher’s. Questions: ' if lang == 'en' else '코드는 Apache-2.0, 번들은 CC BY 4.0 그대로예요. 공개 페이지에 대해 보내 주신 사실은 우리가 확인한 뒤 같은 라이선스로 데이터에 합쳐지고, 업체 문서 인용은 계속 업체의 것이에요. 문의: ' }}<a href="mailto:support@agenthelpnetwork.com">support@agenthelpnetwork.com</a></p>

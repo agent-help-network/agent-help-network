@@ -91,8 +91,8 @@ def test_credit_is_optional():
     changed(PATH, observed_at="2026-13-31T09:30:00Z"),
     changed(PATH, observed_at="2026-11-05T09:30:00Z"),                  # in the future
     changed(PATH, source_url="http://docs.example.com/api"),
-    changed(PATH, source_url="https://docs.example.com/api?token=abc"),
-    changed(PATH, source_url="https://docs.example.com/api#top"),
+    changed(PATH, source_url="https://docs.example.com/api?token=abc"),     # a credential name in the query is an error
+    changed(PATH, source_url="https://docs.example.com/api#access_token=abc"),
     changed(PATH, source_url="https://user:pw@docs.example.com/api"),
     changed(PATH, source_url="https://docs.example.com:8443/api"),
     changed(PATH, source_url="https://127.0.0.1/api"),
@@ -115,6 +115,18 @@ def test_credit_is_optional():
     in_payload(PATH, note="two\nlines"),
     in_payload(PATH, note="write to me at someone@example.org"),
     in_payload(PATH, note="use Bearer abcdefghijklmnop1234"),
+    in_payload(PATH, note="reach me at someone (at) example.org"),     # the usual ways around the address pattern
+    in_payload(PATH, note="reach me at someone[at]example[dot]org"),
+    in_payload(PATH, note="reach me at someone\uff20example.org"),
+    in_payload(PATH, note="key " + "sk_" + "live_" + "A" * 24),            # dummy values shaped like real keys
+    in_payload(PATH, note="key " + "rk_" + "test_" + "A" * 24),
+    in_payload(PATH, note="pat " + "github_pat_" + "A" * 30),
+    in_payload(PATH, note="pat " + "glpat-" + "A" * 20),
+    in_payload(PATH, note="key " + "AIza" + "A" * 35),
+    in_payload(PATH, note="jwt " + "eyJhbGciOi" + ".eyJzdWIiOiJ4" + ".c2lnbmF0dXJl"),
+    in_payload(PATH, note="hook " + "https://hooks.slack.com/services/" + "T000DUMMY/B000DUMMY/xxxxxxxx"),
+    in_payload(PATH, note="mixed \u202etxt.exe"),                        # direction control
+    in_payload(PATH, note="x" * 2001),
     in_payload(PATH, api_docs="https://docs.example.com/api?key=1"),
     in_payload(PATH, api_docs="docs.example.com/api"),
     in_payload(STATUS, source_name=KeyError),
@@ -209,13 +221,128 @@ def test_readme_examples_pass_the_check():
         assert check(json.loads(line)) == ([], []), line
 
 
-def test_accepted_fields_follow_the_bundle_allowlist():
-    from ahn import bundle
+def test_accepted_fields_are_the_expected_ones():
+    # Hard-coded on purpose: comparing the checker with the bundle's own constants would only show they agree.
+    assert CHECK.PAYLOAD_KEYS["official_path"] == {"site_host", "name", "api_docs", "developer_portal", "note", "access"}
+    assert CHECK.PAYLOAD_KEYS["status_source"] == {"site_host", "source_name", "status_page_url", "api_url", "feed_kind"}
+    assert set(CHECK.LINE_KEYS) == {"schema_version", "kind", "observed_at", "source_url", "payload", "credit"}
+    for name in ("ip_address", "api_key", "reporter_id", "password", "token", "cookie", "email", "rank"):
+        assert name in CHECK.FORBIDDEN_KEYS
 
-    assert CHECK.PAYLOAD_KEYS["official_path"] == bundle.PAYLOAD_KEYS["official_path"]
-    assert CHECK.PAYLOAD_KEYS["status_source"] == bundle.PAYLOAD_KEYS["status_source"]
-    assert set(CHECK.LINE_KEYS) <= bundle.ENVELOPE_KEYS | {"credit"}
-    assert bundle.FORBIDDEN_KEYS <= CHECK.FORBIDDEN_KEYS
+
+def _as_contribution(record: dict) -> dict:
+    """A bundle record as a contributor would send it: the envelope fields we fill in are left out."""
+    line = {key: record[key] for key in ("schema_version", "kind", "observed_at", "source_url", "payload")}
+    if line["source_url"] is None:
+        del line["source_url"]
+    return line
+
+
+def test_every_curated_entry_passes_as_a_contribution():
+    """What the service itself publishes must be acceptable when someone sends it back (warnings are allowed)."""
+    from ahn import bundle
+    from ahn.official_paths import OFFICIAL_PATHS
+    from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+
+    failures = []
+    for host in OFFICIAL_PATHS:
+        errors, _ = check(_as_contribution(bundle.official_path_record(host, NOW)))
+        if errors:
+            failures.append((host, errors))
+    for host in set(SOURCES) | set(OFFICIAL_STATUS_PAGES):
+        errors, _ = check(_as_contribution(bundle.status_source_record(host, NOW)))
+        if errors:
+            failures.append((host, errors))
+    assert failures == [], failures
+    assert len(OFFICIAL_PATHS) > 50 and len(SOURCES) > 20
+
+
+def test_a_host_with_no_public_api_can_be_described():
+    record = {"schema_version": 1, "kind": "official_path", "observed_at": "2026-10-31T09:30:00Z",
+              "payload": {"site_host": "example.com", "name": "Example", "api_docs": None, "developer_portal": None,
+                          "note": "No public API; the site is closed to programmatic use."}}
+    assert check(record) == ([], [])
+    assert check(in_payload(record, note=None))[0]                          # nothing says what was found
+    assert check(changed(record, source_url="https://example.com/terms")) == ([], [])
+    assert check(changed(record, source_url="http://example.com/terms"))[0]  # a source, when given, is still checked
+    assert check(changed(PATH, source_url=KeyError))[0]                      # with a documentation page the source stays required
+
+
+def test_fragments_pass_and_query_strings_warn():
+    assert check(changed(PATH, source_url="https://docs.example.com/api#section-2")) == ([], [])
+    assert check(in_payload(PATH, api_docs="https://docs.example.com/api#auth")) == ([], [])
+    errors, warnings = check(in_payload(PATH, api_docs="https://docs.example.com/api?lang=en"))
+    assert errors == [] and len(warnings) == 1 and "query string" in warnings[0]
+    errors, warnings = check(changed(PATH, source_url="https://docs.example.com/api?lang=en"))
+    assert errors == [] and len(warnings) == 1
+    assert check(changed(PATH, source_url="https://docs.example.com/api#a=1&b=2"))[1]          # parameters in a fragment warn
+    for secret in ("?api_key=1", "?x=1&token=2", "#access_token=abc", "?sig=abc"):
+        assert check(changed(PATH, source_url="https://docs.example.com/api" + secret))[0], secret
+
+
+def test_scanning_is_fast_and_long_text_is_refused_before_any_pattern_runs():
+    import time
+
+    for text in ("a" * 256_000, "a@" * 100_000, "a." * 100_000, ("a" * 60 + " (at) ") * 20_000):
+        started = time.perf_counter()
+        errors, _ = check(in_payload(PATH, note=text))
+        assert errors and time.perf_counter() - started < 1.0
+    started = time.perf_counter()
+    assert check(in_payload(PATH, zz="a" * 256_000))[0]                    # an unknown key is scanned too, after the limit
+    assert time.perf_counter() - started < 1.0
+    assert check(in_payload(PATH, note="x" * 300)) == ([], [])             # ordinary text near the limits still passes
+
+
+def test_deep_and_wide_json_is_an_error_not_a_crash(tmp_path):
+    deep = in_payload(PATH, note=None)
+    node = deep["payload"]
+    for _ in range(50):
+        node["x"] = {}
+        node = node["x"]
+    assert check(deep)[0]
+    assert check(in_payload(PATH, access={"auth": [{"method": "api_key"}] * 60}))[0]
+    path = tmp_path / "deep.jsonl"
+    path.write_text("[" * 20000 + "]" * 20000 + "\n", encoding="utf-8")
+    errors, _ = CHECK.check_file(path, now=NOW)
+    assert errors and "not valid JSON" in errors[0]
+
+
+def test_file_size_is_checked_before_reading_and_symlinks_are_refused(tmp_path, monkeypatch):
+    big = tmp_path / "big.jsonl"
+    big.write_bytes(b"x" * (CHECK.MAX_FILE_BYTES + 1))
+    opened = []
+    original = Path.open
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: opened.append(self) or original(self, *a, **k))
+    errors, _ = CHECK.check_file(big, now=NOW)
+    assert errors and "over" in errors[0] and opened == []
+    target = tmp_path / "real.jsonl"
+    target.write_text(json.dumps(PATH) + "\n", encoding="utf-8")
+    link = tmp_path / "link.jsonl"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symbolic links are not available here")
+    errors, _ = CHECK.check_file(link, now=NOW)
+    assert errors and "symbolic link" in errors[0]
+
+
+def test_unicode_line_separators_do_not_split_a_record(tmp_path):
+    record = in_payload(PATH, note="before after end")           # legal inside a JSON string
+    path = tmp_path / "sep.jsonl"
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert " " in path.read_text(encoding="utf-8")
+    assert CHECK.check_file(path, now=NOW) == ([], [])
+
+
+def test_direction_controls_are_refused_raw_or_escaped(tmp_path):
+    for char in ("‪", "‮", "⁦", "⁩"):
+        raw = tmp_path / "raw.jsonl"
+        raw.write_text(json.dumps(in_payload(PATH, note="a" + char + "b"), ensure_ascii=False) + "\n", encoding="utf-8")
+        assert CHECK.check_file(raw, now=NOW)[0], repr(char)
+        assert check(in_payload(PATH, note="a" + char + "b"))[0], repr(char)
+    escaped = tmp_path / "escaped.jsonl"
+    escaped.write_text(json.dumps(in_payload(PATH, note="a‮b")) + "\n", encoding="utf-8")
+    assert CHECK.check_file(escaped, now=NOW)[0]
 
 
 def test_issue_form_has_the_expected_fields():
@@ -260,14 +387,43 @@ def test_contribute_page_leaves_out_report_observation_when_reporting_is_off():
         assert "report_observation" not in client.get(f"/{lang}/contribute").text
 
 
-def test_contribute_page_reads_as_an_invitation_not_a_requirement():
+PRESSURE_EN = re.compile(r"(?i)\b(?:must|required|mandatory|obligat\w*|you have to|have to|should|in order to use|as a condition)\b"
+                         r"|(?<!don't )(?<!do not )(?<!don’t )(?<!not )(?<!no )\bneeds? to\b")
+PRESSURE_KO = ("의무", "반드시", "필수", "해야", "하셔야", "조건으로")
+
+
+def _plain(html: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+
+
+def test_pressure_words_are_caught_but_a_plain_negative_is_not():
+    for text in ("you must send it", "you should send it", "you need to send it", "it is required", "sending is mandatory"):
+        assert PRESSURE_EN.search(text), text
+    for text in ("you don't need to send anything", "you do not need to explain", "there is no need to sign up"):
+        assert not PRESSURE_EN.search(text), text
+
+
+def test_everything_a_contributor_reads_is_an_invitation_not_a_requirement():
     client = _app()
-    plain = {lang: re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", client.get(f"/{lang}/contribute").text)) for lang in ("en", "ko")}
-    for word in ("must", "required", "mandatory", "obligat", "you have to", "in order to use", "as a condition"):
-        assert word not in plain["en"].lower(), word
-    for word in ("의무", "반드시", "필수", "해야 해요", "조건으로"):
-        assert word not in plain["ko"], word
-    assert "Nothing is expected in return" in plain["en"] and "바라는 것은 없고" in plain["ko"]
+    pages = {lang: _plain(client.get(f"/{lang}/contribute").text) for lang in ("en", "ko")}
+    form_lines = (ROOT / ".github" / "ISSUE_TEMPLATE" / "data-contribution.yml").read_text(encoding="utf-8").splitlines()
+    # the form's own "required:" lines are field settings, not wording
+    form = "\n".join(line for line in form_lines if not line.strip().startswith("required:"))
+    contrib = (ROOT / "contrib" / "README.md").read_text(encoding="utf-8")
+    for name, text in {"page": pages["en"], "issue form": form, "contrib/README.md": contrib}.items():
+        found = PRESSURE_EN.search(text)
+        assert not found, (name, found and found.group(0))
+    for word in PRESSURE_KO:
+        assert word not in pages["ko"], word
+    assert "Nothing is expected in return" in pages["en"] and "바라는 것은 없고" in pages["ko"]
+    assert "Nothing is expected" in contrib
+
+
+def test_the_issue_form_asks_for_host_and_kind_and_leaves_the_source_optional():
+    form = (ROOT / ".github" / "ISSUE_TEMPLATE" / "data-contribution.yml").read_text(encoding="utf-8")
+    by_id = {re.search(r"id: (\w+)", block).group(1): block for block in form.split("  - type: ")[1:] if "id:" in block}
+    assert "required: true" in by_id["host"] and "required: true" in by_id["kind"]
+    assert "required: false" in by_id["source"] and "required: true" not in by_id["source"]
 
 
 def test_contribute_is_in_the_sitemap_and_linked_from_the_site():

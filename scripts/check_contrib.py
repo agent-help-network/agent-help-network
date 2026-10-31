@@ -18,9 +18,10 @@ import importlib.util
 import json
 import re
 import sys
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,10 +44,31 @@ FORBIDDEN_KEYS = bundle.FORBIDDEN_KEYS | frozenset({"password", "passwd", "secre
 MAX_FILE_BYTES = 256 * 1024
 MAX_LINES = 200
 MAX_URL = 300
+MAX_STRING = 2000      # any single string in a line; checked before anything is scanned, so a huge value is cheap to refuse
+MAX_DEPTH = 12
 FILE_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,100}\.jsonl$")
 TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")
-SECRET_VALUE = re.compile(r"(?i)\b(?:bearer\s+[a-z0-9._~+/=-]{12,}|sk-[a-z0-9_-]{16,}|ghp_[a-z0-9]{20,}|xox[abp]-[a-z0-9-]{10,}|AKIA[0-9A-Z]{16})")
+# Every quantifier is bounded and a match cannot start inside a run of address characters, so a long string of
+# "aaaa..." costs a few steps per character instead of a re-scan from every position.
+_AT = r"(?:@|\uff20|\s?\(at\)\s?|\s?\[at\]\s?)"
+_DOT = r"(?:\.|\uff0e|\s?\(dot\)\s?|\s?\[dot\]\s?)"
+EMAIL = re.compile(rf"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{{1,64}}{_AT}[A-Za-z0-9-]{{1,63}}{_DOT}[A-Za-z]{{2,24}}")
+SECRET_VALUES = (
+    re.compile(r"(?i)\b(?:bearer\s+[a-z0-9._~+/=-]{12,}|sk-[a-z0-9_-]{16,}|ghp_[a-z0-9]{20,}|xox[abp]-[a-z0-9-]{10,})"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}"),
+    re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{8,}"),                    # Stripe secret and restricted keys
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),                                  # Google API key
+    re.compile(r"\beyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]{5,}"),                  # JWT
+    re.compile(r"(?i)hooks\.slack\.com/services/[a-z0-9]+/[a-z0-9]+"),       # Slack webhook token in the path
+)
+# Names whose value in a query string or fragment is a credential, wherever the address is.
+SECRET_PARAMS = frozenset({"key", "apikey", "api_key", "api-key", "token", "access_token", "auth", "authorization", "secret",
+                           "client_secret", "password", "passwd", "pwd", "sig", "signature", "session", "sessionid", "sid",
+                           "code", "jwt", "bearer", "x-amz-signature", "x-amz-credential"})
+# Right-to-left and isolate controls reorder what a reviewer sees.
+BIDI = re.compile(r"[\u202a-\u202e\u2066-\u2069]")
 
 
 def _verifier():
@@ -60,7 +82,7 @@ VERIFIER = _verifier()
 
 
 def url_problem(value) -> str | None:
-    """A plain https URL on a public hostname: no credentials, port, query or fragment (those are where tokens hide)."""
+    """A plain https URL on a public hostname: no credentials or port. A query string is only a warning (url_warning)."""
     if not isinstance(value, str) or not value.startswith("https://") or any(ch.isspace() for ch in value):
         return "must be a plain https URL"
     if len(value) > MAX_URL:
@@ -72,28 +94,63 @@ def url_problem(value) -> str | None:
         valid_host(parts.hostname or "")
     except ValueError:
         return "must be on a public hostname"
-    if parts.query or parts.fragment or "?" in value or "#" in value:
-        return "must not carry a query string or fragment (public documentation pages do not need one)"
+    for part in (parts.query, parts.fragment):
+        if "=" not in part:                       # "#auth" is an anchor, not a parameter
+            continue
+        names = {name.lower() for name, _ in parse_qsl(part, keep_blank_values=True)}
+        if names & SECRET_PARAMS:
+            return "must not carry a key, token or session value in its query string or fragment"
     return None
 
 
-def _scan(value, where: str, errors: list[str]) -> None:
-    """Forbidden names at any depth, and secret- or address-looking text anywhere."""
+def url_warning(value) -> str | None:
+    """Things a reviewer should look at but that do not make the address wrong: a query string, a fragment that is not an anchor."""
+    parts = urlsplit(value)
+    if parts.query or "?" in value:
+        return "has a query string; a plain page address is better if the page works without it"
+    if "=" in parts.fragment or "&" in parts.fragment:
+        return "has a fragment that looks like parameters rather than a page anchor"
+    return None
+
+
+def _scan(value, where: str, errors: list[str], depth: int = 0) -> bool:
+    """Forbidden names at any depth, and secret- or address-looking text anywhere. Returns True when a size or depth
+    limit was hit: those are checked before any pattern runs, so nothing long or deep ever reaches one."""
+    if depth > MAX_DEPTH:
+        errors.append(f"{where}: nested more than {MAX_DEPTH} levels deep")
+        return True
+    over = False
     if isinstance(value, dict):
         for key, item in value.items():
-            if str(key).lower() in FORBIDDEN_KEYS:
+            name = str(key)
+            if len(name) > 100:
+                errors.append(f"{where}: a field name is longer than 100 characters")
+                over = True
+                continue
+            if name.lower() in FORBIDDEN_KEYS:
                 errors.append(f"{where}: the field {key!r} is not accepted")
-            _scan(item, f"{where}.{key}", errors)
+            if BIDI.search(name):
+                errors.append(f"{where}: a field name contains a direction-control character")
+            over = _scan(item, f"{where}.{name}", errors, depth + 1) or over
     elif isinstance(value, list):
+        if len(value) > 50:
+            errors.append(f"{where}: a list of {len(value)} items, over 50")
+            return True
         for item in value:
-            _scan(item, where, errors)
+            over = _scan(item, where, errors, depth + 1) or over
     elif isinstance(value, str):
-        if EMAIL.search(value):
+        if len(value) > MAX_STRING:
+            errors.append(f"{where}: a text of {len(value)} characters, over {MAX_STRING}")
+            return True
+        if any(EMAIL.search(text) for text in (value, unicodedata.normalize("NFKC", value))):
             errors.append(f"{where}: looks like it contains an email address; leave personal details out")
-        if SECRET_VALUE.search(value):
+        if any(pattern.search(value) for pattern in SECRET_VALUES):
             errors.append(f"{where}: looks like it contains a key or token; remove it and rotate it if it was real")
         if any(ord(ch) < 32 for ch in value):
             errors.append(f"{where}: contains a control character")
+        if BIDI.search(value):
+            errors.append(f"{where}: contains a direction-control character")
+    return over
 
 
 def _text(payload: dict, field: str, errors: list[str]) -> None:
@@ -113,9 +170,11 @@ def check_record(record, *, now: datetime | None = None) -> tuple[list[str], lis
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not isinstance(record, dict):
         return ["the line is not a JSON object"], warnings
+    if _scan(record, "record", errors):      # first: size, depth, names and secret-looking text, before any other field is read
+        return errors, warnings
     extra = set(record) - LINE_KEYS
     if extra:
-        errors.append(f"fields outside the contribution format: {sorted(extra)} (we fill in the other bundle envelope fields)")
+        errors.append(f"fields outside the contribution format: {sorted(str(k)[:40] for k in extra)} (we fill in the other bundle envelope fields)")
     if record.get("schema_version") != 1:
         errors.append("schema_version must be 1")
     kind = record.get("kind")
@@ -132,20 +191,28 @@ def check_record(record, *, now: datetime | None = None) -> tuple[list[str], lis
         else:
             if when > now + timedelta(days=1):
                 errors.append("observed_at is in the future")
-    problem = url_problem(record.get("source_url"))
-    if problem:
-        errors.append(f"source_url {problem} (the public page where you confirmed it)")
+    payload = record.get("payload")
+    # A host with no public API has no page of its own to point at; the name and note then carry the finding.
+    no_public_api = (kind == "official_path" and isinstance(payload, dict)
+                     and not (payload.get("api_docs") or payload.get("developer_portal")))
+    source_url = record.get("source_url")
+    if source_url is None and no_public_api:
+        pass
+    else:
+        problem = url_problem(source_url)
+        if problem:
+            errors.append(f"source_url {problem} (the public page where you confirmed it)")
+        elif url_warning(source_url):
+            warnings.append(f"source_url {url_warning(source_url)}")
     credit = record.get("credit")
     if credit is not None:
         if not isinstance(credit, str) or not credit.strip() or credit != credit.strip() or not credit.isprintable():
             errors.append("credit must be a short printable string (a name or handle) or left out")
         elif len(credit) > TEXT_LIMITS["credit"]:
             errors.append(f"credit is longer than {TEXT_LIMITS['credit']} characters")
-    payload = record.get("payload")
     if not isinstance(payload, dict):
         errors.append("payload must be an object")
         return errors, warnings
-    _scan(record, "record", errors)
     if kind not in KINDS:
         return errors, warnings
     extra = set(payload) - PAYLOAD_KEYS[kind]
@@ -165,13 +232,16 @@ def check_record(record, *, now: datetime | None = None) -> tuple[list[str], lis
             problem = url_problem(payload[field])
             if problem:
                 errors.append(f"payload.{field} {problem}")
-            elif host and not VERIFIER.publisher_owned(host, payload[field]):
+                continue
+            if url_warning(payload[field]):
+                warnings.append(f"payload.{field} {url_warning(payload[field])}")
+            if host and not VERIFIER.publisher_owned(host, payload[field]):
                 warnings.append(f"payload.{field} is not on the host's own domain; the reviewer will look for the page that links it")
     if kind == "official_path":
         if not payload.get("name"):
             errors.append("payload.name is needed (the name of the developer documentation)")
-        if not (payload.get("api_docs") or payload.get("developer_portal")):
-            errors.append("payload needs api_docs or developer_portal")
+        if no_public_api and not payload.get("note"):
+            errors.append("payload needs api_docs or developer_portal; if the site has no public API, say so in note")
         if payload.get("access") is not None:
             for text in VERIFIER.access_problems(host or "invalid.test", payload["access"], today=now.date()):
                 label = text.split(": ", 1)[-1]
@@ -194,14 +264,26 @@ def check_file(path: Path, *, now: datetime | None = None) -> tuple[list[str], l
     warnings: list[str] = []
     if not FILE_NAME.fullmatch(path.name):
         errors.append(f"{path.name}: file names are lowercase letters, digits, dots, dashes and underscores, ending in .jsonl")
-    data = path.read_bytes()
+    if path.is_symlink():
+        return errors + [f"{path.name}: is a symbolic link; send a regular file"], warnings
+    try:
+        size = path.stat().st_size
+        if size > MAX_FILE_BYTES:
+            return errors + [f"{path.name}: over {MAX_FILE_BYTES // 1024} KB; split it into more than one file"], warnings
+        with path.open("rb") as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)     # never more than the limit, even if the file grew since stat
+    except OSError as exc:
+        return errors + [f"{path.name}: cannot be read ({exc.__class__.__name__})"], warnings
     if len(data) > MAX_FILE_BYTES:
         return errors + [f"{path.name}: over {MAX_FILE_BYTES // 1024} KB; split it into more than one file"], warnings
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return errors + [f"{path.name}: not UTF-8"], warnings
-    lines = [(number, line) for number, line in enumerate(text.splitlines(), 1) if line.strip()]
+    if BIDI.search(text):
+        errors.append(f"{path.name}: contains a direction-control character (U+202A-202E, U+2066-2069)")
+    # Split on the newline JSON Lines uses, not str.splitlines(): U+2028 and friends are legal inside a JSON string.
+    lines = [(number, line) for number, line in enumerate(text.split("\n"), 1) if line.strip()]
     if not lines:
         errors.append(f"{path.name}: no records")
     if len(lines) > MAX_LINES:
@@ -209,7 +291,7 @@ def check_file(path: Path, *, now: datetime | None = None) -> tuple[list[str], l
     for number, line in lines[:MAX_LINES]:
         try:
             record = json.loads(line)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             errors.append(f"{path.name}:{number}: not valid JSON ({exc.__class__.__name__})")
             continue
         line_errors, line_warnings = check_record(record, now=now)
