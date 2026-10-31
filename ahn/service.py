@@ -12,7 +12,7 @@ from . import adoption, background_reads, feed_robots, gov_registry, lookup_sign
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
-from .models import ObservationIn, OutcomeIn
+from .models import PUBLIC_TASK_STEP_CODES, ObservationIn, OutcomeIn
 from .official_paths import official_paths
 from .provenance import operator_id
 from .settings import Settings
@@ -23,7 +23,7 @@ from .triage import next_checks, recommendation
 
 LOG = logging.getLogger(__name__)
 PUBLIC_REPORTER_ID = UUID("b2d045dc-9791-4a27-9db4-3e469c63f57f")
-PUBLIC_TASK_STEPS = {"site_open", "login", "human_verification", "service_use", "other"}
+PUBLIC_TASK_STEPS = set(PUBLIC_TASK_STEP_CODES)
 PUBLIC_DAILY_CAP = 100
 PUBLIC_HOST_DAILY_CAP = 5
 PUBLIC_AGGREGATE_TLDS = {

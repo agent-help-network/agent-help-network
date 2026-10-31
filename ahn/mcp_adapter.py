@@ -10,7 +10,7 @@ from uuid import UUID
 from typing import Annotated, Any
 
 import httpx
-from pydantic import WithJsonSchema
+from pydantic import Field, WithJsonSchema
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver import Context
@@ -18,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
-from .models import AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
+from .models import TASK_STEP_FILTER_HINT, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
 from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
@@ -117,7 +117,7 @@ def outer_request_headers(ctx: Context | None) -> dict:
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
-async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "",
+async def check_incident(site_host: str, error_class: str = "", task_step: Annotated[str, Field(description=TASK_STEP_FILTER_HINT)] = "", failure_stage: str = "",
                          http_status: Annotated[Any, WithJsonSchema(HTTP_STATUS_SCHEMA)] = None,
                          challenge: Annotated[Any, WithJsonSchema(_enum_schema(Challenge))] = None,
                          retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,

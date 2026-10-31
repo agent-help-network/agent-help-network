@@ -20,7 +20,7 @@ from .db import connect
 from . import adoption, lookup_signals
 from . import server_card
 from .adoption import parse_days as parse_adoption_days
-from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
+from .models import TASK_STEP_FILTER_HINT, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
 from .rate_limit import RequestLimiter
@@ -518,7 +518,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             **lookup_signals.lenient_codes(http_status, challenge, retry_after, via))
 
     @app.get("/v1/incidents/check", response_model=CheckResponse)
-    def check_incident(request: Request, site_host: str, error_class: ErrorClass | None = None, task_step: str | None = None,
+    def check_incident(request: Request, site_host: str, error_class: ErrorClass | None = None, task_step: str | None = Query(None, description=TASK_STEP_FILTER_HINT),
                        window_hours: int = Query(24, ge=1, le=168), failure_stage: FailureStage | None = None,
                        http_status: str | None = Query(None, description="Optional signal code: 401, 402, 403, 407, 408, 429, 451 or 500-599. A value outside the list is ignored."),
                        challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
