@@ -451,3 +451,18 @@ def test_home_action_table_stacks_at_phone_width(monkeypatch):
         css = client.get("/static/site.css").text
     assert ".ledger-actions-from::before{content:attr(data-label)" in css
     assert "@media(max-width:640px){.ledger-actions thead" in css
+
+
+def test_diagnose_and_browser_use_example_are_findable_on_the_site(monkeypatch):
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: None)
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    example = "https://github.com/agent-help-network/agent-help-network/tree/main/examples/browser-use"
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            home = client.get(f"/{lang}/").text
+            agents = client.get(f"/{lang}/agents").text
+            assert "ahn_client.diagnose(response)" in home and "ahn_client.diagnose(response)" in agents
+            assert f'href="{example}"' in home
+        llms = client.get("/llms.txt").text
+        assert "ahn.diagnose(response)" in llms and "x-amzn-waf-action" in llms
+        assert "summary_line" in llms and "next_action" in llms and example in llms
