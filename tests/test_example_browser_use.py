@@ -142,6 +142,74 @@ def test_repeat_after_the_deadline_that_still_says_retry_is_no_clear_action():
     assert len(fake.calls) == 3
 
 
+def test_the_deadline_is_counted_from_after_the_check_returns():
+    """A slow lookup must not eat into the wait: the clock is read after check(), so the deadline starts when the answer arrived."""
+    clock = Clock()
+
+    def slow_check(url, error_class=None, stage=None, **kw):
+        clock.now += 20  # the lookup itself took 20 s
+        return answer("retry_lookup_once", seconds=30) if not slow_check.done else answer("proceed")
+
+    slow_check.done = False
+    guide = ex.BlockGuide(check=slow_check, clock=clock)
+    guide.lookup("https://example.com/", "access_denied")
+    assert clock.now == 1020.0
+    slow_check.done = True
+    clock.now = 1020.0 + 29  # 1049: before check-return time + 30, though it is past start time + 30
+    assert "No lookup was made" in guide.lookup("https://example.com/", "access_denied")
+    clock.now = 1020.0 + 30
+    assert "Next step (proceed)" in guide.lookup("https://example.com/", "access_denied")
+
+
+@pytest.mark.parametrize("variant", ["https://Example.COM/a", "https://example.com./a", "https://example.com:8443/a?x=1",
+                                     "HTTPS://WWW.Example.com:443/b", "example.com", "www.example.com."])
+def test_host_spellings_share_one_deadline(variant):
+    guide, fake, clock = timed_guide(answer("retry_lookup_once", seconds=60), answer("proceed"))
+    guide.lookup("https://example.com/first", "access_denied")
+    assert ex._host_key(variant) == ex._host_key("https://example.com/") == "example.com"
+    clock.now += 10
+    text = guide.lookup(variant, "access_denied")
+    assert "No lookup was made" in text and "50 s left" in text and len(fake.calls) == 1
+
+
+def test_host_key_uses_the_client_rule():
+    from ahn_client._hosts import normalize_host
+    for value in ("https://a.example.org:81/x", "B.Example.ORG.", "https://www.shop.example.net/"):
+        assert ex._host_key(value) == normalize_host(value)
+    odd = "not a url " + chr(92) + " X"
+    assert ex._host_key(odd) == odd.lower()  # what the client cannot read still gets a stable key
+
+
+def test_retry_wait_falls_back_to_the_profiles_lookup_again_seconds():
+    data = dict(BASE, summary_line="Policy is being read.", access_profile={"freshness": "pending", "retry_after_seconds": 120},
+                next_action={"do": "retry_lookup_once", "url": None, "retry_after_seconds": None})
+    result = Result.from_response("example.com", "https://agenthelpnetwork.com/x", data)
+    assert result.next_action.retry_after_seconds is None and result.lookup_again_seconds == 120
+    assert ex.read_answer(result)[1]["retry_after_seconds"] == 120
+    guide, fake, clock = timed_guide(result, answer("proceed"))
+    assert "Wait about 120 s" in guide.lookup("https://example.com/", "access_denied")
+    clock.now += 119
+    assert "No lookup was made" in guide.lookup("https://example.com/", "access_denied")
+    clock.now += 1
+    assert "Next step (proceed)" in guide.lookup("https://example.com/", "access_denied")
+
+
+def test_only_a_repeat_lookup_borrows_the_profiles_wait():
+    data = dict(BASE, summary_line="x", access_profile={"freshness": "pending", "retry_after_seconds": 120},
+                next_action={"do": "wait_for_provider", "url": None, "retry_after_seconds": None})
+    result = Result.from_response("example.com", "https://agenthelpnetwork.com/x", data)
+    assert result.lookup_again_seconds == 120
+    assert ex.read_answer(result)[1]["retry_after_seconds"] is None  # a provider wait is the provider's, not the profile's
+
+
+def test_without_any_wait_value_the_behaviour_is_unchanged():
+    data = dict(BASE, summary_line="x", next_action={"do": "retry_lookup_once", "url": None, "retry_after_seconds": None})
+    result = Result.from_response("example.com", "https://agenthelpnetwork.com/x", data)
+    assert ex.read_answer(result)[1]["retry_after_seconds"] is None
+    guide, fake, _ = timed_guide(result)
+    assert "Call this tool again, one time only." in guide.lookup("https://example.com/", "access_denied")
+
+
 def test_the_wait_is_per_host():
     guide, fake, clock = timed_guide(answer("retry_lookup_once", seconds=60), answer("proceed"))
     guide.lookup("https://a.example.com/", "access_denied")
