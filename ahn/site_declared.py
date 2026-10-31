@@ -14,7 +14,7 @@ Three files, each at the one path its specification fixes, and the TDM response 
   domain-level discovery. Only entries of type ``application/mcp-server-card+json`` are kept: their identifier and the
   card's URL, or for an inline card its name and remote URLs. The card itself is not fetched.
 
-Reading manners (D-1031-1): a file is requested only where the host's robots.txt, read just before with the same
+Reading manners: a file is requested only where the host's robots.txt, read just before with the same
 user agent, allows that path for us (the same gate as llms.txt, D56); only the paths above, never a guessed one; one
 attempt per file per profile read (the profile's 24-hour cache window); the same pinned-IP reader, timeouts and
 redirect rule as robots.txt, with a 64 KB cap. Only the parsed fields below are stored, never the files.
