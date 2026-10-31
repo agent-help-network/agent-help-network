@@ -375,6 +375,20 @@ class OfficialPaths(StrictModel):
     note: str | None = None
     # Curated "how to use it" bundle for some hosts; left out of the JSON when there is none (never null).
     access: OfficialAccess | None = Field(default=None, exclude_if=lambda value: value is None)
+    # D61: the site's own customer path (help centre, official app, entry link) for a task in a person's own account;
+    # curated for some hosts, left out of the JSON otherwise. Information only: it never changes `recommendation`.
+    consumer: ConsumerPaths | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class ConsumerPath(StrictModel):
+    kind: Literal["customer_help", "official_app", "entry_link"]
+    url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
+    source_url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
+
+
+class ConsumerPaths(StrictModel):
+    paths: list[ConsumerPath] = Field(min_length=1, max_length=6)
+    verified_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 # Every optional field of the access bundle is left out of the JSON when unknown, to keep answers small.
@@ -475,6 +489,9 @@ class NextAction(StrictModel):
     stop_if_you_are: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
         default=None, min_length=1, max_length=16, exclude_if=_omit_none)
     lookup_host: str | None = Field(default=None, exclude_if=_omit_none)
+    # D61: with do=use_official_path, the site's own customer page for a task in the user's own account, which the
+    # developer API in `url` may not reach. Present only when official_paths.consumer is curated.
+    customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
 
 
 class Links(StrictModel):

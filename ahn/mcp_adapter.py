@@ -165,7 +165,8 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
 
 
 def check_result(response: CheckResponse):
-    """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one; then the answer as
+    """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one and, D61,
+    "Customer path: <next_action.customer_url>" when there is one; then the answer as
     JSON, the same text the SDK builds for a model result) and structuredContent equal to the REST answer. The last block is
     always pure JSON. Without one (the switch is off on the API), the model itself, so the result is the one before D51."""
     if response.summary_line is None:
@@ -173,6 +174,9 @@ def check_result(response: CheckResponse):
     lead = response.summary_line
     if response.next_action is not None and response.next_action.url:
         lead += "\nURL: " + response.next_action.url
+    if response.next_action is not None and response.next_action.customer_url:
+        # D61: the site's own customer path, for a task in the user's own account (the URL above is a developer API).
+        lead += "\nCustomer path: " + response.next_action.customer_url
     return CallToolResult(
         content=[TextContent(type="text", text=lead),
                  TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],

@@ -62,6 +62,34 @@ left out and why (refused, not documented, scripts-only page), and the run's sum
 `python scripts/verify_official_paths.py --access-only`, fix what changed, and update `verified_at` of the bundles you
 re-read; the script prints `stale:` lines for bundles already hidden.
 
+## Consumer paths for official paths (`CONSUMER_PATHS`, D61)
+
+For a host with a clear consumer service (retail, pharmacy, banking, telecom, travel, delivery), list where the site itself
+sends its customers, so an agent doing a task in the user's own account is not sent only to a partner API. Only hosts that already
+have an `OFFICIAL_PATHS` entry.
+
+1. Read the host's `robots.txt` with the curation User-Agent. If it refuses (401/403/429) or disallows the pages, stop for that
+   host in this round and list it as refused. No other user agent, browser, cache or search copy.
+2. Open the site's home page and follow its own links (footer "Help", "Customer service", "Contact us", "Get the app"). A
+   search result may point you to a page, but the URL you add must be one you read on the site. Never build a URL by hand.
+3. `customer_help`: the help centre or contact page itself. Do not copy phone numbers; the page that lists them is the link.
+   `official_app`: an App Store or Google Play listing linked from the site's own page (that page is `source_url`); keep only
+   the identifier (`https://apps.apple.com/<cc>/app/<name>/id<digits>`, `https://play.google.com/store/apps/details?id=<id>`)
+   and check that it is the site's own app, not a partner's. `entry_link`: a public page the site links to for a common task;
+   not a sign-in page.
+4. Every `url` must be linked from its `source_url` page (unless it is that page) and be the final address: if it redirects, list
+   where the verifier ended, never a hand-made variant. A page that answers a captcha or 403 even once leaves the host out.
+5. At most 6 paths per host, help pages first. `verified_at` is the day you read them.
+
+```
+python -m pytest tests/test_consumer_paths.py
+python scripts/verify_official_paths.py --consumer-only --hosts a.com,b.org
+```
+
+The live run must end with `failures: 0; rule problems: 0`. A page that is refused, disallowed or redirects to a sign-in
+page is removed. The checker reads `robots.txt` before the first request to every hostname (redirect targets too), treats a
+5xx or timed-out `robots.txt` as disallowing everything, and stops a hostname at its first 403 or bot challenge. Re-verify every 90 days like access bundles: older entries are left out of answers.
+
 ## Weekly status-source jobs
 
 Rank-based expansion of the status mapping stopped at Tranco rank 10,000. Two weekly jobs replace it: re-verify what is
