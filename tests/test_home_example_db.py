@@ -17,7 +17,8 @@ from ahn import access_profile, service
 from ahn.db import connect, migrate
 from ahn.main import create_app
 from ahn.settings import Settings
-from ahn.response_guide import PROCEED_OFFICIAL_ROWS, ROWS
+from ahn.official_paths import official_paths as real_official_paths
+from ahn.response_guide import PROCEED_CONSUMER_ROWS, PROCEED_OFFICIAL_ROWS, ROWS
 
 ROBOTS = b"User-agent: Bytespider\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
 OFFICIAL = {"name": "GitHub", "api_docs": "https://docs.github.com/en/rest", "developer_portal": "https://docs.github.com/", "note": None}
@@ -34,7 +35,7 @@ def prepare(monkeypatch, **flags):
         conn.execute("TRUNCATE status_cache, status_sources, queried_hosts, host_access_profile, background_reads, lookup_metrics, "
                      "request_metrics RESTART IDENTITY CASCADE")
     monkeypatch.setattr(service, "cached_profile", access_profile.cached_profile)
-    monkeypatch.setattr(service, "official_paths", lambda host: dict(OFFICIAL) if host == "github.com" else None)
+    monkeypatch.setattr(service, "official_paths", lambda host: dict(OFFICIAL) if host == "github.com" else real_official_paths(host))
     return settings
 
 
@@ -43,9 +44,9 @@ def counts(settings):
         return {name: conn.execute(f"SELECT count(*) AS n FROM {name}").fetchone()["n"] for name in WRITTEN}
 
 
-def seed(settings):
+def seed(settings, host="github.com"):
     reader = lambda host, path, **_kw: ("ok", ROBOTS, "http_200") if path == "/robots.txt" else ("absent", None, "http_404")  # noqa: E731
-    assert access_profile.get_profile(settings, "github.com", reader=reader)["robots_status"] == "ok"
+    assert access_profile.get_profile(settings, host, reader=reader)["robots_status"] == "ok"
 
 
 def refuse_network(monkeypatch):
@@ -70,27 +71,37 @@ def test_nothing_cached_means_no_card_and_no_write(monkeypatch):
 
 def test_cached_host_gives_a_card_from_stored_rows_and_nothing_is_written(monkeypatch):
     settings = prepare(monkeypatch)
-    seed(settings)
+    seed(settings, "target.com")
     refuse_network(monkeypatch)
     before = counts(settings)
     card = service.home_example(settings)
-    # Changed on purpose by D63: a cached lookup reports no failure and robots is clear, so the card is a proceed answer.
-    assert card["site_host"] == "github.com" and card["do"] == "proceed"
-    assert card["url"] is None and card["confidence"] and card["summary_line"] == PROCEED_OFFICIAL_ROWS["P1"]
+    # The default host is a retail site with a curated customer page, so the card leads with that page (D63 proceed answer).
+    assert card["site_host"] == "target.com" and card["do"] == "proceed"
+    assert card["url"] == "www.target.com/help/contact-us" and card["confidence"]
+    assert card["summary_line"] == PROCEED_CONSUMER_ROWS["P1"]
     assert card["robots_status"] == "ok" and card["status"] is None and len(card["read_on"]) == 10
     assert card["summary_line"].isascii()
     with TestClient(create_app(settings)) as client:
         en = client.get("/en/").text
         ko = client.get("/ko/").text
-    assert 'class="home-live"' in en and "proceed" in en
-    assert 'class="home-live"' in ko and "proceed" in ko
+    assert 'class="home-live"' in en and "proceed" in en and "www.target.com/help/contact-us" in en
+    assert 'class="home-live"' in ko and "proceed" in ko and "www.target.com/help/contact-us" in ko
     assert counts(settings) == before
+
+
+def test_a_developer_api_host_still_gives_the_proceed_card_with_no_url(monkeypatch):
+    # Changed on purpose by D63: a cached lookup reports no failure and robots is clear, so the card is a proceed answer.
+    settings = prepare(monkeypatch)
+    seed(settings)
+    card = service.home_example(settings, "github.com")
+    assert card["site_host"] == "github.com" and card["do"] == "proceed"
+    assert card["url"] is None and card["summary_line"] == PROCEED_OFFICIAL_ROWS["P1"]
 
 
 def test_the_switch_off_gives_the_card_and_the_lookup_from_before_d63(monkeypatch):
     settings = prepare(monkeypatch, proceed_without_failure=False)
     seed(settings)
-    card = service.home_example(settings)
+    card = service.home_example(settings, "github.com")
     assert card["do"] == "use_official_path" and card["url"] == "docs.github.com/en/rest"
     assert card["summary_line"] == ROWS["O7"][1]
     answer = service.check(settings, "github.com")
@@ -123,7 +134,7 @@ def source_row(settings, *, indicator, incident_age_hours=None, incidents=0, fee
 
 def same_answer(settings, expected_do):
     """The card and a real lookup of the same cached state say the same thing (parity)."""
-    card = service.home_example(settings)
+    card = service.home_example(settings, "github.com")
     answer = service.check(settings, "github.com")
     assert card is not None
     assert card["do"] == answer["next_action"]["do"] == expected_do
@@ -172,7 +183,7 @@ def test_parity_d52_history_atom_feed_is_shown_like_the_lookup_shows_it(monkeypa
     monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
     monkeypatch.setattr("ahn.feed_robots.history_allowed", lambda _conn, _url: True)
     before = counts(settings)
-    card = service.home_example(settings)
+    card = service.home_example(settings, "github.com")
     assert card is not None
     assert counts(settings) == before
     answer = service.check(settings, "github.com")
@@ -181,6 +192,8 @@ def test_parity_d52_history_atom_feed_is_shown_like_the_lookup_shows_it(monkeypa
     assert card["confidence"] == answer["recommendation"]["confidence"]
     assert card["status"] is None  # an Atom reading carries no indicator
     assert card["provider_name"] == "GitHub Status" and card["open_incidents"] == 1
+    # The page shows the default host (target.com); point it at github.com to see the history-feed wording.
+    monkeypatch.setattr("ahn.main.home_example", lambda s: service.home_example(s, "github.com"))
     with TestClient(create_app(settings)) as client:
         en, ko = client.get("/en/").text, client.get("/ko/").text
     assert "status: GitHub Status (history feed, 1 open incident)" in en
@@ -196,7 +209,7 @@ def test_the_home_page_queues_nothing_for_a_feed_that_is_due(monkeypatch):
     source_row(settings, indicator="unknown", incident_age_hours=1, incidents=1, feed_source="history_atom")
     monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "undecided")
     before = counts(settings)
-    service.home_example(settings)
+    service.home_example(settings, "github.com")
     assert counts(settings) == before
     with connect(settings) as conn:
         assert conn.execute("SELECT count(*) AS n FROM background_reads").fetchone()["n"] == 0
