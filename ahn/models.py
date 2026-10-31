@@ -489,8 +489,8 @@ class NextAction(StrictModel):
     stop_if_you_are: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
         default=None, min_length=1, max_length=16, exclude_if=_omit_none)
     lookup_host: str | None = Field(default=None, exclude_if=_omit_none)
-    # D61: with do=use_official_path, the site's own customer page for a task in the user's own account, which the
-    # developer API in `url` may not reach. Present only when official_paths.consumer is curated.
+    # D61: with do=use_official_path or, since D63, proceed, the site's own customer page for a task in the user's own
+    # account, which a developer API may not reach. Present only when official_paths.consumer is curated.
     customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
 
 

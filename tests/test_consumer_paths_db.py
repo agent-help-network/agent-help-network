@@ -20,7 +20,7 @@ from ahn import official_paths as official_paths_module  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.main import create_app  # noqa: E402
 from ahn.official_paths import CONSUMER_PATHS, OFFICIAL_PATHS  # noqa: E402
-from ahn.response_guide import CONSUMER_SEE_TAIL  # noqa: E402
+from ahn.response_guide import CONSUMER_FIRST_TAIL  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 
 HOST = "walgreens.com"
@@ -63,12 +63,13 @@ def test_the_rest_answer_names_both_paths_and_keeps_the_verdict(db):
     assert body["official_paths"]["consumer"]["paths"] == CONSUMER_PATHS[HOST]["paths"]
     assert body["recommendation"]["action"] == "use_official_path"
     assert body["next_action"]["do"] == "use_official_path"
-    assert body["next_action"]["url"] == OFFICIAL_PATHS[HOST]["developer_portal"]
+    # Changed on purpose by D63: where robots.txt does not block pages the customer page is also `url`.
+    assert body["next_action"]["url"] == CONSUMER_PATHS[HOST]["paths"][0]["url"]
     assert body["next_action"]["customer_url"] == CONSUMER_PATHS[HOST]["paths"][0]["url"]
-    assert body["summary_line"].endswith(CONSUMER_SEE_TAIL) and len(body["summary_line"]) <= 200
+    assert body["summary_line"].endswith(CONSUMER_FIRST_TAIL) and len(body["summary_line"]) <= 200
     # A developer host without a consumer entry answers as before: no new keys.
     assert "consumer" not in plain["official_paths"] and "customer_url" not in plain["next_action"]
-    assert not plain["summary_line"].endswith(CONSUMER_SEE_TAIL)
+    assert not plain["summary_line"].endswith(CONSUMER_FIRST_TAIL)
 
 
 @pytest.mark.parametrize("lang, lead", [("en", "For a task in your own account"), ("ko", "내 계정으로 하는 일이라면")])

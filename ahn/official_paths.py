@@ -2131,7 +2131,7 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://www.siriusxm.com/help", "https://www.siriusxm.com/"),
     ], "verified_at": "2026-10-31"},
     "lyft.com": {"paths": [
-        _help("https://help.lyft.com/hc/en-us/rider/categories/2872191865", "https://www.lyft.com/click/pax-help-center"),
+        _help("https://help.lyft.com/hc/en-us/rider/categories/2872191865", "https://www.lyft.com/"),
     ], "verified_at": "2026-10-31"},
     "visible.com": {"paths": [
         _help("https://www.visible.com/help", "https://www.visible.com/"),

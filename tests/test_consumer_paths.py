@@ -24,7 +24,8 @@ from ahn.access_profile import parse_robots
 from ahn.models import CheckResponse, ConsumerPath, ConsumerPaths, NextAction, OfficialPaths
 from ahn.official_paths import (CONSUMER_KINDS, CONSUMER_MAX_AGE_DAYS, CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS,
                                 OFFICIAL_PATHS, consumer_is_current, customer_url, official_paths)
-from ahn.response_guide import CONSUMER_HAND_TAIL, CONSUMER_ROWS, CONSUMER_SEE_TAIL, LINE_MAX, ROWS, guide
+from ahn.response_guide import (CONSUMER_FIRST_TAIL, CONSUMER_HAND_TAIL, CONSUMER_ROWS, CUSTOMER_FIRST_ROWS, LINE_MAX,
+                                PROCEED_CONSUMER_ROWS, PROCEED_OFFICIAL_ROWS, ROWS, guide)
 from ahn.triage import next_checks, recommendation
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,8 +48,8 @@ CONSUMER = {"paths": [{"kind": "customer_help", "url": HELP, "source_url": "http
             "verified_at": "2026-10-31"}
 OFFICIAL = {"name": "Example", "api_docs": None, "developer_portal": "https://developer.example.com/", "note": None}
 WITH_CONSUMER = {**OFFICIAL, "consumer": CONSUMER}
-TAILS = (CONSUMER_SEE_TAIL, CONSUMER_HAND_TAIL)
-# Rows where robots.txt or a refused read blocks pages hand the customer page to the user; the others only point to it.
+TAILS = (CONSUMER_FIRST_TAIL, CONSUMER_HAND_TAIL)
+# Rows where robots.txt or a refused read blocks pages hand the customer page to the user; on the others (D63) it comes first.
 HAND_ROWS = frozenset({"O2", "O3", "O4", "O5", "O6"})
 PHONE = re.compile(r"(?:tel:|\+?1?[ (.-]*\d{3}[ ).-]*\d{3}[ .-]*\d{4})")
 
@@ -73,7 +74,10 @@ PROFILES = [None, pending(120), pending(None),
             robots("User-agent: Claude-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n"),
             robots("User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n"),
             robots("User-agent: claude-web\nDisallow: /\n\nUser-agent: *\nAllow: /\n"),
-            robots("User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: Claude-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n")]
+            robots("User-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: Claude-User\nDisallow: /\n\nUser-agent: *\nAllow: /\n"),
+            # D63: a missing robots.txt, and a block that names none of the tokens checked for a vendor
+            {"robots_status": "absent", "robots": None, "freshness": "fresh", "llms_txt_status": "absent"},
+            robots("User-agent: Claude-SearchBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n")]
 PROVIDERS = [None, {"source_name": "S", "source_url": "https://status.example.com/", "indicator": "major", "freshness": "fresh",
                     "basis": "incident", "active_incidents": 1, "max_incident_impact": "major",
                     "incident_updated_at": NOW - timedelta(hours=1), "active_maintenances": 0}]
@@ -253,8 +257,17 @@ def test_a_consumer_only_host_never_becomes_use_official_path():
         assert with_only["recommendation"]["action"] != "use_official_path", case
         assert with_only["recommendation"] == bare["recommendation"] and with_only["next_checks"] == bare["next_checks"], case
         result, plain = guide(with_only), guide(bare)
-        assert "customer_url" not in result["next_action"], case
-        assert result == plain, case  # same row and tail as a host with no official path at all: no developer tail
+        if result["next_action"]["do"] == "proceed":
+            # D63: a proceed answer points at the site's own customer page when one is listed; nothing else moves.
+            assert result["next_action"]["customer_url"] == result["next_action"]["url"] == customer_url(CONSUMER_ONLY), case
+            stripped = {k: v for k, v in result["next_action"].items() if k not in ("customer_url", "url")}
+            assert stripped == {k: v for k, v in plain["next_action"].items() if k != "url"}, case
+            # D63 swaps the proceed summary for the shorter one naming the customer page; never the developer tail.
+            assert "next_action.customer_url" in result["summary_line"] and not result["summary_line"].endswith(CONSUMER_FIRST_TAIL), case
+            assert {k: v for k, v in result.items() if k not in ("next_action", "summary_line")} == {k: v for k, v in plain.items() if k not in ("next_action", "summary_line")}, case
+        else:
+            assert "customer_url" not in result["next_action"], case
+            assert result == plain, case  # same row and tail as a host with no official path at all: no developer tail
         guides.add(result["summary_line"])
     assert not any(line.endswith(tail) for line in guides for tail in TAILS)
 
@@ -278,32 +291,51 @@ def test_recommendation_and_next_checks_ignore_consumer_over_the_whole_space():
         assert plain["next_checks"] == with_consumer["next_checks"], case
 
 
-def test_only_use_official_path_answers_gain_the_customer_branch_and_do_and_url_stay():
+def test_only_use_official_path_and_proceed_answers_gain_the_customer_branch_and_do_stays():
+    # Changed on purpose by D63: proceed answers carry customer_url too, and on the rows where robots.txt does not block
+    # pages (O1, O7 and proceed) the customer page is the sentence's lead and next_action.url.
     seen_rows = set()
     for case in space():
-        before, after = guide(answer(OFFICIAL, **case)), guide(answer(WITH_CONSUMER, **case))
-        assert {k: v for k, v in after["next_action"].items() if k != "customer_url"} == before["next_action"], case
-        if before["next_action"]["do"] == "use_official_path":
-            row, _ = response_guide.select_row(answer(OFFICIAL, **case)["recommendation"], case["profile"], case["provider"], "example.com")
+        plain, mine = answer(OFFICIAL, **case), answer(WITH_CONSUMER, **case)
+        before, after = guide(plain), guide(mine)
+        assert after["next_action"]["do"] == before["next_action"]["do"], case
+        do = before["next_action"]["do"]
+        rest = {k: v for k, v in after["next_action"].items() if k not in ("customer_url", "url")}
+        assert rest == {k: v for k, v in before["next_action"].items() if k != "url"}, case
+        row, _ = response_guide.select_row(plain["recommendation"], case["profile"], case["provider"], "example.com", OFFICIAL)
+        if do in ("use_official_path", "proceed"):
             seen_rows.add(row)
             assert after["next_action"]["customer_url"] == HELP
-            n = after["next_action"]["retry_after_seconds"]
-            assert after["summary_line"] == CONSUMER_ROWS[row].replace("{n}", str(n if n is not None else 0))
-            tail = CONSUMER_HAND_TAIL if row in HAND_ROWS else CONSUMER_SEE_TAIL
-            assert after["summary_line"].endswith(tail) and len(after["summary_line"]) <= LINE_MAX
+            assert len(after["summary_line"]) <= LINE_MAX
+            if row in CUSTOMER_FIRST_ROWS:
+                assert after["next_action"]["url"] == HELP, (row, case)
+            else:
+                assert after["next_action"]["url"] == before["next_action"]["url"], (row, case)
+            if do == "proceed":
+                assert after["summary_line"] == PROCEED_CONSUMER_ROWS[row], (row, case)
+                assert "developer API" not in after["summary_line"]
+            else:
+                n = after["next_action"]["retry_after_seconds"]
+                assert after["summary_line"] == CONSUMER_ROWS[row].replace("{n}", str(n if n is not None else 0))
+                tail = CONSUMER_HAND_TAIL if row in HAND_ROWS else CONSUMER_FIRST_TAIL
+                assert after["summary_line"].endswith(tail)
         else:
             assert after == before, case
-    assert {"O1", "O2", "O3", "O5", "O6", "O7"} <= seen_rows
+    assert {"O1", "O2", "O3", "O5", "O6", "O7", "P1", "P1-V", "P2", "P2-V", "P3"} <= seen_rows
 
 
 def test_without_a_consumer_entry_the_guide_is_the_table_as_before():
     for case in space():
         result = guide(answer(OFFICIAL, **case))
         assert "customer_url" not in result["next_action"]
-        do, sentence = ROWS[response_guide.select_row(answer(OFFICIAL, **case)["recommendation"], case["profile"], case["provider"],
-                                                       "example.com")[0]]
+        rec = answer(OFFICIAL, **case)["recommendation"]
+        row = response_guide.select_row(rec, case["profile"], case["provider"], "example.com", OFFICIAL)[0]
+        do, sentence = ROWS[row]
+        if do == "proceed" and "official_path_available" in rec["reasons"]:
+            sentence = PROCEED_OFFICIAL_ROWS[row]  # D63: a developer API is also listed
         assert re.fullmatch(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}"), result["summary_line"])
-        assert not result["summary_line"].endswith(TAILS)
+        assert not result["summary_line"].endswith(CONSUMER_HAND_TAIL)
+        assert do == "proceed" or not result["summary_line"].endswith(CONSUMER_FIRST_TAIL)
 
 
 @pytest.mark.parametrize("n", [0, 5, 120, 3600])
@@ -314,7 +346,8 @@ def test_every_consumer_sentence_is_short_printable_and_names_both_paths(n):
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text), (row, len(text))
         assert "official path" in text.lower() or "developer" in text  # the developer path is still named
         assert text.endswith(TAILS) and "next_action.customer_url" in text
-        assert "may not reach" in text  # never asserts that the API cannot reach the account (some use OAuth)
+        if row in HAND_ROWS:
+            assert "may not reach" in text  # never asserts that the API cannot reach the account (some use OAuth)
         for absolute in ("no substitute", "not a substitute", "cannot", "can't", "is not a way"):
             assert absolute not in text.lower(), (row, absolute)
         assert ("{n}" in sentence) == ("{n}" in ROWS[row][1])  # the same retry placeholder as the plain row
@@ -323,22 +356,23 @@ def test_every_consumer_sentence_is_short_printable_and_names_both_paths(n):
 
 
 def test_each_consumer_row_is_pinned_and_blocked_rows_hand_off():
-    see = " The API may not reach the user's own account; the site's page is next_action.customer_url."
+    first = " A developer API is also listed (official_paths)."
     hand = " The API may not reach the user's own account; hand the user next_action.customer_url."
-    assert (CONSUMER_SEE_TAIL, CONSUMER_HAND_TAIL) == (see, hand)
+    assert (CONSUMER_FIRST_TAIL, CONSUMER_HAND_TAIL) == (first, hand)
+    lead7 = "For a task in the user's own account, use the site's customer page (next_action.customer_url) instead of retrying page automation."
     assert CONSUMER_ROWS == {
-        "O1": "Official path listed; use it instead of page automation. robots.txt is pending: look up once more in {n} s." + see,
+        "O1": "For a task in the user's own account, use the site's customer page (next_action.customer_url). robots.txt is pending: look up once more in {n} s." + first,
         "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + hand,
         "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + hand,
         "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + hand,
         "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + hand,
         "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + hand,
-        "O7": "An official developer API or portal is listed; prefer it over page automation." + see,
+        "O7": lead7 + first, "O7-N": lead7 + first, "O7-K": lead7 + first,
     }
     for row, sentence in CONSUMER_ROWS.items():
         # A blocked row never sends the agent to the same site's pages; only the user is handed the customer page.
         assert (" see " not in sentence and "hand the user" in sentence) if row in HAND_ROWS else "hand the user" not in sentence
-    assert "use it instead of page automation" in CONSUMER_ROWS["O1"] and "use it instead of page automation" in ROWS["O1"][1]
+    assert "page automation" in CONSUMER_ROWS["O7"] and "page automation" in ROWS["O1"][1]
 
 
 def test_an_unsafe_consumer_url_is_dropped_and_the_plain_row_stays(caplog):
@@ -357,15 +391,15 @@ def test_the_live_wrong_answer_now_names_the_sites_own_path():
     result = answer(official, error_class="site_access", profile=robots("User-agent: *\nAllow: /\n"))
     assert result["recommendation"]["action"] == "use_official_path"
     out = guide(result)
-    assert out["next_action"]["url"] == OFFICIAL_PATHS["walgreens.com"]["developer_portal"]
-    assert out["next_action"]["customer_url"] == CONSUMER_PATHS["walgreens.com"]["paths"][0]["url"]
+    # Changed on purpose by D63: the customer page is also `url`; the developer portal stays in official_paths.
+    assert out["next_action"]["url"] == out["next_action"]["customer_url"] == CONSUMER_PATHS["walgreens.com"]["paths"][0]["url"]
     assert out["summary_line"] == CONSUMER_ROWS["O7"]
 
 
 # --- Response model and MCP text --------------------------------------------------------------------------------------
 
-def _payload(official) -> dict:
-    result = answer(official, profile=robots("User-agent: *\nAllow: /\n"))
+def _payload(official, profile=None) -> dict:
+    result = answer(official, profile=profile or robots("User-agent: *\nAllow: /\n"))
     payload = {"site_host": "example.com", "generated_at": NOW.isoformat().replace("+00:00", "Z"), "synthetic": False, "window_hours": 24,
                "data_horizon_hours": 168, "current_site_status": "unknown", "evidence_level": "no_reports", "summary_code": "X",
                "summary": "Y", "failures": 0, "successes": 0, "reporting_sources": 0, "observations": [], "provider_status": None, "official_paths": official, "access_profile": None, "recommendation": result["recommendation"],
@@ -395,8 +429,16 @@ def test_mcp_first_block_adds_a_customer_path_line(monkeypatch):
         return payload
     monkeypatch.setattr(mcp_adapter, "call_api", fake)
     result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.com"}))
-    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + OFFICIAL["developer_portal"], "Customer path: " + HELP]
+    # Changed on purpose by D63: this is a proceed answer whose `url` is the customer page, so one URL line, no repeat.
+    assert payload["next_action"]["do"] == "proceed" and payload["next_action"]["url"] == HELP
+    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + HELP]
     assert json.loads(result.content[-1].text) == result.structured_content
+    # Where robots.txt blocks pages, `url` stays the developer path and the customer page is the extra line.
+    blocked = _payload(WITH_CONSUMER, robots("User-agent: *\nDisallow: /\n"))
+    assert blocked["next_action"]["url"] == OFFICIAL["developer_portal"]
+    payload = blocked
+    result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.com"}))
+    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + OFFICIAL["developer_portal"], "Customer path: " + HELP]
     tool = next(t for t in asyncio.run(mcp_adapter.mcp.list_tools()) if t.name == "check_incident")
     assert "consumer" not in tool.description and "customer" not in tool.description  # no tool-metadata change (no rescan)
 
@@ -413,7 +455,7 @@ def test_contracts_and_llms_txt_name_every_new_key(name):
 def test_the_contracts_state_the_tail_sentence_and_the_decision():
     for name in ("docs/api-contract.en.md", "docs/api-contract.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
-        assert CONSUMER_SEE_TAIL.strip() in text and CONSUMER_HAND_TAIL.strip() in text
+        assert CONSUMER_FIRST_TAIL.strip() in text and CONSUMER_HAND_TAIL.strip() in text
         assert "D61" in text and "D64" in text and "--consumer-only" in text
         assert f"{len(CONSUMER_PATHS)}" in text and f"{sum(len(v['paths']) for v in CONSUMER_PATHS.values())}" in text
     decisions = (ROOT / "docs/decisions.md").read_text(encoding="utf-8")

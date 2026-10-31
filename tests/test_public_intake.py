@@ -223,7 +223,7 @@ def test_on_demand_provider_status_and_bounded_lookup_activity(public_client, mo
         assert after["provider_source_state"] == "feed_connected"
         assert after["lookup_activity"]["volume_band"] == "5-9"
         assert after["current_site_status"] == "unknown"
-        assert [item["code"] for item in after["next_checks"]] == ["locate_failure_stage", "official_path_available", "provider_clear", "reports_unknown"]
+        assert [item["code"] for item in after["next_checks"]] == ["official_path_available", "provider_clear", "reports_unknown"]  # Changed on purpose by D63: no failure signal sent
         assert after["official_paths"]["api_docs"].startswith("https://docs.github.com/")
         assert after["access_profile"] is None
         assert after["recommendation"] == {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]}
@@ -308,7 +308,8 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     # D48: only OpenAI's user-directed token is blocked, so a lookup that names no vendor gets the conditional answer.
     assert first["recommendation"] == {"action": "unknown", "confidence": "low", "reasons": ["robots_blocks_some_agents"]}
     codes = [item["code"] for item in first["next_checks"]]
-    assert codes[:2] == ["locate_failure_stage", "robots_blocks_some_agents"] and "reports_unknown" in codes
+    # Changed on purpose by D63: no failure signal was sent, so locate_failure_stage is not asked.
+    assert codes[:1] == ["robots_blocks_some_agents"] and "locate_failure_stage" not in codes and "reports_unknown" in codes
     assert first["evidence_level"] == "no_reports"
     # Second lookup within a day reuses the cache: no new reads.
     second = client.get("/v1/incidents/check", params={"site_host": "newsite.org", "error_class": "human_verification"}).json()
@@ -456,7 +457,7 @@ def test_agent_vendor_chooses_the_robots_answer_end_to_end_and_is_never_stored(p
     openai = ask(agent_vendor="openai")
     assert openai["recommendation"] == {"action": "stop_declared_block", "confidence": "medium", "reasons": ["robots_blocks_agents"],
                                         "agent_vendor": "openai"}
-    assert [c["code"] for c in openai["next_checks"]][1] == "robots_blocks_agents"
+    assert [c["code"] for c in openai["next_checks"]][0] == "robots_blocks_agents"  # Changed on purpose by D63
     # Amazonbot is Amazon's search crawler, not its user-directed fetcher (Amzn-User): not Amazon's agent's block.
     amazon = ask(agent_vendor="amazon")
     assert amazon["recommendation"] == {"action": "proceed", "confidence": "low", "reasons": ["robots_blocks_not_your_agent"],
