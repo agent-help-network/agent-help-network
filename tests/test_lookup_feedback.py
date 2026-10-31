@@ -318,3 +318,30 @@ def test_the_tool_refuses_bad_values_without_calling_the_service(monkeypatch, ar
     monkeypatch.setattr(mcp_adapter, "call_api", fake)
     with pytest.raises(mcp_adapter.ToolError, match=message):
         asyncio.run(mcp_adapter.rate_last_lookup(**{"token": token(), **arguments}))
+
+
+def test_the_advertised_check_incident_schema_lists_the_alternative_path_fields():
+    """D60: feeds, llms_full_url, docs_repo and data_export_url are optional and the object accepts further keys."""
+    output = tools_in("1", "0")["check_incident"][3]
+    access = output["$defs"]["OfficialAccess"]
+    new = {"feeds", "llms_full_url", "docs_repo", "data_export_url"}
+    assert new <= set(access["properties"]) and not new & set(access.get("required", []))
+    assert access["additionalProperties"] is True and any(option.get("maxItems") == 3 for option in access["properties"]["feeds"]["anyOf"])
+    assert closed_objects(output) == []
+
+
+FORBIDDEN_PHRASES = ("get past", "bypass", "work around", "workaround", "circumvent", "evade", "spoof", "solve the captcha")
+BLOCK_SIGNALS = ("403", "access denied", "verify you are human", "CAPTCHA", "login wall", "429", "5xx", "timeout")
+
+
+def test_the_tool_text_names_the_blocked_moments_first_and_never_reads_as_a_workaround():
+    description = tools_in("1", "0")["check_incident"][2]
+    instructions = mcp_adapter.mcp.instructions
+    for text in (description, instructions):
+        for signal in BLOCK_SIGNALS:
+            assert signal in text, signal
+        assert "hostname" in text and "official path" in text and "hand the step to the user" in text
+        assert not [phrase for phrase in FORBIDDEN_PHRASES if phrase in text.lower()]
+    # The blocked-moment signals open the description, before the explanation of the answer.
+    assert description.startswith("Call this when a web step is blocked or failing")
+    assert description.index("429") < description.index("robots.txt")

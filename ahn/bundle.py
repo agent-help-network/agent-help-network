@@ -124,7 +124,7 @@ CONTENT_USAGE_KEYS = frozenset({"train_ai", "ai_use", "search"})
 NAMED_GROUP_KEYS = frozenset({"agents", "other_agents", "signals", "usage", "path_specific_samples"})
 # official_paths.access (ahn/official_paths.py OFFICIAL_ACCESS).
 ACCESS_KEYS = frozenset({"auth", "free_tier", "key_signup_url", "official_mcp", "openapi_url", "rate_limits_url",
-                         "sandbox_url", "terms", "verified_at"})
+                         "sandbox_url", "feeds", "llms_full_url", "docs_repo", "data_export_url", "terms", "verified_at"})
 ACCESS_SUB_KEYS = {"auth": frozenset({"method", "source_url"}), "official_mcp": frozenset({"endpoint", "doc_url"}),
                    "terms": frozenset({"url", "quote"}), "free_tier": frozenset({"quote", "source_url"})}
 VANTAGE_KEYS = frozenset({"kind", "region", "asn", "declared"})

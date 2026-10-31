@@ -212,8 +212,11 @@ SIGN_IN = re.compile(r"/(log-?in|sign-?in|sign_in|sso|oauth2?/authorize|authoriz
 NOTE_URL = re.compile(r"https://[^\s)>,;\"']+")
 
 ACCESS_FIELDS = ("auth", "key_signup_url", "free_tier", "rate_limits_url", "sandbox_url", "openapi_url", "official_mcp",
-                 "terms", "verified_at")
-ACCESS_URL_FIELDS = ("key_signup_url", "rate_limits_url", "sandbox_url", "openapi_url")
+                 "feeds", "llms_full_url", "docs_repo", "data_export_url", "terms", "verified_at")
+ACCESS_URL_FIELDS = ("key_signup_url", "rate_limits_url", "sandbox_url", "openapi_url", "llms_full_url", "docs_repo",
+                     "data_export_url")
+ACCESS_FEEDS_MAX = 3
+ACCESS_URL_MAX = 300  # the longest URL an access bundle may carry (the model enforces the same limit)
 BODY_CAP = 20_000_000  # whole OpenAPI documents (several MB) and long terms pages
 OPENAPI_MARK = re.compile(rb"[\"']?(?:openapi|swagger)[\"']?\s*:\s*[\"']?[23]\.")
 _TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " ", "–": "-",
@@ -317,6 +320,21 @@ def access_problems(host: str, access, today: date | None = None) -> list[str]:
     for field in ACCESS_URL_FIELDS:
         if access.get(field) is not None:
             add(field, _url_problem(host, access[field]))
+    for field in ("feeds", "llms_full_url", "docs_repo", "data_export_url"):
+        for url in ([access[field]] if isinstance(access.get(field), str) else access.get(field) or []):
+            if isinstance(url, str) and len(url) > ACCESS_URL_MAX:
+                add(field, f"URL is {len(url)} characters, over {ACCESS_URL_MAX}")
+    feeds = access.get("feeds")
+    if feeds is not None:
+        if not isinstance(feeds, list):
+            add("feeds", "must be a list")
+        else:
+            if len(feeds) > ACCESS_FEEDS_MAX:
+                add("feeds", f"at most {ACCESS_FEEDS_MAX} feeds")
+            for url in feeds:
+                add("feeds", _url_problem(host, url))
+            if len(feeds) != len(set(feeds)):
+                add("feeds", "a feed is listed twice")
     if access.get("free_tier") is not None:
         shape = _object_problems(access["free_tier"], {"quote", "source_url"})
         add("free_tier", shape[0] if shape else _quote_problem(access["free_tier"]["quote"]))
@@ -351,6 +369,7 @@ def access_urls(access: dict) -> list[tuple[str, str]]:
     checked as text on their documentation page instead."""
     found = [(f"access.auth.{item['method']}", item["source_url"]) for item in access.get("auth") or []]
     found += [(f"access.{field}", access[field]) for field in ACCESS_URL_FIELDS if access.get(field)]
+    found += [("access.feeds", url) for url in access.get("feeds") or []]
     if access.get("free_tier"):
         found.append(("access.free_tier", access["free_tier"]["source_url"]))
     found += [("access.official_mcp", item["doc_url"]) for item in access.get("official_mcp") or []]
