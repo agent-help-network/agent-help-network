@@ -13,6 +13,32 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 
 HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 STEP = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+# Recommended task_step vocabulary (D62). Agents that describe the same web step with the same code
+# make reports comparable, so a lookup can tell "blocked on the first page" from "blocked at checkout".
+# The server still checks only the STEP pattern: a code outside this table is valid for the model, the
+# MCP tool and the check filter. Public intake (service.PUBLIC_TASK_STEPS, auto_review.PUBLIC_STEPS)
+# additionally accepts only the PUBLIC_TASK_STEP_CODES subset until a later decision widens it.
+TASK_STEPS = {
+    "site_open": "Opening the site or a public page, before any sign-in.",
+    "search": "Searching or browsing a listing, catalog or results page.",
+    "login": "Signing in: the sign-in page or form, or a verification step that belongs to it.",
+    "account_page": "A page that needs a signed-in session, reached after sign-in succeeded.",
+    "form_fill": "Filling in a multi-field form before it is submitted.",
+    "upload": "Attaching or uploading a file.",
+    "download": "Downloading a file or an export.",
+    "checkout": "Reviewing a cart, order or booking before payment.",
+    "payment": "Entering or confirming a payment.",
+    "confirm": "The final confirmation or submit step, and its confirmation page or message.",
+    "human_verification": "A CAPTCHA, challenge page or other human-verification step.",
+    "service_use": "Using the service's main function once inside.",
+    "contact_support": "Reaching the site's support, help or contact channel.",
+    "other": "A step that fits none of the above, or an unspecified one (the default).",
+}
+PUBLIC_TASK_STEP_CODES = frozenset({"site_open", "login", "human_verification", "service_use", "other"})
+TASK_STEP_HINT = ("Optional step code, lowercase [a-z][a-z0-9_]{0,63}. Recommended: " + ", ".join(TASK_STEPS)
+                  + ". Public intake currently accepts only: " + ", ".join(sorted(PUBLIC_TASK_STEP_CODES)) + ".")
+TASK_STEP_FILTER_HINT = "Optional step filter, lowercase [a-z][a-z0-9_]{0,63}. Recommended codes: " + ", ".join(TASK_STEPS) + "."
 # Special-use and private-network suffixes (RFC 6761/6762/8375 and common LAN
 # conventions). ".test" stays allowed because the local test mode depends on it.
 RESERVED_TLDS = frozenset({"local", "localhost", "internal", "invalid", "example", "arpa", "onion", "lan",
@@ -192,7 +218,7 @@ class AttemptFields(StrictModel):
 
 class ObservationIn(AttemptFields):
     site_host: str
-    task_step: str = "other"
+    task_step: str = Field("other", description=TASK_STEP_HINT)
     error_class: ErrorClass
 
     @field_validator("site_host")

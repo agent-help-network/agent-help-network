@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg.rows import dict_row
 
 from .db import connect_url
+from .models import PUBLIC_TASK_STEP_CODES
 from .service import aggregate_eligible_host, policy_host
 
 
@@ -20,7 +21,7 @@ MIN_REVIEW_AGE = timedelta(minutes=10)
 MAX_OBSERVATION_AGE = timedelta(hours=24)
 HOST_WINDOW = timedelta(hours=24)
 BURST_WINDOW = timedelta(minutes=15)
-PUBLIC_STEPS = {"site_open", "login", "human_verification", "service_use", "other"}
+PUBLIC_STEPS = set(PUBLIC_TASK_STEP_CODES)
 
 
 def _review_hosts(site_host: str) -> list[str]:

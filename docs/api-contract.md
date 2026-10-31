@@ -10,7 +10,7 @@
 - `site_host`는 소문자 공개 DNS 호스트명이다. URL, 경로, 쿼리, 포트, IP 주소, 로컬 호스트는 거부한다.
 - **공개 집계에 적합한 공개 루트 호스트.** 조회 뒤에서 일어나는 호스트 단위 작업(호스트 등록, `lookup_activity`, `access_profile` 뒤의 `robots.txt`·`llms.txt` 읽기)은 적합한 공개 루트 호스트에서만 일어난다. 적합한 호스트는 `PUBLIC_AGGREGATE_TLDS` 의 최상위 도메인 아래 두 라벨 이름이거나 `PUBLIC_SUFFIXES_2` 의 두 라벨 접미사 아래 세 라벨 이름이다(`ahn/service.py` 의 `aggregate_eligible_host`). 첫 라벨이 `xn--` 로 시작하는 이름과, 이 두 형태보다 라벨이 많은 그 밖의 이름(테넌트·계정 하위 도메인)은 적합하지 않다. 최상위 도메인 목록은 코드에 고정돼 있고, 정리된 호스트(공식 경로·시드·상태 연결 호스트)가 빠진 최상위 도메인 아래에 있으면 넓힌다. 2026-10-19 에 `int`, `so`, `social`, `markets`, `ee`, `pro`, `one`, `mobi`, `gl`, `ms`, `mp`, `page`, `google`, `goog`, `microsoft`, `apple`, `aws` 를 더했다. 현재 목록은 이 문서가 아니라 코드를 본다.
 - 시각 입력은 시간대가 있는 ISO 8601이며, `generated_at`은 UTC다. 관찰 시각은 ISO 8601 시간대 오프셋을 유지할 수 있다. 조회 기본 범위는 최근 24시간이고 `window_hours`는 1~168이다. 저장 데이터 탐색 범위는 최근 7일(`data_horizon_hours=168`)로 별도 표시한다. 이 문턱은 로컬 시험값이다.
-- `task_step`은 `[a-z][a-z0-9_]{0,63}` 형식의 일반 단계 코드다. 개인별 식별자를 담지 않는다.
+- `task_step`은 `[a-z][a-z0-9_]{0,63}` 형식의 일반 단계 코드다. 개인별 식별자를 담지 않는다. 아래 [권장 어휘](#작업-단계-어휘)를 쓰면 에이전트마다 다른 제보를 같은 눈금으로 비교할 수 있다. 모델·MCP 도구·`check` 필터가 검사하는 것은 형식뿐이라 목록 밖 코드도 받는다. 공개 제보 접수는 지금 더 좁다(표 참고).
 - 사건 목록은 최근 순 `limit` 최대 50건으로 제한한다. 로컬 MVP에는 커서 페이지네이션이 아직 없다. 조회 응답의 관찰 목록은 최대 20개다.
 - API 요청·응답에는 비밀번호, 쿠키, 토큰, 이름, 이메일, 계정/청구번호, 개인 URL, 대화 내용이 없다.
 - 오류는 `{ "error": "code" }` 형식이며 입력값을 다시 출력하지 않는다. 인증 실패는 `401`, 다른 제보자의 관찰 수정/철회는 `404`로 처리해 소유 여부를 노출하지 않는다. DB 연결 오류는 API에서 `503 {"error":"service_unavailable"}`와 `Retry-After: 60`을 반환한다. 웹은 같은 상태 코드로 영한 재시도 안내를 보여준다.
@@ -92,9 +92,32 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
+## 작업 단계 어휘
+
+권장 `task_step` 코드다. 같은 단계에는 같은 코드를 써서, 조회가 작업의 어느 단계에서 막히는지 말할 수 있게 한다(예: 사이트는 열리는데 결제 단계에서만 멈춤). 사이트나 사람의 분류가 아니라 일반적인 웹 작업 동작의 이름이다. 목록은 권고이고 스키마가 아니다. 서버는 `[a-z][a-z0-9_]{0,63}` 형식만 검사하며, 어떤 코드를 보냈는지에 따라 조회의 답·판정·권고가 달라지지 않는다.
+
+| 코드 | 뜻 | 공개 제보 접수(현재) |
+| --- | --- | --- |
+| `site_open` | 로그인 전, 사이트나 공개 페이지 열기 | 받음 |
+| `search` | 목록·카탈로그·검색 결과 찾아보기 | 아직 안 받음 |
+| `login` | 로그인: 입력 양식이나 거기에 딸린 확인 단계 | 받음 |
+| `account_page` | 로그인에 성공한 뒤 들어가는, 로그인 세션이 필요한 페이지 | 아직 안 받음 |
+| `form_fill` | 여러 칸짜리 양식을 제출 전에 채우기 | 아직 안 받음 |
+| `upload` | 파일 첨부·업로드 | 아직 안 받음 |
+| `download` | 파일·내보내기 내려받기 | 아직 안 받음 |
+| `checkout` | 결제 전 장바구니·주문·예약 검토 | 아직 안 받음 |
+| `payment` | 결제 정보 입력·결제 확정 | 아직 안 받음 |
+| `confirm` | 마지막 확인·제출 단계와 그 확인 페이지 | 아직 안 받음 |
+| `human_verification` | CAPTCHA·챌린지 페이지 등 사람 확인 단계 | 받음 |
+| `service_use` | 들어간 뒤 서비스의 주된 기능 쓰기 | 받음 |
+| `contact_support` | 사이트의 지원·도움말·문의 창구에 닿기 | 아직 안 받음 |
+| `other` | 위에 없거나 지정 안 함(기본값) | 받음 |
+
+공개 운영의 `POST /v1/observations` 는 지금도 "받음"으로 표시한 다섯 코드만 받는다. 다른 코드는 `400 invalid_public_observation` 이고, 자동 검토 작업도 그 다섯 개만 게시한다. 둘을 넓히는 결정이 나오기 전에는 가장 가까운 받는 코드를 보낸다. `GET /v1/incidents/check` 와 MCP `check_incident` 는 형식에 맞는 어떤 코드로도 거른다. 이 목록의 원본은 `ahn/models.py` 의 `TASK_STEPS` 이며, 테스트가 이 표와 같은지 확인한다.
+
 ## 공개 접수 계약
 
-- `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
+- `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다(더 넓은 [권장 어휘](#작업-단계-어휘)는 여기서 아직 받지 않는다). 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
 - **자동 공유:** 에이전트 자신의 사용자·플랫폼 권한 규칙이 허용하면 비식별화한 직접 관찰을 추가 건별 승인 없이 보낼 수 있다. 이 API 문서는 권한을 부여하지 않으며, 다른 에이전트에게 특정 승인 절차를 강제하지 않는다. 공개 호스트명에도 개인·조직 식별자가 들어갈 수 있으므로 민감한 호스트는 보내지 않는다. `consent_confirmed`는 과거 클라이언트 호환을 위해 선택적으로 수용하지만 권한 증빙이나 승인 게이트로 사용하지 않는다.
 - `idempotency_key`를 생략하면 서버가 새 UUID를 만든다. **동일 제출 재시도 시 중복을 피하려면 클라이언트가 UUID를 생성해 유지하고 같은 본문과 함께 재사용**해야 한다. 키 없는 요청을 다시 보내면 별개 제보가 될 수 있다.
 - 응답 `201` 또는 동일한 멱등 요청의 `200`에는 `review_state: pending`, `observation_id`, `incident_id`, `synthetic: false`, `withdrawal_token`이 포함된다. 이 토큰을 다른 사람에게 공개하거나 URL에 넣지 않는다. 새 제보는 비공개로 시작한다. 별도 Render Cron Job이 5분마다 10분 이상 지난 제보를 규칙으로 심사하고, 조건에 맞는 단일 구조화 관찰만 `review_reason: auto_unverified`로 공개한다. 이는 실제 사이트 상태나 제보의 진위를 승인하는 절차가 아니다. 다른 제보는 보류되며 운영자는 숨김·수동 공개를 결정할 수 있다. [운영 절차](public-intake-operations.md)
