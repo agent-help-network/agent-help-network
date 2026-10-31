@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.0
+
+- `Result` keeps the service's own guidance (D51) instead of rebuilding it from the six `recommendation` values:
+  `summary_line`, `next_action` (a `NextAction` with `do`, `url`, `retry_after_seconds`, `stop_if_you_are`, `lookup_host`)
+  and `links`. Each is `None` when the service does not send it (an older service, or `AHN_RESPONSE_GUIDE=0`); every field
+  is validated and a bad one is dropped.
+- `Result.summary()` starts with the service's `summary_line`, then the `next_action` values it points at (URL, tokens to
+  stop on, host to look up) and, if it fits in 700 characters, the detail line of earlier versions. Without a
+  `summary_line` the line is the one 0.5.0 gave.
+- `Result.retry_after_seconds` is now the service's `next_action.retry_after_seconds`, so it is also set while a provider
+  incident is being waited out (900), not only while a profile is pending; after a stop, a hand-off or an official path
+  (`stop_automation`, `stop_if_listed`, `hand_off_to_human`, `use_official_path`) it is `None` and the site's value is not
+  merged. The cache still keeps a pending-profile answer only for the profile's own `retry_after_seconds`. `Result.wait_seconds(site_retry_after)` returns
+  the larger of that and the site's own Retry-After (seconds or a band code), at most 3600; the framework adapters pass the
+  Retry-After band they already hold. The merge is local: nothing new is sent and the service's answer is not changed.
+- `Result.lookup_again_seconds`: the pending profile's own "look up once more in N s" value (0.5.0 gave it as
+  `retry_after_seconds` in every case; now `retry_after_seconds` is `None` after a stop, a hand-off or an official path, so
+  this keeps it). The name follows the service's wording ("look up once more") and says it is not a site wait; it is never
+  combined with the site's Retry-After. langchain-ahn passes it on in its JSON.
+- Without a usable `next_action` (an older service, `AHN_RESPONSE_GUIDE=0`, or a `do` this version does not know) the same
+  rule is read from `recommendation`: for `stop_declared_block`, `hand_off_to_human` and `use_official_path` the site's
+  Retry-After is not merged. A `do` this version does not know never merges.
+- `Result.remember`: one fixed sentence for the next task on the host, made from `next_action` alone (for example
+  "For example.com, start with the official path: ..."). No new judgement; `None` for states that pass (a provider wait, a hand-off).
+- `NextAction` is exported.
+
 ## 0.5.0
 
 - `ahn.check(..., agent_vendor=None)`: optional vendor of your own fetcher (`openai`, `anthropic`, `google`, `perplexity`,

@@ -64,8 +64,12 @@ class AHNLookupInput(BaseModel):
         default=None, description="How the page was requested. Leave out if unknown.")
 
 
-def format_result(result: Result) -> str:
-    """The one-line summary, a blank line, then a JSON object of validated fields."""
+def format_result(result: Result, site_retry_after: Any = None) -> str:
+    """The one-line summary, a blank line, then a JSON object of validated fields.
+
+    The summary starts with the service's own advice (``summary_line``) when it sent one. ``next_action`` and ``remember``
+    are the service's guidance as validated fields. ``site_retry_after`` is the site's Retry-After as seconds or a band code;
+    it only lengthens ``retry_after_seconds`` here and is never sent anywhere."""
     data = {
         "host": result.host,
         "recommendation": result.recommendation,
@@ -78,10 +82,17 @@ def format_result(result: Result) -> str:
         data["official_url"] = result.official_url
     if result.blocked_agents:
         data["blocked_agents"] = list(result.blocked_agents)
-    if result.retry_after_seconds is not None:
-        data["retry_after_seconds"] = result.retry_after_seconds
+    wait = result.wait_seconds(site_retry_after)  # None after a stop, a hand-off or an official path
+    if wait is not None:
+        data["retry_after_seconds"] = wait
+    if result.lookup_again_seconds is not None:
+        data["lookup_again_seconds"] = result.lookup_again_seconds  # the policy is being read: one repeat lookup, not a site wait
+    if result.next_action is not None:
+        data["next_action"] = result.next_action.to_dict()
+    if result.remember:
+        data["remember"] = result.remember
     data["details_url"] = result.url
-    return result.summary() + "\n\n" + json.dumps(data, separators=(",", ":"))
+    return result.summary(site_retry_after) + "\n\n" + json.dumps(data, separators=(",", ":"))
 
 
 _warned = False
@@ -133,7 +144,7 @@ class AHNLookupTool(BaseTool):
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target
             result = bounded_check(host, ec, stage, adapter=ADAPTER, timeout=self.timeout, extra=codes)
-            return format_result(result) if result else NO_ANSWER
+            return format_result(result, retry_after) if result else NO_ANSWER
         except Exception as error:
             return _unexpected(error)
 
@@ -146,6 +157,6 @@ class AHNLookupTool(BaseTool):
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target
             result = await abounded_check(host, ec, stage, adapter=ADAPTER, timeout=self.timeout, extra=codes)
-            return format_result(result) if result else NO_ANSWER
+            return format_result(result, retry_after) if result else NO_ANSWER
         except Exception as error:
             return _unexpected(error)

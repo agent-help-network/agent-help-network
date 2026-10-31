@@ -284,7 +284,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.1.0"
+    assert langchain_ahn.__version__ == "0.2.0"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 
@@ -365,3 +365,75 @@ def test_private_helper_signature_still_takes_the_keywords():
 
     for fn in (_adapter.bounded_check, _adapter.abounded_check):
         assert {"adapter", "timeout", "extra"} <= set(inspect.signature(fn).parameters)
+
+
+# --- the service's own guidance (D51, ahn-client 0.6.0) -------------------------------------------------------
+
+GUIDED = {**ANSWER, "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
+          "next_action": {"do": "use_official_path", "url": "https://developer.example.com/apis", "retry_after_seconds": None},
+          "links": {"feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports"}}
+
+
+def test_the_services_line_and_next_action_reach_the_model(transport):
+    transport(body=GUIDED)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert summary.startswith("AHN example.com: An official developer path is listed for this site.")
+    assert data["next_action"] == {"do": "use_official_path", "url": "https://developer.example.com/apis"}
+    assert data["remember"] == "For example.com, start with the official path: https://developer.example.com/apis"
+    assert "retry_after_seconds" not in data and "summary_line" not in data
+
+
+def test_an_older_answer_has_no_new_keys(transport):
+    transport()
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert summary.startswith("AHN example.com: recommendation=use_official_path")
+    assert "next_action" not in data and "remember" not in data
+
+
+def test_stop_if_listed_and_a_provider_wait_with_the_sites_retry_after(transport):
+    listed = {**ANSWER, "recommendation": {"action": "unknown", "confidence": "low", "reasons": ["robots_blocks_some_agents"]},
+              "summary_line": "The site's robots.txt blocks some agent tokens. If your requests send one in next_action.stop_if_you_are, stop retrying pages; else send agent_vendor.",
+              "next_action": {"do": "stop_if_listed", "url": None, "retry_after_seconds": None, "stop_if_you_are": ["GPTBot"]}}
+    transport(body=listed)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert data["recommendation"] == "unknown" and data["next_action"] == {"do": "stop_if_listed", "stop_if_you_are": ["GPTBot"]}
+    assert "Stop if you are: GPTBot." in summary
+    ahn_client.clear_cache()
+    waiting = {**ANSWER, "recommendation": {"action": "wait_provider_incident", "confidence": "medium", "reasons": []},
+               "summary_line": "The provider reports an active issue. Wait instead of retrying, and look up again in about 15 minutes; its status page lists the affected services.",
+               "next_action": {"do": "wait_for_provider", "url": "https://status.example.com/", "retry_after_seconds": 900}}
+    calls = transport(body=waiting)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "retry_after": "gt_3600", "http_status": 503}))
+    assert data["retry_after_seconds"] == 3600 and data["next_action"]["retry_after_seconds"] == 900
+    assert "wait more than an hour" in summary
+    assert query_of(calls[-1])["retry_after"] == "gt_3600"  # the existing optional code; the merge adds nothing to the request
+    ahn_client.clear_cache()
+    _, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert data["retry_after_seconds"] == 900
+
+
+def test_a_stop_answer_carries_no_wait_even_with_the_sites_retry_after(transport):
+    stop = {**ANSWER, "recommendation": {"action": "stop_declared_block", "confidence": "high", "reasons": []},
+            "summary_line": "The site's robots.txt explicitly blocks agent user agents at the site root, and no official path is listed. Stop automated retries; hand the step to the user if needed.",
+            "next_action": {"do": "stop_automation", "url": None, "retry_after_seconds": None}}
+    transport(body=stop)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
+    assert "retry_after_seconds" not in data and "Retry-After" not in summary
+    assert data["next_action"] == {"do": "stop_automation"}
+
+
+def test_an_older_stop_answer_carries_no_site_wait_and_a_pending_profile_keeps_its_own(transport):
+    stop = {**ANSWER, "recommendation": {"action": "stop_declared_block", "confidence": "high", "reasons": []}}
+    transport(body=stop)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
+    assert "retry_after_seconds" not in data and "lookup_again_seconds" not in data and "Retry-After" not in summary
+    ahn_client.clear_cache()
+    pending = {**ANSWER, "access_profile": {"robots_status": "pending", "robots": None, "llms_txt_status": "pending",
+                                            "freshness": "pending", "retry_after_seconds": 45},
+               "summary_line": "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in 45 s.",
+               "next_action": {"do": "use_official_path", "url": "https://developer.example.com/apis", "retry_after_seconds": 45}}
+    transport(body=pending)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "retry_after": "gt_3600"}))
+    assert data["lookup_again_seconds"] == 45 and "retry_after_seconds" not in data
+    assert data["next_action"] == {"do": "use_official_path", "url": "https://developer.example.com/apis"}
+    assert "Retry-After" not in summary
