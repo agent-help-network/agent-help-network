@@ -190,7 +190,7 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
     # feedback.HOURLY_RETENTION_DAYS), used-token fingerprints five minutes after the token has expired (one hour after its lookup; the margin covers clock skew).
     # Own transaction for the same reason as above.
     try:
-        with psycopg.connect(database_url) as conn:
+        with connect_url(database_url) as conn:
             conn.execute("DELETE FROM lookup_feedback_hourly WHERE hour < now() - interval '35 days'")
             conn.execute("DELETE FROM lookup_feedback_used WHERE expires_at < now() - interval '5 minutes'")  # feedback.EXPIRY_GRACE
     except psycopg.Error as exc:
