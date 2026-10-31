@@ -341,8 +341,50 @@ def test_the_merge_still_applies_to_the_come_back_later_answers(do):
     assert parse(answer(do)).wait_seconds(1800) == 1800
 
 
-def test_an_older_service_still_merges_the_site_value():
-    assert parse(BASE).wait_seconds(1800) == 1800
+OLD_STOPS = ("stop_declared_block", "hand_off_to_human", "use_official_path")
+
+
+def old_answer(action, **over):
+    """An answer from a service without next_action (older, or AHN_RESPONSE_GUIDE=0)."""
+    return {**BASE, "recommendation": {**BASE["recommendation"], "action": action}, **over}
+
+
+@pytest.mark.parametrize("action", ["proceed", "unknown", "wait_provider_incident"])
+def test_an_older_service_still_merges_the_site_value_for_come_back_later_verdicts(action):
+    assert parse(old_answer(action)).wait_seconds(1800) == 1800
+
+
+@pytest.mark.parametrize("action", OLD_STOPS)
+@pytest.mark.parametrize("site", ["gt_3600", "60_3600", 1800])
+def test_an_older_service_with_a_stop_verdict_never_gets_a_site_wait(action, site):
+    result = parse(old_answer(action))
+    assert result.next_action is None
+    assert result.wait_seconds(site) is None
+    assert "Retry-After" not in result.summary(site) and result.summary(site) == result.summary()
+    # the same with the service's sentence but no readable next_action
+    with_line = parse(old_answer(action, summary_line=server_lines()["stop_automation"]))
+    assert with_line.wait_seconds(site) is None
+    assert "Retry-After" not in with_line.summary(site) and with_line.summary(site) == with_line.summary()
+
+
+def test_a_next_action_with_an_unknown_do_never_merges_the_site_value():
+    body = answer("proceed", next_action={"do": "a_tenth_value", "url": None, "retry_after_seconds": 900})
+    result = parse(body)
+    assert result.next_action is None
+    assert result.wait_seconds("gt_3600") is None
+    assert "Retry-After" not in result.summary("gt_3600")
+
+
+def test_the_pending_profile_value_survives_a_hand_off_or_an_official_path():
+    profile = {"robots_status": "pending", "robots": None, "llms_txt_status": "pending", "freshness": "pending",
+               "retry_after_seconds": 45}
+    for do in ("use_official_path", "hand_off_to_human", "stop_if_listed"):
+        result = parse(answer(do, access_profile=profile))
+        assert result.retry_after_seconds is None and result.lookup_again_seconds == 45
+        assert result.wait_seconds("gt_3600") is None
+    old = parse(old_answer("use_official_path", access_profile=profile))
+    assert old.retry_after_seconds == 45 and old.lookup_again_seconds == 45  # as 0.5.0
+    assert parse(BASE).lookup_again_seconds is None
 
 
 # --- the cache keeps a pending profile only for its own retry_after_seconds --------------------------------------

@@ -420,3 +420,20 @@ def test_a_stop_answer_carries_no_wait_even_with_the_sites_retry_after(transport
     summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
     assert "retry_after_seconds" not in data and "Retry-After" not in summary
     assert data["next_action"] == {"do": "stop_automation"}
+
+
+def test_an_older_stop_answer_carries_no_site_wait_and_a_pending_profile_keeps_its_own(transport):
+    stop = {**ANSWER, "recommendation": {"action": "stop_declared_block", "confidence": "high", "reasons": []}}
+    transport(body=stop)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
+    assert "retry_after_seconds" not in data and "lookup_again_seconds" not in data and "Retry-After" not in summary
+    ahn_client.clear_cache()
+    pending = {**ANSWER, "access_profile": {"robots_status": "pending", "robots": None, "llms_txt_status": "pending",
+                                            "freshness": "pending", "retry_after_seconds": 45},
+               "summary_line": "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in 45 s.",
+               "next_action": {"do": "use_official_path", "url": "https://developer.example.com/apis", "retry_after_seconds": 45}}
+    transport(body=pending)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "retry_after": "gt_3600"}))
+    assert data["lookup_again_seconds"] == 45 and "retry_after_seconds" not in data
+    assert data["next_action"] == {"do": "use_official_path", "url": "https://developer.example.com/apis"}
+    assert "Retry-After" not in summary

@@ -30,6 +30,10 @@ RETRY_BAND_FLOOR = {"none": 0, "lt_60": 0, "60_3600": 60, "gt_3600": MAX_WAIT}
 SERVER_LINE = re.compile(r"^[ -~]{1,200}$")
 HOSTNAME = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 
+# Without a usable next_action the same gate is read from the verdict: a stop, a hand-off or an official path is not
+# "come back later". Unknown values never merge (conservative).
+WAIT_ACTIONS = frozenset({"proceed", "wait_provider_incident", "unknown"})
+
 SAFETY_TAIL = "Declared policy is not an access guarantee; bypassing site controls is not advised."
 
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
@@ -119,7 +123,7 @@ class NextAction:
         return data
 
 
-def _head(host: str, line: str, action: Optional[NextAction], site_retry_after: Any) -> str:
+def _head(host: str, line: str, action: Optional[NextAction], site_retry_after: Any, merge: bool) -> str:
     """The service's sentence first, then the few next_action values it points at, as fixed text."""
     parts = [f"AHN {host}: {line}"]
     if action and action.url:
@@ -129,7 +133,7 @@ def _head(host: str, line: str, action: Optional[NextAction], site_retry_after: 
     if action and action.lookup_host:
         parts.append(f"Look up: {action.lookup_host}.")
     site = site_wait(site_retry_after)
-    if site and (action is None or action.do in WAIT_DO) and site > ((action.retry_after_seconds or 0) if action else 0):
+    if site and merge and site > ((action.retry_after_seconds or 0) if action else 0):
         parts.append("The site's own Retry-After is longer: wait more than an hour." if site_over(site_retry_after)
                      else f"The site's own Retry-After is longer: wait at least {site} s.")
     return " ".join(parts)
@@ -272,21 +276,42 @@ class Result:
         )
 
     @property
+    def _merges_site(self) -> bool:
+        """The one gate for every use of the site's Retry-After: True only when the answer means "come back later".
+        With a ``next_action`` that is ``do`` in ``WAIT_DO``; with a ``next_action`` key this client cannot read (a ``do`` it does
+        not know) never; with an older service (no key) the verdict decides (``WAIT_ACTIONS``)."""
+        if self.next_action is not None:
+            return self.next_action.do in WAIT_DO
+        if self.raw.get("next_action") is not None:
+            return False
+        return self.recommendation in WAIT_ACTIONS
+
+    @property
     def retry_after_seconds(self) -> Optional[int]:
         """Seconds to wait before repeating the same lookup once, or None. With a ``next_action``: its
         ``retry_after_seconds`` (a provider incident: 900; a profile being read), only when ``do`` means "come back later"
         (``wait_for_provider``, ``retry_lookup_once``, ``no_clear_action``, ``proceed``, ``lookup_apex_host``); after a stop,
-        a hand-off or an official path it is None. With an older service (no ``next_action``): the pending profile's value."""
+        a hand-off or an official path it is None. With an older service (no ``next_action``): the pending profile's value.
+        ``lookup_again_seconds`` is the profile's value whatever the answer says."""
         if self.next_action is not None:
             return self.next_action.retry_after_seconds if self.next_action.do in WAIT_DO else None
+        return _retry_after(self.access_profile)
+
+    @property
+    def lookup_again_seconds(self) -> Optional[int]:
+        """While the host's robots.txt and llms.txt are being read (``access_profile.freshness`` is ``pending``), the seconds
+        before the one repeat lookup the service asks for; otherwise None. It is the profile's own value and is not combined
+        with the site's Retry-After; it stays set after a hand-off or an official path (0.5.0 gave it as
+        ``retry_after_seconds`` there too)."""
         return _retry_after(self.access_profile)
 
     def wait_seconds(self, site_retry_after: Any = None) -> Optional[int]:
         """``retry_after_seconds`` combined with the site's own Retry-After: the larger of the two, at most 3600. Pass the
         site's value as whole seconds, or as the band code (``60_3600``, ``gt_3600``) an adapter holds. The merge happens
         here only; the site's value is never sent to the service and never changes its answer. After a stop, a hand-off or
-        an official path (see ``retry_after_seconds``) there is nothing to wait for and the result is None."""
-        if self.next_action is not None and self.next_action.do not in WAIT_DO:
+        an official path (by ``next_action.do``, or by ``recommendation`` for an older service) there is nothing to wait for
+        and the result is None."""
+        if not self._merges_site:
             return None
         values = [value for value in (self.retry_after_seconds, site_wait(site_retry_after)) if value]
         return max(values) if values else None
@@ -334,7 +359,7 @@ class Result:
         action_code = self.recommendation if self.recommendation in ACTIONS else None
         if self.summary_line is None:
             return _summary(self.host, self.raw, self.url, action_code)
-        head = _head(self.host, self.summary_line, self.next_action, site_retry_after)
+        head = _head(self.host, self.summary_line, self.next_action, site_retry_after, self._merges_site)
         room = MAX_SUMMARY - len(head) - 1
         if room >= 200:
             return head + " " + _summary(self.host, self.raw, self.url, action_code, room, compact=True)

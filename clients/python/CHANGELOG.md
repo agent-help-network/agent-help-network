@@ -15,6 +15,13 @@
   merged. The cache still keeps a pending-profile answer only for the profile's own `retry_after_seconds`. `Result.wait_seconds(site_retry_after)` returns
   the larger of that and the site's own Retry-After (seconds or a band code), at most 3600; the framework adapters pass the
   Retry-After band they already hold. The merge is local: nothing new is sent and the service's answer is not changed.
+- `Result.lookup_again_seconds`: the pending profile's own "look up once more in N s" value (0.5.0 gave it as
+  `retry_after_seconds` in every case; now `retry_after_seconds` is `None` after a stop, a hand-off or an official path, so
+  this keeps it). The name follows the service's wording ("look up once more") and says it is not a site wait; it is never
+  combined with the site's Retry-After. langchain-ahn passes it on in its JSON.
+- Without a usable `next_action` (an older service, `AHN_RESPONSE_GUIDE=0`, or a `do` this version does not know) the same
+  rule is read from `recommendation`: for `stop_declared_block`, `hand_off_to_human` and `use_official_path` the site's
+  Retry-After is not merged. A `do` this version does not know never merges.
 - `Result.remember`: one fixed sentence for the next task on the host, made from `next_action` alone (for example
   "For example.com, start with the official path: ..."). No new judgement; `None` for states that pass (a provider wait, a hand-off).
 - `NextAction` is exported.

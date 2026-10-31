@@ -85,6 +85,8 @@ def format_result(result: Result, site_retry_after: Any = None) -> str:
     wait = result.wait_seconds(site_retry_after)  # None after a stop, a hand-off or an official path
     if wait is not None:
         data["retry_after_seconds"] = wait
+    if result.lookup_again_seconds is not None:
+        data["lookup_again_seconds"] = result.lookup_again_seconds  # the policy is being read: one repeat lookup, not a site wait
     if result.next_action is not None:
         data["next_action"] = result.next_action.to_dict()
     if result.remember:
