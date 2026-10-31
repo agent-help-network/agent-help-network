@@ -147,7 +147,7 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
     ``ahn.check(url, error_class, stage, **ahn.signals(exc))``. Possible keys: ``http_status`` (the HTTP status the
     exception carries, only 401, 402, 403, 407, 408, 429, 451 and 500-599), ``challenge`` (``header`` when the response
     has a ``cf-mitigated: challenge`` header, or, given its status, an AWS WAF ``x-amzn-waf-action`` that marks a challenge
-    (``challenge`` on 202, ``captcha`` on 405, either on 403 or 451; exact values only); ``none`` when it has headers without a marker), ``retry_after`` (for 429 and
+    (``challenge`` or ``captcha`` on a 403 or 451, the only statuses here that can carry one; whole value, any case); ``none`` when it has headers without a marker), ``retry_after`` (for 429 and
     503: ``none``, ``lt_60``, ``60_3600`` or ``gt_3600`` seconds; an HTTP date counts as ``none``) and ``via``
     (``http_fetch`` for httpx, requests, aiohttp and urllib errors, ``browser`` for Playwright, Selenium and similar
     ones; pass ``via="browser"`` or ``"http_fetch"`` yourself when you know). A key whose value is not known is left

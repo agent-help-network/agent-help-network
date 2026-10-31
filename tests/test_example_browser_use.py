@@ -194,6 +194,14 @@ def test_retry_wait_falls_back_to_the_profiles_lookup_again_seconds():
     assert "Next step (proceed)" in guide.lookup("https://example.com/", "access_denied")
 
 
+def test_only_a_repeat_lookup_borrows_the_profiles_wait():
+    data = dict(BASE, summary_line="x", access_profile={"freshness": "pending", "retry_after_seconds": 120},
+                next_action={"do": "wait_for_provider", "url": None, "retry_after_seconds": None})
+    result = Result.from_response("example.com", "https://agenthelpnetwork.com/x", data)
+    assert result.lookup_again_seconds == 120
+    assert ex.read_answer(result)[1]["retry_after_seconds"] is None  # a provider wait is the provider's, not the profile's
+
+
 def test_without_any_wait_value_the_behaviour_is_unchanged():
     data = dict(BASE, summary_line="x", next_action={"do": "retry_lookup_once", "url": None, "retry_after_seconds": None})
     result = Result.from_response("example.com", "https://agenthelpnetwork.com/x", data)

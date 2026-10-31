@@ -1234,6 +1234,8 @@ def test_examples_parse_and_name_the_browser_use_adapter():
     text = (examples / "browser_use_hook_example.py").read_text(encoding="utf-8")
     assert 'ADAPTER = "browser-use"' in text and "adapter=ADAPTER" in text
     assert "on_step_end" in text and "@tools.action" not in text  # the action lives in examples/browser-use/
+    moved = (examples / "browser_use_actions_example.py").read_text(encoding="utf-8")  # old name, linked from released READMEs
+    assert "examples/browser-use/ahn_browser_use.py" in moved and "import" not in moved
     action = (ROOT / "examples" / "browser-use" / "ahn_browser_use.py").read_text(encoding="utf-8")
     assert 'ADAPTER = "browser-use"' in action and "adapter=ADAPTER" in action and "@tools.action(" in action
 

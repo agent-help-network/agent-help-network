@@ -8,7 +8,7 @@
   a 405 (`captcha`), a 403 or a 451; on a 429, a 503 or any other status it is not a challenge (`challenge="none"`).
 - `ahn.diagnose` follows that rule too: a 429 or 5xx with the header no longer reports `challenge="header"`.
 
-## 0.6.1
+## 0.6.1 (not published to PyPI; released as part of 0.6.2)
 
 - `ahn.diagnose(response, body=None)`: a Playwright, httpx or requests response (any object with `status_code` or `status`,
   `headers` and optionally `text` or `content`) gives `(error_class, failure_stage, signals)` for `ahn.check`, by the same status
