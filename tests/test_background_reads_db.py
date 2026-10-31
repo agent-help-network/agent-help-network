@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient  # noqa: E402  (after the skip: ahn.ma
 from ahn import background_reads, export, service
 from ahn.access_profile import cached_profile
 from ahn.db import connect, migrate
+from ahn.site_declared import paths as site_declared_paths  # D59: the standard files follow the robots read
 from ahn.main import create_app
 from ahn.service import PUBLIC_REPORTER_ID
 from ahn.settings import Settings
@@ -121,9 +122,10 @@ def test_processing_fills_the_cache_with_provenance_and_empties_the_queue(db, mo
     assert stored["vantage"] == {"kind": "datacenter", "region": "US", "asn": None, "declared": True}
     assert stored["reader_version"].startswith("AgentHelpNetwork/")
     assert stored["robots_sha256"] == hashlib.sha256(ROBOTS).hexdigest() and stored["llms_sha256"] == hashlib.sha256(LLMS).hexdigest()
-    assert reader.calls == [("fill-example.org", "/robots.txt"), ("fill-example.org", "/llms.txt")]
+    assert reader.calls == [("fill-example.org", "/robots.txt"), ("fill-example.org", "/llms.txt")] + [
+        ("fill-example.org", path) for path in site_declared_paths()]
     # Nothing new is queued while the answer is fresh, and a second processing run reads nothing.
-    assert background_reads.process_due(db)["claimed"] == 0 and len(reader.calls) == 2
+    assert background_reads.process_due(db)["claimed"] == 0 and len(reader.calls) == 2 + len(site_declared_paths())
 
 
 def test_a_transport_failure_is_a_finished_job_and_keeps_the_hourly_retry(db, monkeypatch):
@@ -341,8 +343,9 @@ def test_retry_after_follows_the_queue_position(db, monkeypatch):
         conn.execute("DELETE FROM background_reads")
         background_reads.enqueue(conn, [("access_profile", f"ahead{index}-example.org") for index in range(30)])
         conn.execute("UPDATE background_reads SET requested_at=now() - interval '1 minute' WHERE site_host LIKE 'ahead%%'")
-    # 30 jobs ahead, two threads at about JOB_SECONDS each: (30 + 1) * 2 / 2 = 31 seconds.
-    assert service.check(db, "behind-example.org")["access_profile"]["retry_after_seconds"] == 31
+    # 30 jobs ahead, two threads at about JOB_SECONDS each: (30 + 1) * JOB_SECONDS / 2 seconds.
+    assert background_reads.JOB_SECONDS == 4.0
+    assert service.check(db, "behind-example.org")["access_profile"]["retry_after_seconds"] == 62
     with connect(db) as conn:
         background_reads.enqueue(conn, [("access_profile", "later-example.org")])
         conn.execute("UPDATE background_reads SET not_before=now() + interval '1 hour' WHERE site_host='later-example.org'")
@@ -404,7 +407,7 @@ def test_content_use_is_stored_with_the_read_kept_through_a_failure_and_exported
     first = service.check(db, "signal-example.org")["access_profile"]["content_use"]
     assert (first["status"], first["reason"]) == ("not_read", "pending")
     background_reads.process_due(db)
-    assert calls == ["/robots.txt", "/llms.txt"]  # no request beyond the two files
+    assert calls == ["/robots.txt", "/llms.txt", *site_declared_paths()]  # no request beyond the two files and the D59 files
     answer = service.check(db, "signal-example.org")
     content_use = answer["access_profile"]["content_use"]
     assert content_use["status"] == "declared" and content_use["freshness"] == "fresh"

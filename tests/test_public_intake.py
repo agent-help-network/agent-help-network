@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from ahn import background_reads
 from ahn.access_profile import cached_profile
 from ahn.db import connect, migrate
+from ahn.site_declared import paths as site_declared_paths  # D59: the standard files follow the robots read
 from ahn.auto_review import review_batch
 from ahn.bandwidth_guard import parse_bandwidth, run_guard
 from ahn.main import create_app
@@ -312,14 +313,14 @@ def test_access_profile_layer_answers_without_reports(public_client, monkeypatch
     assert first["evidence_level"] == "no_reports"
     # Second lookup within a day reuses the cache: no new reads.
     second = client.get("/v1/incidents/check", params={"site_host": "newsite.org", "error_class": "human_verification"}).json()
-    assert reads == [("newsite.org", "/robots.txt"), ("newsite.org", "/llms.txt")]
+    assert reads == [("newsite.org", "/robots.txt"), ("newsite.org", "/llms.txt")] + [("newsite.org", path) for path in site_declared_paths()]
     assert second["recommendation"]["action"] == "hand_off_to_human"
     assert CheckResponse(**second).access_profile.robots.rules[0].agent == "ChatGPT-User"
     page = client.get("/en/search", params={"site_host": "newsite.org"})
     assert page.status_code == 200
     # Account-style subdomains never trigger a read.
     sensitive = client.get("/v1/incidents/check", params={"site_host": "user123.newsite.org"}).json()
-    assert sensitive["access_profile"] is None and len(reads) == 2
+    assert sensitive["access_profile"] is None and len(reads) == 2 + len(site_declared_paths())
 
 
 def test_api_names_the_host_that_answered_after_the_www_fallback(public_client, monkeypatch):
@@ -372,7 +373,8 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     assert "profile_not_read" not in [item["code"] for item in www["next_checks"]]
     assert CheckResponse(**www).access_profile.read_host == "aliasexample.org"
     # One read of the apex serves both names; nothing is read, registered or counted under www.
-    assert reads == [("aliasexample.org", "/robots.txt"), ("aliasexample.org", "/llms.txt")]
+    assert reads == [("aliasexample.org", "/robots.txt"), ("aliasexample.org", "/llms.txt")] + [
+        ("aliasexample.org", path) for path in site_declared_paths()]
     with connect(settings) as conn:
         assert [r["site_host"] for r in conn.execute("SELECT site_host FROM host_access_profile").fetchall()] == ["aliasexample.org"]
         assert [r["site_host"] for r in conn.execute("SELECT site_host FROM queried_hosts").fetchall()] == ["aliasexample.org"]
@@ -382,7 +384,7 @@ def test_www_lookup_answers_from_the_apex_while_reports_keep_their_own_host(publ
     for host in ("user123.aliasexample.org", "www.user123.aliasexample.org"):
         other = client.get("/v1/incidents/check", params={"site_host": host}).json()
         assert other["access_profile"] is None and other["recommendation"]["reasons"][-1:] == ["profile_not_read"]
-    assert len(reads) == 2
+    assert len(reads) == 2 + len(site_declared_paths())
     # Reports stay under the exact host they were made for: a published www report is not the apex's report,
     # and its incident page keeps its own host while showing the site's declared policy.
     receipt = post_public(client, sample(site_host="www.aliasexample.org")).json()
@@ -480,6 +482,7 @@ def test_profile_transport_errors_retry_hourly_but_refusals_and_answers_keep_the
     refused = get_profile(settings, "edge.org", now=t0, reader=refusing)
     assert refused["robots_status"] == "refused" and refused["robots_detail"] == "http_403" and refused["freshness"] == "fresh"
     get_profile(settings, "edge.org", now=t0 + timedelta(hours=5), reader=refusing)
+    # A host that refused robots.txt itself is not asked for the D59 standard files (robots_refused).
     assert calls == ["/robots.txt", "/robots.txt", "/llms.txt"]  # apex robots, www fallback robots, llms — read once only
     with connect(settings) as conn:
         row = conn.execute("SELECT robots_status,robots_detail,llms_detail FROM host_access_profile WHERE site_host='edge.org'").fetchone()

@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .access_profile import get_profile
+from .access_profile import HOST_READ_WORST_SECONDS, get_profile
 from .db import connect
 from .models import valid_host
 from .service import aggregate_eligible_host
@@ -32,6 +32,11 @@ PAUSE_SECONDS = 0.5
 # path) keeps its own, shorter ERROR_RETRY, so a host someone asks about is still retried within the hour.
 WARM_ERROR_RETRY = timedelta(hours=24)
 TIME_BUDGET_SECONDS = 120.0  # keep the 5-minute review cron from overrunning its own schedule
+HOST_WORST_SECONDS = HOST_READ_WORST_SECONDS
+# The review cron runs every 5 minutes (*/5). A further host starts only if, read at its worst, it still ends before
+# this line, counted from the cron run's own start: 300 seconds less 20 for the steps after the pre-read and process
+# exit, so a run never overlaps the next one. The first host needs only budget (D59).
+CRON_SAFE_SECONDS = 280.0
 _clock = time.monotonic
 
 
@@ -56,11 +61,13 @@ def load_seed_hosts(path: str | Path | None = None) -> list[str]:
 
 def warm_profiles(
     settings, *, batch: int = 10, max_age_hours: int = 168, reader=None, now: datetime | None = None,
-    time_budget: float = TIME_BUDGET_SECONDS,
+    time_budget: float = TIME_BUDGET_SECONDS, cron_started: float | None = None,
 ) -> dict:
     """Read up to ``batch`` seed hosts that have no profile row or whose last attempt is older than ``max_age_hours``.
 
-    No new host is started once ``time_budget`` seconds have passed; the rest stay due. Returns
+    A host starts while ``time_budget`` is not used up; a host after the first also needs the time since
+    ``cron_started`` (a ``_clock`` reading taken when the cron run began; this call's own start when not given) plus
+    HOST_WORST_SECONDS to stay within CRON_SAFE_SECONDS. The rest stay due. Returns
     candidates (due hosts left unprocessed), read (profiles returned), ok (robots_status 'ok')
     and errors (robots_status 'error', or a host whose read raised). When errors is not 0, causes
     counts them by label: the stored robots_detail (dns_failed, connect_timeout, ...) or
@@ -96,12 +103,20 @@ def warm_profiles(
     chosen = due[:max(batch, 0)]
     options = {} if reader is None else {"reader": reader}
     started = _clock()
+    cron_started = started if cron_started is None else cron_started
     processed = 0
     causes: dict[str, int] = {}
     for index, host in enumerate(chosen):
-        if index:
-            if _clock() - started > time_budget:
+        if index == 0:
+            if time_budget <= 0:
                 break
+        else:
+            clock = _clock()
+            if clock - started >= time_budget:
+                break  # the budget is used up; the rest stay due
+            if clock - cron_started + HOST_WORST_SECONDS > CRON_SAFE_SECONDS:
+                break  # one more host at its worst could run into the next cron run
+        if index:
             time.sleep(PAUSE_SECONDS)
         processed += 1
         try:

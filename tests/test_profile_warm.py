@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ahn import auto_review, background_reads, profile_warm, status_refresh
+from ahn import access_profile, auto_review, background_reads, profile_warm, status_refresh
 from ahn.db import connect, migrate
 from ahn.official_paths import OFFICIAL_PATHS
 from ahn.service import aggregate_eligible_host
@@ -284,16 +284,62 @@ def test_warm_profiles_swallows_an_exception_for_one_host_and_continues(warm_set
     assert stored_hosts(settings) == {SEEDS[0], SEEDS[2]}  # the raising host left no row, so it stays due
 
 
+def _ticking(monkeypatch, step):
+    ticks = iter(range(0, 100_000, step))  # each clock read is ``step`` seconds later
+    monkeypatch.setattr(profile_warm, "_clock", lambda: next(ticks))
+
+
 def test_warm_profiles_stops_starting_new_hosts_after_the_time_budget(warm_settings, monkeypatch):
     settings, _ = warm_settings
-    ticks = iter(range(0, 1000, 100))  # each clock read is 100 seconds later
-    monkeypatch.setattr(profile_warm, "_clock", lambda: next(ticks))
+    _ticking(monkeypatch, 10)
     reader = Reader()
 
-    result = profile_warm.warm_profiles(settings, batch=5, reader=reader, now=datetime.now(timezone.utc), time_budget=150)
+    result = profile_warm.warm_profiles(settings, batch=5, reader=reader, now=datetime.now(timezone.utc), time_budget=25)
 
-    assert reader.hosts == SEEDS[:2]  # started at 0, second host checked at 100 (ok), third at 200 (over budget)
-    assert result == {"candidates": 3, "read": 2, "ok": 2, "errors": 0}
+    assert reader.hosts == SEEDS[:3]  # started at 0, checked at 10 and 20 (within 25), the fourth at 30 is over
+    assert result == {"candidates": 2, "read": 3, "ok": 3, "errors": 0}
+
+
+def test_the_default_budget_reads_several_hosts(warm_settings):
+    # The worst case of one host (136 s) is above the budget (120 s); budget alone decides how many hosts start.
+    assert profile_warm.HOST_WORST_SECONDS > profile_warm.TIME_BUDGET_SECONDS
+    settings, _ = warm_settings
+    reader = Reader()
+    assert profile_warm.warm_profiles(settings, batch=4, reader=reader, now=datetime.now(timezone.utc))["read"] == 4
+
+
+def test_a_further_host_starts_only_if_its_worst_case_ends_before_the_next_cron_run(warm_settings, monkeypatch):
+    # The worst case comes from the reader's own limits: DNS 2 + connect 2*2 + headers 3 + body 10 + last receive 3.
+    assert access_profile.REQUEST_WORST_SECONDS == 22.0
+    assert profile_warm.HOST_WORST_SECONDS == access_profile.HOST_READ_WORST_SECONDS == 6 * 22.0 + 4.0
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    room = profile_warm.CRON_SAFE_SECONDS - profile_warm.HOST_WORST_SECONDS  # latest cron time a further host may start
+    # Plenty of budget, but at the second host's check (clock 100) the cron run is one second past that point.
+    _ticking(monkeypatch, 100)
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=10_000, cron_started=100 - room - 1)
+    assert len(reader.hosts) == 1
+    # Exactly on that point the second host starts; at the third check (clock 200) the cron run is past it.
+    _ticking(monkeypatch, 100)
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=10_000, cron_started=100 - room)
+    assert len(reader.hosts) == 2
+
+
+def test_the_first_host_needs_only_budget(warm_settings, monkeypatch):
+    settings, _ = warm_settings
+    now = datetime.now(timezone.utc)
+    _ticking(monkeypatch, 100)
+    # A long queue drain must not starve the seed pre-read: the cron run is long past its line and the budget is
+    # nearly gone, yet one host starts ...
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=1, cron_started=-10_000)
+    assert len(reader.hosts) == 1
+    # ... and with no budget at all none does.
+    reader = Reader()
+    profile_warm.warm_profiles(settings, batch=5, reader=reader, now=now, time_budget=0)
+    assert reader.hosts == []
 
 
 def test_warm_profiles_with_zero_batch_reads_nothing_and_reports_the_backlog(warm_settings):
@@ -306,7 +352,8 @@ def test_warm_profiles_with_zero_batch_reads_nothing_and_reports_the_backlog(war
 def test_cron_main_prints_the_warm_line_and_honours_the_batch_variable(monkeypatch, capsys):
     seen = []
 
-    def fake_warm(received_settings, *, batch, **_options):
+    def fake_warm(received_settings, *, batch, cron_started, **_options):
+        assert isinstance(cron_started, float)  # the cron run's own start reaches the pre-read
         seen.append(batch)
         return {"candidates": 7, "read": 3, "ok": 2, "errors": 1}
 
@@ -383,14 +430,14 @@ def test_cron_main_survives_a_failing_warm_step(monkeypatch, capsys):
 
 def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(monkeypatch, capsys):
     calls = []
-    ticks = {"values": iter([0.0, 100.0])}
+    ticks = {"values": iter([-5.0, 0.0, 100.0])}  # cron start, queue start, seed step
 
     def fake_drain(received_settings, *, time_budget):
         calls.append(("queue", time_budget))
         return {"claimed": 3, "done": 2, "failed": 1, "dropped": 0, "remaining": 4}
 
-    def fake_warm(received_settings, *, batch, time_budget):
-        calls.append(("seeds", time_budget))
+    def fake_warm(received_settings, *, batch, time_budget, cron_started):
+        calls.append(("seeds", time_budget, cron_started))
         return {"candidates": 0, "read": 1, "ok": 1, "errors": 0}
 
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://never-connected.invalid/none")
@@ -405,10 +452,10 @@ def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(mo
     out = capsys.readouterr().out
     assert "background_reads done=2 failed=1 dropped=0 cut=0 remaining=4" in out
     # The queue had the whole seed budget; the seeds get what it left.
-    assert calls == [("queue", profile_warm.TIME_BUDGET_SECONDS), ("seeds", profile_warm.TIME_BUDGET_SECONDS - 100.0)]
+    assert calls == [("queue", profile_warm.TIME_BUDGET_SECONDS), ("seeds", profile_warm.TIME_BUDGET_SECONDS - 100.0, -5.0)]
     # A queue that used up the budget leaves the seeds for the next run.
     calls.clear()
-    ticks["values"] = iter([0.0, 500.0])
+    ticks["values"] = iter([-5.0, 0.0, 500.0])
     auto_review.main()
     assert "profile_warm skipped=time_budget" in capsys.readouterr().out and calls == [("queue", profile_warm.TIME_BUDGET_SECONDS)]
 
@@ -417,7 +464,7 @@ def test_cron_main_drains_the_lookup_queue_before_the_seeds_within_one_budget(mo
         raise RuntimeError("relation background_reads does not exist")
 
     monkeypatch.setattr(background_reads, "drain", broken)
-    ticks["values"] = iter([0.0, 1.0])
+    ticks["values"] = iter([-5.0, 0.0, 1.0])
     auto_review.main()
     out = capsys.readouterr().out
     assert "background_reads failed=RuntimeError" in out and "does not exist" not in out and "profile_warm read=1" in out

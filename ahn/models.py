@@ -350,6 +350,87 @@ class ContentUseCompact(StrictModel):
 ContentUse = Annotated[ContentUseDeclared | ContentUseCompact, Field(discriminator="status")]
 
 
+DeclaredStatus = Literal["declared", "none_declared", "not_read"]
+
+
+class CatalogApi(StrictModel):
+    """One API of an RFC 9727 catalog: its anchor and RFC 8631 links as published (at most 3 per relation)."""
+    anchor: str | None = None
+    service_desc: list[str] | None = Field(default=None, exclude_if=_omit_none)
+    service_doc: list[str] | None = Field(default=None, exclude_if=_omit_none)
+    service_meta: list[str] | None = Field(default=None, exclude_if=_omit_none)
+    status: list[str] | None = Field(default=None, exclude_if=_omit_none)
+
+
+class ApiCatalog(StrictModel):
+    """/.well-known/api-catalog (RFC 9727). Fields other than status and source_url appear only when declared."""
+    status: DeclaredStatus
+    reason: str | None = Field(default=None, exclude_if=_omit_none)
+    source_url: str
+    apis: list[CatalogApi] | None = Field(default=None, exclude_if=_omit_none)
+    apis_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    items: list[str] | None = Field(default=None, exclude_if=_omit_none)
+    items_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    nested_catalogs: list[str] | None = Field(default=None, exclude_if=_omit_none)
+
+
+class TdmRule(StrictModel):
+    location: str
+    tdm_reservation: Literal[0, 1] | None = None  # null: a value other than 0 or 1 (TDMRep reads it as unset)
+    tdm_policy: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class TdmHeader(StrictModel):
+    """tdm-reservation / tdm-policy response headers seen on the response to one of the files read."""
+    path: str
+    tdm_reservation: Literal[0, 1] | None = None
+    tdm_policy: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class TdmReservation(StrictModel):
+    """/.well-known/tdmrep.json and TDM response headers (W3C TDMRep). Quoted as declared, never a legal reading."""
+    status: DeclaredStatus
+    reason: str | None = Field(default=None, exclude_if=_omit_none)
+    source_url: str
+    rules: list[TdmRule] | None = Field(default=None, exclude_if=_omit_none)
+    rules_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    root_reservation: Literal[0, 1] | None = Field(default=None, exclude_if=_omit_none)  # left out: unset for "/"
+    any_reserved: bool | None = Field(default=None, exclude_if=_omit_none)
+    headers: list[TdmHeader] | None = Field(default=None, exclude_if=_omit_none)
+    # Only when a header made status 'declared' although tdmrep.json itself was not declared: that file read's result.
+    file_status: Literal["none_declared", "not_read"] | None = Field(default=None, exclude_if=_omit_none)
+    file_reason: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class McpCatalogServer(StrictModel):
+    identifier: str | None = None
+    card_url: str | None = Field(default=None, exclude_if=_omit_none)
+    inline_card: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
+    name: str | None = Field(default=None, exclude_if=_omit_none)
+    remote_urls: list[str] | None = Field(default=None, exclude_if=_omit_none)
+
+
+class McpDiscovery(StrictModel):
+    """Experimental: MCP Server Card entries of the host's /.well-known/ai-catalog.json (MCP SEP-2127 discovery)."""
+    experimental: Literal[True] = True
+    status: DeclaredStatus
+    reason: str | None = Field(default=None, exclude_if=_omit_none)
+    source_url: str
+    servers: list[McpCatalogServer] | None = Field(default=None, exclude_if=_omit_none)
+    servers_total: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    spec_version: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class SiteDeclared(StrictModel):
+    """What the host publishes for agents at standard locations (D59); information only, never in the recommendation."""
+    api_catalog: ApiCatalog
+    tdm: TdmReservation
+    mcp_discovery: McpDiscovery | None = Field(default=None, exclude_if=_omit_none)  # absent with AHN_MCP_DISCOVERY=0
+    fetched_at: datetime | None = None
+    freshness: Literal["fresh", "stale", "pending"]
+    note: str | None = Field(default=None, exclude_if=_omit_none)  # present when at least one file is declared
+
+
 class AccessProfile(StrictModel):
     robots_status: Literal["ok", "absent", "redirected", "refused", "invalid", "error", "too_large", "not_public", "pending"]
     robots: RobotsSummary | None = None
@@ -366,6 +447,8 @@ class AccessProfile(StrictModel):
     note: str
     # Content-use preferences declared in the same robots.txt; information only, never part of the recommendation.
     content_use: ContentUse | None = None
+    # D59: standard-location files the host publishes for agents; left out with AHN_SITE_DECLARED=0 (never null).
+    site_declared: SiteDeclared | None = Field(default=None, exclude_if=_omit_none)
 
 
 class OfficialPaths(StrictModel):
