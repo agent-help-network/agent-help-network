@@ -129,9 +129,9 @@ def http_status(tool_response) -> Optional[int]:
     return None
 
 
-def challenge_cue(tool_response: dict, host: str) -> bool:
+def challenge_cue(tool_response: dict, host: str, code: Optional[int] = None) -> bool:
     headers = tool_response.get("headers")
-    if isinstance(headers, dict) and challenge_code(headers) == "header":
+    if isinstance(headers, dict) and challenge_code(headers, code) == "header":
         return True
     for field in BODY_FIELDS:
         value = tool_response.get(field)
@@ -145,7 +145,7 @@ def status_class(code: int, tool_response: dict, host: str) -> Optional[str]:
     if code in (401, 407):
         return "login_auth"
     if code in (403, 451):
-        return "human_verification" if challenge_cue(tool_response, host) else "site_access"
+        return "human_verification" if challenge_cue(tool_response, host, code) else "site_access"
     if code == 402:
         return "site_access"
     if code in (408, 429) or 500 <= code <= 599:
@@ -223,7 +223,7 @@ def _signals(payload) -> Dict[str, Any]:
             found["http_status"] = code
             headers = response.get("headers")
             if isinstance(headers, dict):
-                challenge = challenge_code(headers)
+                challenge = challenge_code(headers, code)
                 if challenge:
                     found["challenge"] = challenge
                 if code in (429, 503):

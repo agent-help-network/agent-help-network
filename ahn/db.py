@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import secrets
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from .settings import Settings
 
 
 DEFAULT_CONNECT_TIMEOUT = "10"
+UTC_OPTION = "-c TimeZone=UTC"
 
 
 def conninfo(database_url: str) -> str:
@@ -20,11 +22,42 @@ def conninfo(database_url: str) -> str:
     # dead database longer than the request budget allows.
     params = conninfo_to_dict(database_url)
     params.setdefault("connect_timeout", DEFAULT_CONNECT_TIMEOUT)
+    # Every session runs in UTC whatever the server, the PGTZ variable or the role says. psycopg hands timestamptz back
+    # in the session zone, and "+ timedelta" on a DST-zone value moves the wall clock (a day across a fall-back is 25
+    # hours) while SQL day intervals and CURRENT_DATE follow the session zone too. Sent as a start-up option, so it costs
+    # no round trip. Appended after any options the URL carries, so it wins. (Render has no connection pooler in front
+    # of the database, which is the setup that rejects start-up options.)
+    existing = params.get("options")
+    params["options"] = f"{existing} {UTC_OPTION}" if existing else UTC_OPTION
     return make_conninfo(**params)
 
 
+def as_utc(moment: datetime) -> datetime:
+    """The same instant in UTC. A naive datetime is refused rather than read as local time."""
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("a timezone-aware datetime is required")
+    return moment.astimezone(timezone.utc)
+
+
+def connect_url(database_url: str, **kwargs):
+    """Open a session that is in UTC. The start-up option covers the usual case at no cost; a client PGTZ variable
+    outranks it (the server applies it last), so a session still reporting another zone is set once, outside any
+    transaction so that a later rollback cannot undo it."""
+    conn = psycopg.connect(conninfo(database_url), **kwargs)
+    if conn.info.parameter_status("TimeZone") != "UTC":
+        autocommit = conn.autocommit
+        try:
+            conn.autocommit = True
+            conn.execute("SET TimeZone TO 'UTC'")
+            conn.autocommit = autocommit
+        except BaseException:
+            conn.close()  # never hand back a session whose zone is still unknown
+            raise
+    return conn
+
+
 def connect(settings: Settings):
-    return psycopg.connect(conninfo(settings.database_url), row_factory=dict_row)
+    return connect_url(settings.database_url, row_factory=dict_row)
 
 
 def migrate(settings: Settings) -> list[int]:

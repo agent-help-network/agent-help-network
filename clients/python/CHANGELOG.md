@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.2
+
+- `ahn.signals(exc)` now reads AWS WAF's `x-amzn-waf-action` header, as `diagnose` already did: a 403 or 451 with `challenge` or
+  `captcha` gives `challenge="header"`. The Claude Code plugin hook (plugin 0.3.8) and the Claude Agent SDK adapter read it the
+  same way, so one response gets the same codes whichever path reads it. The header counts only on a 202 (`challenge`),
+  a 405 (`captcha`), a 403 or a 451; on a 429, a 503 or any other status it is not a challenge (`challenge="none"`).
+- `ahn.diagnose` follows that rule too: a 429 or 5xx with the header no longer reports `challenge="header"`.
+
+## 0.6.1 (not published to PyPI; released as part of 0.6.2)
+
+- `ahn.diagnose(response, body=None)`: a Playwright, httpx or requests response (any object with `status_code` or `status`,
+  `headers` and optionally `text` or `content`) gives `(error_class, failure_stage, signals)` for `ahn.check`, by the same status
+  and header rules as `classify` and `signals`. The first 4,000 characters of a body are tested on your machine for a few
+  human-check markers and the body is never sent, stored or returned. No library is imported or required.
+- AWS WAF: a 202 or 405 with `x-amzn-waf-action: challenge|captcha` is `human_verification` with `challenge=header`
+  (https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html). A 403 or 451 is
+  `human_verification` when a header or the body points to a human check.
+- A 200 whose page `<title>` looks like a human check gives `error_class` None with `.candidate` True and `.hint` `"human_verification"`: a hint, never looked up by code that just unpacks the result.
+- `Result.summary()` ends with "robots.txt asks N s between requests." when the host's robots.txt asks for a delay
+  (`Result.crawl_delay_seconds`, rounded to one decimal; a delay that rounds to 0.0 is ignored).
+
 ## 0.6.0
 
 - `Result` keeps the service's own guidance (D51) instead of rebuilding it from the six `recommendation` values:

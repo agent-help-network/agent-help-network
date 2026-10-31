@@ -97,7 +97,7 @@ def test_quotes_are_short_and_never_judge_the_terms():
         for field in ("free_tier", "terms"):
             if field in access:
                 assert 0 < len(access[field]["quote"]) <= ACCESS_QUOTE_MAX, (host, field)
-        # Owner decision D-1020-3: a link and a verbatim quote only, no verdict or summary field.
+        # A link and a verbatim quote only, no verdict or summary field.
         assert not {"stance", "allowed", "summary", "automation"} & set(access.get("terms", {})), host
 
 

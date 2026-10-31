@@ -8,8 +8,9 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
-import psycopg
 from psycopg.rows import dict_row
+
+from .db import connect_url
 
 
 API_BASE = "https://api.render.com/v1"
@@ -158,7 +159,7 @@ def run_guard(database_url: str, api_key: str, resource_id: str, *, now: datetim
     latest_sample = max(at for at, _ in samples)
     if latest_sample < now - timedelta(hours=4):
         raise RuntimeError("Render bandwidth metrics are stale")
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+    with connect_url(database_url, row_factory=dict_row) as conn:
         if not conn.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (LOCK_KEY,)).fetchone()["ok"]:
             # A concurrent run owns the state row; it will evaluate the same window.
             return {"state": "skipped", "usage_gb": None, "action": "none", "coverage_gap": False, "coverage_gap_new": False}
