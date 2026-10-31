@@ -36,7 +36,7 @@ publisher page that links to that organisation.
 | `rate_limits_url`, `sandbox_url` | a documentation page covers it | Link only; never copy test card numbers or test credentials. |
 | `openapi_url` | the publisher publishes an OpenAPI or Swagger document | The JSON or YAML file itself, not a Swagger UI page. The script checks the body. |
 | `official_mcp` | a publisher page gives an MCP endpoint | `endpoint` copied exactly from `doc_url`. Never connect to it. The official MCP registry is for finding candidates only (a domain-verified name such as `com.stripe/*` whose remote URL is on the same registrable domain, checked with the Public Suffix List); the evidence is the publisher's own documentation page, and an endpoint that page does not print is left out. |
-| `terms` | the publisher has terms or a policy for API or developer use | `url` plus one verbatim sentence, or a clause that keeps its meaning on its own, at most 200 characters. Prefer one about API use, automation, rate limits, or credentials. No `...` edits, no paraphrase, no stance or summary (owner decision: terms are linked and quoted, never judged). |
+| `terms` | the publisher has terms or a policy for API or developer use | `url` plus one verbatim sentence, or a clause that keeps its meaning on its own, at most 200 characters. Prefer one about API use, automation, rate limits, or credentials. No `...` edits, no paraphrase, no stance or summary (terms are linked and quoted, never judged). |
 | `verified_at` | always | The UTC date you read the pages. |
 
 **Aliases.** When another key in `OFFICIAL_PATHS` is the same publisher and API (`twitter.com` for `x.com`), add it to the alias
