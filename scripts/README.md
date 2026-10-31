@@ -65,8 +65,8 @@ re-read; the script prints `stale:` lines for bundles already hidden.
 ## Consumer paths for official paths (`CONSUMER_PATHS`, D61)
 
 For a host with a clear consumer service (retail, pharmacy, banking, telecom, travel, delivery), list where the site itself
-sends its customers, so an agent doing a task in the user's own account is not sent only to a partner API. Only hosts that already
-have an `OFFICIAL_PATHS` entry.
+sends its customers, so an agent doing a task in the user's own account is not sent only to a partner API. A host may have no `OFFICIAL_PATHS` entry (D64);
+its answer then carries `consumer` only.
 
 1. Read the host's `robots.txt` with the curation User-Agent. If it refuses (401/403/429) or disallows the pages, stop for that
    host in this round and list it as refused. No other user agent, browser, cache or search copy.
