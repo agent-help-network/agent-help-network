@@ -152,6 +152,40 @@ def test_connect_page_install_section_in_both_languages():
         assert "공식 통합이 아니" in pages["ko"].text
 
 
+def test_agents_page_and_readmes_install_links_decode_to_the_mcp_url():
+    import base64
+    import html
+    import json
+    import re
+    import urllib.parse
+    from pathlib import Path
+
+    mcp = "https://agenthelpnetwork.com/mcp"
+
+    def check(text):
+        cur = re.search(r'(cursor://anysphere\.cursor-deeplink/mcp/install\?[^")\s]+)', text)
+        assert cur
+        params = dict(p.split("=", 1) for p in html.unescape(cur.group(1)).split("?", 1)[1].split("&"))
+        assert params["name"] == "agent-help-network"
+        assert json.loads(base64.b64decode(params["config"])) == {"url": mcp}
+        vs = re.search(r'vscode:mcp/install\?([^")\s]+)', text)
+        assert vs
+        assert json.loads(urllib.parse.unquote(vs.group(1))) == {"name": "agent-help-network", "type": "http", "url": mcp}
+        assert '"type": "streamableHttp", "url": "%s"' % mcp in html.unescape(text)
+        flat = html.unescape(text).replace(chr(13) + chr(10), chr(10))
+        assert '[mcp_servers.agent-help-network]' + chr(10) + 'url = "%s"' % mcp in flat
+
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/agents")
+            assert page.status_code == 200 and 'id="install-coding-agent"' in page.text
+            check(page.text)
+    root = Path(__file__).resolve().parents[1]
+    for name in ("README.md", "README.ko.md"):
+        check((root / name).read_text(encoding="utf-8"))
+
+
 def test_connect_page_embeds_the_pinned_demo_video_without_autoplay():
     import re
 

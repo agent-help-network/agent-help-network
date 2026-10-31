@@ -21,6 +21,16 @@ claude plugin install ahn@agent-help-network
 pip install ahn-client
 pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-agent-sdk]</code></pre>
       <p>{{ 'The first two lines are the Claude Code plugin; the pip lines are the Python client and its framework adapters. Any other MCP client connects to the remote server instead.' if lang == 'en' else '앞의 두 줄은 Claude Code 플러그인이고 pip 줄은 Python 클라이언트와 프레임워크 어댑터입니다. 그 밖의 MCP 클라이언트는 원격 서버에 직접 연결합니다.' }} <a href="/{{ lang }}/connect#install">{{ t.nav_connect }} →</a></p>
+      <h3 id="install-coding-agent">{{ 'Install in your coding agent' if lang == 'en' else '코딩 에이전트에 설치' }}</h3>
+      <p>{{ 'Remote HTTP server, no account or key. The links add the server to your client; your client asks you to confirm before it is saved.' if lang == 'en' else '원격 HTTP 서버이며 계정이나 키가 필요 없습니다. 링크는 서버 추가 화면을 열 뿐이고, 저장 전에 클라이언트가 확인을 묻습니다.' }}</p>
+      <p><a class="install-button" href="cursor://anysphere.cursor-deeplink/mcp/install?name=agent-help-network&amp;config=eyJ1cmwiOiJodHRwczovL2FnZW50aGVscG5ldHdvcmsuY29tL21jcCJ9">{{ 'Add to Cursor' if lang == 'en' else 'Cursor 에 추가' }}</a> <a class="install-button" href="vscode:mcp/install?%7B%22name%22%3A%22agent-help-network%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fagenthelpnetwork.com%2Fmcp%22%7D">{{ 'Install in VS Code' if lang == 'en' else 'VS Code 에 설치' }}</a></p>
+      <p>{{ 'Cline: add this to cline_mcp_settings.json (Cline MCP Servers, Configure tab):' if lang == 'en' else 'Cline: cline_mcp_settings.json 에 넣습니다(Cline 의 MCP Servers, Configure 탭).' }}</p>
+      <pre class="ledger-code"><code>{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}</code></pre>
+      <p>{{ 'Codex: add this to ~/.codex/config.toml:' if lang == 'en' else 'Codex: ~/.codex/config.toml 에 넣습니다.' }}</p>
+      <pre class="ledger-code"><code>[mcp_servers.agent-help-network]
+url = "https://agenthelpnetwork.com/mcp"</code></pre>
+      <p>{{ 'VS Code without the link: put {"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}} in mcp.json.' if lang == 'en' else '링크 없이 VS Code 에 넣으려면 mcp.json 에 {"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}} 를 씁니다.' }}</p>
+      <p><a href="https://cursor.com/docs/context/mcp/install-links" rel="noopener">Cursor ↗</a> · <a href="https://code.visualstudio.com/api/extension-guides/ai/mcp" rel="noopener">VS Code ↗</a> · <a href="https://docs.cline.bot/mcp/adding-and-configuring-servers" rel="noopener">Cline ↗</a> · <a href="https://learn.chatgpt.com/docs/extend/mcp?surface=cli" rel="noopener">Codex ↗</a></p>
     </article>
     <article class="info-card">
       <span class="info-number">02 / READ</span>
