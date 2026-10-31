@@ -164,6 +164,11 @@ python scripts/answer_quality.py --vendor-pass anthropic      # and a second liv
 - **Live answers:** one `GET /v1/incidents/check` per host, at most one per second, with the User-Agent
   `ahn-quality-check/1 (+https://agenthelpnetwork.com)` and no `error_class`. An answer is actionable when it lists an official
   path or its `recommendation.action` is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`. Also reported:
+  **M4c** (consumer-task measure; M4 above is kept for comparison) counts an answer when `next_action.customer_url` is
+  present, or the action is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`, or the action is `proceed`
+  and no agent token's own robots group disallows the site root. A developer path without `customer_url`, and `unknown`, are
+  not M4c. `consumer_path_coverage` is the share of answers whose `official_paths` has a `consumer` entry. Rows and metrics
+  carry `m4c`; the result `schema_version` is 2 (a version 1 file still works as the previous run). Also reported:
   the share still `profile_pending` and the share with no data (action `unknown`, no official path, no status). A failed
   lookup is counted as an error and is left out of the percentages; it is never retried.
 - **Vendor pass (D48):** `--vendor-pass <agent_vendor>` asks every host a second time with that `agent_vendor` (same pacing,
