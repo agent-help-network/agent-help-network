@@ -15,7 +15,7 @@ from browser_use import Agent, ChatBrowserUse, Tools
 from ahn_browser_use import register_tool
 
 TASK = ("Open {url} and report the page title. If the page is blocked (403, CAPTCHA, login wall, 429, 5xx), "
-        "call check_blocked_site once and do what it says.")
+        "call check_blocked_site and do what it says (it may ask for one more lookup).")
 
 
 async def main(url: str) -> None:

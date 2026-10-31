@@ -9,8 +9,10 @@ in nowhere. Every branch ends in "use the official path", "ask the user", "wait"
 """
 
 import asyncio
-import re
-from typing import Any, Dict, Mapping, Optional, Tuple
+import math
+import time
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from urllib.parse import urlsplit
 
 import ahn_client as ahn
 
@@ -33,36 +35,33 @@ DO_FOR_RECOMMENDATION = {"wait_provider_incident": "wait_for_provider", "hand_of
                          "use_official_path": "use_official_path", "stop_declared_block": "stop_automation",
                          "proceed": "proceed", "unknown": "no_clear_action"}
 
-HTTPS_URL = re.compile(r"^https://[A-Za-z0-9.-]{1,253}(?:/[A-Za-z0-9._~/%+=&?#-]*)?$")
-HOSTNAME = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
-TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+WAIT_STEP = 30  # Browser Use's `wait` action sleeps at most this many seconds per call (0.13.14)
 NO_BYPASS = "Do not try to get around the block."
 
 NO_ANSWER = ("Agent Help Network gave no answer (not a public hostname, lookups disabled, or no connection). Do not retry the page in a loop. "
              "Tell the user what the page showed and ask how to continue. " + NO_BYPASS)
 
 
-def _text(value: Any, limit: int = 200) -> Optional[str]:
-    return value if isinstance(value, str) and 0 < len(value) <= limit and value.isascii() and value.isprintable() else None
+def read_answer(answer: Any) -> Tuple[str, Dict[str, Any]]:
+    """(summary_line, next_action) from an ``ahn_client.Result`` (0.6.0). The client has already checked every field; ``do`` falls
+    back to the recommendation when the service sent no ``next_action``, and to ``no_clear_action`` when it sent one this client
+    cannot read."""
+    line = answer.summary_line or answer.summary()  # the service's sentence, else the client's own line from validated fields
+    source = answer.next_action
+    if source is not None:
+        return line, {"do": source.do, "url": source.url, "retry_after_seconds": source.retry_after_seconds,
+                      "stop_if_you_are": list(source.stop_if_you_are), "lookup_host": source.lookup_host}
+    do = "no_clear_action" if answer.raw.get("next_action") is not None else DO_FOR_RECOMMENDATION.get(answer.recommendation, "no_clear_action")
+    return line, {"do": do, "url": None, "retry_after_seconds": None, "stop_if_you_are": [], "lookup_host": None}
 
 
-def read_answer(raw: Mapping[str, Any]) -> Tuple[Optional[str], Dict[str, Any]]:
-    """(summary_line, next_action) from a lookup answer's JSON, each field checked; do falls back to the recommendation."""
-    line = _text(raw.get("summary_line"))
-    source = raw.get("next_action") if isinstance(raw.get("next_action"), dict) else {}
-    do = source.get("do") if source.get("do") in DO_VALUES else None
-    if do is None:
-        rec = raw.get("recommendation") if isinstance(raw.get("recommendation"), dict) else {}
-        do = DO_FOR_RECOMMENDATION.get(rec.get("action"), "no_clear_action")
-    url = source.get("url")
-    url = url if isinstance(url, str) and len(url) <= 200 and HTTPS_URL.fullmatch(url) else None
-    seconds = source.get("retry_after_seconds")
-    seconds = seconds if isinstance(seconds, int) and not isinstance(seconds, bool) and 0 <= seconds <= 3600 else None
-    tokens = source.get("stop_if_you_are")
-    tokens = [t for t in tokens if isinstance(t, str) and TOKEN.fullmatch(t)][:16] if isinstance(tokens, list) else []
-    apex = source.get("lookup_host")
-    apex = apex if isinstance(apex, str) and HOSTNAME.fullmatch(apex) else None
-    return line, {"do": do, "url": url, "retry_after_seconds": seconds, "stop_if_you_are": tokens, "lookup_host": apex}
+def _host_key(url: str) -> str:
+    """The host a page URL names, lower case without one leading ``www.``; the key for the retry bookkeeping (never sent anywhere)."""
+    try:
+        host = (urlsplit(url).hostname or url).lower()
+    except ValueError:
+        host = url.lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def instruction(action: Mapping[str, Any], *, repeated_retry: bool = False) -> str:
@@ -86,8 +85,12 @@ def instruction(action: Mapping[str, Any], *, repeated_retry: bool = False) -> s
         return ("The site's declared policy does not block agents like this one, but that is not a guarantee the page will load. "
                 "Retry the page at most once, slowly; if it fails again, stop and tell the user. " + NO_BYPASS)
     if do == "retry_lookup_once":
-        wait = f"after {seconds} s (use the wait action)" if seconds else "once more"
-        return f"The site's policy is still being read. Call this tool again {wait}, one time only. Do not poll. Do not reload the page meanwhile."
+        if seconds:
+            wait = (f"Wait about {seconds} s (the wait action takes at most {WAIT_STEP} s per call, so repeat it), then call this tool again, "
+                    "one time only. If you call it earlier it only reports the time left and does not use up that one lookup.")
+        else:
+            wait = "Call this tool again, one time only."
+        return f"The site's policy is still being read. {wait} Do not poll. Do not reload the page meanwhile."
     if do == "stop_if_listed":
         names = ", ".join(action.get("stop_if_you_are") or []) or "(none listed)"
         return (f"The site blocks some agents by name: {names}. This answer cannot say whether that applies to this setup; do not guess. "
@@ -100,29 +103,38 @@ def instruction(action: Mapping[str, Any], *, repeated_retry: bool = False) -> s
 
 
 class BlockGuide:
-    """Looks a blocked page's host up and turns the answer into the text the model reads. Holds the one bit of state the contract
-    needs: a second ``retry_lookup_once`` for the same host counts as ``no_clear_action``."""
+    """Looks a blocked page's host up and turns the answer into the text the model reads. Holds the state the contract needs for
+    ``retry_lookup_once``: the one repeat lookup is only worth making once the service's wait (5 to 300 s) is over, and ahn-client
+    answers any earlier call from its cache. So a call before that deadline makes no lookup and is not counted; the first call after
+    it is the repeat, and a second ``retry_lookup_once`` then counts as ``no_clear_action``."""
 
-    def __init__(self, *, timeout: float = 3.0, agent_vendor: Optional[str] = None, check=ahn.check):
-        self.timeout, self.agent_vendor, self._check = timeout, agent_vendor, check
-        self._retry_pending = set()
+    def __init__(self, *, timeout: float = 3.0, agent_vendor: Optional[str] = None, check=ahn.check,
+                 clock: Callable[[], float] = time.monotonic):
+        self.timeout, self.agent_vendor, self._check, self._clock = timeout, agent_vendor, check, clock
+        self._retry_until: Dict[str, float] = {}  # host -> clock() time after which the one repeat lookup is due
 
     def lookup(self, url: str, reason: str) -> str:
+        key = _host_key(url)
+        deadline = self._retry_until.get(key)
+        if deadline is not None and self._clock() < deadline:
+            left = max(1, math.ceil(deadline - self._clock()))
+            return (f"Agent Help Network is still reading this site's policy; {left} s left. No lookup was made and your one repeat lookup is "
+                    f"not used up. Use the wait action in steps of up to {WAIT_STEP} s, then call this tool again. Do not reload the page meanwhile.")
         error_class = ERROR_CLASS.get(reason, "site_access")
         # Blocks for at most `timeout` seconds and never raises (only a wrong agent_vendor does).
         answer = self._check(url, error_class, "response_observed", timeout=self.timeout, adapter=ADAPTER, via="browser",
                              agent_vendor=self.agent_vendor)
         if answer is None:
             return NO_ANSWER
-        line, action = read_answer(answer.raw)
-        if line is None:
-            line = answer.summary()  # the client's own line, built from validated fields
-        host = answer.host
-        repeated = action["do"] == "retry_lookup_once" and host in self._retry_pending
+        line, action = read_answer(answer)
+        repeated = False
         if action["do"] == "retry_lookup_once":
-            self._retry_pending.add(host)
+            if key in self._retry_until:
+                repeated = True  # the deadline has passed, so this was the repeat lookup and the service still says "retry"
+            else:
+                self._retry_until[key] = self._clock() + (action["retry_after_seconds"] or 0)  # after the check: the client's cache ends by then
         else:
-            self._retry_pending.discard(host)
+            self._retry_until.pop(key, None)
         shown = "no_clear_action" if repeated else action["do"]
         return f"{line}\nNext step ({shown}): {instruction(action, repeated_retry=repeated)}"
 
