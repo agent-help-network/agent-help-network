@@ -54,7 +54,7 @@ def codes(checks) -> list[str]:
 
 
 def checks_for(status, **kwargs) -> list[dict]:
-    return next_checks(None, status, "no_reports", now=NOW, **kwargs)
+    return next_checks("site_access", status, "no_reports", now=NOW, **kwargs)
 
 
 def no_provider(error_class=None) -> dict:
@@ -337,7 +337,7 @@ def test_the_vendor_switch_does_not_change_d54():
     for status in (page(**ITEMS), page(updated=None), page()):
         assert (recommendation(None, status, None, None, now=NOW, vendor_aware=False)
                 == recommendation(None, status, None, None, now=NOW))
-        assert codes(next_checks(None, status, "no_reports", now=NOW, vendor_aware=False)) == codes(checks_for(status))
+        assert codes(next_checks("site_access", status, "no_reports", now=NOW, vendor_aware=False)) == codes(checks_for(status))
 
 
 # --- the board and the lookup say the same thing about a host ------------------------------------------------------
@@ -381,6 +381,5 @@ def test_board_and_lookup_agree(indicator, age, shape, api_url):
 def test_the_search_page_shows_the_page_text_in_korean():
     root = Path(__file__).resolve().parents[1]
     template = (root / "ahn" / "templates" / "search.html").read_text(encoding="utf-8")
-    main = (root / "ahn" / "main.py").read_text(encoding="utf-8")
-    assert "'provider_page_stale' if item.code == 'provider_incident_stale'" in template
-    assert '"provider_page_stale": PAGE_STALE_CHECK_KO' in main
+    assert "ko_by_text.get(item.text)" in template
+    assert triage.CHECK_TEXT_KO[PAGE_STALE_CHECK] == PAGE_STALE_CHECK_KO

@@ -206,6 +206,7 @@ def test_the_answer_is_the_same_with_the_record_and_without_the_table(db, client
         body = response.json()
         body.pop("generated_at")
         body.pop("lookup_activity", None)    # the seven-day volume band moves with every lookup, as in the D47 tests
+        body.pop("feedback_token", None)           # a fresh one-time token per answer (D58)
         return body
     first = lookup(client, error_class="site_access", http_status=403)
     assert len(stored(db)) == 1

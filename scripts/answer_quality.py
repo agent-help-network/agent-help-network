@@ -7,10 +7,13 @@ Two measurements, both about the answer a first lookup of a host gets:
   live     One GET of /v1/incidents/check per host, at most one request per second, with a User-Agent that says
            it is this check. Metrics: share of answers an agent can act on, share still pending, share with no data.
 
-An answer is actionable when it lists an official path (api_docs or developer_portal), or when
-recommendation.action is stop_declared_block, wait_provider_incident or hand_off_to_human. The lookup carries
-no error_class, like the first lookup of an agent that has not classified its failure yet, so hand_off_to_human
-and wait_provider_incident show up only when the data alone calls for them.
+An answer is actionable (M4) when it lists an official path (api_docs or developer_portal), or when
+recommendation.action is stop_declared_block, wait_provider_incident or hand_off_to_human. M4 therefore counts a
+developer API alone. M4c is the consumer-task measure: next_action.customer_url is present, or the action is one of
+those three, or the action is proceed and no robots group of an agent token disallows the root. A developer path
+without customer_url, and unknown, are not M4c. consumer_path_coverage is the share of answers whose official_paths
+carries a consumer entry. The lookup carries no error_class, like the first lookup of an agent that has not
+classified its failure yet, so hand_off_to_human and wait_provider_incident show up only when the data alone calls for them.
 
 --vendor-pass VENDOR (D48) adds a second live pass that sends agent_vendor=VENDOR for the same hosts (same pacing,
 so twice the requests). It is stored beside the first pass as live_vendor, with the hosts whose action differs between
@@ -48,9 +51,10 @@ from ahn.official_paths import official_paths  # noqa: E402
 from ahn.profile_warm import load_seed_hosts  # noqa: E402
 from ahn.service import aggregate_eligible_host, policy_host  # noqa: E402
 from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES  # noqa: E402
-from ahn.triage import accepted_vendor, profile_pending  # noqa: E402
+from ahn.triage import accepted_vendor, declared_block, profile_pending  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: live rows gain customer_url, m4c, consumer_path; live metrics gain m4c and consumer_path_coverage
+READABLE_SCHEMAS = frozenset({1, SCHEMA_VERSION})  # a v1 file still serves as the previous run (its m4c deltas are None)
 DEFAULT_SET = ROOT / "ahn" / "quality" / "failure_hosts_v1.txt"
 DEFAULT_OUT_DIR = ROOT / "work" / "answer-quality"
 DEFAULT_BASE_URL = "https://agenthelpnetwork.com"
@@ -59,6 +63,7 @@ USER_AGENT = "ahn-quality-check/1 (+https://agenthelpnetwork.com)"
 MIN_INTERVAL = 1.0  # seconds between two lookups: at most one request per second
 TIMEOUT = 20.0
 ACTIONABLE_ACTIONS = frozenset({"stop_declared_block", "wait_provider_incident", "hand_off_to_human"})
+CONSUMER_ACTIONS = frozenset({"hand_off_to_human", "stop_declared_block", "wait_provider_incident"})
 COVERAGE_KEYS = ("seed", "official_path", "status", "access_bundle")
 
 Fetch = Callable[[str, dict, float], "tuple[int, str]"]
@@ -158,6 +163,7 @@ def classify_answer(body: dict) -> dict:
     pending = profile_pending(profile)
     actionable = listed or action in ACTIONABLE_ACTIONS
     no_data = action == "unknown" and not listed and not provider and not page
+    customer = (body.get("next_action") or {}).get("customer_url") or None
     return {
         "action": action,
         "confidence": recommendation.get("confidence"),
@@ -168,9 +174,26 @@ def classify_answer(body: dict) -> dict:
         "profile_freshness": (profile or {}).get("freshness"),
         "robots_status": (profile or {}).get("robots_status"),
         "profile_pending": pending,
+        "customer_url": customer,
+        "consumer_path": bool(official and official.get("consumer")),
         "actionable": actionable,
+        "m4c": consumer_actionable(body, action, customer),
         "no_data": no_data,
     }
+
+
+def consumer_actionable(body: dict, action: str | None, customer: str | None) -> bool:
+    """M4c: the answer gives a path a consumer task can use. Stricter than M4, which counts a developer API alone.
+
+    True for a customer_url, a hand-off/stop/wait action, or proceed on a host with no explicit robots block for any
+    agent token (triage.declared_block, the same test the verdict uses). use_official_path without customer_url
+    (developer path only) and unknown are not consumer-actionable.
+    """
+    if customer:
+        return True
+    if action in CONSUMER_ACTIONS:
+        return True
+    return action == "proceed" and not declared_block(body.get("access_profile"))
 
 
 def default_fetch(url: str, headers: dict, timeout: float) -> tuple[int, str]:
@@ -225,6 +248,8 @@ def live_metrics(results: dict[str, dict]) -> dict:
         actions[str(r["action"])] = actions.get(str(r["action"]), 0) + 1
     counts = {
         "actionable": sum(r["actionable"] for r in answered),
+        "m4c": sum(bool(r.get("m4c")) for r in answered),
+        "consumer_path_coverage": sum(bool(r.get("consumer_path")) for r in answered),
         "profile_pending": sum(r["profile_pending"] for r in answered),
         "no_data": sum(r["no_data"] for r in answered),
         "official_path": sum(r["official_path"] for r in answered),
@@ -247,7 +272,7 @@ def previous_result(out_dir: Path, today: str) -> dict | None:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(data, dict) and data.get("schema_version") == SCHEMA_VERSION:
+        if isinstance(data, dict) and data.get("schema_version") in READABLE_SCHEMAS:
             data["_file"] = path.name
             return data
     return None
@@ -268,10 +293,11 @@ def compare(current: dict, previous: dict | None) -> dict:
     cur_off, old_off = current.get("offline", {}).get("metrics"), previous.get("offline", {}).get("metrics")
     change["offline_pct_points"] = {k: _delta(cur_off, old_off, k) for k in (*COVERAGE_KEYS, "all_four")}
     cur_live, old_live = current.get("live", {}).get("metrics"), previous.get("live", {}).get("metrics")
-    change["live_pct_points"] = {k: _delta(cur_live, old_live, k) for k in ("actionable", "profile_pending", "no_data")}
+    change["live_pct_points"] = {k: _delta(cur_live, old_live, k) for k in ("actionable", "m4c", "consumer_path_coverage", "profile_pending", "no_data")}
     old_hosts = {h["host"]: h for h in previous.get("hosts", [])}
     worse: list[dict] = []
     better: list[str] = []
+    consumer_better: list[str] = []
     action_changes: list[dict] = []
     for row in current["hosts"]:
         old = old_hosts.get(row["host"])
@@ -294,10 +320,16 @@ def compare(current: dict, previous: dict | None) -> dict:
                     action_changes.append({"host": row["host"], "from": old_live_row["action"], "to": new_live["action"]})
                 if new_live["actionable"] and not old_live_row["actionable"]:
                     better.append(row["host"])
+                if "m4c" in old_live_row and "m4c" in new_live:  # a v1 row has no m4c: nothing to compare
+                    if old_live_row["m4c"] and not new_live["m4c"]:
+                        reasons.append("no_longer_consumer_actionable")
+                    elif new_live["m4c"] and not old_live_row["m4c"]:
+                        consumer_better.append(row["host"])
         if reasons:
             worse.append({"host": row["host"], "source": row["source"], "reasons": reasons})
     change["worse_hosts"] = worse
     change["better_hosts"] = better
+    change["consumer_better_hosts"] = consumer_better
     change["action_changes"] = action_changes
     change["new_hosts"] = [h["host"] for h in current["hosts"] if h["host"] not in old_hosts]
     change["dropped_hosts"] = sorted(set(old_hosts) - {h["host"] for h in current["hosts"]})

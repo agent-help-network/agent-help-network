@@ -458,6 +458,20 @@ class OfficialPaths(StrictModel):
     note: str | None = None
     # Curated "how to use it" bundle for some hosts; left out of the JSON when there is none (never null).
     access: OfficialAccess | None = Field(default=None, exclude_if=lambda value: value is None)
+    # D61: the site's own customer path (help centre, official app, entry link) for a task in a person's own account;
+    # curated for some hosts, left out of the JSON otherwise. Information only: it never changes `recommendation`.
+    consumer: ConsumerPaths | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class ConsumerPath(StrictModel):
+    kind: Literal["customer_help", "official_app", "entry_link"]
+    url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
+    source_url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
+
+
+class ConsumerPaths(StrictModel):
+    paths: list[ConsumerPath] = Field(min_length=1, max_length=6)
+    verified_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 # Every optional field of the access bundle is left out of the JSON when unknown, to keep answers small.
@@ -493,6 +507,12 @@ class OfficialAccess(StrictModel):
     sandbox_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
     openapi_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL)
     official_mcp: list[AccessMcp] | None = Field(**_ABSENT, min_length=1)
+    # Official alternative paths to the same information (D60). Curated links only: the service never reads these URLs,
+    # and they never change `recommendation` or `next_checks`.
+    feeds: list[Annotated[str, Field(pattern=HTTPS_URL, max_length=300)]] | None = Field(**_ABSENT, min_length=1, max_length=3)
+    llms_full_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
+    docs_repo: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
+    data_export_url: str | None = Field(**_ABSENT, pattern=HTTPS_URL, max_length=300)
     terms: AccessTerms | None = Field(**_ABSENT)
     verified_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
@@ -552,11 +572,52 @@ class NextAction(StrictModel):
     stop_if_you_are: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
         default=None, min_length=1, max_length=16, exclude_if=_omit_none)
     lookup_host: str | None = Field(default=None, exclude_if=_omit_none)
+    # D61: with do=use_official_path or, since D63, proceed, the site's own customer page for a task in the user's own
+    # account, which a developer API may not reach. Present only when official_paths.consumer is curated.
+    customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
 
 
 class Links(StrictModel):
     feedback: str | None = Field(default=None, exclude_if=_omit_none)
     changelog: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class FeedbackOutcome(str, Enum):
+    """D58: what happened on the caller's next attempt after a blocked lookup. "Not tried" is never sent: no answer is that."""
+    succeeded = "succeeded"
+    still_blocked = "still_blocked"
+    handed_off = "handed_off"
+    gave_up = "gave_up"
+
+
+class FeedbackPath(str, Enum):
+    """D58: which way the attempt that the outcome is about went."""
+    official_path = "official_path"
+    same_site = "same_site"
+    unknown = "unknown"
+
+
+# Token text as issued by ahn/feedback.py: base64url payload, a dot, base64url MAC. The bound only keeps junk short.
+FEEDBACK_TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,480}\.[A-Za-z0-9_-]{43}$")
+
+
+class Feedback(StrictModel):
+    """D58: a one-time token for saying, later, whether the next attempt worked (POST /v1/feedback, MCP rate_last_lookup)."""
+    token: str = Field(max_length=530)
+    expires_in_seconds: int = Field(ge=1, le=3600)
+    outcomes: list[FeedbackOutcome]
+    paths: list[FeedbackPath]
+
+
+class FeedbackIn(StrictModel):
+    """D58: body of POST /v1/feedback. No hostname: the token says which lookup it answers."""
+    token: str = Field(max_length=530)
+    outcome: FeedbackOutcome
+    path: FeedbackPath = FeedbackPath.unknown
+
+
+class FeedbackReceipt(StrictModel):
+    accepted: Literal[True]
 
 
 class CheckResponse(StrictModel):
@@ -589,6 +650,8 @@ class CheckResponse(StrictModel):
     recommendation: Recommendation | None = None
     failure_stage: FailureStage | None = None
     next_checks: list[NextCheck] = Field(default_factory=list)
+    # D58: present only on a blocked lookup (error_class sent) that the service counts; left out (never null) otherwise.
+    feedback_token: Feedback | None = Field(default=None, exclude_if=_omit_none)
 
 
 class Receipt(StrictModel):

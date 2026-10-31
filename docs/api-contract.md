@@ -86,9 +86,9 @@
 
 ## OpenAPI 및 MCP
 
-`/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`와 `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
+`/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
-MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
@@ -144,6 +144,40 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 **어떤 응답도 달라지지 않는다.** 이 코드가 있든 없든 `recommendation`, `next_checks`, `evidence_level`, `observations` 와 다른 모든 필드는 같다. 이 코드는 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않는다(D11). 아직 응답 어디에도 나오지 않는다. 나중에 더하면 선택 층으로, 대략적인 구간만, 서로 다른 클라이언트 세 곳 이상일 때만 나온다.
 
 MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들지 않고 대상 사이트나 호출자의 데이터를 바꾸지 않는다. 조회는 익명으로 집계되고(호스트 등록·일별 호스트 조회 수, 조회 자체의 짧은 트랜잭션. 그림자 모드로 선택 조회 신호 코드의 시간별 호스트 집계도 있다. [조회 신호 코드](#조회-신호-코드) 참고), 서비스가 캐시를 채우려고 호스트의 공개 `robots.txt`·`llms.txt`·상태 피드를 읽을 수 있으며 이 읽기는 조회가 기다리는 동안이 아니라 뒤에서 한다. 주석은 `readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`(공개 웹을 설명함)다. 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
+
+### 결과 회신 (`feedback_token`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
+
+막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 이 조회(와 이를 부르는 MCP `check_incident`)에만 붙을 수 있으며 사건 상세(`GET /v1/incidents/{id}`)와 사이트 자체 페이지에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다).
+
+```json
+"feedback_token": {
+  "token": "<불투명 값>",
+  "expires_in_seconds": 3600,
+  "outcomes": ["succeeded", "still_blocked", "handed_off", "gave_up"],
+  "paths": ["official_path", "same_site", "unknown"]
+}
+```
+
+그 밖에는 키를 생략하며 `null` 로 두지 않는다. 답이 정해진 뒤에 더하므로 `recommendation`, `next_checks` 와 다른 모든 키, 그 순서는 이 키가 있든 없든 같다. 이 키를 담은 응답에는 `Cache-Control: no-store` 를 붙인다. `AHN_LOOKUP_FEEDBACK=0` 이면 모든 답에서 빠지고 MCP 도구 목록에서도 `rate_last_lookup` 이 빠진다. 그 전에 발급된 토큰은 만료 전까지 회신할 수 있다.
+
+조회자는 그 단계를 다시 시도한 뒤 무슨 일이 있었는지와 함께 토큰을 한 번 돌려보낼 수 있다.
+
+`POST /v1/feedback` 에 JSON 본문 `{"token": "<토큰>", "outcome": "succeeded", "path": "official_path"}` 를 보내면 `200 {"accepted": true}` 를 돌려준다. 본문은 이 세 키만 받고 `path` 는 선택이다(기본값 `unknown`). 호스트명은 없다. 어느 조회에 대한 회신인지는 토큰이 말한다.
+
+| 필드 | 값 | 뜻 |
+|---|---|---|
+| `outcome` | `succeeded`, `still_blocked`, `handed_off`, `gave_up` | 다음 시도가 통함, 여전히 막힘, 사용자에게 넘김, 포기. "시도 안 함"은 보내지 않는다. 회신이 없는 것이 그 값이다. |
+| `path` | `official_path`, `same_site`, `unknown` | 답이 가리킨 공식 경로로 시도함, 같은 사이트를 다시 시도함, 말하지 않음. |
+
+오류: 목록 밖의 `outcome`·`path` 는 `field`·`allowed_values` 와 함께 `400 invalid_request`, 그 밖의 본문 문제(토큰 없음, `site_host` 같은 모르는 키)는 `400 invalid_request`, 이 서비스가 발급하지 않은 값(형식 오류·변조·다른 키로 서명·발급된 철자와 다른 표기)은 `400 invalid_feedback_token`, 조회 뒤 3600초 이상 지나면 `410 feedback_token_expired`, 이미 쓴 토큰은 `409 feedback_token_used`(같은 회신을 다시 보내도 달라지는 것이 없다), DB 오류는 `503 service_unavailable`.
+
+토큰은 조회자에게 불투명하다. 서비스 비밀값에서 파생한 키로 HMAC-SHA256 서명한 값이며, 그 조회를 센 공개 루트 호스트명, `recommendation.action`, 클라이언트 종류([조회 신호 코드](#조회-신호-코드)와 같은 분류), 발급 시각, 그 조회를 셌는지, 무작위 값을 담는다. **토큰을 발급할 때는 아무것도 저장하지 않는다.** 토큰이 쓰이면 두 번 쓰이지 않도록 그 토큰의 서명된 내용(무작위 값 포함)의 SHA-256 지문을 만료 시각과 함께, 호스트명 없이 둔다. 지문은 토큰 만료 5분 뒤부터(인스턴스 간 시계 차 여유) 다음 회신이 들어올 때와 15분마다 도는 정리 작업이 삭제한다. 결과는 조회의 발급 시간·호스트명·권고·클라이언트 종류·결과·경로별로 한 번 세며(잠금을 200ms 넘게 기다려야 하면 세기를 건너뛰고 회신은 그대로 받는다), 집계는 35일 보관한다. 시간당 조합은 최대 200개이고 나머지는 호스트명 없는 `(overflow)` 행으로 접는다. 세지 않는 조회(운영자 자신의 네트워크, `X-AHN-Test: 1`)도 흐름을 끝까지 시험할 수 있도록 토큰을 받지만, 그 회신은 받기만 하고 세지 않는다.
+
+**회신은 어떤 답도 바꾸지 않는다.** 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않고(D11), 집계는 공개하지 않으며 어떤 응답에도 나오지 않는다.
+
+MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보내고 `{"accepted": true}` 를 돌려준다. 위 오류 코드는 도구 오류로 돌아온다. 주석은 `readOnlyHint=false`, `destructiveHint=false`(집계에 더하기만 함), `idempotentHint=true`(반복 호출해도 더 달라지지 않음), `openWorldHint=false` 이며 `AHN_LOOKUP_FEEDBACK` 이 `0` 이 아니면 모든 모드에서 나타난다. `token` 입력 스키마는 REST 본문과 같은 패턴·길이 제한을 갖는다.
+
+**응답에 키가 더해질 수 있다.** MCP `tools/list` 가 알리는 각 도구(`check_incident`, `rate_last_lookup` 등)의 `outputSchema` 는 모든 객체에서 추가 속성을 허용한다(`additionalProperties: true`). 그래서 도구 목록을 캐시한 클라이언트도 선택 키가 더해진 뒤의 답을 계속 받아들인다. 서비스 자신은 닫힌 모델로 답을 검사한다.
 
 ### 에이전트 벤더 (`agent_vendor`, D48)
 
@@ -247,7 +281,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
   - `mcp_discovery`(**시험**, `experimental: true`): AI Catalog 항목 중 `type` 이 `application/mcp-server-card+json` 인 것 최대 5개(`servers_total`), 항목마다 `identifier` 와 `card_url`(호스팅된 Server Card) 또는 인라인 카드면 `inline_card: true`·`name`·`remote_urls` 최대 3개. 카드 자체는 열지 않는다. `AHN_MCP_DISCOVERY=0` 은 이 읽기를 멈추고 필드를 뺀다.
   - `fetched_at`·`freshness` 는 프로필 읽기의 값이다. `note` 는 하나라도 `declared` 일 때 있다. `AHN_SITE_DECLARED=0` 은 세 읽기를 모두 멈추고 `site_declared` 를 뺀다. 오프라인 번들·Export v1 에는 넣지 않는다. Cloudflare Content Signals(`robots.txt` 안 `Content-Signal:`)는 여기가 아니라 `content_use` 에 있다.
 - `official_paths` 는 코드 안의 정리된 표(`ahn/official_paths.py`)에서 온다. `name`, `api_docs`, `developer_portal`, `note` 만 있으며 `name` 을 제외한 세 필드는 `null` 일 수 있고, 표에 없는 호스트면 객체 전체가 `null` 이다. 서브도메인은 루트 호스트의 항목과 맞춘다(`api.github.com` 은 `github.com` 항목). `note` 만 있는 항목(예: 공개 API 없음)은 표시하지만 판정과 `official_path_available` 에서는 사용 가능한 공식 경로로 세지 않으며, 그러려면 `api_docs` 나 `developer_portal` 이 있어야 한다. 공개 개발자 문서가 실제로 확인된 호스트만 넣고 확신이 없으면 뺀다. 없음(`null`)은 공식 경로가 없다는 결론이 아니다. 목록은 보증·제휴가 아니고, 공식 API 사용에는 보통 사용자 자신의 자격 증명과 업체 약관이 필요하다.
-- `next_checks.code` 는 다음 순서로 나온다: ① 실패 단계(`failure_stage` 값이 있고 `unknown` 이 아니면 `before_target_response`·`response_observed`·`access_denial_observed`, 아니면 `error_class` 가 `human_verification`·`login_auth` 가 아닐 때 `locate_failure_stage`) → ② 인계(`human_handoff`, `account_handoff`) → ③ 선언 프로필(프로필을 읽지 않은 서브도메인·테넌트 호스트는 `profile_not_read`, `www.<루트>` 이름은 루트 호스트의 프로필을 받는다; `retry_after_seconds` 가 있는 `pending` 프로필이면 `profile_pending`; 그 밖에 프로필이 있으면 `robots_fetch_refused`, `robots_unknown`, 또는 [판정](#판정-recommendation)의 robots 코드(`robots_blocks_agents`, `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`, `robots_blocks_not_your_agent`, `robots_allows_agents` 중 하나. `robots_blocks_some_agents`·`robots_names_vendor_alias` 뒤에 `robots_wildcard_disallow` 가 붙을 때만 둘), 이어서 `robots.grouping_differs_by_parser` 가 비어 있지 않으면 `robots_grouping_differs_by_parser`, 이어서 `llms_txt_present`, 이어서 `content_use_ai_input_declared_no`) → ④ 공식 경로(`official_path_available`) → ④-2 등록부 사실(`host_facts` 가 있을 때만 `government_registry_listed`, `government_list_version_missing`, `government_suffix_restricted` 중 하나, 정보성이며 `recommendation` 을 바꾸지 않음) → ⑤ 업체(신선한 활성 표시면 `provider_scope`, 그중 `basis: components_only` 이면 대신 `provider_components_only`, 위 판정 표의 오래된 사건이나 진행 중 사건·점검이 7일 넘게 갱신되지 않은 사건 목록 없는 경미 페이지(D54, `source_time: active_items` 피드만)면 대신 `provider_incident_stale`, 이어서 해당하면 `provider_scope_partial`, 이어서 사건 목록 없는 경미 페이지에 쓸 수 있는 갱신 시각이 없으면 `provider_update_time_unknown`, 이어서 활성 표시의 근거가 진행 중인 점검뿐이고 사건이 0건이면(`basis: maintenance`, `active_incidents: 0`, D55) `provider_maintenance_only`; 사건 이력 피드 읽기가 답을 기다리게 하면(D57) `provider_scope` 다음 `provider_history_incident`(이 단계의 다른 코드 없음); 신선한 `indicator: none` 이면 `provider_clear`; 그 밖에는 `provider_unknown`) → ⑥ 제보(`reports_unknown`, `reports_stale`, `reports_unverified`). 모두 35개 코드이며 영어 계약의 표에 뜻이 있다. D48 의 세 코드: `robots_blocks_some_agents` 는 "일부 에이전트 토큰의 루트가 명시 금지됐고 이 답은 당신이 어느 에이전트인지 모른다. 당신 요청이 그 토큰 중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 자동 재시도를 멈추고 공식 경로를 우선하라. 아니면 당신 얘기가 아니다. `agent_vendor` 를 보내면 당신 에이전트에 대한 답을 받는다"는 뜻이다. `robots_blocks_not_your_agent` 는 "명시 금지된 토큰이 있지만 이 답이 판정한 토큰(당신 벤더의 판정 토큰, 벤더가 없으면 모든 벤더의 판정 토큰)은 아니다. 요청을 절제하라. 접근 보장이 아니다"는 뜻이다. `robots_names_vendor_alias` 는 "루트를 금지하는 그룹이 당신 벤더의 에이전트를 문서화된 토큰과 맞지 않는 이름으로 지목한다. 선언된 차단으로 보지는 않지만 허용으로도 읽지 말고 공식 경로를 우선하며 사용자에게 알려라"는 뜻이다. `robots_blocks_agents` 는 이제 "당신 에이전트의 토큰(벤더를 보내지 않았으면 나열된 모든 벤더의 토큰)의 루트가 명시 금지됐다"는 뜻이다. `provider_components_only` 는 "업체 페이지 전체 표시는 활성이지만 발표된 사건·점검이 없다. 사용하는 컴포넌트를 업체 페이지에서 확인하라"는 뜻이다(`minor`·`maintenance` 면 대기 이유로 보지 않고 `major`·`critical` 이면 계속 대기). `provider_incident_stale` 은 "업체의 활성 사건이 7일 넘게 업데이트되지 않았고 진행 중인 점검도 없다. `provider_status.affected` 에 쓰는 서비스가 있으면 기다리고 아니면 진행하라"는 뜻이다(페이지 표시가 가장 심한 사건보다 높은 `major`·`critical` 이면 계속 대기). 같은 코드가 사건 목록 없이 `minor` 만 표시하는 Instatus·Google Gmail 페이지(`source_time: active_items`)의 진행 중 사건·점검이 7일 넘게 갱신되지 않았을 때도 붙고(D54), 그때 문구는 `provider_status.source_updated_at` 을 말한다. `provider_update_time_unknown` 은 "업체 페이지가 `minor` 를 표시하지만 읽을 수 있는 사건 목록도 쓸 수 있는 갱신 시각도 없어 지금 문제인지 남아 있는 표시인지 구별할 수 없다. 대기는 유지하되 확신도가 낮으니 업체 상태 페이지에서 날짜를 확인하고, 오래됐거나 쓰는 서비스가 없으면 진행하라"는 뜻이다(D54). `provider_maintenance_only` 는 "업체가 발표한 사건은 없고 활성 상태의 근거는 진행 중인 점검뿐이다(`basis: maintenance`, `active_incidents: 0`). 페이지 전체 표시는 `minor`·`major`·`critical` 일 수 있고 그 표시만으로는 점검 말고 다른 문제가 있는지 구별할 수 없어 대기는 유지한다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하라"는 뜻이다(D55). 정보용이라 `action`·`confidence` 를 바꾸지 않으며, 이때 `provider_scope` 의 문구는 `indicator: maintenance` 와 같은 점검 문구다. `provider_history_incident` 는 "이 서비스는 업체 상태 API 를 읽지 않는다(그 robots.txt 가 금지하거나 아직 다시 읽지 않음). 업체의 공개 사건 이력 피드(`provider_status.source_kind: history_atom`)에 최근 7일 안에 갱신된 열린 사건이 있다. 그 피드에는 페이지 상태·등급·영향받는 서비스가 없어 대기하되 확신도는 낮다. 업체 상태 페이지에서 무엇이 영향받는지 확인하고, 쓰는 서비스가 없으면 진행하라"는 뜻이다(D57). `provider_scope_partial` 은 대기 여부를 바꾸지 않는다. 영향 컴포넌트가 모두 지역·거점 그룹일 때만 대기의 `confidence` 를 `low` 로 낮추고, "가장 심한 사건 < 페이지 표시" 조건으로 붙었을 때는 정보로만 남는다(D45): "범위가 일부일 수 있다. `affected` 목록에 쓰는 서비스가 있는지 확인하라"는 뜻이다. 미해결 사건과 점검이 가리킨 컴포넌트가 모두 그 페이지의 지역·거점(PoP) 컴포넌트 그룹에 있을 때(업체 자신의 컴포넌트 목록에서 만든 `ahn/status_scope.py` 의 고정 표 `REGIONAL_GROUPS`, 표에 없는 그룹은 세지 않음), 또는 미해결 사건이 1건 이상이고 `max_incident_impact` 가 `minor`·`major`·`critical` 인 `indicator` 보다 낮을 때 붙는다. `robots_grouping_differs_by_parser` 는 정보용이다: "해석기마다 이 robots.txt 의 답이 갈린다. Google 방식은 이 답이 나눈 그룹을 합쳐 대개 더 엄격하게 읽거나, 쉼표로 나열한 User-agent 줄에서 첫 이름만 읽는다(이 답은 나열한 이름을 모두 읽는다). 권장 행동은 이 서비스의 해석을 따른다"는 뜻이다. `profile_pending` 은 "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있으니 `access_profile.retry_after_seconds` 초 뒤 같은 조회를 한 번 더 하면 선언 정책이 들어 있다, 반복 폴링은 하지 말라"는 뜻이다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
+- `next_checks.code` 는 다음 순서로 나온다: ① 실패 단계(`failure_stage` 값이 있고 `unknown` 이 아니면 `before_target_response`·`response_observed`·`access_denial_observed`, 아니면 실패 신호(`error_class` 또는 `failure_stage`, D63)가 있고 `error_class` 가 `human_verification`·`login_auth` 가 아닐 때 `locate_failure_stage`) → ② 인계(`human_handoff`, `account_handoff`) → ③ 선언 프로필(프로필을 읽지 않은 서브도메인·테넌트 호스트는 `profile_not_read`, `www.<루트>` 이름은 루트 호스트의 프로필을 받는다; `retry_after_seconds` 가 있는 `pending` 프로필이면 `profile_pending`; 그 밖에 프로필이 있으면(`error_class` 가 `human_verification`·`login_auth` 이면 robots 코드는 뺀다. D63, `access_profile` 자체는 그대로) `robots_fetch_refused`, `robots_allows_agents`(`robots_status` 가 `absent`, D63), `robots_unknown`, 또는 [판정](#판정-recommendation)의 robots 코드(`robots_blocks_agents`, `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`, `robots_blocks_not_your_agent`, `robots_allows_agents` 중 하나. `robots_blocks_some_agents`·`robots_names_vendor_alias` 뒤에 `robots_wildcard_disallow` 가 붙을 때만 둘), 이어서 `robots.grouping_differs_by_parser` 가 비어 있지 않으면 `robots_grouping_differs_by_parser`, 이어서 `llms_txt_present`, 이어서 `content_use_ai_input_declared_no`) → ④ 공식 경로(`official_path_available`) → ④-2 등록부 사실(`host_facts` 가 있을 때만 `government_registry_listed`, `government_list_version_missing`, `government_suffix_restricted` 중 하나, 정보성이며 `recommendation` 을 바꾸지 않음) → ⑤ 업체(신선한 활성 표시면 `provider_scope`, 그중 `basis: components_only` 이면 대신 `provider_components_only`, 위 판정 표의 오래된 사건이나 진행 중 사건·점검이 7일 넘게 갱신되지 않은 사건 목록 없는 경미 페이지(D54, `source_time: active_items` 피드만)면 대신 `provider_incident_stale`, 이어서 해당하면 `provider_scope_partial`, 이어서 사건 목록 없는 경미 페이지에 쓸 수 있는 갱신 시각이 없으면 `provider_update_time_unknown`, 이어서 활성 표시의 근거가 진행 중인 점검뿐이고 사건이 0건이면(`basis: maintenance`, `active_incidents: 0`, D55) `provider_maintenance_only`; 사건 이력 피드 읽기가 답을 기다리게 하면(D57) `provider_scope` 다음 `provider_history_incident`(이 단계의 다른 코드 없음); 신선한 `indicator: none` 이면 `provider_clear`; 그 밖에는 `provider_unknown`) → ⑥ 제보(`reports_unknown`, `reports_stale`, `reports_unverified`). 모두 35개 코드이며 영어 계약의 표에 뜻이 있다. D48 의 세 코드: `robots_blocks_some_agents` 는 "일부 에이전트 토큰의 루트가 명시 금지됐고 이 답은 당신이 어느 에이전트인지 모른다. 당신 요청이 그 토큰 중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 자동 재시도를 멈추고 공식 경로를 우선하라. 아니면 당신 얘기가 아니다. `agent_vendor` 를 보내면 당신 에이전트에 대한 답을 받는다"는 뜻이다. `robots_blocks_not_your_agent` 는 "명시 금지된 토큰이 있지만 이 답이 판정한 토큰(당신 벤더의 판정 토큰, 벤더가 없으면 모든 벤더의 판정 토큰)은 아니다. 요청을 절제하라. 접근 보장이 아니다"는 뜻이다. `robots_names_vendor_alias` 는 "루트를 금지하는 그룹이 당신 벤더의 에이전트를 문서화된 토큰과 맞지 않는 이름으로 지목한다. 선언된 차단으로 보지는 않지만 허용으로도 읽지 말고 공식 경로를 우선하며 사용자에게 알려라"는 뜻이다. `robots_blocks_agents` 는 이제 "당신 에이전트의 토큰(벤더를 보내지 않았으면 나열된 모든 벤더의 토큰)의 루트가 명시 금지됐다"는 뜻이다. `provider_components_only` 는 "업체 페이지 전체 표시는 활성이지만 발표된 사건·점검이 없다. 사용하는 컴포넌트를 업체 페이지에서 확인하라"는 뜻이다(`minor`·`maintenance` 면 대기 이유로 보지 않고 `major`·`critical` 이면 계속 대기). `provider_incident_stale` 은 "업체의 활성 사건이 7일 넘게 업데이트되지 않았고 진행 중인 점검도 없다. `provider_status.affected` 에 쓰는 서비스가 있으면 기다리고 아니면 진행하라"는 뜻이다(페이지 표시가 가장 심한 사건보다 높은 `major`·`critical` 이면 계속 대기). 같은 코드가 사건 목록 없이 `minor` 만 표시하는 Instatus·Google Gmail 페이지(`source_time: active_items`)의 진행 중 사건·점검이 7일 넘게 갱신되지 않았을 때도 붙고(D54), 그때 문구는 `provider_status.source_updated_at` 을 말한다. `provider_update_time_unknown` 은 "업체 페이지가 `minor` 를 표시하지만 읽을 수 있는 사건 목록도 쓸 수 있는 갱신 시각도 없어 지금 문제인지 남아 있는 표시인지 구별할 수 없다. 대기는 유지하되 확신도가 낮으니 업체 상태 페이지에서 날짜를 확인하고, 오래됐거나 쓰는 서비스가 없으면 진행하라"는 뜻이다(D54). `provider_maintenance_only` 는 "업체가 발표한 사건은 없고 활성 상태의 근거는 진행 중인 점검뿐이다(`basis: maintenance`, `active_incidents: 0`). 페이지 전체 표시는 `minor`·`major`·`critical` 일 수 있고 그 표시만으로는 점검 말고 다른 문제가 있는지 구별할 수 없어 대기는 유지한다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하라"는 뜻이다(D55). 정보용이라 `action`·`confidence` 를 바꾸지 않으며, 이때 `provider_scope` 의 문구는 `indicator: maintenance` 와 같은 점검 문구다. `provider_history_incident` 는 "이 서비스는 업체 상태 API 를 읽지 않는다(그 robots.txt 가 금지하거나 아직 다시 읽지 않음). 업체의 공개 사건 이력 피드(`provider_status.source_kind: history_atom`)에 최근 7일 안에 갱신된 열린 사건이 있다. 그 피드에는 페이지 상태·등급·영향받는 서비스가 없어 대기하되 확신도는 낮다. 업체 상태 페이지에서 무엇이 영향받는지 확인하고, 쓰는 서비스가 없으면 진행하라"는 뜻이다(D57). `provider_scope_partial` 은 대기 여부를 바꾸지 않는다. 영향 컴포넌트가 모두 지역·거점 그룹일 때만 대기의 `confidence` 를 `low` 로 낮추고, "가장 심한 사건 < 페이지 표시" 조건으로 붙었을 때는 정보로만 남는다(D45): "범위가 일부일 수 있다. `affected` 목록에 쓰는 서비스가 있는지 확인하라"는 뜻이다. 미해결 사건과 점검이 가리킨 컴포넌트가 모두 그 페이지의 지역·거점(PoP) 컴포넌트 그룹에 있을 때(업체 자신의 컴포넌트 목록에서 만든 `ahn/status_scope.py` 의 고정 표 `REGIONAL_GROUPS`, 표에 없는 그룹은 세지 않음), 또는 미해결 사건이 1건 이상이고 `max_incident_impact` 가 `minor`·`major`·`critical` 인 `indicator` 보다 낮을 때 붙는다. `robots_grouping_differs_by_parser` 는 정보용이다: "해석기마다 이 robots.txt 의 답이 갈린다. Google 방식은 이 답이 나눈 그룹을 합쳐 대개 더 엄격하게 읽거나, 쉼표로 나열한 User-agent 줄에서 첫 이름만 읽는다(이 답은 나열한 이름을 모두 읽는다). 권장 행동은 이 서비스의 해석을 따른다"는 뜻이다. `profile_pending` 은 "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있으니 `access_profile.retry_after_seconds` 초 뒤 같은 조회를 한 번 더 하면 선언 정책이 들어 있다, 반복 폴링은 하지 말라"는 뜻이다. 기존 `current_site_status: unknown` 과 `observations` 의 의미는 그대로다.
 - 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 기본 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 아직 읽지 않은 호스트가 먼저이고, 전송 실패는 이미 답이 있던 호스트라도 이 선읽기에서는 24시간 뒤에 다시 시도한다(조회 경로는 1시간). 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
 - MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 뒤에서 하는 robots/llms·상태 피드 읽기 — 확정 답은 24시간 재사용, 전송 실패는 1시간 뒤 재시도)는 호출자가 보는 결과를 바꾸지 않는다.
 
@@ -327,9 +361,10 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 | `unknown` | `robots_status` 가 `refused` 이고 공식 경로가 없다 | medium | `robots_fetch_refused` |
 | `use_official_path` | robots 주의(아래)이고 공식 경로가 있다 | medium | 그 주의의 robots 코드(아래), 이어서 `official_path_available` |
 | `unknown` | robots 주의이고 공식 경로가 없다 | low | 그 주의의 robots 코드 |
-| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` | medium | 해당하면 `robots_blocks_not_your_agent`(아래), 이어서 `official_path_available` |
-| `proceed` | `robots_status` 가 `ok` 이고 robots 차단도 robots 주의도 아니다 | low | `robots_blocks_not_your_agent` 또는 `robots_allows_agents` |
-| `unknown` | 그 밖의 모든 경우 | low | 접근 프로필이 있으면 `robots_unknown`(예: `robots.txt` 를 읽지 못함), 공개 모드에서 서브도메인·테넌트 호스트면(`www.<루트>` 이름은 제외) `profile_not_read`, 그 밖에는 빈 목록 |
+| `proceed` | 실패 신호(`error_class`·`failure_stage`)가 없고 robots 가 clear 다: `robots_status` 가 `ok` 이고 robots 차단도 주의도 아니거나, `robots_status` 가 `absent` 다(D63) | low | `robots_blocks_not_your_agent` 또는 `robots_allows_agents`, 공식 경로가 있으면 이어서 `official_path_available` |
+| `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error`(D63 뒤로는 실패 신호가 있거나 robots 가 clear 가 아닐 때만 여기 온다) | medium | 해당하면 `robots_blocks_not_your_agent`(아래), 이어서 `official_path_available` |
+| `proceed` | robots 가 clear(위와 같음)이고 공식 경로가 없다 | low | `robots_blocks_not_your_agent` 또는 `robots_allows_agents` |
+| `unknown` | 그 밖의 모든 경우 | low | 접근 프로필이 있고 `robots.txt` 를 읽지 못했으면(`redirected`·`invalid`·`error`·`too_large`·`not_public`) `robots_unknown`, 공개 모드에서 서브도메인·테넌트 호스트면(`www.<루트>` 이름은 제외) `profile_not_read`, 그 밖에는 빈 목록 |
 
 "공식 경로가 있다"는 `official_paths` 에 `api_docs` 나 `developer_portal` 이 있다는 뜻이며 `note` 만 있는 항목은 해당하지 않는다.
 
@@ -355,6 +390,8 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 그래서 선언 차단 답(`stop_declared_block`, 또는 `use_official_path` high)은 호출자 자신의 토큰, 벤더가 없으면 모든 벤더의 토큰이 막혀야 나온다. 2026-10-22 표본(robots.txt 판독 161곳)에서 어느 벤더에게도, 벤더 모름에게도 전보다 엄격해진 호스트는 없었다.
 
+**실패 신호(D63).** `error_class` 또는 `failure_stage`(값 무관, `unknown` 포함). 선택 신호 코드 `http_status`·`challenge`·`retry_after`·`via` 는 권고의 실패 신호가 아니며 세기만 한다(D47). **`robots_status: absent`**(HTTP 404·410)는 어떤 에이전트에도 제한을 선언하지 않은 것이다(RFC 9309). 접근 보장은 아니며 사이트 약관·플랫폼 규칙은 별개다. `AHN_PROCEED_WITHOUT_FAILURE=0` 이면 권고, `next_checks` 코드와 문장, 요약 문장, `next_action.url`, `customer_url` 이 모두 D63 이전으로 돌아간다.
+
 **이전 규칙**은 `AHN_VENDOR_AWARE_BLOCK=0` 일 때, D48 이전에 읽은 프로필(`robots.vendor_aliases_blocked` 없음)일 때, 그리고 답에 필요한 판정 토큰(벤더가 없으면 모든 벤더의 것, 있으면 그 벤더의 것)이 캐시된 프로필의 `rules` 에 없을 때 그대로 적용된다. 없는 토큰을 허용으로 읽지 않는다. 이전 규칙에서 **차단 선언**(robots 차단)은 `robots_status` 가 `ok` 이고 `user_agent` 또는 `search_crawler` 토큰 하나 이상을 이름으로 지목한 그룹이 루트를 금지하는 경우다. 학습 크롤러의 금지는 `agents_blocked` 에 나오지만 차단 선언으로 세지 않는다. **와일드카드 단독 금지**(robots 주의)는 `robots_status` 가 `ok` 이고 차단 선언이 없으며, 어떤 그룹도 지목하지 않은 `user_agent` 또는 `search_crawler` 토큰 하나 이상이 루트를 금지하는 `*` 그룹(`User-agent: *` 와 `Disallow: /`)을 물려받는 경우다. 다른 토큰을 지목한 그룹(허용된 검색 크롤러, 금지된 학습 크롤러)이 있어도 성립한다. 차단 선언은 아니지만 "에이전트를 허용함"으로도 보고하지 않는다. 자동화를 청하지 않은 것으로 보고 공식 경로를 우선하며 허락으로 읽지 않는다.
 
 ### 한 줄 요약과 다음 행동 (`summary_line`·`next_action`, D51)
@@ -370,7 +407,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 | `hand_off_to_human` | `hand_off_to_human` | `null` | `null` |
 | `use_official_path` | `use_official_path` | `official_paths.api_docs`, 없으면 `developer_portal` | 프로필이 `pending` 이면 그 `retry_after_seconds`, 아니면 `null` |
 | `stop_automation` | `stop_declared_block` | `null` | `null` |
-| `proceed` | `proceed` | `null` | `null` |
+| `proceed` | `proceed` | `null`, `official_paths.consumer` 가 큐레이션돼 있으면 고객 페이지(`customer_url`, D63) | `null` |
 | `retry_lookup_once` | `unknown` 이고 `profile_pending`(첫 읽기가 대기 중) | `null` | `access_profile.retry_after_seconds` |
 | `stop_if_listed` | `unknown` 이고 `robots_blocks_some_agents` | `null` | `null` |
 | `lookup_apex_host` | `unknown` 이고 `profile_not_read` | `null` | `null` |
@@ -379,6 +416,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 - `retry_after_seconds` 는 같은 조회를 **한 번** 다시 할 때다. 폴링 간격이 아니다. 다시 조회했는데 또 `retry_lookup_once` 가 오면 `no_clear_action` 으로 읽는다.
 - `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
+- `customer_url` 은 `use_official_path` 이거나 D63 뒤로는 `proceed` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업에서 개발자 API 가 닿지 못할 때 쓰는 길이다. `proceed` 와 페이지를 막지 않는 `use_official_path` 행(대기 프로필, 또는 robots 차단 없는 공식 경로)에서는 `next_action.url` 도 고객 페이지이고 요약 문장이 고객 페이지를 먼저 말하며, 개발자 API 는 "also listed" 꼬리로 둔다. robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행에서는 `url` 이 개발자 경로로 남고 요약이 `customer_url` 을 사용자에게 넘기라고 말한다(D61). 에이전트가 자동화할 페이지가 아니라 사용자에게 넘길 페이지다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
@@ -429,19 +467,54 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 | `sandbox_url` | 시험·샌드박스 환경에 관한 업체 문서. 링크만 주며 시험용 값은 옮기지 않는다. |
 | `openapi_url` | 업체 소유 URL 에 있는 기계 판독용 OpenAPI·Swagger 문서. |
 | `official_mcp` | `{endpoint, doc_url}` 목록: `doc_url` 의 업체 문서에 적힌 그대로의 MCP 끝점. 이 서비스는 그 끝점에 접속하지 않는다. |
+| `feeds` | 업체 소유 도메인의 공식 RSS·Atom 피드 URL 1~3개(소식·릴리스·변경 기록). 페이지 자동화 없이 같은 정보를 얻는 길이다. 선택 필드이며, 서비스는 이 URL 에 요청하지 않는다(큐레이션된 링크일 뿐). |
+| `llms_full_url` | 업체가 직접 내는 `llms-full.txt`(문서 전체를 한 텍스트로)의 업체 소유 URL. 큐레이션된 링크이고 서비스는 읽지 않는다. |
+| `docs_repo` | 업체의 공식 문서 저장소(업체 소유 URL, 또는 `github.com` 의 업체 선언 조직 안). |
+| `data_export_url` | 업체의 공식 데이터 내보내기·덤프 페이지(공개 데이터셋, 일괄 내려받기 등). |
 | `terms` | `{url, quote}`: API 에 관한 업체의 약관·정책 문서와 그 문서에서 그대로 옮긴 문장이나 구절 하나(200자 이하). |
 | `verified_at` | 묶음의 모든 URL 과 인용을 마지막으로 읽은 날짜(UTC). |
 
 - **약관은 링크하고 인용할 뿐 해석하지 않는다.** `terms` 에는 판정·입장·"자동화 허용" 같은 요약이 없다. 인용은 발췌 하나일 뿐 법률 조언도 문서 전체도 아니다. 링크된 문서를 읽어야 한다.
 - **업체 소유, 직접 읽음, 추측 없음.** 모든 URL 은 키의 등록 가능 도메인(표와 같이 공용 접미사 기준), 그 키에 `PUBLISHER_DOMAINS` 로 선언된 도메인, 또는 한 도메인을 여러 주인이 쓰는 `github.com`·`raw.githubusercontent.com` 이라면 `PUBLISHER_GITHUB_ORGS` 에 선언된 업체 자신의 조직 안에 있다(둘 다 `scripts/verify_official_paths.py`). 모든 페이지는 `verified_at` 에 실제로 가져와 읽었다. 읽기를 거절한 페이지(401·403·429·챌린지)는 그 필드를 비우며 거절을 우회하지 않는다.
 - **오래된 묶음은 숨긴다.** `verified_at` 이 90일을 넘은 묶음은 다시 확인할 때까지 응답에서 빠지고, `official_paths` 의 나머지는 그대로 남는다.
-- **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다.
+- **조언은 바뀌지 않는다.** `access` 는 `recommendation` 과 `next_checks` 를 바꾸지 않는다. `feeds`·`llms_full_url`·`docs_repo`·`data_export_url` 도 같다(D60): 호출자가 쓰라고 주는 링크일 뿐 서비스는 읽지 않으며, 이 필드를 채워도 `recommendation`·`next_checks` 가 그대로임을 테스트로 고정한다. URL 은 길이 300자 이하의 https 주소이고 `feeds` 는 최대 3개다. `check_incident` 가 알리는 `outputSchema` 에는 네 필드가 선택으로 나타나며, 다른 모든 객체처럼 추가 키를 받는다(D58).
 - 같은 업체·같은 API 의 호스트는 묶음 하나를 같이 쓴다(`chatgpt.com`↔`openai.com`, `notion.com`↔`notion.so`, `twitter.com`↔`x.com`, `wikimedia.org`↔`wikipedia.org`). 묶음 수는 `len(OFFICIAL_ACCESS)` 로 센다.
 - 검증: `python scripts/verify_official_paths.py --access-only [--hosts a.com]` 이 위와 같은 예절로 묶음 안의 모든 문서 URL 을 읽고(모든 경유지가 공개 주소로만 풀려야 함), 각 인용과 MCP 끝점이 페이지의 보이는 텍스트에 그대로 있는지(공백·타이포그래피 따옴표는 맞춰서) 확인하며, `openapi_url` 이 OpenAPI·Swagger 문서인지 본다. MCP 끝점 자체에는 요청하지 않는다. 네트워크 없는 규칙(모양, 방식 목록, 200자 상한, 업체 소유 도메인, 미래 날짜 금지)은 CI 의 `tests/test_official_access.py` 에서도 돈다.
 - 첫 검증 2026-10-20(날짜가 붙은 기록): `github.com`, `stripe.com`, `openai.com`, `youtube.com`, `slack.com`, `notion.so`, `reddit.com`, `x.com`, `wikipedia.org`, `cloudflare.com` 묶음. 고유 URL 54개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 28개 모두 확인. 같은 날 `free_tier` 를 무료로 쓸 수 있는 양이나 조건을 말하는 문장으로 좁혀 `stripe.com`·`x.com`·`wikipedia.org` 의 인용(요금 홍보 문구, 요금 방식 문장, 자유 콘텐츠에 관한 문장)을 뺐다. 남은 것은 URL 51개, 인용·끝점 23개다. 읽기 거절로 비운 것: OpenAI 약관과 키 콘솔(`openai.com`, `platform.openai.com`: 403), Reddit 속도 제한 위키(403). 스크립트 없이는 본문이 없어 비운 것: Notion 개발자 약관.
 - 두 번째 검증 2026-10-20(날짜가 붙은 기록): 40개 업체 더. API 문서나 개발자 포털이 있는 표 키 중 에이전트 수요 순서(D35)로 골랐다: `gitlab.com`, `bitbucket.org`, `google.dev`, `stackexchange.com`(별칭 `stackoverflow.com`), `discord.com`, `telegram.org`, `zoom.us`, `asana.com`, `figma.com`, `twilio.com`, `vercel.com`, `netlify.com`, `digitalocean.com`, `sentry.io`, `datadoghq.com`, `huggingface.co`, `anthropic.com`, `perplexity.ai`, `mistral.ai`, `groq.com`, `together.ai`, `deepseek.com`, `x.ai`, `openrouter.ai`, `elevenlabs.io`, `supabase.com`, `linear.app`, `shopify.com`, `paypal.com`, `squareup.com`, `spotify.com`, `twitch.tv`, `kakao.com`, `tosspayments.com`, `replicate.com`, `coinbase.com`, `plaid.com`, `mongodb.com`, `sendgrid.com`, `render.com`. 고유 URL 136개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 30개 모두 확인. 읽기 거절로 비운 것: Stack Exchange API 약관, Discord 개발자 약관·정책, x.ai 법무 페이지(403). 스크립트가 돌아야 본문이 나오거나 https 가 아니어서 비운 것: Twitch 약관, Kakao 개발자 약관(http 로 이동), Atlassian·Vercel·Datadog 의 MCP 끝점(페이지의 보이는 텍스트에 없음). 문서 페이지에 스크립트 없이는 읽을 본문이 없어 묶음을 만들지 않은 곳: `airtable.com`, `dropbox.com`, `hubspot.com`, `cohere.com`, `naver.com`, `data.go.kr`, `mapbox.com`, `nasa.gov`.
 - `official_paths` 와 `access` 는 저장된 사실이 아니라 코드이므로 JSON Lines 내보내기(아래)에는 해당 종류가 없다.
 - 묶음 추가 절차: `scripts/README.md`.
+
+#### 소비자 공식 경로 (`official_paths.consumer`, 2026-10-31, D61)
+
+개발자 API 는 사이트의 데이터 위에 무언가를 만드는 길이다. 그 사이트의 사용자 본인 계정으로 하는 일(처방 리필, 요금 납부, 예약 변경)에는 도움이 안 될 수 있다. 파트너용 API 가 많고, OAuth 로 사용자 계정에 닿는 API 도 있다(`access` 참고). 소비자 서비스가 뚜렷한 일부 호스트에는 `official_paths` 에 `consumer` 가 붙는다. 사이트 자신이 고객에게 안내하는 길이다.
+
+```json
+"official_paths": {
+  "name": "...", "api_docs": null, "developer_portal": "https://developer.example.com/", "note": null,
+  "consumer": {
+    "paths": [
+      {"kind": "customer_help", "url": "https://www.example.com/help", "source_url": "https://www.example.com/"},
+      {"kind": "official_app", "url": "https://apps.apple.com/us/app/example/id123", "source_url": "https://www.example.com/app"}
+    ],
+    "verified_at": "2026-10-31"
+  }
+}
+```
+
+| `kind` | 뜻 |
+| --- | --- |
+| `customer_help` | 사이트 자신의 도움말·고객센터·연락처 페이지. 전화번호는 답에 복사하지 않고 번호가 적힌 페이지를 링크한다. |
+| `official_app` | 사이트 자신의 페이지(`source_url`)가 링크한 App Store·Google Play 목록. 앱 식별자만 남긴다. |
+| `entry_link` | 흔한 고객 작업에 대해 사이트 자신이 링크한 공개 진입 경로. |
+
+- `consumer` 는 큐레이션돼 있고 유효할 때만(90일 안에 확인, `access` 와 같은 규칙) 붙고, 아니면 키 자체가 없다(`null` 아님). 개발자 항목이 없는 호스트도 큐레이션할 수 있다(D64). 이때 `official_paths` 답은 `name`(호스트)과 `consumer` 만 갖고 `api_docs`·`developer_portal`·`note` 는 `null` 이며, 판정은 공식 경로가 없는 호스트와 같다(`use_official_path` 는 개발자 경로가 있어야 나온다). 경로는 6개 이하, 각 `url`·`source_url` 은 200자 이하의 `https` URL 이다.
+- **사이트 자신의 페이지, 직접 읽음, 추측 없음.** `url` 과 `source_url` 은 키의 등록 가능 도메인에 있다. 단 `official_app` 은 App Store·Google Play 목록이다. 모든 `url` 은 `source_url` 페이지가 링크한 것이고(그 페이지 자신이면 예외), 리다이렉트되는 주소가 아니라 최종 주소로 적는다. 각 페이지는 그 호스트의 `robots.txt` 가 허용한 뒤 큐레이션 User-Agent 로 `verified_at` 에 읽었다. 읽기를 거절한 호스트는 뺀다. 서비스는 답하는 동안 이 URL 들을 읽지 않는다.
+- **판정은 바뀌지 않는다.** `recommendation` 과 `next_checks` 는 `consumer` 가 있든 없든 같다(테스트로 고정). 서비스는 호출자가 사이트 데이터로 무언가를 만드는지 사용자 계정에서 일하는지 모르고, 사용자 계정에 닿는 개발자 API 도 있으므로 하나를 고르지 않는다. `consumer` 가 있으면 `summary_line` 이 둘 다 말하고 `next_action` 에 `customer_url` 이 붙는다(아래). D63 뒤로는 `proceed` 도 같다. robots.txt 가 페이지를 막지 않는 행(O1·O7, 모든 `proceed` 행)은 문장이 고객 페이지로 시작하고 `next_action.url` 이 그 페이지이며, 개발자 API 는 문장에 자리가 있으면 "A developer API is also listed (official_paths)." 꼬리로 말한다(고객 페이지가 있는 `proceed` 문장은 "For tasks in the user's own account, the site's customer page is next_action.customer_url." 꼬리만 붙는다). robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행은 "The API may not reach the user's own account; hand the user next_action.customer_url." 로 끝나고 `url` 은 개발자 경로로 남아, 에이전트가 같은 사이트의 페이지로 돌아가지 않게 한다. 다른 행동은 그대로다.
+- 검증: `python scripts/verify_official_paths.py --consumer-only [--hosts a.com]` 은 각 호스트명(리다이렉트 목적지 포함)에 처음 요청하기 전에 그 `robots.txt` 를 읽고, 막힌 곳은 요청하지 않는다. `robots.txt` 가 5xx 이거나 시간 초과면 전부 금지로 보고, 리다이렉트는 따라간다(RFC 9309). 한 호스트명에서 처음 403 이나 봇 확인 화면(제목 또는 보이는 본문으로 판별)이 나오면 그 호스트명의 나머지 요청을 멈춘다. 모든 `url` 은 `source_url` 페이지의 `href`(정규화)로 링크돼 있어야 하고 최종 주소여야 한다. 순수 규칙은 CI 의 `tests/test_consumer_paths.py`, 실제 검증기의 요청 예절은 가짜 fetcher 로 `tests/test_consumer_verifier.py` 에서 돈다.
+- 첫 검증 2026-10-31(날짜가 붙은 기록, 검수 뒤 같은 날 다시 돌림): 12개 호스트(`walgreens.com`, `walmart.com`, `target.com`, `chase.com`, `wellsfargo.com`, `capitalone.com`, `americanexpress.com`, `verizon.com`, `usps.com`, `uber.com`, `paypal.com`, `spotify.com`), 경로 29개, 모든 페이지 200, `failures: 0; rule problems: 0`. 읽기 거절·금지로 뺀 곳: `tesla.com`·`doordash.com`(robots.txt 403), `instacart.com`(robots.txt 가 큐레이션 에이전트를 막음), `amazon.com`(첫 페이지와 연락처 페이지가 큐레이션 에이전트에 captcha 화면을 돌려줬고 도움말 페이지 하나는 403 이 나온 적이 있음). 시간 초과이거나 스크립트 없이는 첫 페이지에 도움말 링크가 없어 뺀 곳: `kroger.com`, `bestbuy.com`, `fedex.com`, `att.com`. PayPal 연락처 페이지 하나는 도움말 페이지가 다른 연락처 주소를 링크하고 있어 뺐다.
+- 둘째 묶음 2026-10-31: 47개 호스트 추가. 각 사이트 자신의 홈 페이지(또는 거기서 링크한 도움말 페이지)에 있는 링크만 썼고, 모든 페이지 200, `failures: 0; rule problems: 0`. 읽기가 거절된 곳(403·429·챌린지 화면·`robots.txt` 금지)과, `robots.txt`·홈이 시간 초과이거나 스크립트 없이는 도움말 링크가 없는 곳은 뺐다(목록은 영문 계약 문서의 같은 항목에 있다). 최종 표 상태는 아래 셋째 묶음 기록에 있다(`expedia.com`·`orbitz.com`·`travelocity.com`·`cheaptickets.com` 은 429 로 거기서 뺐다).
+- 셋째 묶음 2026-10-31(D64, 소비자 전용 호스트): `OFFICIAL_PATHS` 항목이 없는 35개 호스트를 같은 방식으로 읽음: `cvs.com`, `jetblue.com`, `nike.com`, `ikea.com`, `progressive.com`, `statefarm.com`, `peacocktv.com`, `sling.com`, `siriusxm.com`, `lyft.com`, `visible.com`, `cricketwireless.com`, `boostmobile.com`, `dish.com`, `cash.app`, `publix.com`, `enterprise.com`, `avis.com`, `petsmart.com`, `academy.com`, `travelers.com`, `coned.com`, `pge.com`, `coursera.org`, `vividseats.com`, `shutterfly.com`, `sonos.com`, `roku.com`, `nintendo.com`, `flyfrontier.com`, `xbox.com`, `playstation.com`, `paramountplus.com`, `vistaprint.com`, `kayak.com`. 전체 재실행에서 `expedia.com`·`orbitz.com`·`travelocity.com`·`cheaptickets.com` 이 429 를 돌려 읽기를 끝냈으므로 이 넷은 둘째 묶음에서 빼고 다시 시도하지 않았다. 뺀 곳: `directv.com`(`robots.txt` 에 닿지 않음), `wyndhamhotels.com`(도움말 페이지가 홈에서 링크되지 않음). 표 합계 90개 호스트·158개 경로(남긴 항목은 `failures: 0; rule problems: 0`).
 
 ## 뒤에서 읽기 (stale-while-revalidate, 2026-10-19)
 

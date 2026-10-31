@@ -604,11 +604,11 @@ def test_the_timeout_stays_two_seconds(monkeypatch):
 def test_versions_and_the_documents_name_the_codes():
     manifest = json.loads((ROOT / "plugins/claude-code/ahn/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.8"
+    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.10"
     assert ahn.__version__ == "0.6.2"
     plugin_readme = (ROOT / "plugins/claude-code/ahn/README.md").read_text(encoding="utf-8")
     client_readme = (ROOT / "clients/python/README.md").read_text(encoding="utf-8")
-    assert "version 0.3.8 |" in plugin_readme
+    assert "version 0.3.10 |" in plugin_readme
     for name in ("http_status", "challenge", "retry_after", "via"):
         assert f"`{name}`" in plugin_readme and f"`{name}`" in client_readme
     for value in ("lt_60", "60_3600", "gt_3600", "http_fetch", "browser", "header"):

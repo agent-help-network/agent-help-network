@@ -34,6 +34,10 @@ publisher page that links to that organisation.
 | `key_signup_url` | a documentation page explains how to get a key or token | Not a console URL behind a sign-in. |
 | `free_tier` | a sentence states how much can be used free of charge or on what condition (YouTube's "10,000 units per day" quota is the model) | `quote` copied verbatim, at most 200 characters, plus `source_url`. **Never a pricing slogan ("No setup fees"), a free-trial advert, a price-list header, or "pay only for what you use"**: a per-transaction or pay-as-you-go service has no free tier unless a sentence names a free amount. Leave it out when the only evidence is a table cell or an image. |
 | `rate_limits_url`, `sandbox_url` | a documentation page covers it | Link only; never copy test card numbers or test credentials. |
+| `feeds` | the publisher lists an official RSS or Atom feed (news, releases, changelog) | One to three URLs, each a feed on a publisher-owned domain, found by following a link on the publisher's own page. Never guess `/feed` or `/rss` paths. The script checks that the body starts like an RSS, Atom or RDF document. |
+| `llms_full_url` | the publisher publishes `llms-full.txt` and links or declares it | The publisher's own file only; the service never reads it. |
+| `docs_repo` | the publisher's documentation names its official docs repository | A publisher-owned URL, or on `github.com` inside the declared organisation (`PUBLISHER_GITHUB_ORGS`). |
+| `data_export_url` | the publisher offers an official data export or dump page | The publisher's page that explains the export, not the dump file itself. Link only. |
 | `openapi_url` | the publisher publishes an OpenAPI or Swagger document | The JSON or YAML file itself, not a Swagger UI page. The script checks the body. |
 | `official_mcp` | a publisher page gives an MCP endpoint | `endpoint` copied exactly from `doc_url`. Never connect to it. The official MCP registry is for finding candidates only (a domain-verified name such as `com.stripe/*` whose remote URL is on the same registrable domain, checked with the Public Suffix List); the evidence is the publisher's own documentation page, and an endpoint that page does not print is left out. |
 | `terms` | the publisher has terms or a policy for API or developer use | `url` plus one verbatim sentence, or a clause that keeps its meaning on its own, at most 200 characters. Prefer one about API use, automation, rate limits, or credentials. No `...` edits, no paraphrase, no stance or summary (terms are linked and quoted, never judged). |
@@ -57,6 +61,34 @@ left out and why (refused, not documented, scripts-only page), and the run's sum
 **Re-verify every 90 days.** A bundle older than 90 days is left out of answers. Run
 `python scripts/verify_official_paths.py --access-only`, fix what changed, and update `verified_at` of the bundles you
 re-read; the script prints `stale:` lines for bundles already hidden.
+
+## Consumer paths for official paths (`CONSUMER_PATHS`, D61)
+
+For a host with a clear consumer service (retail, pharmacy, banking, telecom, travel, delivery), list where the site itself
+sends its customers, so an agent doing a task in the user's own account is not sent only to a partner API. A host may have no `OFFICIAL_PATHS` entry (D64);
+its answer then carries `consumer` only.
+
+1. Read the host's `robots.txt` with the curation User-Agent. If it refuses (401/403/429) or disallows the pages, stop for that
+   host in this round and list it as refused. No other user agent, browser, cache or search copy.
+2. Open the site's home page and follow its own links (footer "Help", "Customer service", "Contact us", "Get the app"). A
+   search result may point you to a page, but the URL you add must be one you read on the site. Never build a URL by hand.
+3. `customer_help`: the help centre or contact page itself. Do not copy phone numbers; the page that lists them is the link.
+   `official_app`: an App Store or Google Play listing linked from the site's own page (that page is `source_url`); keep only
+   the identifier (`https://apps.apple.com/<cc>/app/<name>/id<digits>`, `https://play.google.com/store/apps/details?id=<id>`)
+   and check that it is the site's own app, not a partner's. `entry_link`: a public page the site links to for a common task;
+   not a sign-in page.
+4. Every `url` must be linked from its `source_url` page (unless it is that page) and be the final address: if it redirects, list
+   where the verifier ended, never a hand-made variant. A page that answers a captcha or 403 even once leaves the host out.
+5. At most 6 paths per host, help pages first. `verified_at` is the day you read them.
+
+```
+python -m pytest tests/test_consumer_paths.py
+python scripts/verify_official_paths.py --consumer-only --hosts a.com,b.org
+```
+
+The live run must end with `failures: 0; rule problems: 0`. A page that is refused, disallowed or redirects to a sign-in
+page is removed. The checker reads `robots.txt` before the first request to every hostname (redirect targets too), treats a
+5xx or timed-out `robots.txt` as disallowing everything, and stops a hostname at its first 403 or bot challenge. Re-verify every 90 days like access bundles: older entries are left out of answers.
 
 ## Weekly status-source jobs
 
@@ -132,6 +164,11 @@ python scripts/answer_quality.py --vendor-pass anthropic      # and a second liv
 - **Live answers:** one `GET /v1/incidents/check` per host, at most one per second, with the User-Agent
   `ahn-quality-check/1 (+https://agenthelpnetwork.com)` and no `error_class`. An answer is actionable when it lists an official
   path or its `recommendation.action` is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`. Also reported:
+  **M4c** (consumer-task measure; M4 above is kept for comparison) counts an answer when `next_action.customer_url` is
+  present, or the action is `stop_declared_block`, `wait_provider_incident` or `hand_off_to_human`, or the action is `proceed`
+  and no agent token's own robots group disallows the site root. A developer path without `customer_url`, and `unknown`, are
+  not M4c. `consumer_path_coverage` is the share of answers whose `official_paths` has a `consumer` entry. Rows and metrics
+  carry `m4c`; the result `schema_version` is 2 (a version 1 file still works as the previous run). Also reported:
   the share still `profile_pending` and the share with no data (action `unknown`, no official path, no status). A failed
   lookup is counted as an error and is left out of the percentages; it is never retried.
 - **Vendor pass (D48):** `--vendor-pass <agent_vendor>` asks every host a second time with that `agent_vendor` (same pacing,
