@@ -22,6 +22,11 @@ Exit code 1 when any URL is not ok, a quote or endpoint is not found, or a rule 
     python scripts/verify_official_paths.py                 # whole table and every access bundle
     python scripts/verify_official_paths.py --hosts a.com,b.org --json work/official-paths.json
     python scripts/verify_official_paths.py --access-only --hosts stripe.com   # one access bundle
+    python scripts/verify_official_paths.py --consumer-only                    # consumer paths (D61)
+
+Consumer paths (CONSUMER_PATHS, D61) are the sites' own help pages, store listings and entry links, so --consumer-only
+reads each hostname's robots.txt first and requests nothing it disallows for the curation user agent; an official_app
+listing must be linked from its source_url page. That mode makes no other request.
 """
 
 from __future__ import annotations
@@ -44,8 +49,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from ahn.models import valid_host  # noqa: E402
-from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, OFFICIAL_ACCESS,  # noqa: E402
-                                OFFICIAL_PATHS, access_is_current)
+from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, CONSUMER_KINDS,  # noqa: E402
+                                CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
+                                access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
@@ -413,6 +419,103 @@ def text_contains(page: str, needle: str) -> bool:
     return bool(needle.strip()) and _squash(needle) in _squash(page)
 
 
+# --- Consumer paths (D61): pure checks (also run by tests/test_consumer_paths.py) ------------------------------------
+
+SAFE_CONSUMER_URL = re.compile(r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%+=&?#-]*)?$")  # what next_action.customer_url accepts
+
+
+def store_link_key(url: str) -> str | None:
+    """A store listing reduced to what identifies the app: an App Store path without its query, or a Google Play
+    details path with only its id parameter. None when the URL is not a store listing."""
+    parts = urlsplit(url)
+    name = (parts.hostname or "").lower()
+    if name in {"apps.apple.com", "itunes.apple.com"} and re.search(r"/id\d+$", parts.path.rstrip("/")):
+        return "https://apps.apple.com" + parts.path.rstrip("/")
+    if name == "play.google.com" and parts.path.rstrip("/") == "/store/apps/details":
+        found = re.search(r"(?:^|&)id=([A-Za-z0-9._]+)(?:&|$)", parts.query)
+        return f"https://play.google.com/store/apps/details?id={found.group(1)}" if found else None
+    return None
+
+
+def consumer_problems(host: str, consumer, today: date | None = None) -> list[str]:
+    """Rule violations in one CONSUMER_PATHS entry: shape, kinds, the size limit, verified_at, plain public https URLs
+    that next_action.customer_url can carry, site-owned pages (a store listing only for official_app, in canonical form)."""
+    problems: list[str] = []
+
+    def add(field: str, problem: str | None) -> None:
+        if problem:
+            problems.append(f"{host}: consumer.{field}: {problem}")
+
+    shape = _object_problems(consumer, {"paths", "verified_at"})
+    if shape:
+        add("*", shape[0])
+        return problems
+    verified = consumer["verified_at"]
+    try:
+        verified_on = date.fromisoformat(verified) if isinstance(verified, str) and len(verified) == 10 else None
+    except ValueError:
+        verified_on = None
+    if verified_on is None:
+        add("verified_at", "must be an ISO date YYYY-MM-DD")
+    elif verified_on > (today or datetime.now(timezone.utc).date()):
+        add("verified_at", "is in the future")
+    paths = consumer["paths"]
+    if not isinstance(paths, list) or not paths:
+        add("paths", "must be a non-empty list")
+        return problems
+    if len(paths) > CONSUMER_MAX_PATHS:
+        add("paths", f"at most {CONSUMER_MAX_PATHS} paths")
+    seen: set[str] = set()
+    site = registrable(host)
+    for item in paths:
+        shape = _object_problems(item, {"kind", "url", "source_url"})
+        if shape:
+            add("paths", shape[0])
+            continue
+        kind, url, source = item["kind"], item["url"], item["source_url"]
+        if kind not in CONSUMER_KINDS:
+            add("paths", f"unknown kind {kind!r}; allowed: {', '.join(CONSUMER_KINDS)}")
+        for field, value in (("url", url), ("source_url", source)):
+            if not isinstance(value, str) or len(value) > 200 or not SAFE_CONSUMER_URL.fullmatch(value):
+                add(f"paths.{field}", f"not a plain https URL of at most 200 characters: {value!r}")
+                continue
+            parts = urlsplit(value)
+            try:
+                public = valid_host(parts.hostname or "") == parts.netloc
+            except ValueError:
+                public = False
+            if not public:
+                add(f"paths.{field}", f"not a public hostname: {value}")
+            elif SIGN_IN.search(parts.path):
+                add(f"paths.{field}", f"a sign-in page: {value}")
+        if not isinstance(url, str) or not isinstance(source, str):
+            continue
+        url_host = (urlsplit(url).hostname or "").lower()
+        if kind == "official_app":
+            if url_host not in CONSUMER_STORE_HOSTS:
+                add("paths.url", f"an official_app URL must be an App Store or Google Play listing: {url}")
+            elif store_link_key(url) != url:
+                add("paths.url", f"keep only the listing identifier (no campaign parameters): {url}")
+        elif registrable(url_host) != site:
+            add("paths.url", f"not on the site's own domain: {url}")
+        if registrable(urlsplit(source).hostname or "") != site:
+            add("paths.source_url", f"not on the site's own domain: {source}")
+        if url in seen:
+            add("paths.url", f"listed twice: {url}")
+        seen.add(url)
+    return problems
+
+
+def store_links(body: bytes, base: str) -> set[str]:
+    """Canonical store listings linked (href) from a page."""
+    found = set()
+    for href in re.findall(rb"href\s*=\s*[\"']([^\"']+)[\"']", body, re.IGNORECASE):
+        key = store_link_key(urljoin(base, html.unescape(href.decode("utf-8", "replace"))))
+        if key:
+            found.add(key)
+    return found
+
+
 # --- Live checks ----------------------------------------------------------------------------------------------------
 
 def table_urls(hosts: set[str] | None = None, *, paths: bool = True, access: bool = True) -> dict[str, list[tuple[str, str]]]:
@@ -530,13 +633,86 @@ class Fetcher:
         return row, (body if result == "ok" else b"")
 
 
+def check_consumer(hosts: set[str] | None) -> int:
+    """Live check of CONSUMER_PATHS (D61). These are the sites' own pages, so each hostname's robots.txt is read first
+    (once) and a URL it disallows for the curation user agent is not requested; a refused robots.txt (401/403/429) stops
+    every URL on that hostname. Each url and source_url must answer ok; an official_app listing must also be linked from
+    its source_url page. Exit code 1 on any failure or rule problem."""
+    from urllib.robotparser import RobotFileParser
+
+    keys = [host for host in CONSUMER_PATHS if not hosts or host in hosts]
+    problems = [line for host in keys for line in consumer_problems(host, CONSUMER_PATHS[host])]
+    problems += [f"{host}: consumer entry for a host that is not in OFFICIAL_PATHS" for host in keys if host not in OFFICIAL_PATHS]
+    fetcher = Fetcher()
+    robots: dict[str, RobotFileParser | str] = {}
+
+    def permitted(url: str) -> str | None:
+        name = (urlsplit(url).hostname or "").lower()
+        if name not in robots:
+            try:
+                status, _, _, body = fetcher._get(f"https://{name}/robots.txt", True) if fetcher.public_host(name) else (None, None, "", b"")
+            except httpx.HTTPError:
+                status, body = None, b""
+            if status in {401, 403, 429}:
+                robots[name] = f"blocked:robots_{status}"
+            else:
+                parser = RobotFileParser()
+                parser.parse(body.decode("utf-8", "replace").splitlines() if status == 200 else [])
+                robots[name] = parser
+        rule = robots[name]
+        if isinstance(rule, str):
+            return rule
+        return None if rule.can_fetch(USER_AGENT, url) else "robots_disallowed"
+
+    pages: dict[str, tuple[dict, bytes]] = {}
+
+    def page(url: str, allowed: set[str]) -> dict:  # bodies are kept: any page may be a source_url later
+        if url not in pages:
+            refusal = permitted(url)
+            if refusal:
+                pages[url] = ({"url": url, "final_url": url, "status": None, "result": refusal}, b"")
+            else:
+                pages[url] = fetcher.check(url, allowed, want_body=True)
+            row = pages[url][0]
+            print(f"{row['result']:<20} {row['status']!s:<4} {url}", flush=True)
+        return pages[url][0]
+
+    failures: list[str] = []
+    for host in keys:
+        for item in CONSUMER_PATHS[host]["paths"]:
+            site = {registrable(host)}
+            source = page(item["source_url"], site)
+            if source["result"] != "ok":
+                failures.append(f"{host}: source_url {source['result']}: {item['source_url']}")
+            if item["kind"] == "official_app":
+                if source["result"] == "ok" and item["url"] not in store_links(pages[item["source_url"]][1], source["final_url"]):
+                    failures.append(f"{host}: official_app not linked from its source_url page: {item['url']}")
+                target = page(item["url"], {"apple.com", "google.com"})
+            else:
+                target = page(item["url"], site)
+            if target["result"] != "ok":
+                failures.append(f"{host}: url {target['result']}: {item['url']}")
+    for line in problems + failures:
+        print(f"consumer: {line}")
+    for host in keys:
+        if not consumer_is_current(CONSUMER_PATHS[host]):
+            print(f"stale: {host} consumer verified_at {CONSUMER_PATHS[host]['verified_at']} is left out of answers until re-verified")
+    print(f"\nconsumer hosts: {len(keys)}; pages: {len(pages)}; failures: {len(failures)}; rule problems: {len(problems)}; "
+          f"requests: {fetcher.requests}")
+    return 1 if problems or failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--hosts", help="comma-separated table keys to check (default: all)")
     parser.add_argument("--access-only", action="store_true", help="check only access bundles (URLs, quotes, MCP endpoints)")
+    parser.add_argument("--consumer-only", action="store_true",
+                        help="check only consumer paths (D61): robots.txt first, then each page, and store links on the source page")
     parser.add_argument("--json", type=Path, help="write per-URL and per-host results to this file")
     args = parser.parse_args()
     hosts = {h.strip() for h in args.hosts.split(",") if h.strip()} if args.hosts else None
+    if args.consumer_only:
+        return check_consumer(hosts)
     access_hosts = [host for host in OFFICIAL_ACCESS if not hosts or host in hosts]
     problems = [line for host in access_hosts for line in access_problems(host, OFFICIAL_ACCESS[host])]
     problems += [f"{host}: access bundle for a host that is not in OFFICIAL_PATHS" for host in access_hosts if host not in OFFICIAL_PATHS]

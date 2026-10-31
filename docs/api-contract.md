@@ -88,7 +88,7 @@
 
 `/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
-MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있으면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
@@ -406,6 +406,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `retry_after_seconds` 는 같은 조회를 **한 번** 다시 할 때다. 폴링 간격이 아니다. 다시 조회했는데 또 `retry_lookup_once` 가 오면 `no_clear_action` 으로 읽는다.
 - `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
+- `customer_url` 은 `use_official_path` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때만 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업이라면 `url` 의 개발자 API 가 대신할 수 없을 때 쓰는 길이다. `do` 와 `url` 은 그대로다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
@@ -473,6 +474,35 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - 두 번째 검증 2026-10-20(날짜가 붙은 기록): 40개 업체 더. API 문서나 개발자 포털이 있는 표 키 중 에이전트 수요 순서(D35)로 골랐다: `gitlab.com`, `bitbucket.org`, `google.dev`, `stackexchange.com`(별칭 `stackoverflow.com`), `discord.com`, `telegram.org`, `zoom.us`, `asana.com`, `figma.com`, `twilio.com`, `vercel.com`, `netlify.com`, `digitalocean.com`, `sentry.io`, `datadoghq.com`, `huggingface.co`, `anthropic.com`, `perplexity.ai`, `mistral.ai`, `groq.com`, `together.ai`, `deepseek.com`, `x.ai`, `openrouter.ai`, `elevenlabs.io`, `supabase.com`, `linear.app`, `shopify.com`, `paypal.com`, `squareup.com`, `spotify.com`, `twitch.tv`, `kakao.com`, `tosspayments.com`, `replicate.com`, `coinbase.com`, `plaid.com`, `mongodb.com`, `sendgrid.com`, `render.com`. 고유 URL 136개 모두 업체 소유 호스트에서 200, 인용과 MCP 끝점 30개 모두 확인. 읽기 거절로 비운 것: Stack Exchange API 약관, Discord 개발자 약관·정책, x.ai 법무 페이지(403). 스크립트가 돌아야 본문이 나오거나 https 가 아니어서 비운 것: Twitch 약관, Kakao 개발자 약관(http 로 이동), Atlassian·Vercel·Datadog 의 MCP 끝점(페이지의 보이는 텍스트에 없음). 문서 페이지에 스크립트 없이는 읽을 본문이 없어 묶음을 만들지 않은 곳: `airtable.com`, `dropbox.com`, `hubspot.com`, `cohere.com`, `naver.com`, `data.go.kr`, `mapbox.com`, `nasa.gov`.
 - `official_paths` 와 `access` 는 저장된 사실이 아니라 코드이므로 JSON Lines 내보내기(아래)에는 해당 종류가 없다.
 - 묶음 추가 절차: `scripts/README.md`.
+
+#### 소비자 공식 경로 (`official_paths.consumer`, 2026-10-31, D61)
+
+개발자 API 는 사이트의 데이터 위에 무언가를 만드는 길이다. 그 사이트의 사용자 본인 계정으로 하는 일(처방 리필, 요금 납부, 예약 변경)을 하는 길이 아니다. 그런 API 는 대개 파트너용이고 사용자의 계정에 닿지 않는다. 소비자 서비스가 뚜렷한 일부 호스트에는 `official_paths` 에 `consumer` 가 붙는다. 사이트 자신이 고객에게 안내하는 길이다.
+
+```json
+"official_paths": {
+  "name": "...", "api_docs": null, "developer_portal": "https://developer.example.com/", "note": null,
+  "consumer": {
+    "paths": [
+      {"kind": "customer_help", "url": "https://www.example.com/help", "source_url": "https://www.example.com/"},
+      {"kind": "official_app", "url": "https://apps.apple.com/us/app/example/id123", "source_url": "https://www.example.com/app"}
+    ],
+    "verified_at": "2026-10-31"
+  }
+}
+```
+
+| `kind` | 뜻 |
+| --- | --- |
+| `customer_help` | 사이트 자신의 도움말·고객센터·연락처 페이지. 전화번호는 답에 복사하지 않고 번호가 적힌 페이지를 링크한다. |
+| `official_app` | 사이트 자신의 페이지(`source_url`)가 링크한 App Store·Google Play 목록. 앱 식별자만 남긴다. |
+| `entry_link` | 흔한 고객 작업에 대해 사이트 자신이 링크한 공개 진입 경로. |
+
+- `consumer` 는 큐레이션돼 있고 유효할 때만(90일 안에 확인, `access` 와 같은 규칙) 붙고, 아니면 키 자체가 없다(`null` 아님). `official_paths` 항목이 있는 호스트에만 큐레이션한다. 경로는 6개 이하, 각 `url`·`source_url` 은 200자 이하의 `https` URL 이다.
+- **사이트 자신의 페이지, 직접 읽음, 추측 없음.** `url` 과 `source_url` 은 키의 등록 가능 도메인에 있다. 단 `official_app` 목록은 `source_url` 페이지가 링크한 것이어야 한다. 각 페이지는 그 호스트의 `robots.txt` 가 허용한 뒤 큐레이션 User-Agent 로 `verified_at` 에 읽었다. 읽기를 거절한 호스트는 뺀다. 서비스는 답하는 동안 이 URL 들을 읽지 않는다.
+- **판정은 바뀌지 않는다.** `recommendation` 과 `next_checks` 는 `consumer` 가 있든 없든 같다(테스트로 고정). 서비스는 호출자가 사이트 데이터로 무언가를 만드는지 사용자 계정에서 일하는지 모르므로 하나를 고르지 않는다. `next_action.do` 가 `use_official_path` 이고 `consumer` 가 있으면 `summary_line` 이 둘 다 말하고(같은 뜻의 짧은 문장 + "In the user's own account the API is no substitute; see next_action.customer_url.") `next_action` 에 `customer_url` 이 붙는다(아래). 다른 행동은 그대로다.
+- 검증: `python scripts/verify_official_paths.py --consumer-only [--hosts a.com]` 이 각 호스트의 `robots.txt` 를 먼저 읽어 막힌 곳은 요청하지 않고, 각 페이지를 읽고, `official_app` 목록이 `source_url` 에 링크돼 있는지 확인한다. 순수 규칙은 CI 의 `tests/test_consumer_paths.py` 에서 돈다.
+- 첫 검증 2026-10-31(날짜가 붙은 기록): 13개 호스트(`walgreens.com`, `walmart.com`, `amazon.com`, `target.com`, `chase.com`, `wellsfargo.com`, `capitalone.com`, `americanexpress.com`, `verizon.com`, `usps.com`, `uber.com`, `paypal.com`, `spotify.com`), 경로 32개, 모든 페이지 200. 읽기 거절·금지로 뺀 곳: `tesla.com`·`doordash.com`(robots.txt 403), `instacart.com`(robots.txt 가 큐레이션 에이전트를 막음). 시간 초과이거나 스크립트 없이는 첫 페이지에 도움말 링크가 없어 뺀 곳: `kroger.com`, `bestbuy.com`, `fedex.com`, `att.com`.
 
 ## 뒤에서 읽기 (stale-while-revalidate, 2026-10-19)
 

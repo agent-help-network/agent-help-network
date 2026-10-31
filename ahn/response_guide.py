@@ -4,7 +4,8 @@ Everything here is computed from the finished answer (``recommendation``, ``acce
 ``provider_status``) and never changes it. The sentences are a fixed table of English templates: the only value filled
 in is a whole number of seconds, and no hostname, agent token, URL or text taken from a site or a provider ever reaches
 a sentence. ``next_action.do`` is a pure function of ``recommendation.action`` (the four values that split ``unknown``
-only say what can be done while no verdict exists)."""
+only say what can be done while no verdict exists). When the host has a curated consumer path (D61), a use_official_path
+row takes its CONSUMER_ROWS sentence and next_action gains ``customer_url``; ``do`` and ``url`` stay the same."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import logging
 import re
 
 from .background_reads import FEED_RETRY_MINUTES
+from .official_paths import customer_url
 from .triage import blocked_governing_tokens
 
 LOG = logging.getLogger(__name__)
@@ -65,6 +67,20 @@ ROWS: dict[str, tuple[str, str]] = {
     "U9": ("no_clear_action", "No declared policy or official path is available for this host. Treat its agent policy as unknown, not as permission."),
 }
 DO_VALUES = tuple(dict.fromkeys(do for do, _ in ROWS.values()))
+
+# D61: the same use_official_path rows when official_paths.consumer is curated for the host. The service does not know
+# whether the caller is building on the site's data or doing a task in the user's own account, so the sentence names both:
+# a shorter lead with the same meaning and `do`, then CONSUMER_TAIL. Each whole sentence stays within LINE_MAX.
+CONSUMER_TAIL = " In the user's own account the API is no substitute; see next_action.customer_url."
+CONSUMER_ROWS: dict[str, str] = {
+    "O1": "An official developer path is listed. robots.txt is still being read: look up once more in {n} s." + CONSUMER_TAIL,
+    "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + CONSUMER_TAIL,
+    "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + CONSUMER_TAIL,
+    "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + CONSUMER_TAIL,
+    "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + CONSUMER_TAIL,
+    "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + CONSUMER_TAIL,
+    "O7": "An official developer API or portal is listed; prefer it over page automation." + CONSUMER_TAIL,
+}
 # Rows whose retry_after_seconds is the pending profile's own value (a read is queued).
 RETRY_ROWS = frozenset({"O1", "U1", "U2"})
 # The last row of each action: where a combination the table does not list falls to (logged; tests forbid it).
@@ -187,6 +203,14 @@ def guide(result: dict) -> dict:
     if not listed:
         LOG.warning("response_guide_unmapped")  # a code only: no host, no text
     do, sentence = ROWS[row]
+    customer = None
+    if do == "use_official_path" and row in CONSUMER_ROWS:
+        raw = customer_url(result.get("official_paths"))
+        customer = safe_url(raw) if raw else None
+        if raw and customer is None:
+            LOG.warning("response_guide_url_dropped")
+        if customer:
+            sentence = CONSUMER_ROWS[row]
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))
@@ -202,6 +226,8 @@ def guide(result: dict) -> dict:
             action["stop_if_you_are"] = tokens
     if do == "lookup_apex_host":
         action["lookup_host"] = apex_host(result["site_host"])
+    if customer:
+        action["customer_url"] = customer
     out = {"summary_line": sentence, "next_action": action}
     found = links()
     if found:

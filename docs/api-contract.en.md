@@ -278,6 +278,35 @@ A link to the documentation is often not enough: an agent that hit a bot wall or
 - `official_paths` and `access` are code, not stored facts, so the JSON Lines export (below) has no kind for them.
 - How to add bundles: `scripts/README.md`.
 
+#### Consumer paths (`official_paths.consumer`, 2026-10-31, D61)
+
+A developer API is the path for building on a site's data. It is not a way to do a task in a person's own account on that site (refill a prescription, pay a bill, change a booking): those APIs are usually for partners, and the user's account is not reachable through them. For some hosts with a clear consumer service, `official_paths` also carries `consumer`: where the site itself sends its customers.
+
+```json
+"official_paths": {
+  "name": "...", "api_docs": null, "developer_portal": "https://developer.example.com/", "note": null,
+  "consumer": {
+    "paths": [
+      {"kind": "customer_help", "url": "https://www.example.com/help", "source_url": "https://www.example.com/"},
+      {"kind": "official_app", "url": "https://apps.apple.com/us/app/example/id123", "source_url": "https://www.example.com/app"}
+    ],
+    "verified_at": "2026-10-31"
+  }
+}
+```
+
+| `kind` | Meaning |
+| --- | --- |
+| `customer_help` | The site's own help centre or contact page. A phone number is never copied into the answer: the page that lists it is linked instead. |
+| `official_app` | An App Store or Google Play listing that the site's own page (`source_url`) links to. Only the listing identifier is kept. |
+| `entry_link` | A public entry point the site itself links to for a common customer task. |
+
+- `consumer` is present only when curated and current (verified within 90 days, the same rule as `access`); otherwise the key is absent, never `null`. It is curated only for hosts that also have an `official_paths` entry. At most 6 paths; each `url` and `source_url` is an `https` URL of at most 200 characters.
+- **The site's own pages, read, never guessed.** `url` and `source_url` are on the key's registrable domain, except an `official_app` listing, which must be linked from `source_url`. Each page was read on `verified_at` with the curation User-Agent after that hostname's `robots.txt` allowed it; a refused read leaves the host out. The service never reads these URLs while answering.
+- **The verdict does not change.** `recommendation` and `next_checks` are the same with or without `consumer` (a test pins it). The service does not know whether the caller is building on the site's data or working in the user's account, so it does not pick one: when `next_action.do` is `use_official_path` and `consumer` is curated, `summary_line` names both (a shorter sentence with the same meaning, then "In the user's own account the API is no substitute; see next_action.customer_url.") and `next_action` gains `customer_url` ([below](#summary-line-and-next-action)). Every other action is unchanged.
+- Verification: `python scripts/verify_official_paths.py --consumer-only [--hosts a.com]` reads each hostname's `robots.txt` first and requests nothing it disallows, then each page, and checks that every `official_app` listing is linked from its `source_url`. The pure rules run in CI in `tests/test_consumer_paths.py`.
+- First run 2026-10-31 (a dated record): 13 hosts (`walgreens.com`, `walmart.com`, `amazon.com`, `target.com`, `chase.com`, `wellsfargo.com`, `capitalone.com`, `americanexpress.com`, `verizon.com`, `usps.com`, `uber.com`, `paypal.com`, `spotify.com`), 32 paths, every page 200. Left out because the read was refused or disallowed: `tesla.com` and `doordash.com` (robots.txt 403), `instacart.com` (robots.txt disallows the curation agent). Left out because the read timed out or the home page links no help page without scripts: `kroger.com`, `bestbuy.com`, `fedex.com`, `att.com`.
+
 ### Host facts layer
 
 `host_facts` carries **registry facts about the domain**: which public government domain list names it and the organisation that list gives, and the registry rule that a suffix is reserved for government bodies. It is a fact about who registered a name. It does not say that a site, page or link is genuine or safe, it does not change `recommendation`, and a missing field does not say anything about the site. It is **left out of the response entirely** (no `null`) unless a government list or a government-only suffix rule applies to the host, so ordinary hosts get no extra bytes.
@@ -406,6 +435,7 @@ Every lookup answer also carries `summary_line` and `next_action` (D51). Both ar
 - `retry_after_seconds` is when to repeat the same lookup **once**. It is not a polling interval. If a repeated lookup answers `retry_lookup_once` again, read it as `no_clear_action`.
 - `stop_if_you_are` is present only when `recommendation.reasons` contains `robots_blocks_some_agents`: the agent tokens from this service's token table whose vendor is explicitly disallowed at the site root. If your requests identify as one of them, treat it as a declared block and stop retrying pages. Send `agent_vendor` for an answer for your own agent.
 - `lookup_host` is present only with `lookup_apex_host`: the site's main domain, whose declared policy covers the site.
+- `customer_url` is present only with `use_official_path` when `official_paths.consumer` is curated (D61): the site's own customer page (the first `customer_help`, else the first `entry_link`, else the first `official_app`), for a task in the user's own account, where the developer API in `url` is no substitute. `do` and `url` stay the same.
 - `url` is taken only from the curated official paths and verified status sources described above, and must be an `https` URL of at most 200 characters; otherwise it is `null`.
 - If the three keys cannot be produced, they are left out and the rest of the answer is unchanged. The OpenAPI schema always lists `summary_line`, `next_action` and `links` as optional properties, whether or not they are present.
 - `do` never says more or less than `recommendation.action`. The four values that split `unknown` all mean that no verdict exists; they only say what can be done now.
@@ -584,7 +614,7 @@ Two packages in this repository call only `GET /v1/incidents/check` and never su
 
 `check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction; plus, in shadow mode, an hourly per-host count of its optional lookup signal codes, see [Lookup signal codes](#lookup-signal-codes)), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
 
-MCP `check_incident` returns two text blocks: first `summary_line` (and, when `next_action.url` is set, a second line `URL: <url>`), then the full answer as JSON, the same as the structured content and the REST answer. Read the last block if you parse text.
+MCP `check_incident` returns two text blocks: first `summary_line` (and, when `next_action.url` is set, a second line `URL: <url>`; when `next_action.customer_url` is set, a further line `Customer path: <url>`, D61), then the full answer as JSON, the same as the structured content and the REST answer. Read the last block if you parse text.
 
 Setting `AHN_RESPONSE_GUIDE=0` removes `summary_line`, `next_action`, `links` and the first MCP block, so the answer is the same as before D51.
 
