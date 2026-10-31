@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import Lock
 from time import monotonic, perf_counter
@@ -17,10 +17,10 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
-from . import adoption, lookup_signals
+from . import adoption, feedback, lookup_signals
 from . import server_card
 from .adoption import parse_days as parse_adoption_days
-from .models import CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
+from .models import CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome, FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
 from .rate_limit import RequestLimiter
@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 10, 27)
+POLICY_UPDATED = date(2026, 10, 30)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -105,11 +105,13 @@ LANG = {
 # Optional fixed-list codes of a lookup (error_class and failure_stage also on the incident list). A rejected value
 # is answered with the allowed values only, never an echo of what was sent.
 CHECK_CODE_FIELDS = {"error_class": ErrorClass, "failure_stage": FailureStage}
+# D58: the two enum fields of POST /v1/feedback; a wrong value is refused with the allowed list, like the two above.
+FEEDBACK_CODE_FIELDS = {"outcome": FeedbackOutcome, "path": FeedbackPath}
 
 
-def invalid_code(field: str) -> JSONResponse:
+def invalid_code(field: str, fields: dict = CHECK_CODE_FIELDS) -> JSONResponse:
     return JSONResponse({"error": "invalid_request", "field": field,
-                         "allowed_values": [item.value for item in CHECK_CODE_FIELDS[field]]}, status_code=400)
+                         "allowed_values": [item.value for item in fields[field]]}, status_code=400)
 
 
 def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
@@ -258,6 +260,11 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 loc = tuple(issue.get("loc", ()))
                 if len(loc) == 2 and loc[0] == "query" and loc[1] in CHECK_CODE_FIELDS:
                     return invalid_code(loc[1])
+        if request.url.path == "/v1/feedback":
+            for issue in exc.errors():
+                loc = tuple(issue.get("loc", ()))
+                if len(loc) == 2 and loc[0] == "body" and loc[1] in FEEDBACK_CODE_FIELDS:
+                    return invalid_code(loc[1], FEEDBACK_CODE_FIELDS)
         return JSONResponse({"error": "invalid_request"}, status_code=400)
 
     @app.exception_handler(psycopg.Error)
@@ -309,7 +316,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS}:
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -551,6 +558,20 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 # Analytics failure must not turn a successful lookup into an error.
                 logging.getLogger(__name__).warning("mcp_check_metrics_unavailable")
         return result
+
+    @app.post("/v1/feedback", response_model=FeedbackReceipt)
+    def lookup_feedback(body: FeedbackIn, response: Response):
+        """D58: one outcome for one earlier blocked lookup, named only by the one-time token from its answer."""
+        response.headers["Cache-Control"] = "no-store"
+        now = datetime.now(timezone.utc)
+        try:
+            feedback.verify(settings.key_pepper, body.token, now)  # a forged or expired token never opens a connection
+            with connect(settings) as conn:
+                feedback.record(conn, settings.key_pepper, body.token, body.outcome.value, body.path.value, now,
+                                count=settings.collect_lookup_metrics)
+        except feedback.FeedbackError as exc:
+            raise ServiceError(exc.code, exc.status) from None
+        return {"accepted": True}
 
     @app.get("/v1/incidents")
     def list_incidents(site_host: str | None = None, error_class: ErrorClass | None = None, limit: int = Query(20, ge=1, le=50)):

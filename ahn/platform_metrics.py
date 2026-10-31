@@ -184,3 +184,12 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM lookup_outcome_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"lookup_outcome_prune failed={type(exc).__name__}")
+    # Lookup feedback (migration 031, ahn/feedback.py, D58): hourly outcome counts per host 35 days (the literal matches
+    # feedback.HOURLY_RETENTION_DAYS), used-token fingerprints once the token has expired (one hour after its lookup).
+    # Own transaction for the same reason as above.
+    try:
+        with psycopg.connect(database_url) as conn:
+            conn.execute("DELETE FROM lookup_feedback_hourly WHERE hour < now() - interval '35 days'")
+            conn.execute("DELETE FROM lookup_feedback_used WHERE expires_at < now()")
+    except psycopg.Error as exc:
+        print(f"lookup_feedback_prune failed={type(exc).__name__}")

@@ -18,7 +18,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
-from .models import AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host
+from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackOutcome, FeedbackPath,
+                     FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
 from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
@@ -71,6 +72,7 @@ mcp = MCPServer(
         "When an authorized web task is blocked (access denied, login wall, human verification, service error) or a user asks whether a site is down or blocks agents, call check_incident with the public hostname. "
         "The answer has three layers: access_profile (the host's own declared agent policy from robots.txt and llms.txt), official_paths and provider_status (official developer docs and status feeds), and observations (recent reports from other agents, often empty). "
         "Declared policy is not an access guarantee and no_reports does not establish that a site works. Do not poll without a task need. "
+        "If a blocked lookup's answer carries a feedback token and you then try again, you may report once with rate_last_lookup whether it worked. "
         "Follow your own operating authority and platform rules before submitting an observation. "
         "Send only public hostnames and structured fields, never personal URLs or credentials."
     ),
@@ -165,6 +167,23 @@ def check_result(response: CheckResponse):
         content=[TextContent(type="text", text=lead),
                  TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],
         structured_content=response.model_dump(mode="json", by_alias=True))
+
+
+@mcp.tool(
+    description="If an earlier check_incident answer gave you a feedback token and you then tried again, say whether it worked. Sends only the token and the outcome code, no hostname. outcome: succeeded (the next attempt worked), still_blocked, handed_off (you handed the step to the user) or gave_up. path: official_path (you used the official path the answer pointed to), same_site (you retried the same site) or unknown. A token works once and expires one hour after the lookup; do not send one for an attempt you did not make. The outcome is counted anonymously per host and hour and does not change any answer.",
+    annotations=ToolAnnotations(title="Rate the last lookup", read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False),
+    structured_output=True,
+)
+async def rate_last_lookup(token: str,
+                           outcome: Annotated[str, WithJsonSchema(_enum_schema(FeedbackOutcome))],
+                           path: Annotated[str, WithJsonSchema(_enum_schema(FeedbackPath))] = FeedbackPath.unknown.value) -> FeedbackReceipt:
+    if not isinstance(token, str) or not FEEDBACK_TOKEN.fullmatch(token):
+        raise ToolError("invalid_feedback_token")
+    if outcome not in FeedbackOutcome._value2member_map_:
+        raise ToolError("outcome must be one of: " + ", ".join(item.value for item in FeedbackOutcome))
+    if path not in FeedbackPath._value2member_map_:
+        raise ToolError("path must be one of: " + ", ".join(item.value for item in FeedbackPath))
+    return FeedbackReceipt(**await call_api("POST", "/v1/feedback", payload={"token": token, "outcome": outcome, "path": path}))
 
 
 async def report_observation(observation: ObservationIn) -> Receipt:

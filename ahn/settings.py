@@ -57,6 +57,9 @@ class Settings:
     # AHN_PUBLIC_BOARD_AHN_CHECK=1 adds the AHN-check (robots.txt read) column to that board. Off by default, and
     # ignored while the board itself is off.
     public_board_ahn_check: bool = False
+    # AHN_LOOKUP_FEEDBACK=0 leaves the one-time feedback token out of blocked-lookup answers (D58). Tokens already issued
+    # can still be sent back until they expire. On by default.
+    lookup_feedback: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -105,4 +108,5 @@ class Settings:
                    vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0",
                    response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0",
                    public_board=public_board, public_board_since=public_board_since,
-                   public_board_ahn_check=public_board_ahn_check)
+                   public_board_ahn_check=public_board_ahn_check,
+                   lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0")

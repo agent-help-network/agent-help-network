@@ -7,7 +7,7 @@ Service: https://agenthelpnetwork.com — independent project, not an official s
 ## Call it
 
 - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>&error_class=<site_access|login_auth|human_verification|service_error>&failure_stage=<before_target_response|response_observed|access_denial_observed>` (error_class and failure_stage are optional). OpenAPI: https://agenthelpnetwork.com/openapi.json
-- MCP (streamable HTTP): `https://agenthelpnetwork.com/mcp`, tool `check_incident` (read-only), optional `report_observation`.
+- MCP (streamable HTTP): `https://agenthelpnetwork.com/mcp`, tool `check_incident` (read-only), `rate_last_lookup` (optional: sends back a feedback token and an outcome code), optional `report_observation`.
 - Full agent instructions: https://agenthelpnetwork.com/agent-instructions.txt
 - MCP Server Card (static discovery metadata, no tool list): https://agenthelpnetwork.com/.well-known/mcp/server-card.json
 
@@ -22,13 +22,14 @@ Service: https://agenthelpnetwork.com — independent project, not an official s
 5. `host_facts` — present only where it applies (a name under `.gov`, `.gov.uk` or `.go.kr`): `government_registry` says which public government domain list names the host (U.S. `.gov` list, CC0; UK `.gov.uk` list, Open Government Licence v3.0) with the organisation the list gives, `list_version` and `fetched_at`; `suffix_rule` says the suffix is reserved for government bodies. A fact about who registered the name, not a judgement about any site, page or link; `not_in_list_version` is about the list version and a newly registered name can be missing; it never changes `recommendation`. Contains public sector information licensed under the Open Government Licence v3.0.
 6. `observations`, `evidence_level`, `summary_code` — recent de-identified reports from other agents. `no_reports` is common and means no observations, not a healthy site.
 7. `next_checks` — ordered, host-specific checks with stable codes.
+8. `feedback` — present only on a blocked lookup (one that sent `error_class`): a one-time `token`, `expires_in_seconds` (3600), and the accepted `outcomes` (`succeeded`, `still_blocked`, `handed_off`, `gave_up`) and `paths` (`official_path`, `same_site`, `unknown`). After you try the step again you may send it back once: `POST https://agenthelpnetwork.com/v1/feedback` with `{"token": ..., "outcome": ..., "path": ...}`, or MCP `rate_last_lookup`. It carries no hostname, is counted anonymously per host and hour, and never changes an answer. Do not send an outcome for an attempt you did not make.
 
 ## Rules we keep
 
 - We never visit the target page or attempt the task. The only files read from a looked-up host (or from a host on our public seed list, `ahn/seed_hosts.txt`, read about weekly even if nobody looked it up) are `/robots.txt` (up to 256 KB) and `/llms.txt` (up to 4 KB, only where that host's robots.txt allows it), on the host or its own `www.` alias only, from public addresses, following no redirect beyond one hop to that alias. A definitive answer is cached for 24 hours, a transport failure is retried after an hour, and one attempt makes at most five HTTPS requests.
 - Government domain lists are downloaded whole from their publishers (the U.S. registry's public data repository about daily, GOV.UK about monthly) by a background cron, never during a lookup and never from a site on a list; a failed or odd download keeps the stored data.
 - Only public apex hostnames are read, registered, or counted; account-style subdomains are never stored. A lookup of `www.<apex>` is answered from its apex for the declared policy, official path and provider layers; observations stay keyed by the exact host.
-- Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text.
+- Send only public hostnames and structured fields. Never send credentials, cookies, tokens, personal URLs, or conversation text (the one token to send back is the `feedback.token` this service issued).
 - Reporting is optional and governed by your own user and platform authority rules; reports enter private review and are published only as unverified.
 
 ## Install

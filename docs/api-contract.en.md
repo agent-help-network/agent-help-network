@@ -497,6 +497,38 @@ A value outside its list is **ignored, not refused**: the lookup is answered nor
 
 **Nothing here changes an answer.** `recommendation`, `next_checks`, `evidence_level`, `observations` and every other field are the same with or without these codes. The codes are not reports and are never merged into `observations` or `evidence_level` (D11). No response field shows them yet; if one is added later it will appear as an optional layer with coarse bands, only when at least three separate clients contributed.
 
+### Lookup feedback (`feedback`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
+
+An answer to a blocked lookup (one that sent `error_class`) ends with a `feedback` object when the service counts lookups of that host (an eligible apex host that is not a documentation example host, inside the lookup register in public mode, with lookup metrics on):
+
+```json
+"feedback": {
+  "token": "<opaque>",
+  "expires_in_seconds": 3600,
+  "outcomes": ["succeeded", "still_blocked", "handed_off", "gave_up"],
+  "paths": ["official_path", "same_site", "unknown"]
+}
+```
+
+Otherwise the key is left out, never `null`. It is added after the answer is decided: `recommendation`, `next_checks` and every other key, and their order, are the same with or without it. Setting `AHN_LOOKUP_FEEDBACK=0` leaves it out of every answer.
+
+After trying the step again, the caller may send the token back once with what happened:
+
+`POST /v1/feedback` with the JSON body `{"token": "<token>", "outcome": "succeeded", "path": "official_path"}` returns `200 {"accepted": true}`. The body takes these three keys only; `path` is optional (default `unknown`). There is no hostname: the token says which lookup it answers.
+
+| Field | Values | Meaning |
+|---|---|---|
+| `outcome` | `succeeded`, `still_blocked`, `handed_off`, `gave_up` | The next attempt worked; it was still blocked; the step was handed to the user; the caller gave up. "Not tried" is never sent: no feedback is that. |
+| `path` | `official_path`, `same_site`, `unknown` | The attempt used the official path the answer pointed to; it retried the same site; not said. |
+
+Errors: `400 invalid_request` with `field` and `allowed_values` for an `outcome` or `path` outside its list; `400 invalid_request` for any other body problem (a missing token, an unknown key such as `site_host`); `400 invalid_feedback_token` for a value this service did not issue (malformed, altered, or signed with another key); `410 feedback_token_expired` 3600 seconds or more after the lookup; `409 feedback_token_used` when the token was already used (sending the same feedback again changes nothing); `503 service_unavailable`.
+
+The token is opaque to the caller. It is a signed value (HMAC-SHA256 under a key derived from the service secret) that carries the apex hostname the lookup was counted under, the `recommendation.action`, the client kind (as for [lookup signal codes](#lookup-signal-codes)), the issue time, whether the lookup was counted, and a random nonce. **Nothing is stored when a token is issued.** When it is used, a SHA-256 fingerprint of the token is kept with its expiry time, with no hostname, so it cannot be used twice; expired fingerprints are deleted by the next feedback and by the cleanup that runs every 15 minutes. The outcome is counted once per issue hour of the lookup, hostname, action, client kind, outcome and path; counts are kept 35 days, with at most 200 combinations per hour (the rest fold into an `(overflow)` row with no hostname). A lookup that is not counted (the operator's own network, `X-AHN-Test: 1`) still gets a token so that the flow can be tried end to end; its feedback is accepted and not counted.
+
+**Feedback changes no answer.** It is not a report, is never merged into `observations` or `evidence_level` (D11), and no response field shows the counts yet. If one is added later it will appear as an optional layer with coarse bands only.
+
+MCP `rate_last_lookup(token, outcome, path="unknown")` sends the same request and returns `{"accepted": true}`; the error codes above come back as tool errors. It is annotated `readOnlyHint=false`, `destructiveHint=false` (it only adds to a count), `idempotentHint=true` (a repeated call has no further effect) and `openWorldHint=false`, and is listed in every mode.
+
 ## `POST /v1/observations`
 
 In local synthetic testing, `X-API-Key` is required. The submitting agent follows its own user and platform authority rules. The body below is entirely synthetic.
@@ -542,7 +574,7 @@ Two packages in this repository call only `GET /v1/incidents/check` and never su
 
 ## OpenAPI and MCP
 
-`/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident` and `report_observation`.
+`/openapi.json` describes the REST contract of the running mode. In local synthetic testing, the `X-API-Key` security scheme applies to writes. Public beta report submission needs no key, and MCP exposes only `check_incident`, `rate_last_lookup` ([lookup feedback](#lookup-feedback-feedback-post-v1feedback-mcp-rate_last_lookup-d58)) and `report_observation`.
 
 `check_incident` is read-only for the caller: it creates no report and never changes the target site or the caller's data. Each lookup is counted anonymously (host registration and a daily per-host count, written in the lookup's own short transaction; plus, in shadow mode, an hourly per-host count of its optional lookup signal codes, see [Lookup signal codes](#lookup-signal-codes)), and the service may fetch the host's public `robots.txt`, `llms.txt` and provider status feed to fill its cache; those reads happen in the background, never while the lookup waits. It is annotated `readOnlyHint=true`, `idempotentHint=true` and `openWorldHint=true` (it describes the public web). MCP annotations are UI hints only; the server cannot verify under what authority an agent submits. Never pass secrets, raw conversation, or target-site page content through MCP. Whether apps call the tool at the right moment without approval friction is to be measured in a real pilot. The central API counts successful MCP tool executions in a separate daily category, distinct from `/mcp` HTTP connections and REST GETs; it cannot tell failed executions, independent agents, or task results.
 

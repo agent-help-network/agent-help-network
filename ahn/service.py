@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, feed_robots, gov_registry, lookup_signals, status_scope
+from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -635,6 +635,16 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 result.update(response_guide.guide(result))
             except Exception:
                 LOG.warning("response_guide_unavailable")
+        if (settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
+                and eligible and host not in lookup_signals.EXAMPLE_HOSTS and (not public or registered)):
+            # D58: added last, after the answer is decided; a signed value, so nothing is written here. A lookup that is not
+            # counted (operator network, X-AHN-Test) still gets a token so the flow can be tried, but its feedback is not counted.
+            try:
+                result["feedback"] = feedback.feedback_field(settings.key_pepper, host, result["recommendation"]["action"],
+                                                             signal.client_kind if signal is not None else "rest_other",
+                                                             signal is not None, now)
+            except Exception:
+                LOG.warning("feedback_token_unavailable")
         if signal is not None:
             count_row = _record_signal(conn, settings, host, error_class, failure_stage, signal,
                                           result["recommendation"]["action"], public=public, registered=registered,
