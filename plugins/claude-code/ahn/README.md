@@ -21,7 +21,7 @@ The plugin acts only after a web step has already failed, and only for a failure
 | What happened | Line added? | What is sent to Agent Help Network |
 | :- | :- | :- |
 | `WebFetch` answered 401 or 407 | yes | hostname; `error_class=login_auth`; `http_status`; `via` |
-| `WebFetch` answered 402, 403 or 451 | yes | hostname; `error_class=site_access` (`human_verification` when a `cf-mitigated: challenge` header or the page text shows a challenge); `http_status`; `via` |
+| `WebFetch` answered 402, 403 or 451 | yes | hostname; `error_class=site_access` (`human_verification` when a `cf-mitigated: challenge` or `x-amzn-waf-action: challenge|captcha` header or the page text shows a challenge); `http_status`; `via` |
 | `WebFetch` answered 408, 429 or a 5xx | yes | hostname; `error_class=service_error`; `http_status`; `via`; a `retry_after` band when the result carries a `Retry-After` header |
 | A fetch or browser tool threw an error naming a block, a login, a challenge, a timeout or a 5xx | yes | hostname; the matching `error_class`; `failure_stage` |
 | DNS failure, refused connection, or Claude Code's own `is unable to fetch from <host>` refusal | yes | hostname; `error_class=site_access`; `failure_stage=before_target_response` |
@@ -44,7 +44,7 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.7 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.8 |
 | `.claude-plugin/icon.png` | Listing icon (512 x 512 PNG, same design as the site icon) |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
@@ -93,7 +93,7 @@ User-Agent: ahn-claude-code-plugin/0.2
   | Parameter | Values | Added when | How the hook decides |
   | :- | :- | :- | :- |
   | `http_status` | 401, 402, 403, 407, 408, 429, 451, 500–599 | the result is a `WebFetch` answer (`PostToolUse`) | `tool_response.code`. A status mentioned in an error text is never sent |
-  | `challenge` | `header`, `none` | the result carries a non-empty `headers` object | `header` when a `cf-mitigated` header (a list value is read element by element, bytes are decoded) contains `challenge`, else `none`. The page text is not used for this code |
+  | `challenge` | `header`, `none` | the result carries a non-empty `headers` object | `header` when a `cf-mitigated` header (a list value is read element by element, bytes are decoded) contains `challenge`, or, from version 0.3.8, when an `x-amzn-waf-action` header (AWS WAF) is `challenge` or `captcha` on a 403 or 451; else `none`. The AWS header on any other status is not a challenge. The page text is not used for this code |
   | `retry_after` | `none`, `lt_60`, `60_3600`, `gt_3600` | a 429 or 503 whose result carries a `headers` object | the `Retry-After` seconds as a band (under 60, 60 to 3600, over 3600); a date, a missing or an unreadable header is `none` |
   | `via` | `http_fetch`, `browser` | the tool's name says it | `WebFetch` and MCP tools whose server name has `fetch` in it: `http_fetch`; MCP tools whose server name has `browser`, `chrome`, `playwright`, `puppeteer`, `selenium`, `webdriver`, `devtools`, `firefox`, `camoufox` or `stagehand` in it: `browser`; any other tool: left out |
 
@@ -111,7 +111,7 @@ A mistyped address is not a site that refuses agents, so only statuses that repo
 | :- | :- | :- |
 | 401, 407 | `login_auth` | credentials required |
 | 402 | `site_access` | payment required: a site that asks for payment to be crawled (for example [Cloudflare Pay per Crawl](https://developers.cloudflare.com/ai-crawl-control/features/pay-per-crawl/what-is-pay-per-crawl/)) has declared an access policy, and the lookup reports what the host declares. The plugin never suggests a way around a paywall |
-| 403, 451 | `site_access` | `human_verification` instead when a `cf-mitigated: challenge` header or the page text (CAPTCHA, "verify you are human", "checking your browser") points to a challenge |
+| 403, 451 | `site_access` | `human_verification` instead when a `cf-mitigated: challenge` or `x-amzn-waf-action: challenge|captcha` header or the page text (CAPTCHA, "verify you are human", "checking your browser") points to a challenge |
 | 408 | `service_error` | request timeout |
 | 429 | `service_error` | the contract has no rate-limit class; a `Retry-After` of whole seconds, when the tool result carries one, is added to the line as `HTTP 429, the site asks to retry after N s.` Only its band (`retry_after`, see above) is sent, never the number of seconds |
 | 500–599 | `service_error` | the server failed; a 503 with a `Retry-After` of whole seconds is added to the line the same way (`HTTP 503, the site asks to retry after N s.`) |
