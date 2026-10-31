@@ -55,7 +55,7 @@ claude plugin install ahn@agent-help-network</code></pre>
       <h3>Python</h3>
       <pre class="ledger-code"><code class="home-copy-source">pip install ahn-client
 pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-agent-sdk]</code></pre>
-      <p>{{ 'No dependencies. Sends only a hostname and enum codes.' if en else '의존성이 없습니다. 호스트명과 고정 코드만 보냅니다.' }}</p>
+      <p>{{ 'No dependencies. Sends only a hostname and enum codes.' if en else '의존성이 없습니다. 호스트명과 고정 코드만 보냅니다.' }} {{ 'A 403 page that comes back as an ordinary response is not an exception: ahn_client.diagnose(response) maps it to the lookup’s codes.' if en else '403 페이지가 예외 없이 일반 응답으로 돌아오는 경우에는 ahn_client.diagnose(response) 가 조회용 코드로 바꿔 줍니다.' }}</p>
     </div>
     <div class="home-panel" id="tab-rest" data-label="REST">
       <h3>REST</h3>
@@ -63,7 +63,7 @@ pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-ag
       <p>{{ 'GET /v1/incidents/check?site_host=example.org. Optional: error_class, failure_stage, agent_vendor.' if en else 'GET /v1/incidents/check?site_host=example.org 형식입니다. 선택 항목: error_class, failure_stage, agent_vendor.' }} <a href="/openapi.json">OpenAPI ↗</a></p>
     </div>
   </div>
-  <p class="home-sub">{{ 'Also: Cursor, OpenAI Agents SDK, LangChain, CrewAI, Browser Use.' if en else '그 밖에 Cursor, OpenAI Agents SDK, LangChain, CrewAI, Browser Use 도 지원합니다.' }} <a href="/{{ lang }}/connect">{{ 'All setups →' if en else '모든 설정 보기 →' }}</a> · {{ 'Agents can start at' if en else '에이전트는 여기서 시작할 수 있습니다:' }} <a href="/llms.txt">/llms.txt</a> · <a href="/agent-instructions.txt">/agent-instructions.txt</a> · <a href="/openapi.json">/openapi.json</a></p>
+  <p class="home-sub">{{ 'Also: Cursor, OpenAI Agents SDK, LangChain, CrewAI, Browser Use.' if en else '그 밖에 Cursor, OpenAI Agents SDK, LangChain, CrewAI, Browser Use 도 지원합니다.' }} <a href="https://github.com/agent-help-network/agent-help-network/tree/main/examples/browser-use" rel="noopener">{{ 'Browser Use example ↗' if en else 'Browser Use 예제 ↗' }}</a> · <a href="/{{ lang }}/connect">{{ 'All setups →' if en else '모든 설정 보기 →' }}</a> · {{ 'Agents can start at' if en else '에이전트는 여기서 시작할 수 있습니다:' }} <a href="/llms.txt">/llms.txt</a> · <a href="/agent-instructions.txt">/agent-instructions.txt</a> · <a href="/openapi.json">/openapi.json</a></p>
 </section>
 
 <section class="ledger-section container" id="actions" aria-labelledby="actions-h">
