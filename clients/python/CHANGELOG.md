@@ -9,9 +9,9 @@
 - AWS WAF: a 202 or 405 with `x-amzn-waf-action: challenge|captcha` is `human_verification` with `challenge=header`
   (https://docs.aws.amazon.com/waf/latest/developerguide/waf-captcha-and-challenge-actions.html). A 403 or 451 is
   `human_verification` when a header or the body points to a human check.
-- A 200 whose body starts with a human-check marker is `human_verification` with `.candidate` True: a hint, not a finding.
+- A 200 whose page `<title>` looks like a human check gives `error_class` None with `.candidate` True and `.hint` `"human_verification"`: a hint, never looked up by code that just unpacks the result.
 - `Result.summary()` ends with "robots.txt asks N s between requests." when the host's robots.txt asks for a delay
-  (`Result.crawl_delay_seconds`).
+  (`Result.crawl_delay_seconds`, rounded to one decimal, ignored below 0.1 s).
 
 ## 0.6.0
 

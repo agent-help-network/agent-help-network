@@ -108,14 +108,45 @@ def test_a_method_named_text_is_never_called():
     assert ahn.diagnose(response)[0] == "site_access" and response.text_called is False
 
 
-def test_a_quiet_200_is_only_a_candidate():
-    result = ahn.diagnose(Httpxish(200, {"a": "b"}, "<p>Are you a robot?</p>"))
-    assert tuple(result)[:2] == ("human_verification", "response_observed") and result.candidate is True
-    assert result[2] == {"via": "http_fetch"} and "challenge" not in result[2]
-    # A normal page that mentions cloudflare or a challenge is not flagged.
-    assert ahn.diagnose(Httpxish(200, {}, "Protected by Cloudflare. A coding challenge for you.")).candidate is False
-    # Candidate is for 200 only.
-    assert ahn.diagnose(Httpxish(201, {}, "captcha")).candidate is False and ahn.diagnose(Httpxish(404, {}, "captcha"))[0] is None
+def test_a_quiet_200_is_only_a_hint_and_is_not_looked_up_by_the_readme_example(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_client, "_urlopen", lambda request, timeout: calls.append(request))
+    for html in ("<html><title>Just a moment...</title><body>Are you a robot?</body></html>",
+                 "<title>Attention Required! | Cloudflare</title>", "<TITLE>Verify you are human</TITLE>"):
+        result = ahn.diagnose(Httpxish(200, {"a": "b"}, html))
+        assert tuple(result) == (None, None, {}) and result.candidate is True and result.hint == "human_verification"
+        error_class, stage, found = result           # the README example: look up only when error_class is set
+        if error_class:
+            ahn.check("https://example.com/x", error_class, stage, **found)
+    assert calls == []
+
+
+@pytest.mark.parametrize("html", [
+    '<html><title>Sign in</title><script src="https://www.google.com/recaptcha/api.js"></script></html>',
+    "<title>Dashboard</title><p>Just a moment, loading your dashboard</p>", "Protected by Cloudflare. A coding challenge for you.",
+    "<p>Are you a robot?</p>", "<title>Welcome</title>" + "x" * 4000 + "<title>captcha</title>"])
+def test_ordinary_200_pages_are_not_even_a_hint(html):
+    result = ahn.diagnose(Httpxish(200, {}, html))
+    assert tuple(result) == (None, None, {}) and result.candidate is False and result.hint is None
+    # A hint is for 200 only.
+    assert ahn.diagnose(Httpxish(201, {}, "<title>captcha</title>")).candidate is False
+    assert ahn.diagnose(Httpxish(404, {}, "<title>captcha</title>"))[0] is None
+
+
+@pytest.mark.parametrize("status,expected", [(429, "service_error"), (503, "service_error"), (500, "service_error"), (401, "login_auth")])
+def test_aws_marker_does_not_turn_other_statuses_into_a_challenge(status, expected):
+    error_class, _, found = ahn.diagnose(Httpxish(status, {"x-amzn-waf-action": "challenge"}))
+    assert error_class == expected and found["http_status"] == status
+
+
+@pytest.mark.parametrize("status", [200, 201, 204, 301, 404, 406])
+def test_aws_marker_with_other_non_error_statuses_is_nothing(status):
+    assert ahn.diagnose(Httpxish(status, {"x-amzn-waf-action": "challenge"}))[0] is None
+
+
+def test_only_202_and_405_with_the_marker_are_challenges_without_a_body_cue():
+    assert [s for s in range(100, 600) if ahn.diagnose(Httpxish(s, {"x-amzn-waf-action": "captcha"}))[0] == "human_verification"
+            ] == [202, 403, 405, 451]
 
 
 def test_diagnose_never_raises_and_never_returns_text():
@@ -184,10 +215,16 @@ def test_crawl_delay_ends_the_summary(delay, text):
     assert line.endswith(text) and len(line) <= MAX_SUMMARY
 
 
-@pytest.mark.parametrize("delay", [None, 0, -1, 3601, True, "10", float("nan")])
+@pytest.mark.parametrize("delay", [None, 0, -1, 3601, True, "10", float("nan"), 1e-05, 0.04, float("inf")])
 def test_no_crawl_delay_note_for_other_values(delay):
     result = parse({"wildcard_crawl_delay": delay})
     assert result.crawl_delay_seconds is None and "robots.txt asks" not in result.summary()
+
+
+@pytest.mark.parametrize("delay,text", [(0.1, "0.1 s"), (0.06, "0.1 s"), (3600, "3600 s"), (3599.999999, "3600 s"), (2.25, "2.2 s"), (12.34, "12.3 s")])
+def test_crawl_delay_is_one_decimal_and_never_exponent_notation(delay, text):
+    line = parse({"wildcard_crawl_delay": delay}).summary()
+    assert line.endswith(f"robots.txt asks {text} between requests.") and "e-" not in line.split("robots.txt asks")[1]
 
 
 def test_crawl_delay_fits_with_a_long_service_line_and_the_safety_tail():
@@ -196,6 +233,24 @@ def test_crawl_delay_fits_with_a_long_service_line_and_the_safety_tail():
     line = result.summary()
     assert len(line) <= MAX_SUMMARY and line.endswith("robots.txt asks 5 s between requests.")
     assert "bypassing site controls is not advised" in line
+
+
+def test_crawl_delay_with_a_long_answer_and_no_summary_line():
+    result = parse({"wildcard_crawl_delay": 5, "agents_blocked": ["Agent%02d" % i for i in range(60)]})
+    assert result.summary_line is None
+    line = result.summary()
+    assert len(line) <= MAX_SUMMARY and line.endswith("robots.txt asks 5 s between requests.")
+    assert "Declared policy is not an access guarantee" in line
+
+
+def test_crawl_delay_when_the_head_alone_is_cut():
+    # A head so long that no room is left for the detail line: the cut branch of the summary must still end with the note.
+    result = parse({"wildcard_crawl_delay": 7}, summary_line="H" * 200, next_action={
+        "do": "stop_if_listed", "url": "https://developer.example.com/" + "a" * 160, "retry_after_seconds": None,
+        "stop_if_you_are": ["Agent%02d" % i + "x" * 40 for i in range(6)], "lookup_host": "example.com"})
+    assert result.next_action is not None and len(result.next_action.stop_if_you_are) == 6
+    line = result.summary()
+    assert len(line) <= MAX_SUMMARY and line.endswith("robots.txt asks 7 s between requests.") and "…" in line
 
 
 def test_version_and_exports():

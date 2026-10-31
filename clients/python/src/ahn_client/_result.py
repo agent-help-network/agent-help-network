@@ -357,13 +357,14 @@ class Result:
     @property
     def crawl_delay_seconds(self) -> Optional[float]:
         """The ``Crawl-delay`` of the host's ``*`` group in robots.txt (``access_profile.robots.wildcard_crawl_delay``), in
-        seconds between requests; None when absent or not a number above 0 and at most 3600. Information about the site's
+        seconds between requests, rounded to one decimal; None when absent, not a number, below 0.1 or above 3600. Information about the site's
         request, not a permission and not part of the verdict."""
         rules = _dict((self.access_profile or {}).get("robots")) or {}
         value = rules.get("wildcard_crawl_delay")
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 3600:
             return None
-        return float(value)
+        value = round(float(value), 1)  # one decimal: no exponent notation, no 1e-05
+        return value if value >= 0.1 else None
 
     def summary(self, site_retry_after: Any = None) -> str:
         """One line, at most 700 characters, built only from validated fields. With a service ``summary_line`` it comes
