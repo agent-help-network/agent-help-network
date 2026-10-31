@@ -425,3 +425,17 @@ def test_the_closing_caution_survives_a_long_head():
     summary = parse(body, "a" * 60 + ".example.com").summary()
     assert len(summary) <= MAX_SUMMARY and summary.endswith(SAFETY_TAIL)
     assert parse(answer("proceed")).summary().endswith(SAFETY_TAIL)
+
+
+@pytest.mark.parametrize("site", ["gt_3600", "60_3600", 1800])
+@pytest.mark.parametrize("sent", ["stop_forever", "Stop!", None, 7])
+def test_an_older_service_with_an_unknown_verdict_never_gets_a_site_wait(sent, site):
+    for extra in ({}, {"summary_line": server_lines()["stop_automation"]}, {"next_action": None}):
+        result = parse(old_answer(sent, **extra))
+        assert result.recommendation == "unknown"  # normalised as before
+        assert result.wait_seconds(site) is None
+        assert "Retry-After" not in result.summary(site)
+
+
+def test_an_explicit_unknown_still_merges_for_an_older_service():
+    assert parse(old_answer("unknown")).wait_seconds("gt_3600") == 3600
