@@ -223,16 +223,18 @@ def test_the_code_is_in_the_model_the_contracts_the_readmes_and_the_plugin():
 
 
 def test_the_korean_search_page_shows_the_maintenance_text_for_a_maintenance_only_wait():
+    # The Korean sentence follows the English text that was served, not the code alone (see test_ko_special_checks).
     template = (ROOT / "ahn" / "templates" / "search.html").read_text(encoding="utf-8")
-    found = re.search(r"\{\{ item\.text if lang == 'en' else (next_check_ko\.get\(.*?, item\.text\)) \}\}", template)
+    found = re.search(r"\{\{ item\.text if lang == 'en' else (\(ko_by_text\.get\(.*?\)) \}\}", template)
     assert found
     expression = jinja2.Environment().compile_expression(found.group(1))
-    ko = {**CHECKS_KO, "provider_maintenance": MAINTENANCE_CHECK_KO, "provider_page_stale": "unused"}
 
-    def korean(code, provider_status):
-        return expression(item={"code": code, "text": "english"}, signals={"provider_status": provider_status}, next_check_ko=ko)
+    def korean(item):
+        return expression(item=item, ko_by_text=triage.CHECK_TEXT_KO, next_check_ko=CHECKS_KO)
 
-    assert korean("provider_scope", cloudflare_shape()) == MAINTENANCE_CHECK_KO
-    assert korean("provider_scope", status("maintenance", basis=None, incidents=None)) == MAINTENANCE_CHECK_KO
-    assert korean("provider_scope", status("major", basis="incident", incidents=1)) == CHECKS_KO["provider_scope"]
-    assert korean(CODE, cloudflare_shape()) == CHECKS_KO[CODE]
+    for provider_status in (cloudflare_shape(), status("maintenance", basis=None, incidents=None)):
+        [item] = [c for c in checks(provider_status) if c["code"] == "provider_scope"]
+        assert item["text"] == MAINTENANCE_CHECK and korean(item) == MAINTENANCE_CHECK_KO
+    [item] = [c for c in checks(status("major", basis="incident", incidents=1)) if c["code"] == "provider_scope"]
+    assert item["text"] != MAINTENANCE_CHECK and korean(item) == CHECKS_KO["provider_scope"]
+    assert korean({"code": CODE, "text": CHECKS[CODE]}) == CHECKS_KO[CODE]
