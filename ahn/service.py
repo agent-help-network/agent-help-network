@@ -661,7 +661,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             conn.commit()
     return result
 
-HOME_EXAMPLE_HOST = "github.com"
+HOME_EXAMPLE_HOST = "target.com"
 
 
 def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict | None:
