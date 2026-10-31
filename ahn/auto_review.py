@@ -126,6 +126,7 @@ def review_batch(database_url: str, *, now: datetime | None = None, limit: int =
 
 
 def main() -> None:
+    cron_started = time.monotonic()  # profile_warm keeps a worst-case host read from running into the next run
     database_url = os.environ.get("AHN_DATABASE_URL", "")
     if not database_url:
         raise RuntimeError("AHN_DATABASE_URL is required")
@@ -164,7 +165,8 @@ def main() -> None:
         print("profile_warm skipped=time_budget")
     elif warm_batch:
         try:
-            warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch, time_budget=budget)
+            warm = warm_profiles(Settings(database_url, "unused-by-status-refresh"), batch=warm_batch, time_budget=budget,
+                                 cron_started=cron_started)
             line = f"profile_warm read={warm['read']} ok={warm['ok']} errors={warm['errors']} remaining={warm['candidates']}"
             if warm.get("causes"):  # why the errors happened: labels such as dns_failed:7,connect_timeout:3, no host names
                 line += f" causes={format_causes(warm['causes'])}"
