@@ -1937,6 +1937,177 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://support.spotify.com/us/"),
         _help("https://support.spotify.com/us/article/contact-us/", "https://support.spotify.com/us/"),
     ], "verified_at": "2026-10-31"},
+    "dell.com": {"paths": [
+        _help("https://www.dell.com/support/home/en-us", "https://www.dell.com/en-us"),
+        _help("https://www.dell.com/en-us/shop/lp/contact-us", "https://www.dell.com/en-us"),
+    ], "verified_at": "2026-10-31"},
+    "samsung.com": {"paths": [
+        _help("https://www.samsung.com/us/support/contact/", "https://www.samsung.com/us/"),
+    ], "verified_at": "2026-10-31"},
+    "lg.com": {"paths": [
+        _help("https://www.lg.com/us/support", "https://www.lg.com/us/"),
+        _help("https://www.lg.com/us/support/contact", "https://www.lg.com/us/"),
+    ], "verified_at": "2026-10-31"},
+    "apple.com": {"paths": [
+        _help("https://www.apple.com/contact/", "https://www.apple.com/"),
+        _app("https://apps.apple.com/us/app/apple-store/id375380948", "https://www.apple.com/"),
+    ], "verified_at": "2026-10-31"},
+    "microsoft.com": {"paths": [
+        _help("https://support.microsoft.com/en-us/", "https://www.microsoft.com/en-us"),
+        _help("https://support.microsoft.com/contactus", "https://www.microsoft.com/en-us"),
+    ], "verified_at": "2026-10-31"},
+    "craigslist.org": {"paths": [
+        _help("https://www.craigslist.org/about/help/"),
+    ], "verified_at": "2026-10-31"},
+    "ticketmaster.com": {"paths": [
+        _help("https://help.ticketmaster.com/hc/en-us", "https://help.ticketmaster.com"),
+        _entry_link("https://www.ticketmaster.com/giftcards", "https://www.ticketmaster.com/"),
+        _app("https://apps.apple.com/us/app/ticketmaster-buy-sell-tickets/id500003565", "https://www.ticketmaster.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.ticketmaster.mobile.android.na", "https://www.ticketmaster.com/"),
+    ], "verified_at": "2026-10-31"},
+    "eventbrite.com": {"paths": [
+        _help("https://www.eventbrite.com/help/en-us/", "https://www.eventbrite.com/"),
+        _help("https://www.eventbrite.com/help/en-us/contact-us/", "https://www.eventbrite.com/"),
+    ], "verified_at": "2026-10-31"},
+    "thumbtack.com": {"paths": [
+        _help("https://help.thumbtack.com", "https://www.thumbtack.com/"),
+    ], "verified_at": "2026-10-31"},
+    "steampowered.com": {"paths": [
+        _help("https://help.steampowered.com/en/", "https://store.steampowered.com/"),
+    ], "verified_at": "2026-10-31"},
+    "strava.com": {"paths": [
+        _help("https://support.strava.com/en-us/", "https://support.strava.com"),
+        _app("https://apps.apple.com/us/app/strava-run-bike-walk/id426826309", "https://www.strava.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.strava", "https://www.strava.com/"),
+    ], "verified_at": "2026-10-31"},
+    "deezer.com": {"paths": [
+        _help("https://support.deezer.com/hc/en-gb", "https://www.deezer.com/en/"),
+        _app("https://apps.apple.com/us/app/deezer-music-player-podcast/id292738169", "https://www.deezer.com/en/"),
+        _app("https://play.google.com/store/apps/details?id=deezer.android.app", "https://www.deezer.com/en/"),
+    ], "verified_at": "2026-10-31"},
+    "youtube.com": {"paths": [
+        _help("https://www.youtube.com/t/contact_us/", "https://www.youtube.com/"),
+    ], "verified_at": "2026-10-31"},
+    "vimeo.com": {"paths": [
+        _help("https://help.vimeo.com/hc/en-us", "https://help.vimeo.com"),
+    ], "verified_at": "2026-10-31"},
+    "dropbox.com": {"paths": [
+        _help("https://help.dropbox.com/", "https://www.dropbox.com/"),
+        _help("https://www.dropbox.com/contact", "https://www.dropbox.com/"),
+    ], "verified_at": "2026-10-31"},
+    "1password.com": {"paths": [
+        _help("https://1password.com/contact-support", "https://1password.com/"),
+    ], "verified_at": "2026-10-31"},
+    "bitwarden.com": {"paths": [
+        _help("https://bitwarden.com/help/", "https://bitwarden.com/"),
+    ], "verified_at": "2026-10-31"},
+    "todoist.com": {"paths": [
+        _help("https://www.todoist.com/help", "https://www.todoist.com/"),
+    ], "verified_at": "2026-10-31"},
+    "whatsapp.com": {"paths": [
+        _help("https://faq.whatsapp.com/", "https://www.whatsapp.com/"),
+        _help("https://www.whatsapp.com/contact", "https://www.whatsapp.com/"),
+    ], "verified_at": "2026-10-31"},
+    "telegram.org": {"paths": [
+        _help("https://www.telegram.org/faq", "https://www.telegram.org/"),
+    ], "verified_at": "2026-10-31"},
+    "slack.com": {"paths": [
+        _help("https://slack.com/help", "https://slack.com/"),
+    ], "verified_at": "2026-10-31"},
+    "wix.com": {"paths": [
+        _help("https://support.wix.com/en", "https://www.wix.com/"),
+        _help("https://www.wix.com/about/contact-us", "https://www.wix.com/"),
+    ], "verified_at": "2026-10-31"},
+    "wordpress.com": {"paths": [
+        _help("https://wordpress.com/support/", "https://wordpress.com/"),
+        _help("https://wordpress.com/support/contact/", "https://wordpress.com/"),
+    ], "verified_at": "2026-10-31"},
+    "venmo.com": {"paths": [
+        _help("https://help.venmo.com/cs/home", "https://venmo.com/"),
+        _help("https://help.venmo.com/cs/contact-us", "https://venmo.com/"),
+    ], "verified_at": "2026-10-31"},
+    "wise.com": {"paths": [
+        _help("https://wise.com/help/", "https://wise.com/"),
+    ], "verified_at": "2026-10-31"},
+    "klarna.com": {"paths": [
+        _help("https://www.klarna.com/us/help/", "https://www.klarna.com/us/"),
+    ], "verified_at": "2026-10-31"},
+    "affirm.com": {"paths": [
+        _help("https://helpcenter.affirm.com/s/", "https://www.affirm.com/"),
+    ], "verified_at": "2026-10-31"},
+    "airbnb.com": {"paths": [
+        _help("https://www.airbnb.com/help", "https://www.airbnb.com/"),
+        _entry_link("https://www.airbnb.com/giftcards", "https://www.airbnb.com/"),
+    ], "verified_at": "2026-10-31"},
+    "expedia.com": {"paths": [
+        _help("https://www.expedia.com/helpcenter/", "https://www.expedia.com/"),
+    ], "verified_at": "2026-10-31"},
+    "orbitz.com": {"paths": [
+        _help("https://www.orbitz.com/helpcenter", "https://www.orbitz.com/p/support.htm"),
+    ], "verified_at": "2026-10-31"},
+    "travelocity.com": {"paths": [
+        _help("https://www.travelocity.com/helpcenter", "https://www.travelocity.com/p/support.htm"),
+    ], "verified_at": "2026-10-31"},
+    "cheaptickets.com": {"paths": [
+        _help("https://www.cheaptickets.com/helpcenter", "https://www.cheaptickets.com/customer-service"),
+    ], "verified_at": "2026-10-31"},
+    "accor.com": {"paths": [
+        _help("https://group.accor.com/en/contact/contact-us", "https://group.accor.com/en"),
+    ], "verified_at": "2026-10-31"},
+    "flightaware.com": {"paths": [
+        _help("https://www.flightaware.com/about/faq/", "https://www.flightaware.com/"),
+    ], "verified_at": "2026-10-31"},
+    "mta.info": {"paths": [
+        _help("https://www.mta.info/contact-us", "https://www.mta.info/"),
+    ], "verified_at": "2026-10-31"},
+    "mbta.com": {"paths": [
+        _help("https://www.mbta.com/customer-support", "https://www.mbta.com/"),
+    ], "verified_at": "2026-10-31"},
+    "irs.gov": {"paths": [
+        _help("https://www.irs.gov/help/let-us-help-you", "https://www.irs.gov/"),
+    ], "verified_at": "2026-10-31"},
+    "healthcare.gov": {"paths": [
+        _help("https://www.healthcare.gov/contact-us/", "https://www.healthcare.gov/"),
+    ], "verified_at": "2026-10-31"},
+    "zoom.com": {"paths": [
+        _help("https://support.zoom.com/hc/en", "https://www.zoom.com/"),
+    ], "verified_at": "2026-10-31"},
+    "notion.com": {"paths": [
+        _help("https://www.notion.com/help", "https://www.notion.com/"),
+    ], "verified_at": "2026-10-31"},
+    "figma.com": {"paths": [
+        _help("https://help.figma.com/hc/en-us", "https://www.figma.com/"),
+    ], "verified_at": "2026-10-31"},
+    "supercell.com": {"paths": [
+        _help("https://supercell.com/en/support/", "https://supercell.com/"),
+    ], "verified_at": "2026-10-31"},
+    "calendly.com": {"paths": [
+        _help("https://calendly.com/help", "https://calendly.com/"),
+        _help("https://calendly.com/contact-us", "https://calendly.com/"),
+        _app("https://apps.apple.com/us/app/calendly-meeting-scheduling/id1451094657", "https://calendly.com/"),
+    ], "verified_at": "2026-10-31"},
+    "meta.com": {"paths": [
+        _help("https://www.meta.com/help/", "https://www.meta.com/"),
+    ], "verified_at": "2026-10-31"},
+    "surveymonkey.com": {"paths": [
+        _help("https://help.surveymonkey.com/en/", "https://www.surveymonkey.com/"),
+    ], "verified_at": "2026-10-31"},
+    "synology.com": {"paths": [
+        _help("https://www.synology.com/en-global/company/contact_us", "https://www.synology.com/company/contact_us"),
+    ], "verified_at": "2026-10-31"},
+    "tomtom.com": {"paths": [
+        _help("https://help.tomtom.com/hc/en-150", "https://help.tomtom.com/hc/"),
+    ], "verified_at": "2026-10-31"},
+    "nvidia.com": {"paths": [
+        _help("https://www.nvidia.com/en-us/support/", "https://www.nvidia.com/en-us/"),
+        _help("https://www.nvidia.com/en-us/contact/", "https://www.nvidia.com/en-us/"),
+    ], "verified_at": "2026-10-31"},
+    "intel.com": {"paths": [
+        _help("https://www.intel.com/content/www/us/en/support.html", "https://www.intel.com/content/www/us/en/homepage.html"),
+    ], "verified_at": "2026-10-31"},
+    "last.fm": {"paths": [
+        _help("https://www.last.fm/about/contact", "https://www.last.fm/"),
+    ], "verified_at": "2026-10-31"},
 }
 
 

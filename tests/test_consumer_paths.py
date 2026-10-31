@@ -96,11 +96,12 @@ def space():
 
 # --- The seed table ---------------------------------------------------------------------------------------------------
 
-def test_the_first_seed_covers_ten_to_twenty_consumer_hosts_with_a_developer_entry():
-    assert 10 <= len(CONSUMER_PATHS) <= 20
+def test_the_seed_covers_consumer_hosts_with_a_developer_entry():
+    assert len(CONSUMER_PATHS) >= 10
     for host in CONSUMER_PATHS:
         entry = OFFICIAL_PATHS[host]
-        assert entry["api_docs"] or entry["developer_portal"], host  # the wrong answer D61 fixes needs a developer path
+        # the wrong answer D61 fixes needs a developer answer: a path, or a note saying there is no public API
+        assert entry["api_docs"] or entry["developer_portal"] or entry["note"], host
     assert {"walgreens.com", "walmart.com"} <= set(CONSUMER_PATHS)
     # Its pages answered with a captcha or 403 to the curation agent, so it is listed as left out, not curated.
     assert "amazon.com" not in CONSUMER_PATHS
@@ -118,8 +119,7 @@ def test_every_entry_passes_the_rules_and_the_model(host):
 
 def test_no_phone_number_or_tel_link_is_copied_into_the_table():
     text = json.dumps(CONSUMER_PATHS)
-    assert not PHONE.search(text.replace("id311548709", "").replace("id407558537", "").replace("id416023011", "")
-                            .replace("id368677368", "").replace("id283646709", "")), PHONE.search(text)
+    assert not PHONE.search(re.sub(r"/id\d+", "", text)), PHONE.search(text)  # store listing identifiers are not phone numbers
     assert "tel:" not in text and "sms:" not in text
 
 
