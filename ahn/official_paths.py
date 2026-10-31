@@ -1851,6 +1851,112 @@ for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so",
     OFFICIAL_ACCESS[_alias] = OFFICIAL_ACCESS[_primary]
 
 
+# The site's own customer path (D61), answered as official_paths.consumer for some table keys. A developer API is the path
+# for building on a site's data; it may not reach a person's own account there (refill a prescription, pay a bill, change
+# a booking), though some do through OAuth. For hosts with a clear consumer service this table lists where the site itself sends people:
+#   customer_help  the site's own help centre or contact page (a phone number is never copied: the page is linked instead);
+#   official_app   an App Store or Google Play listing that the site's own page links to;
+#   entry_link     a public entry point the site itself links to for a common customer task.
+# Every entry was read on verified_at with the curation user agent, after that host's robots.txt allowed it. url is the page
+# itself; source_url is the site's own page where the link was found (the same page for a help centre reached directly).
+# url and source_url are on the key's registrable domain, except an official_app url, which is on a store host and must be
+# linked from source_url. Store URLs keep only the listing identifier (no campaign parameters). Nothing here is guessed:
+# a page that refused the read, or a link not found on the site's own page, is left out. Procedure: scripts/README.md.
+CONSUMER_KINDS = ("customer_help", "official_app", "entry_link")
+CONSUMER_STORE_HOSTS = frozenset({"apps.apple.com", "play.google.com"})
+CONSUMER_MAX_PATHS = 6
+# A consumer entry older than this is left out of answers until it is verified again (same age as access bundles).
+CONSUMER_MAX_AGE_DAYS = 90
+
+
+def _help(url: str, source_url: str | None = None) -> dict:
+    return {"kind": "customer_help", "url": url, "source_url": source_url or url}
+
+
+def _app(url: str, source_url: str) -> dict:
+    return {"kind": "official_app", "url": url, "source_url": source_url}
+
+
+def _entry_link(url: str, source_url: str) -> dict:
+    return {"kind": "entry_link", "url": url, "source_url": source_url}
+
+
+CONSUMER_PATHS: dict[str, dict] = {
+    "walgreens.com": {"paths": [
+        _help("https://www.walgreens.com/topic/help/default.jsp", "https://www.walgreens.com/"),
+        _help("https://www.walgreens.com/mktg/contactus/contact-us-landing.jsp", "https://www.walgreens.com/"),
+        _entry_link("https://www.walgreens.com/rx-checkout/guest-express-refill", "https://www.walgreens.com/"),
+    ], "verified_at": "2026-10-31"},
+    "walmart.com": {"paths": [
+        _help("https://www.walmart.com/help", "https://www.walmart.com/"),
+    ], "verified_at": "2026-10-31"},
+    "target.com": {"paths": [
+        # corporate.target.com "Contact & Help" links contactus.target.com/ContactUs, which redirects here.
+        _help("https://www.target.com/help/contact-us", "https://corporate.target.com/about/contact-help"),
+    ], "verified_at": "2026-10-31"},
+    "chase.com": {"paths": [
+        _help("https://www.chase.com/digital/customer-service", "https://www.chase.com/"),
+        _help("https://www.chase.com/personal/personal-banking-contact", "https://www.chase.com/digital/customer-service"),
+    ], "verified_at": "2026-10-31"},
+    "wellsfargo.com": {"paths": [
+        _help("https://www.wellsfargo.com/help/", "https://www.wellsfargo.com/"),
+        _help("https://www.wellsfargo.com/help/contact-us/", "https://www.wellsfargo.com/help/"),
+        _app("https://apps.apple.com/us/app/wells-fargo-mobile/id311548709", "https://www.wellsfargo.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.wf.wellsfargomobile", "https://www.wellsfargo.com/"),
+    ], "verified_at": "2026-10-31"},
+    "capitalone.com": {"paths": [
+        _help("https://www.capitalone.com/help-center/", "https://www.capitalone.com/"),
+        _help("https://www.capitalone.com/help-center/contact-us/", "https://www.capitalone.com/"),
+        _app("https://apps.apple.com/us/app/capital-one-mobile/id407558537", "https://www.capitalone.com/digital/tools/mobile/"),
+    ], "verified_at": "2026-10-31"},
+    "americanexpress.com": {"paths": [
+        _help("https://www.americanexpress.com/us/customer-service/", "https://www.americanexpress.com/"),
+        _help("https://www.americanexpress.com/en-us/support/contacts/", "https://www.americanexpress.com/"),
+    ], "verified_at": "2026-10-31"},
+    "verizon.com": {"paths": [
+        _help("https://www.verizon.com/support/", "https://www.verizon.com/"),
+        _app("https://apps.apple.com/us/app/my-verizon/id416023011", "https://www.verizon.com/solutions-and-services/my-verizon-mobile/"),
+        _app("https://play.google.com/store/apps/details?id=com.vzw.hss.myverizon",
+             "https://www.verizon.com/solutions-and-services/my-verizon-mobile/"),
+    ], "verified_at": "2026-10-31"},
+    "usps.com": {"paths": [
+        _help("https://faq.usps.com/s/", "https://www.usps.com/"),
+        _help("https://www.usps.com/help/contact-us.htm", "https://www.usps.com/"),
+    ], "verified_at": "2026-10-31"},
+    "uber.com": {"paths": [
+        _help("https://help.uber.com/", "https://www.uber.com/"),
+        _app("https://apps.apple.com/us/app/uber-rides-eats-hotels/id368677368", "https://help.uber.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.ubercab", "https://help.uber.com/"),
+    ], "verified_at": "2026-10-31"},
+    "paypal.com": {"paths": [
+        _help("https://www.paypal.com/us/cshelp/personal", "https://www.paypal.com/us/home"),
+        _app("https://apps.apple.com/us/app/paypal-pay-send-save/id283646709", "https://www.paypal.com/us/digital-wallet"),
+        _app("https://play.google.com/store/apps/details?id=com.paypal.android.p2pmobile", "https://www.paypal.com/us/digital-wallet"),
+    ], "verified_at": "2026-10-31"},
+    "spotify.com": {"paths": [
+        _help("https://support.spotify.com/us/"),
+        _help("https://support.spotify.com/us/article/contact-us/", "https://support.spotify.com/us/"),
+    ], "verified_at": "2026-10-31"},
+}
+
+
+def consumer_is_current(consumer: dict, today: date | None = None) -> bool:
+    """True while verified_at is at most CONSUMER_MAX_AGE_DAYS old (and not in the future)."""
+    today = today or datetime.now(timezone.utc).date()
+    age = (today - date.fromisoformat(consumer["verified_at"])).days
+    return 0 <= age <= CONSUMER_MAX_AGE_DAYS
+
+
+def customer_url(official: dict | None) -> str | None:
+    """The one consumer URL a next step points to: the first help page, else the first entry link, else the first app."""
+    paths = ((official or {}).get("consumer") or {}).get("paths") or []
+    for kind in ("customer_help", "entry_link", "official_app"):
+        for item in paths:
+            if item.get("kind") == kind and item.get("url"):
+                return item["url"]
+    return None
+
+
 def access_is_current(access: dict, today: date | None = None) -> bool:
     """True while verified_at is at most ACCESS_MAX_AGE_DAYS old (and not in the future)."""
     today = today or datetime.now(timezone.utc).date()
@@ -1861,7 +1967,8 @@ def access_is_current(access: dict, today: date | None = None) -> bool:
 def official_paths(site_host: str, today: date | None = None) -> dict | None:
     """Exact apex match first, then the apex of any subdomain; returns a copy or None.
 
-    The copy carries `access` only when the key has a bundle that is still current; otherwise the key is absent.
+    The copy carries `access` only when the key has a bundle that is still current, and `consumer` (D61) only when the
+    key has a consumer entry that is still current; otherwise each key is absent.
     """
     host = site_host.strip().rstrip(".").lower()
     labels = host.split(".")
@@ -1873,5 +1980,8 @@ def official_paths(site_host: str, today: date | None = None) -> dict | None:
             access = OFFICIAL_ACCESS.get(key)
             if access is not None and access_is_current(access, today):
                 result["access"] = copy.deepcopy(access)
+            consumer = CONSUMER_PATHS.get(key)
+            if consumer is not None and consumer_is_current(consumer, today):
+                result["consumer"] = copy.deepcopy(consumer)
             return result
     return None

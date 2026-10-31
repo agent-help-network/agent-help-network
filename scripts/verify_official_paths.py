@@ -22,6 +22,15 @@ Exit code 1 when any URL is not ok, a quote or endpoint is not found, or a rule 
     python scripts/verify_official_paths.py                 # whole table and every access bundle
     python scripts/verify_official_paths.py --hosts a.com,b.org --json work/official-paths.json
     python scripts/verify_official_paths.py --access-only --hosts stripe.com   # one access bundle
+    python scripts/verify_official_paths.py --consumer-only                    # consumer paths (D61)
+
+Consumer paths (CONSUMER_PATHS, D61) are the sites' own help pages, store listings and entry links, so --consumer-only
+reads each hostname's robots.txt before its first request there (redirect targets included) and requests nothing it
+disallows for the curation user agent. A robots.txt answering 5xx or timing out counts as disallowing everything; its
+redirects are followed (RFC 9309); 401/403/429 refuse the host. The first 403 or bot-challenge page on a hostname (a
+challenge is also recognised from the visible text when the title says nothing) stops every later request there. Every
+url must be linked (href, normalised) from its source_url page, unless it is that page, and must not redirect: the
+listed address is the final one. That mode makes no other request.
 """
 
 from __future__ import annotations
@@ -36,16 +45,19 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from urllib.robotparser import RobotFileParser  # noqa: E402
+
 from ahn.models import valid_host  # noqa: E402
-from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, OFFICIAL_ACCESS,  # noqa: E402
-                                OFFICIAL_PATHS, access_is_current)
+from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, CONSUMER_KINDS,  # noqa: E402
+                                CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
+                                access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
@@ -413,6 +425,188 @@ def text_contains(page: str, needle: str) -> bool:
     return bool(needle.strip()) and _squash(needle) in _squash(page)
 
 
+# --- Consumer paths (D61): pure checks (also run by tests/test_consumer_paths.py) ------------------------------------
+
+SAFE_CONSUMER_URL = re.compile(r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%+=&?#-]*)?$")  # what next_action.customer_url accepts
+
+
+def store_link_key(url: str) -> str | None:
+    """A store listing reduced to what identifies the app: an App Store path without its query, or a Google Play
+    details path with only its id parameter. None when the URL is not a store listing."""
+    parts = urlsplit(url)
+    name = (parts.hostname or "").lower()
+    if name in {"apps.apple.com", "itunes.apple.com"} and re.search(r"/id\d+$", parts.path.rstrip("/")):
+        return "https://apps.apple.com" + parts.path.rstrip("/")
+    if name == "play.google.com" and parts.path.rstrip("/") == "/store/apps/details":
+        found = re.search(r"(?:^|&)id=([A-Za-z0-9._]+)(?:&|$)", parts.query)
+        return f"https://play.google.com/store/apps/details?id={found.group(1)}" if found else None
+    return None
+
+
+def consumer_problems(host: str, consumer, today: date | None = None) -> list[str]:
+    """Rule violations in one CONSUMER_PATHS entry: shape, kinds, the size limit, verified_at, plain public https URLs
+    that next_action.customer_url can carry, site-owned pages (a store listing only for official_app, in canonical form)."""
+    problems: list[str] = []
+
+    def add(field: str, problem: str | None) -> None:
+        if problem:
+            problems.append(f"{host}: consumer.{field}: {problem}")
+
+    shape = _object_problems(consumer, {"paths", "verified_at"})
+    if shape:
+        add("*", shape[0])
+        return problems
+    verified = consumer["verified_at"]
+    try:
+        verified_on = date.fromisoformat(verified) if isinstance(verified, str) and len(verified) == 10 else None
+    except ValueError:
+        verified_on = None
+    if verified_on is None:
+        add("verified_at", "must be an ISO date YYYY-MM-DD")
+    elif verified_on > (today or datetime.now(timezone.utc).date()):
+        add("verified_at", "is in the future")
+    paths = consumer["paths"]
+    if not isinstance(paths, list) or not paths:
+        add("paths", "must be a non-empty list")
+        return problems
+    if len(paths) > CONSUMER_MAX_PATHS:
+        add("paths", f"at most {CONSUMER_MAX_PATHS} paths")
+    seen: set[str] = set()
+    site = registrable(host)
+    for item in paths:
+        shape = _object_problems(item, {"kind", "url", "source_url"})
+        if shape:
+            add("paths", shape[0])
+            continue
+        kind, url, source = item["kind"], item["url"], item["source_url"]
+        if kind not in CONSUMER_KINDS:
+            add("paths", f"unknown kind {kind!r}; allowed: {', '.join(CONSUMER_KINDS)}")
+        for field, value in (("url", url), ("source_url", source)):
+            if not isinstance(value, str) or len(value) > 200 or not SAFE_CONSUMER_URL.fullmatch(value):
+                add(f"paths.{field}", f"not a plain https URL of at most 200 characters: {value!r}")
+                continue
+            parts = urlsplit(value)
+            try:
+                public = valid_host(parts.hostname or "") == parts.netloc
+            except ValueError:
+                public = False
+            if not public:
+                add(f"paths.{field}", f"not a public hostname: {value}")
+            elif SIGN_IN.search(parts.path):
+                add(f"paths.{field}", f"a sign-in page: {value}")
+        if not isinstance(url, str) or not isinstance(source, str):
+            continue
+        url_host = (urlsplit(url).hostname or "").lower()
+        if kind == "official_app":
+            if url_host not in CONSUMER_STORE_HOSTS:
+                add("paths.url", f"an official_app URL must be an App Store or Google Play listing: {url}")
+            elif store_link_key(url) != url:
+                add("paths.url", f"keep only the listing identifier (no campaign parameters): {url}")
+        elif registrable(url_host) != site:
+            add("paths.url", f"not on the site's own domain: {url}")
+        if registrable(urlsplit(source).hostname or "") != site:
+            add("paths.source_url", f"not on the site's own domain: {source}")
+        if url in seen:
+            add("paths.url", f"listed twice: {url}")
+        seen.add(url)
+    return problems
+
+
+def store_links(body: bytes, base: str) -> set[str]:
+    """Canonical store listings linked (href) from a page."""
+    found = set()
+    for href in re.findall(rb"href\s*=\s*[\"']([^\"']+)[\"']", body, re.IGNORECASE):
+        key = store_link_key(urljoin(base, html.unescape(href.decode("utf-8", "replace"))))
+        if key:
+            found.add(key)
+    return found
+
+
+# A bot wall recognised from the visible text when the title says nothing (an interstitial titled with the brand name).
+# STRONG markers count anywhere near the top of a page; the weaker BOT_WALL words only on a short page, because a long help
+# page may mention a captcha or "access denied" in passing.
+BOT_TEXT_STRONG = re.compile(r"enter the characters you see|type the characters you see|verify (?:that )?you are (?:a )?human|"
+                             r"checking your browser|checking if the site connection is secure|press (?:&|and) hold", re.IGNORECASE)
+BOT_TEXT_SHORT = 6000
+BOT_SCAN = 2_000_000
+REDIRECTS = frozenset({301, 302, 303, 307, 308})
+REFUSED = frozenset({202, 401, 403, 429})
+LINK_REDIRECT_FOLLOWS = 3
+
+
+def bot_page(title: str, body: bytes) -> bool:
+    """A challenge or bot-wall page, from its title or, when the title says nothing, from its visible text."""
+    if BOT_WALL.search(title or ""):
+        return True
+    text = " ".join(page_text(body[:BOT_SCAN]).split())
+    if BOT_TEXT_STRONG.search(text[:BOT_TEXT_SHORT]):
+        return True
+    return len(text) <= BOT_TEXT_SHORT and bool(BOT_WALL.search(text))
+
+
+def store_app_id(url: str) -> tuple[str, str] | None:
+    """("apple", digits) or ("play", package) for a store listing; the name part of an App Store path is cosmetic."""
+    key = store_link_key(url)
+    if key is None:
+        return None
+    if key.startswith("https://apps.apple.com"):
+        return "apple", re.search(r"/id(\d+)$", key).group(1)
+    return "play", key.split("id=", 1)[1]
+
+
+def link_key(url: str):
+    """What a link is compared by: a store listing by its app id; a page by host, path (trailing slash, case of the
+    host and percent-encoding folded; scheme ignored) and its query pairs. A fragment never counts."""
+    app = store_app_id(url)
+    if app:
+        return app
+    parts = urlsplit(url)
+    if parts.scheme not in {"https", "http"} or not parts.hostname:
+        return None
+    return "page", parts.hostname.lower(), unquote(parts.path).rstrip("/") or "/", frozenset(parse_qsl(parts.query))
+
+
+def page_hrefs(body: bytes, base: str) -> list[str]:
+    """Absolute href targets on a page, in order, without duplicates."""
+    found: dict[str, None] = {}
+    for href in re.findall(rb"href\s*=\s*[\"']([^\"']+)[\"']", body, re.IGNORECASE):
+        found[urljoin(base, html.unescape(href.decode("utf-8", "replace")).strip())] = None
+    return list(found)
+
+
+def linked(url: str, hrefs) -> bool:
+    """url is linked by one of hrefs: the same app, or the same host and path with at least url's query pairs (a link
+    may add tracking parameters, never drop one the listed URL has)."""
+    want = link_key(url)
+    if want is None:
+        return False
+    for href in hrefs:
+        have = link_key(href)
+        if have is None or have[0] != want[0]:
+            continue
+        if want[0] != "page" and have == want:
+            return True
+        if want[0] == "page" and have[1:3] == want[1:3] and want[3] <= have[3]:
+            return True
+    return False
+
+
+def redirect_candidates(hrefs, site: set[str], url: str, base: str) -> list[str]:
+    """Links on a source page to another hostname of the same site whose address shares a word (4+ letters) with the
+    listed url's path (contactus.example.com/ContactUs for /help/contact-us): such a link may redirect to the listed url,
+    which is then accepted only when the followed redirect ends exactly there. At most LINK_REDIRECT_FOLLOWS are followed."""
+    skip = {(urlsplit(url).hostname or "").lower(), (urlsplit(base).hostname or "").lower()}
+    words = {word for word in re.split(r"[^a-z]+", urlsplit(url).path.lower()) if len(word) >= 4}
+    out = []
+    for href in hrefs:
+        parts = urlsplit(href)
+        name = (parts.hostname or "").lower()
+        address = (name + parts.path).lower()
+        if parts.scheme == "https" and name not in skip and registrable(name) in site and any(word in address for word in words):
+            out.append(href)
+    return out[:LINK_REDIRECT_FOLLOWS]
+
+
 # --- Live checks ----------------------------------------------------------------------------------------------------
 
 def table_urls(hosts: set[str] | None = None, *, paths: bool = True, access: bool = True) -> dict[str, list[tuple[str, str]]]:
@@ -530,13 +724,173 @@ class Fetcher:
         return row, (body if result == "ok" else b"")
 
 
+class ConsumerCheck:
+    """Live check of consumer paths (D61) through a Fetcher (or a test double with the same _get, public_host and
+    requests). Etiquette: robots.txt of every hostname before its first page (redirect targets too); a refused or
+    unreachable robots.txt, or the first refused page or challenge, stops that hostname for the rest of the run."""
+
+    def __init__(self, fetcher, out=print) -> None:
+        self.fetcher, self.out = fetcher, out
+        self.robots: dict[str, RobotFileParser | str] = {}
+        self.stopped: dict[str, str] = {}
+        self.pages: dict[str, tuple[dict, bytes]] = {}
+
+    def _read_robots(self, name: str) -> RobotFileParser | str:
+        url = f"https://{name}/robots.txt"
+        for _ in range(MAX_HOPS + 1):
+            parts = urlsplit(url)
+            if parts.scheme != "https" or not self.fetcher.public_host((parts.hostname or "").lower()):
+                return "robots_unreachable"
+            try:
+                status, location, title, body = self.fetcher._get(url, True)
+            except httpx.HTTPError:
+                return "robots_unreachable"  # a timeout or transport error: everything is disallowed (RFC 9309 2.3.1.4)
+            if status in REDIRECTS and location:
+                url = urljoin(url, location)  # followed (RFC 9309 2.3.1.2); the rules apply to the original hostname
+                continue
+            break
+        else:
+            return "robots_unreachable"
+        if status in {401, 403, 429}:
+            return f"blocked:robots_{status}"
+        if status is None or status >= 500 or status in REDIRECTS:
+            return "robots_unreachable"
+        if status == 200 and bot_page(title, body):
+            return "blocked:robots_challenge"
+        parser = RobotFileParser()
+        parser.parse(body.decode("utf-8", "replace").splitlines() if status == 200 else [])  # other 4xx: no rules
+        return parser
+
+    def refusal(self, url: str) -> str | None:
+        name = (urlsplit(url).hostname or "").lower()
+        if name in self.stopped:
+            return f"skipped:{self.stopped[name]}"
+        if name not in self.robots:
+            self.robots[name] = self._read_robots(name)
+        rule = self.robots[name]
+        if isinstance(rule, str):
+            self.stopped[name] = rule
+            return rule
+        return None if rule.can_fetch(USER_AGENT, url) else "robots_disallowed"
+
+    def fetch(self, url: str, allowed: set[str]) -> tuple[dict, bytes]:
+        current, hops, retried, status, title, body = url, 0, False, None, "", b""
+        result = None
+        while True:
+            parts = urlsplit(current)
+            name = (parts.hostname or "").lower()
+            if parts.scheme != "https":
+                result = "not_https"
+                break
+            result = self.refusal(current)
+            if result:
+                break
+            if not self.fetcher.public_host(name):
+                result = "not_public_address"
+                break
+            try:
+                status, location, title, body = self.fetcher._get(current, True)
+            except httpx.HTTPError as exc:
+                if not retried:
+                    retried = True
+                    continue
+                result = f"error:{type(exc).__name__}"
+                break
+            if status in {500, 502, 503, 504} and not retried:
+                retried = True
+                continue
+            if status in REDIRECTS and location and hops < MAX_HOPS:
+                current, hops = urljoin(current, location), hops + 1
+                continue
+            final = urlsplit(current)
+            if status in REFUSED:
+                result = f"blocked:{status}"
+            elif status != 200:
+                result = f"status:{status}"
+            elif registrable(name) not in allowed:
+                result = f"foreign_host:{name}"
+            elif "challenge" in final.path.lower() or name.startswith("unblock.") or bot_page(title, body):
+                result = "blocked:challenge"
+            elif current != url and SIGN_IN.search(final.path):
+                result = "sign_in_page"
+            elif NOT_FOUND.search(title) or SITE_DOWN.search(title):
+                result = "not_found_title"
+            else:
+                result = "ok"
+            if result.startswith("blocked:"):
+                self.stopped[name] = result  # the first refusal on a hostname ends this run there
+            break
+        row = {"url": url, "final_url": current, "status": status, "hops": hops, "title": title, "result": result}
+        return row, (body if result == "ok" else b"")
+
+    def page(self, url: str, allowed: set[str]) -> tuple[dict, bytes]:
+        if url not in self.pages:
+            self.pages[url] = self.fetch(url, allowed)
+            row = self.pages[url][0]
+            moved = f" -> {row['final_url']}" if row["final_url"] != url else ""
+            self.out(f"{row['result']:<24} {row['status']!s:<4} {url}{moved}")
+        return self.pages[url]
+
+    def linked_from(self, url: str, body: bytes, base: str, site: set[str]) -> bool:
+        hrefs = page_hrefs(body, base)
+        if linked(url, hrefs):
+            return True
+        for href in redirect_candidates(hrefs, site, url, base):
+            row, _ = self.page(href, site)
+            if row["result"] == "ok" and linked(url, [row["final_url"]]):
+                return True
+        return False
+
+    def run(self, table: dict[str, dict], keys) -> list[str]:
+        failures: list[str] = []
+        for host in keys:
+            site = {registrable(host)}
+            for item in table[host]["paths"]:
+                kind, url, source_url = item["kind"], item["url"], item["source_url"]
+                source, source_body = self.page(source_url, site)
+                if source["result"] != "ok":
+                    failures.append(f"{host}: source_url {source['result']}: {source_url}")
+                elif url != source_url and not self.linked_from(url, source_body, source["final_url"], site):
+                    failures.append(f"{host}: {kind} not linked from its source_url page: {url}")
+                target, _ = self.page(url, {"apple.com", "google.com"} if kind == "official_app" else site)
+                if target["result"] != "ok":
+                    failures.append(f"{host}: url {target['result']}: {url}")
+                elif target["final_url"] != url:
+                    failures.append(f"{host}: url redirects; list the final address: {url} -> {target['final_url']}")
+        return failures
+
+
+def check_consumer(hosts: set[str] | None) -> int:
+    """Live check of CONSUMER_PATHS (D61) with ConsumerCheck. Exit code 1 on any failure or rule problem."""
+    keys = [host for host in CONSUMER_PATHS if not hosts or host in hosts]
+    problems = [line for host in keys for line in consumer_problems(host, CONSUMER_PATHS[host])]
+    problems += [f"{host}: consumer entry for a host that is not in OFFICIAL_PATHS" for host in keys if host not in OFFICIAL_PATHS]
+    fetcher = Fetcher()
+    checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
+    failures = checker.run(CONSUMER_PATHS, keys)
+    for line in problems + failures:
+        print(f"consumer: {line}")
+    for host in keys:
+        if not consumer_is_current(CONSUMER_PATHS[host]):
+            print(f"stale: {host} consumer verified_at {CONSUMER_PATHS[host]['verified_at']} is left out of answers until re-verified")
+    for name, reason in sorted(checker.stopped.items()):
+        print(f"stopped: {name} {reason}")
+    print(f"\nconsumer hosts: {len(keys)}; pages: {len(checker.pages)}; failures: {len(failures)}; rule problems: {len(problems)}; "
+          f"requests: {fetcher.requests}")
+    return 1 if problems or failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--hosts", help="comma-separated table keys to check (default: all)")
     parser.add_argument("--access-only", action="store_true", help="check only access bundles (URLs, quotes, MCP endpoints)")
+    parser.add_argument("--consumer-only", action="store_true",
+                        help="check only consumer paths (D61): robots.txt first, then each page, and store links on the source page")
     parser.add_argument("--json", type=Path, help="write per-URL and per-host results to this file")
     args = parser.parse_args()
     hosts = {h.strip() for h in args.hosts.split(",") if h.strip()} if args.hosts else None
+    if args.consumer_only:
+        return check_consumer(hosts)
     access_hosts = [host for host in OFFICIAL_ACCESS if not hosts or host in hosts]
     problems = [line for host in access_hosts for line in access_problems(host, OFFICIAL_ACCESS[host])]
     problems += [f"{host}: access bundle for a host that is not in OFFICIAL_PATHS" for host in access_hosts if host not in OFFICIAL_PATHS]
