@@ -19,9 +19,11 @@
   `retry_after_seconds` in every case; now `retry_after_seconds` is `None` after a stop, a hand-off or an official path, so
   this keeps it). The name follows the service's wording ("look up once more") and says it is not a site wait; it is never
   combined with the site's Retry-After. langchain-ahn passes it on in its JSON.
-- Without a usable `next_action` (an older service, `AHN_RESPONSE_GUIDE=0`, or a `do` this version does not know) the same
-  rule is read from `recommendation`: for `stop_declared_block`, `hand_off_to_human` and `use_official_path` the site's
-  Retry-After is not merged. A `do` this version does not know never merges.
+- When to merge the site's Retry-After: with a readable `next_action`, by its `do`; a `next_action` whose `do` this version
+  does not know never merges. Without a `next_action` (an older service, `AHN_RESPONSE_GUIDE=0`) the verdict as the service
+  sent it decides, and only `proceed`, `wait_provider_incident` or an explicit `unknown` merge; `stop_declared_block`,
+  `hand_off_to_human`, `use_official_path` and any verdict this version does not know (shown as `unknown` in
+  `recommendation`) do not.
 - `Result.remember`: one fixed sentence for the next task on the host, made from `next_action` alone (for example
   "For example.com, start with the official path: ..."). No new judgement; `None` for states that pass (a provider wait, a hand-off).
 - `NextAction` is exported.

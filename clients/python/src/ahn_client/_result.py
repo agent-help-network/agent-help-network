@@ -279,12 +279,15 @@ class Result:
     def _merges_site(self) -> bool:
         """The one gate for every use of the site's Retry-After: True only when the answer means "come back later".
         With a ``next_action`` that is ``do`` in ``WAIT_DO``; with a ``next_action`` key this client cannot read (a ``do`` it does
-        not know) never; with an older service (no key) the verdict decides (``WAIT_ACTIONS``)."""
+        not know) never; with an older service (no key) the verdict as the service sent it decides: only ``proceed``,
+        ``wait_provider_incident`` or an explicit ``unknown`` (``WAIT_ACTIONS``). A verdict this version does not know is
+        normalised to ``unknown`` in ``recommendation`` but is read here from ``raw``, so it never merges."""
         if self.next_action is not None:
             return self.next_action.do in WAIT_DO
         if self.raw.get("next_action") is not None:
             return False
-        return self.recommendation in WAIT_ACTIONS
+        sent = (_dict(self.raw.get("recommendation")) or {}).get("action")
+        return isinstance(sent, str) and sent in WAIT_ACTIONS
 
     @property
     def retry_after_seconds(self) -> Optional[int]:

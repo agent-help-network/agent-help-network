@@ -437,3 +437,10 @@ def test_an_older_stop_answer_carries_no_site_wait_and_a_pending_profile_keeps_i
     assert data["lookup_again_seconds"] == 45 and "retry_after_seconds" not in data
     assert data["next_action"] == {"do": "use_official_path", "url": "https://developer.example.com/apis"}
     assert "Retry-After" not in summary
+
+def test_an_older_answer_with_an_unknown_verdict_carries_no_site_wait(transport):
+    odd = {**ANSWER, "recommendation": {"action": "stop_forever", "confidence": "high", "reasons": []},
+           "summary_line": "The site's robots.txt explicitly blocks agent user agents at the site root. Stop automated retries."}
+    transport(body=odd)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
+    assert data["recommendation"] == "unknown" and "retry_after_seconds" not in data and "Retry-After" not in summary
