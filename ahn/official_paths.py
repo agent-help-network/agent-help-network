@@ -2035,21 +2035,6 @@ CONSUMER_PATHS: dict[str, dict] = {
     "affirm.com": {"paths": [
         _help("https://helpcenter.affirm.com/s/", "https://www.affirm.com/"),
     ], "verified_at": "2026-10-31"},
-    "expedia.com": {"paths": [
-        _help("https://www.expedia.com/helpcenter/", "https://www.expedia.com/"),
-    ], "verified_at": "2026-10-31"},
-    "orbitz.com": {"paths": [
-        # the home page links /p/support.htm, which redirects here.
-        _help("https://www.orbitz.com/helpcenter"),
-    ], "verified_at": "2026-10-31"},
-    "travelocity.com": {"paths": [
-        # the home page links /p/support.htm, which redirects here.
-        _help("https://www.travelocity.com/helpcenter"),
-    ], "verified_at": "2026-10-31"},
-    "cheaptickets.com": {"paths": [
-        # the home page links /customer-service, which redirects here.
-        _help("https://www.cheaptickets.com/helpcenter"),
-    ], "verified_at": "2026-10-31"},
     "flightaware.com": {"paths": [
         _help("https://www.flightaware.com/about/faq/", "https://www.flightaware.com/"),
     ], "verified_at": "2026-10-31"},
@@ -2106,6 +2091,143 @@ CONSUMER_PATHS: dict[str, dict] = {
     "last.fm": {"paths": [
         _help("https://www.last.fm/about/contact", "https://www.last.fm/"),
     ], "verified_at": "2026-10-31"},
+    # Consumer-only hosts (D64): no OFFICIAL_PATHS entry, so official_paths answers with consumer only.
+    "cvs.com": {"paths": [
+        _help("https://www.cvs.com/retail/help/help_index", "https://www.cvs.com/"),
+        _help("https://www.cvs.com/retail/help/help_contact_us", "https://www.cvs.com/"),
+        _entry_link("https://www.cvs.com/store-locator/landing", "https://www.cvs.com/"),
+        _app("https://apps.apple.com/us/app/cvs-health/id395545555", "https://www.cvs.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.cvs.launchers.cvs", "https://www.cvs.com/"),
+    ], "verified_at": "2026-10-31"},
+    "jetblue.com": {"paths": [
+        _help("https://www.jetblue.com/contact-us", "https://www.jetblue.com/"),
+    ], "verified_at": "2026-10-31"},
+    "nike.com": {"paths": [
+        _help("https://www.nike.com/help", "https://www.nike.com/"),
+    ], "verified_at": "2026-10-31"},
+    "ikea.com": {"paths": [
+        _help("https://www.ikea.com/global/en/support/faq/", "https://www.ikea.com/"),
+    ], "verified_at": "2026-10-31"},
+    "progressive.com": {"paths": [
+        _help("https://www.progressive.com/contact-us/", "https://www.progressive.com/"),
+    ], "verified_at": "2026-10-31"},
+    "statefarm.com": {"paths": [
+        _help("https://www.statefarm.com/help-center/account-management", "https://www.statefarm.com/"),
+        _entry_link("https://www.statefarm.com/claims", "https://www.statefarm.com/"),
+        _app("https://apps.apple.com/us/app/state-farm/id318142137", "https://www.statefarm.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.statefarm.pocketagent", "https://www.statefarm.com/"),
+    ], "verified_at": "2026-10-31"},
+    "peacocktv.com": {"paths": [
+        _help("https://www.peacocktv.com/help", "https://www.peacocktv.com/"),
+        _entry_link("https://www.peacocktv.com/gift-cards", "https://www.peacocktv.com/"),
+        _app("https://apps.apple.com/us/app/peacock-tv-stream-tv-movies/id1508186374", "https://www.peacocktv.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.peacocktv.peacockandroid", "https://www.peacocktv.com/"),
+    ], "verified_at": "2026-10-31"},
+    "sling.com": {"paths": [
+        _help("https://www.sling.com/help/en"),
+        _entry_link("https://www.sling.com/deals/gift-card", "https://www.sling.com/"),
+    ], "verified_at": "2026-10-31"},
+    "siriusxm.com": {"paths": [
+        _help("https://www.siriusxm.com/help", "https://www.siriusxm.com/"),
+    ], "verified_at": "2026-10-31"},
+    "lyft.com": {"paths": [
+        _help("https://help.lyft.com/hc/en-us/rider/categories/2872191865", "https://www.lyft.com/click/pax-help-center"),
+    ], "verified_at": "2026-10-31"},
+    "visible.com": {"paths": [
+        _help("https://www.visible.com/help", "https://www.visible.com/"),
+        _app("https://apps.apple.com/us/app/visible-mobile/id1367950045", "https://www.visible.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.visiblemobile.flagship", "https://www.visible.com/"),
+    ], "verified_at": "2026-10-31"},
+    "cricketwireless.com": {"paths": [
+        _help("https://www.cricketwireless.com/support", "https://www.cricketwireless.com/"),
+        _help("https://www.cricketwireless.com/contactus", "https://www.cricketwireless.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.cricketwireless.trycricket", "https://www.cricketwireless.com/"),
+    ], "verified_at": "2026-10-31"},
+    "boostmobile.com": {"paths": [
+        _help("https://help.boostmobile.com/", "https://www.boostmobile.com/"),
+        _entry_link("https://www.boostmobile.com/locations/locator/", "https://www.boostmobile.com/"),
+    ], "verified_at": "2026-10-31"},
+    "dish.com": {"paths": [
+        _help("https://support.dish.com", "https://www.dish.com/"),
+    ], "verified_at": "2026-10-31"},
+    "cash.app": {"paths": [
+        _help("https://cash.app/help", "https://cash.app/"),
+    ], "verified_at": "2026-10-31"},
+    "publix.com": {"paths": [
+        _help("https://www.publix.com/contact", "https://www.publix.com/"),
+        _entry_link("https://www.publix.com/gift-cards", "https://www.publix.com/"),
+    ], "verified_at": "2026-10-31"},
+    "enterprise.com": {"paths": [
+        _help("https://www.enterprise.com/en/help/contact.html", "https://www.enterprise.com/en/home.html"),
+        _app("https://play.google.com/store/apps/details?id=com.ehi.enterprise.android", "https://www.enterprise.com/en/home.html"),
+    ], "verified_at": "2026-10-31"},
+    "avis.com": {"paths": [
+        _help("https://www.avis.com/en/customer-service", "https://www.avis.com/en/home"),
+    ], "verified_at": "2026-10-31"},
+    "petsmart.com": {"paths": [
+        _help("https://www.petsmart.com/help", "https://www.petsmart.com/"),
+        _help("https://www.petsmart.com/account/contact", "https://www.petsmart.com/"),
+        _entry_link("https://www.petsmart.com/gift-cards/", "https://www.petsmart.com/"),
+    ], "verified_at": "2026-10-31"},
+    "academy.com": {"paths": [
+        _help("https://www.academy.com/help", "https://www.academy.com/"),
+        _entry_link("https://www.academy.com/c/shops/gift-card-shop", "https://www.academy.com/"),
+        _app("https://apps.apple.com/us/app/academy-sports-outdoors/id1572699554", "https://www.academy.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.academy.android", "https://www.academy.com/"),
+    ], "verified_at": "2026-10-31"},
+    "travelers.com": {"paths": [
+        _help("https://www.travelers.com/contact-us", "https://www.travelers.com/"),
+    ], "verified_at": "2026-10-31"},
+    "coned.com": {"paths": [
+        _help("https://www.coned.com/en/faqs/frequently-asked-questions", "https://www.coned.com/en/"),
+        _help("https://www.coned.com/en/contact-us", "https://www.coned.com/en/"),
+    ], "verified_at": "2026-10-31"},
+    "pge.com": {"paths": [
+        _help("https://www.pge.com/en/contact-us.html", "https://www.pge.com/"),
+    ], "verified_at": "2026-10-31"},
+    "coursera.org": {"paths": [
+        _help("https://www.coursera.org/about/contact", "https://www.coursera.org/"),
+    ], "verified_at": "2026-10-31"},
+    "vividseats.com": {"paths": [
+        _help("https://www.vividseats.com/contact-us", "https://www.vividseats.com/"),
+        _entry_link("https://www.vividseats.com/gift-center", "https://www.vividseats.com/"),
+    ], "verified_at": "2026-10-31"},
+    "shutterfly.com": {"paths": [
+        _help("https://support.shutterfly.com/s/", "https://support.shutterfly.com"),
+        _entry_link("https://www.shutterfly.com/gift-certificates/", "https://www.shutterfly.com/"),
+    ], "verified_at": "2026-10-31"},
+    "sonos.com": {"paths": [
+        _help("https://support.sonos.com/en-us/home", "https://www.sonos.com/en-us/home"),
+        _help("https://www.sonos.com/en-us/contact", "https://www.sonos.com/en-us/home"),
+    ], "verified_at": "2026-10-31"},
+    "roku.com": {"paths": [
+        _help("https://www.roku.com/about/contact", "https://www.roku.com/"),
+    ], "verified_at": "2026-10-31"},
+    "nintendo.com": {"paths": [
+        _help("https://en-americas-support.nintendo.com/app/region/d/home", "https://support.nintendo.com/"),
+    ], "verified_at": "2026-10-31"},
+    "flyfrontier.com": {"paths": [
+        _help("https://www.flyfrontier.com/customer-service/", "https://www.flyfrontier.com/"),
+        _app("https://apps.apple.com/us/app/frontier-airlines/id1041410548", "https://www.flyfrontier.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.flyfrontier.android", "https://www.flyfrontier.com/"),
+    ], "verified_at": "2026-10-31"},
+    "xbox.com": {"paths": [
+        _help("https://support.xbox.com/en-US/", "https://www.xbox.com/en-US/"),
+    ], "verified_at": "2026-10-31"},
+    "playstation.com": {"paths": [
+        _help("https://www.playstation.com/en-us/support/", "https://www.playstation.com/en-us/"),
+    ], "verified_at": "2026-10-31"},
+    "paramountplus.com": {"paths": [
+        _help("https://help.paramountplus.com/s/", "https://help.paramountplus.com/s/"),
+    ], "verified_at": "2026-10-31"},
+    "vistaprint.com": {"paths": [
+        _help("https://www.vistaprint.com/customer-care/help-center/", "https://www.vistaprint.com/"),
+    ], "verified_at": "2026-10-31"},
+    "kayak.com": {"paths": [
+        _help("https://www.kayak.com/c/help/", "https://www.kayak.com/"),
+        _app("https://apps.apple.com/us/app/kayak-flights-hotels-cars/id305204535", "https://www.kayak.com/"),
+        _app("https://play.google.com/store/apps/details?id=com.kayak.android", "https://www.kayak.com/"),
+    ], "verified_at": "2026-10-31"},
 }
 
 
@@ -2137,13 +2259,21 @@ def official_paths(site_host: str, today: date | None = None) -> dict | None:
     """Exact apex match first, then the apex of any subdomain; returns a copy or None.
 
     The copy carries `access` only when the key has a bundle that is still current, and `consumer` (D61) only when the
-    key has a consumer entry that is still current; otherwise each key is absent.
+    key has a consumer entry that is still current; otherwise each key is absent. A host that has a current consumer
+    entry but no OFFICIAL_PATHS entry (D64) answers with `consumer` only: name is the table key, and api_docs,
+    developer_portal and note are null, so the verdict (which counts only api_docs and developer_portal) is unchanged.
     """
     host = site_host.strip().rstrip(".").lower()
     labels = host.split(".")
     for index in range(len(labels) - 1):
         key = ".".join(labels[index:])
         entry = OFFICIAL_PATHS.get(key)
+        if entry is None:
+            consumer = CONSUMER_PATHS.get(key)
+            if consumer is not None and consumer_is_current(consumer, today):
+                return {"name": key, "api_docs": None, "developer_portal": None, "note": None,
+                        "consumer": copy.deepcopy(consumer)}
+            continue
         if entry is not None:
             result = dict(entry)
             access = OFFICIAL_ACCESS.get(key)

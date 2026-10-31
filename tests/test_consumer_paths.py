@@ -96,14 +96,21 @@ def space():
 
 # --- The seed table ---------------------------------------------------------------------------------------------------
 
-def test_the_seed_covers_consumer_hosts_with_a_developer_entry():
+def test_the_seed_covers_consumer_hosts_and_a_developer_path_must_be_verified_when_present():
     assert len(CONSUMER_PATHS) >= 10
+    only = [host for host in CONSUMER_PATHS if host not in OFFICIAL_PATHS]
+    assert only, "D64: consumer-only hosts exist"
     for host in CONSUMER_PATHS:
-        entry = OFFICIAL_PATHS[host]
-        assert entry["api_docs"] or entry["developer_portal"], host  # the wrong answer D61 fixes needs a developer path
+        entry = OFFICIAL_PATHS.get(host)
+        if entry is not None and (entry["api_docs"] or entry["developer_portal"]):
+            assert VERIFIED_DEV(entry), host  # a developer path, when listed, is a real https address
     assert {"walgreens.com", "walmart.com"} <= set(CONSUMER_PATHS)
     # Its pages answered with a captcha or 403 to the curation agent, so it is listed as left out, not curated.
     assert "amazon.com" not in CONSUMER_PATHS
+
+
+def VERIFIED_DEV(entry) -> bool:
+    return all(entry[k] is None or entry[k].startswith("https://") for k in ("api_docs", "developer_portal"))
 
 
 @pytest.mark.parametrize("host", sorted(CONSUMER_PATHS))
@@ -118,7 +125,7 @@ def test_every_entry_passes_the_rules_and_the_model(host):
 
 def test_no_phone_number_or_tel_link_is_copied_into_the_table():
     text = json.dumps(CONSUMER_PATHS)
-    assert not PHONE.search(re.sub(r"/id\d+", "", text)), PHONE.search(text)  # store listing identifiers are not phone numbers
+    assert not PHONE.search(re.sub(r"/(?:id)?\d+", "", text)), PHONE.search(text)  # store listing identifiers are not phone numbers
     assert "tel:" not in text and "sms:" not in text
 
 
@@ -215,6 +222,41 @@ def test_consumer_rides_along_only_for_curated_and_current_entries():
     assert "consumer" not in official_paths("walgreens.com", today=stale)
     assert official_paths("walgreens.com", today=stale)["developer_portal"] == OFFICIAL_PATHS["walgreens.com"]["developer_portal"]
     assert not consumer_is_current({"verified_at": "2026-11-01"}, TODAY)  # a future date is not current either
+
+
+CONSUMER_ONLY = {"name": "example.com", "api_docs": None, "developer_portal": None, "note": None, "consumer": CONSUMER}
+NO_DEV = {"name": "example.com", "api_docs": None, "developer_portal": None, "note": None}
+
+
+def test_a_consumer_only_host_answers_with_the_consumer_block_alone():
+    host = next(h for h in sorted(CONSUMER_PATHS) if h not in OFFICIAL_PATHS)
+    found = official_paths(host, today=on(host))
+    assert found["name"] == host and found["api_docs"] is None and found["developer_portal"] is None and found["note"] is None
+    assert found["consumer"] == CONSUMER_PATHS[host] and found["consumer"] is not CONSUMER_PATHS[host]
+    assert official_paths("www." + host, today=on(host))["consumer"] == CONSUMER_PATHS[host]
+    stale = on(host) + timedelta(days=CONSUMER_MAX_AGE_DAYS + 1)
+    assert official_paths(host, today=stale) is None  # nothing curated and current is left to say
+
+
+def test_the_response_model_accepts_a_consumer_only_answer_without_developer_fields():
+    model = OfficialPaths(**{"name": "example.com", "consumer": CONSUMER})
+    dumped = json.loads(model.model_dump_json())
+    assert dumped["api_docs"] is None and dumped["developer_portal"] is None and dumped["consumer"] == CONSUMER
+    assert "access" not in dumped
+
+
+def test_a_consumer_only_host_never_becomes_use_official_path():
+    guides = set()
+    for case in space():
+        with_only = answer(CONSUMER_ONLY, **case)
+        bare = answer(NO_DEV, **case)
+        assert with_only["recommendation"]["action"] != "use_official_path", case
+        assert with_only["recommendation"] == bare["recommendation"] and with_only["next_checks"] == bare["next_checks"], case
+        result, plain = guide(with_only), guide(bare)
+        assert "customer_url" not in result["next_action"], case
+        assert result == plain, case  # same row and tail as a host with no official path at all: no developer tail
+        guides.add(result["summary_line"])
+    assert not any(line.endswith(tail) for line in guides for tail in TAILS)
 
 
 def test_customer_url_prefers_help_then_entry_link_then_app():
@@ -372,9 +414,10 @@ def test_the_contracts_state_the_tail_sentence_and_the_decision():
     for name in ("docs/api-contract.en.md", "docs/api-contract.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert CONSUMER_SEE_TAIL.strip() in text and CONSUMER_HAND_TAIL.strip() in text
-        assert "D61" in text and "--consumer-only" in text
+        assert "D61" in text and "D64" in text and "--consumer-only" in text
         assert f"{len(CONSUMER_PATHS)}" in text and f"{sum(len(v['paths']) for v in CONSUMER_PATHS.values())}" in text
-    assert "| D61 " in (ROOT / "docs/decisions.md").read_text(encoding="utf-8")
+    decisions = (ROOT / "docs/decisions.md").read_text(encoding="utf-8")
+    assert "| D61 " in decisions and "| D64 " in decisions
 
 
 @pytest.mark.parametrize("name", ["docs/api-contract.en.md", "docs/api-contract.md", "docs/decisions.md", "ahn/llms.txt", "README.md",

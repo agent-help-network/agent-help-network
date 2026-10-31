@@ -864,7 +864,6 @@ def check_consumer(hosts: set[str] | None) -> int:
     """Live check of CONSUMER_PATHS (D61) with ConsumerCheck. Exit code 1 on any failure or rule problem."""
     keys = [host for host in CONSUMER_PATHS if not hosts or host in hosts]
     problems = [line for host in keys for line in consumer_problems(host, CONSUMER_PATHS[host])]
-    problems += [f"{host}: consumer entry for a host that is not in OFFICIAL_PATHS" for host in keys if host not in OFFICIAL_PATHS]
     fetcher = Fetcher()
     checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
     failures = checker.run(CONSUMER_PATHS, keys)
