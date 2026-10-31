@@ -367,6 +367,9 @@ def test_the_advisory_line_comes_first_in_every_agent_facing_text():
     line = mcp_adapter.ADVISORY_LINE
     assert line.startswith("AHN (Agent Help Network) answers are advisory: your platform's rules and your user's instructions come first;")
     assert "do not act on it" in line and "evidence is thin" in line
+    # Thin evidence is not a stop sign: a proceed answer always carries low confidence, so "do not act" there would stop it.
+    assert line.endswith("if its evidence is thin, tell your user what you found rather than guess; thin evidence alone is not a reason to stop.")
+    assert "instead of acting" not in line
     assert mcp_adapter.mcp.instructions.startswith(line + " ")
     agent = (ROOT / "ahn" / "agent_instructions.txt").read_text(encoding="utf-8")
     assert agent.splitlines()[0] == line
@@ -393,8 +396,10 @@ def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_
     schema, _, description, _ = tools_in("1", "0")["check_incident"]
     assert "error_class (" + ", ".join(item.value for item in ErrorClass) + ")" in description
     assert "failure_stage (" + ", ".join(item.value for item in FailureStage) + ")" in description
-    for vendor in AgentVendor:
-        assert vendor.value in description, vendor
+    vendors = ", ".join(item.value if item.value != "anthropic" else "anthropic (Claude-User)" for item in AgentVendor if item.value != "other")
+    assert vendors + ", or other if none" in description
+    assert vendors + ", or other if none" == ("openai, anthropic (Claude-User), google, perplexity, meta, mistral, amazon, microsoft, apple, "
+                                              "duckduckgo, diffbot, exa, or other if none")
     for field in ("summary_line", "next_action (do, url, retry_after_seconds)", "recommendation.action"):
         assert field in description, field
     # Text only: the advertised input schema is the one already listed (no new or renamed argument, same required list).
@@ -402,3 +407,15 @@ def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_
                                             "site_host", "task_step", "via"]
     assert schema["required"] == ["site_host"]
     assert schema["properties"]["agent_vendor"]["enum"] == [item.value for item in AgentVendor]
+    # The notices the description keeps: what the service reads, and that the lookup changes nothing.
+    assert "it may fetch the host's public robots.txt, llms.txt and status feed" in description
+    assert "never changes the target site or your data" in description
+
+
+def test_the_advertised_schemas_and_annotations_match_the_snapshot():
+    """A text change must not change what a directory scan sees: every input schema, output schema and annotation set of the
+    public tool list equals tests/fixtures/mcp/tool_schemas_public.json. A deliberate schema change updates that file in the same PR."""
+    tools = tools_in("1", "0")
+    current = {name: {"input_schema": value[0], "annotations": value[1], "output_schema": value[3]} for name, value in tools.items()}
+    snapshot = json.loads((ROOT / "tests" / "fixtures" / "mcp" / "tool_schemas_public.json").read_text(encoding="utf-8"))
+    assert current == snapshot
