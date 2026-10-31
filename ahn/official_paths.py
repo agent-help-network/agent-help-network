@@ -1956,11 +1956,9 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://support.microsoft.com/en-us/", "https://www.microsoft.com/en-us"),
         _help("https://support.microsoft.com/contactus", "https://www.microsoft.com/en-us"),
     ], "verified_at": "2026-10-31"},
-    "craigslist.org": {"paths": [
-        _help("https://www.craigslist.org/about/help/"),
-    ], "verified_at": "2026-10-31"},
     "ticketmaster.com": {"paths": [
-        _help("https://help.ticketmaster.com/hc/en-us", "https://help.ticketmaster.com"),
+        # the home page links help.ticketmaster.com, which redirects here.
+        _help("https://help.ticketmaster.com/hc/en-us"),
         _entry_link("https://www.ticketmaster.com/giftcards", "https://www.ticketmaster.com/"),
         _app("https://apps.apple.com/us/app/ticketmaster-buy-sell-tickets/id500003565", "https://www.ticketmaster.com/"),
         _app("https://play.google.com/store/apps/details?id=com.ticketmaster.mobile.android.na", "https://www.ticketmaster.com/"),
@@ -1976,7 +1974,8 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://help.steampowered.com/en/", "https://store.steampowered.com/"),
     ], "verified_at": "2026-10-31"},
     "strava.com": {"paths": [
-        _help("https://support.strava.com/en-us/", "https://support.strava.com"),
+        # the home page links support.strava.com, which redirects here.
+        _help("https://support.strava.com/en-us/"),
         _app("https://apps.apple.com/us/app/strava-run-bike-walk/id426826309", "https://www.strava.com/"),
         _app("https://play.google.com/store/apps/details?id=com.strava", "https://www.strava.com/"),
     ], "verified_at": "2026-10-31"},
@@ -1989,7 +1988,8 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://www.youtube.com/t/contact_us/", "https://www.youtube.com/"),
     ], "verified_at": "2026-10-31"},
     "vimeo.com": {"paths": [
-        _help("https://help.vimeo.com/hc/en-us", "https://help.vimeo.com"),
+        # the home page links help.vimeo.com, which redirects here.
+        _help("https://help.vimeo.com/hc/en-us"),
     ], "verified_at": "2026-10-31"},
     "dropbox.com": {"paths": [
         _help("https://help.dropbox.com/", "https://www.dropbox.com/"),
@@ -2035,24 +2035,20 @@ CONSUMER_PATHS: dict[str, dict] = {
     "affirm.com": {"paths": [
         _help("https://helpcenter.affirm.com/s/", "https://www.affirm.com/"),
     ], "verified_at": "2026-10-31"},
-    "airbnb.com": {"paths": [
-        _help("https://www.airbnb.com/help", "https://www.airbnb.com/"),
-        _entry_link("https://www.airbnb.com/giftcards", "https://www.airbnb.com/"),
-    ], "verified_at": "2026-10-31"},
     "expedia.com": {"paths": [
         _help("https://www.expedia.com/helpcenter/", "https://www.expedia.com/"),
     ], "verified_at": "2026-10-31"},
     "orbitz.com": {"paths": [
-        _help("https://www.orbitz.com/helpcenter", "https://www.orbitz.com/p/support.htm"),
+        # the home page links /p/support.htm, which redirects here.
+        _help("https://www.orbitz.com/helpcenter"),
     ], "verified_at": "2026-10-31"},
     "travelocity.com": {"paths": [
-        _help("https://www.travelocity.com/helpcenter", "https://www.travelocity.com/p/support.htm"),
+        # the home page links /p/support.htm, which redirects here.
+        _help("https://www.travelocity.com/helpcenter"),
     ], "verified_at": "2026-10-31"},
     "cheaptickets.com": {"paths": [
-        _help("https://www.cheaptickets.com/helpcenter", "https://www.cheaptickets.com/customer-service"),
-    ], "verified_at": "2026-10-31"},
-    "accor.com": {"paths": [
-        _help("https://group.accor.com/en/contact/contact-us", "https://group.accor.com/en"),
+        # the home page links /customer-service, which redirects here.
+        _help("https://www.cheaptickets.com/helpcenter"),
     ], "verified_at": "2026-10-31"},
     "flightaware.com": {"paths": [
         _help("https://www.flightaware.com/about/faq/", "https://www.flightaware.com/"),
@@ -2093,10 +2089,12 @@ CONSUMER_PATHS: dict[str, dict] = {
         _help("https://help.surveymonkey.com/en/", "https://www.surveymonkey.com/"),
     ], "verified_at": "2026-10-31"},
     "synology.com": {"paths": [
-        _help("https://www.synology.com/en-global/company/contact_us", "https://www.synology.com/company/contact_us"),
+        # the home page links /company/contact_us, which redirects here.
+        _help("https://www.synology.com/en-global/company/contact_us"),
     ], "verified_at": "2026-10-31"},
     "tomtom.com": {"paths": [
-        _help("https://help.tomtom.com/hc/en-150", "https://help.tomtom.com/hc/"),
+        # the home page links help.tomtom.com/hc/, which redirects here.
+        _help("https://help.tomtom.com/hc/en-150"),
     ], "verified_at": "2026-10-31"},
     "nvidia.com": {"paths": [
         _help("https://www.nvidia.com/en-us/support/", "https://www.nvidia.com/en-us/"),

@@ -100,8 +100,7 @@ def test_the_seed_covers_consumer_hosts_with_a_developer_entry():
     assert len(CONSUMER_PATHS) >= 10
     for host in CONSUMER_PATHS:
         entry = OFFICIAL_PATHS[host]
-        # the wrong answer D61 fixes needs a developer answer: a path, or a note saying there is no public API
-        assert entry["api_docs"] or entry["developer_portal"] or entry["note"], host
+        assert entry["api_docs"] or entry["developer_portal"], host  # the wrong answer D61 fixes needs a developer path
     assert {"walgreens.com", "walmart.com"} <= set(CONSUMER_PATHS)
     # Its pages answered with a captcha or 403 to the curation agent, so it is listed as left out, not curated.
     assert "amazon.com" not in CONSUMER_PATHS
