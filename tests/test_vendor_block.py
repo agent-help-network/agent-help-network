@@ -342,9 +342,11 @@ def test_switch_off_matches_the_previous_code_on_random_profiles():
         for official in officials:
             for error_class in (None, "site_access", "service_error", "human_verification", "login_auth"):
                 for vendor in (None, "anthropic", "google", "other"):
-                    assert recommendation(error_class, None, prof, official, agent_vendor=vendor, vendor_aware=False) == \
+                    assert recommendation(error_class, None, prof, official, agent_vendor=vendor, vendor_aware=False,
+                                          proceed_without_failure=False) == \
                         _previous_recommendation(error_class, None, prof, official)
-                    assert next_checks(error_class, None, "no_reports", None, prof, official, agent_vendor=vendor, vendor_aware=False) == \
+                    assert next_checks(error_class, None, "no_reports", None, prof, official, agent_vendor=vendor, vendor_aware=False,
+                                      proceed_without_failure=False) == \
                         _previous_next_checks(error_class, None, "no_reports", None, prof, official)
 
 

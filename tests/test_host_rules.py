@@ -245,7 +245,8 @@ def test_recommendation_prefers_declared_policy_and_official_paths():
     assert recommendation("site_access", None, _profile(["ChatGPT-User"], []), official)["action"] == "use_official_path"
     assert recommendation("site_access", None, _profile(["ChatGPT-User"], []), None)["action"] == "stop_declared_block"
     assert recommendation("site_access", None, _profile([], ["GPTBot"]), None) == {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents"]}
-    assert recommendation("site_access", None, _profile([], [], status="absent"), None)["action"] == "unknown"
+    # Changed on purpose by D63: a missing robots.txt declares no restriction.
+    assert recommendation("site_access", None, _profile([], [], status="absent"), None)["action"] == "proceed"
     assert recommendation("site_access", None, None, None) == {"action": "unknown", "confidence": "low", "reasons": []}
     assert recommendation("human_verification", None, _profile(["ChatGPT-User"], []), official)["action"] == "hand_off_to_human"
     incident = {"freshness": "fresh", "indicator": "major"}

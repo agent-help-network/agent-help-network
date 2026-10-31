@@ -35,7 +35,7 @@ CHECKS = {
     "robots_blocks_not_your_agent": "Some agent tokens are explicitly disallowed (access_profile.robots.agents_blocked), but not the tokens this answer was decided on (your vendor's governing tokens, or, without agent_vendor, every vendor's). Those blocks do not decide this answer. The host may not welcome some automation, so keep requests modest; this is not an access guarantee. This service reads only the tokens it lists: if your fetcher sends a token of its own, check robots.txt for a group that names it.",
     "robots_names_vendor_alias": "A robots.txt group that disallows the site root names your vendor's agent under a name your documented token does not match (for example a retired name). It is not read as a declared block on your token, and not as permission either: prefer an official path and tell the user.",
     "robots_allows_agents": "This host's robots.txt does not disallow the site root for the agent tokens this answer was decided on. Declared crawler policy is not an access guarantee; CDN challenges and rate limits can still apply, so keep requests modest and honor any Crawl-delay.",
-    "robots_unknown": "No robots.txt policy could be read for this host (absent, redirected, or unreachable within limits). Treat the host's agent policy as unknown rather than permissive.",
+    "robots_unknown": "No robots.txt could be read for this host (redirected, unreachable, invalid or too large within limits; see access_profile.robots_detail). No declared policy is known: this service treats it neither as a block nor as a declaration of no restriction.",
     "robots_wildcard_disallow": "This host's robots.txt disallows the site root for every crawler it does not name (User-agent: *), and at least one agent user agent is named by no group, so it falls under that wildcard (access_profile.robots.agents_allowed lists the tokens the host names and allows). Whether a user-directed fetcher honours that wildcard is your operator's policy; treat the host as not inviting automation, prefer an official path if one exists, and do not read this as permission.",
     "robots_grouping_differs_by_parser": "Parsers disagree on this robots.txt (access_profile.robots.grouping_differs_by_parser lists '*' and the agent tokens whose root decision changes): Google-style parsers merge groups that this answer keeps apart, which usually reads more strictly, or read only the first name of a comma-separated User-agent line, which this answer splits into every listed name. The recommendation uses this service's reading; if your operator follows Google's reading, check those tokens against it before relying on the answer.",
     "robots_fetch_refused": "This host's edge refused even a plain robots.txt read from a data-center address with an honest bot user agent (see access_profile.robots_detail). Expect page automation from a similar environment to be refused too: prefer the official path, and hand the step to the user if it needs them.",
@@ -73,7 +73,7 @@ CHECKS_KO = {
     "robots_blocks_not_your_agent": "일부 에이전트 토큰이 명시적으로 금지돼 있지만(access_profile.robots.agents_blocked), 이 답이 판정한 토큰(당신 벤더의 판정 토큰, agent_vendor 가 없으면 모든 벤더의 판정 토큰)은 아닙니다. 그 차단은 이 답을 정하지 않습니다. 호스트가 일부 자동화를 반기지 않을 수 있으니 요청을 절제하세요. 접근 보장이 아닙니다. 이 서비스는 목록에 있는 토큰만 읽으므로, 당신의 페처가 자기만의 토큰을 보낸다면 그 이름을 지목한 그룹이 있는지 robots.txt 에서 확인하세요.",
     "robots_names_vendor_alias": "사이트 루트를 금지하는 robots.txt 그룹이 당신 벤더의 에이전트를 문서화된 토큰과 맞지 않는 이름(예: 옛 이름)으로 지목합니다. 당신 토큰에 대한 선언된 차단으로 보지는 않지만 허용으로 읽지도 마세요. 공식 경로를 우선하고 사용자에게 알리세요.",
     "robots_allows_agents": "이 호스트의 robots.txt는 이 답이 판정한 에이전트 토큰의 루트 접근을 금지하지 않습니다. 선언된 크롤러 정책은 접근 보장이 아니며 CDN 챌린지와 속도 제한은 여전히 적용될 수 있으니 요청을 절제하고 Crawl-delay를 지키세요.",
-    "robots_unknown": "이 호스트의 robots.txt 정책을 읽지 못했습니다(없음, 리다이렉트, 또는 제한 내 미도달). 에이전트 정책을 허용이 아니라 미상으로 두세요.",
+    "robots_unknown": "이 호스트의 robots.txt 를 읽지 못했습니다(리다이렉트, 미도달, 형식 오류 또는 크기 초과; access_profile.robots_detail 참조). 선언된 정책을 알 수 없으며, 이 서비스는 이를 차단으로도 제한 없음 선언으로도 보지 않습니다.",
     "robots_wildcard_disallow": "이 호스트의 robots.txt는 이름을 지정하지 않은 모든 크롤러(User-agent: *)의 사이트 루트 접근을 금지하며, 에이전트 UA 가운데 어떤 그룹도 지목하지 않은 것이 있어 그 와일드카드에 해당합니다(호스트가 지목해 허용한 토큰은 access_profile.robots.agents_allowed 참조). 사용자 지시 페처가 이 와일드카드를 따르는지는 운영사 정책이지만, 호스트가 자동화를 환영하지 않는다고 보고 공식 경로가 있으면 그쪽을 쓰며 허용으로 읽지 마세요.",
     "robots_grouping_differs_by_parser": "이 robots.txt 는 해석기마다 답이 갈립니다(루트 판정이 바뀌는 '*' 와 에이전트 토큰은 access_profile.robots.grouping_differs_by_parser). Google 방식 해석기는 이 답이 나눈 그룹을 합쳐 대개 더 엄격하게 읽거나, 쉼표로 나열한 User-agent 줄에서 첫 이름만 읽습니다(이 답은 나열한 이름을 모두 읽습니다). 권장 행동은 이 서비스의 해석을 따릅니다. 운영사가 Google 방식을 따른다면 답을 쓰기 전에 그 토큰들을 그 방식으로 다시 확인하세요.",
     "robots_fetch_refused": "이 호스트의 경계가 데이터센터 주소·정직한 봇 UA의 단순 robots.txt 읽기조차 거절했습니다(access_profile.robots_detail 참조). 비슷한 환경의 페이지 자동화도 거절될 것으로 보고, 공식 경로를 우선하고 사용자 참여가 필요한 단계는 사용자에게 넘기세요.",
@@ -95,6 +95,16 @@ PREVIOUS_CHECKS = {
 }
 
 # Same code (provider_scope), different text: the provider announced scheduled work, which is not an incident to diagnose.
+# D63: the same code, a different sentence. robots_allows_agents for a host that publishes no robots.txt (HTTP 404 or 410);
+# llms_txt_present for an llms.txt larger than this service reads; provider_unknown for an Atom incident history, whose
+# feed carries no page status, so indicator stays null by design.
+ROBOTS_ABSENT_CHECK = "This host publishes no robots.txt (HTTP 404 or 410; access_profile.robots_status is absent), so it declares no restriction for any agent. This is not an access guarantee: CDN challenges, sign-ins and rate limits can still apply, and the site's terms and your platform's rules are separate."
+ROBOTS_ABSENT_CHECK_KO = "이 호스트는 robots.txt 를 게시하지 않습니다(HTTP 404·410, access_profile.robots_status 가 absent). 어떤 에이전트에도 제한을 선언하지 않은 것입니다. 접근 보장은 아니며 CDN 챌린지·로그인·속도 제한은 여전히 적용될 수 있고, 사이트 약관과 플랫폼 규칙은 별개입니다."
+LLMS_TOO_LARGE_CHECK = "This host publishes llms.txt, but it is larger than this service reads (access_profile.llms_detail is too_large), so its content was not checked here. If your task needs it, read only the part you need; it is the host's own guidance for language-model agents."
+LLMS_TOO_LARGE_CHECK_KO = "이 호스트는 llms.txt 를 게시하지만 이 서비스가 읽는 크기를 넘어(access_profile.llms_detail 이 too_large) 내용을 확인하지 않았습니다. 작업에 필요하면 필요한 부분만 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내입니다."
+HISTORY_QUIET_CHECK = "The provider's public incident history was read (provider_status.source_kind is history_atom). That feed carries no page status, so indicator stays null, and nothing in it makes this answer wait. This is not a statement that the provider is healthy; check its status page if your step depends on it."
+HISTORY_QUIET_CHECK_KO = "업체의 공개 사건 이력 피드를 읽었습니다(provider_status.source_kind 가 history_atom). 그 피드에는 페이지 상태가 없어 indicator 는 null 이며, 이 답을 기다리게 할 내용은 없습니다. 업체가 정상이라는 뜻은 아닙니다. 작업이 업체에 달려 있으면 상태 페이지를 확인하세요."
+
 MAINTENANCE_CHECK = "The provider has announced scheduled maintenance. Compare its window and affected services with your blocked step; wait for the maintenance to end instead of retrying in a loop."
 MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하고, 반복 재시도하지 말고 점검이 끝날 때까지 기다리세요."
 # Same code (provider_incident_stale), different text: a minor page with no incident list, from a feed whose update
@@ -388,6 +398,22 @@ def profile_pending(access_profile: dict | None) -> bool:
                 and access_profile.get("retry_after_seconds") is not None)
 
 
+def failure_observed(error_class: str | None, failure_stage: str | None) -> bool:
+    """D63: the lookup reports a failure. Only error_class and failure_stage count (any value, ``unknown`` too): the
+    optional signal codes are counted and never change the answer (D47)."""
+    return error_class is not None or failure_stage is not None
+
+
+def _robots_clear(access_profile: dict | None, verdict: str | None) -> bool:
+    """D63: robots.txt declares no restriction for the agent: read and clear, or absent (HTTP 404 or 410)."""
+    if not access_profile:
+        return False
+    status = access_profile.get("robots_status")
+    if status == "absent":
+        return True
+    return status == "ok" and (not access_profile.get("robots") or verdict == "clear")
+
+
 def _wait(reason: str, provider_regional: bool) -> dict:
     # D45: an announced issue whose affected components are all regions or points of presence still waits, with low
     # confidence. "Worst incident below the page" is not enough: a major page over a fresh minor incident is how an
@@ -399,16 +425,20 @@ def _wait(reason: str, provider_regional: bool) -> dict:
 
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                    official: dict | None, *, profile_not_read: bool = False, provider_regional: bool = False,
-                   now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True) -> dict:
+                   now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True,
+                   failure_stage: str | None = None, proceed_without_failure: bool = True) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
     point-of-presence group, status_scope.REGIONAL_GROUPS); now: the lookup time (D45).
     agent_vendor: an accepted agent_vendor value (accepted_vendor) or None; vendor_aware: AHN_VENDOR_AWARE_BLOCK (D48).
-    The accepted vendor is echoed as recommendation.agent_vendor only while the vendor-aware rule is on."""
+    The accepted vendor is echoed as recommendation.agent_vendor only while the vendor-aware rule is on.
+    failure_stage, proceed_without_failure: D63. With the switch on, a lookup that reports no failure (neither error_class
+    nor failure_stage) and a robots.txt that is clear or absent gets proceed even where an official path is listed."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
-                             provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware)
+                             provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
+                             failure_stage=failure_stage, proceed_without_failure=proceed_without_failure)
     if vendor is not None:
         result["agent_vendor"] = vendor
     return result
@@ -416,7 +446,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
 
 def _recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                     official: dict | None, *, profile_not_read: bool, provider_regional: bool, now: datetime | None,
-                    agent_vendor: str | None, vendor_aware: bool) -> dict:
+                    agent_vendor: str | None, vendor_aware: bool, failure_stage: str | None = None,
+                    proceed_without_failure: bool = True) -> dict:
     wait_reason = provider_wait_reason(provider_status, now)
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
@@ -462,11 +493,16 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
         if official_listed:
             return {"action": "use_official_path", "confidence": "medium", "reasons": robots_codes + ["official_path_available"]}
         return {"action": "unknown", "confidence": "low", "reasons": robots_codes}
+    clear = proceed_without_failure and _robots_clear(access_profile, verdict)
+    if clear and not failure_observed(error_class, failure_stage):
+        # D63: nothing sent reports a failure and robots.txt is clear (or absent): continue, and name the official path.
+        return {"action": "proceed", "confidence": "low",
+                "reasons": (robots_codes or ["robots_allows_agents"]) + (["official_path_available"] if official_listed else [])}
     if official_listed and error_class in (None, "site_access", "service_error"):
         # A block that is not the caller's (D48) stays visible next to the official path.
         not_yours = [code for code in robots_codes if code == "robots_blocks_not_your_agent"]
         return {"action": "use_official_path", "confidence": "medium", "reasons": not_yours + ["official_path_available"]}
-    if access_profile and access_profile.get("robots_status") == "ok":
+    if clear or (not proceed_without_failure and access_profile and access_profile.get("robots_status") == "ok"):
         return {"action": "proceed", "confidence": "low", "reasons": robots_codes or ["robots_allows_agents"]}
     if access_profile:
         return {"action": "unknown", "confidence": "low", "reasons": ["robots_unknown"]}
@@ -490,13 +526,15 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 official: dict | None = None, *, profile_not_read: bool = False,
                 host_facts: dict | None = None, provider_partial: bool = False,
                 now: datetime | None = None, agent_vendor: str | None = None,
-                vendor_aware: bool = True) -> list[dict[str, str]]:
+                vendor_aware: bool = True, proceed_without_failure: bool = True) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
-    agent_vendor, vendor_aware: as for recommendation() (D48)."""
+    agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63."""
     codes: list[str] = []
+    handoff = error_class in {"human_verification", "login_auth"}
+    failed = failure_observed(error_class, failure_stage) if proceed_without_failure else True
     if failure_stage and failure_stage != "unknown":
         codes.append(failure_stage)
-    elif error_class not in {"human_verification", "login_auth"}:
+    elif failed and not handoff:
         codes.append("locate_failure_stage")
     if error_class == "human_verification":
         codes.append("human_handoff")
@@ -507,17 +545,21 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     if profile_pending(access_profile):
         codes.append("profile_pending")
     elif access_profile:
-        if access_profile.get("robots_status") == "refused":
-            codes.append("robots_fetch_refused")
-        elif access_profile.get("robots_status") != "ok":
-            codes.append("robots_unknown")
-        elif access_profile.get("robots"):
-            codes.extend(robots_verdict(access_profile, agent_vendor if vendor_aware else None, vendor_aware=vendor_aware)[1])
-        else:
-            codes.append("robots_allows_agents")
-        if access_profile.get("robots_status") == "ok" and (access_profile.get("robots") or {}).get("grouping_differs_by_parser"):
-            # Information only: recommendation() reads the default grouping and never this list.
-            codes.append("robots_grouping_differs_by_parser")
+        status = access_profile.get("robots_status")
+        if not handoff or not proceed_without_failure:
+            if status == "refused":
+                codes.append("robots_fetch_refused")
+            elif status == "absent" and proceed_without_failure:
+                codes.append("robots_allows_agents")
+            elif status != "ok":
+                codes.append("robots_unknown")
+            elif access_profile.get("robots"):
+                codes.extend(robots_verdict(access_profile, agent_vendor if vendor_aware else None, vendor_aware=vendor_aware)[1])
+            else:
+                codes.append("robots_allows_agents")
+            if status == "ok" and (access_profile.get("robots") or {}).get("grouping_differs_by_parser"):
+                # Information only: recommendation() reads the default grouping and never this list.
+                codes.append("robots_grouping_differs_by_parser")
         if access_profile.get("llms_txt_status") == "present":
             codes.append("llms_txt_present")
         if ai_input_declared_no(access_profile.get("content_use")):
@@ -557,4 +599,12 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     texts = CHECKS if vendor_aware else {**CHECKS, **PREVIOUS_CHECKS}
     if page_stale(provider_status, now):
         texts = {**texts, "provider_incident_stale": PAGE_STALE_CHECK}
+    # D63: the same code with a different sentence. The absent sentence needs the switch: off, the code is robots_unknown.
+    if proceed_without_failure and access_profile and access_profile.get("robots_status") == "absent":
+        texts = {**texts, "robots_allows_agents": ROBOTS_ABSENT_CHECK}
+    if access_profile and access_profile.get("llms_detail") == "too_large":
+        texts = {**texts, "llms_txt_present": LLMS_TOO_LARGE_CHECK}
+    if (provider_status and provider_status.get("source_kind") == "history_atom" and provider_status.get("freshness") == "fresh"
+            and not history_incident(provider_status, now)):
+        texts = {**texts, "provider_unknown": HISTORY_QUIET_CHECK}
     return [{"code": code, "text": MAINTENANCE_CHECK if maintenance and code == "provider_scope" else texts[code]} for code in codes]

@@ -17,6 +17,7 @@ from ahn import access_profile, service
 from ahn.db import connect, migrate
 from ahn.main import create_app
 from ahn.settings import Settings
+from ahn.response_guide import PROCEED_OFFICIAL_ROWS
 
 ROBOTS = b"User-agent: Bytespider\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
 OFFICIAL = {"name": "GitHub", "api_docs": "https://docs.github.com/en/rest", "developer_portal": "https://docs.github.com/", "note": None}
@@ -73,15 +74,16 @@ def test_cached_host_gives_a_card_from_stored_rows_and_nothing_is_written(monkey
     refuse_network(monkeypatch)
     before = counts(settings)
     card = service.home_example(settings)
-    assert card["site_host"] == "github.com" and card["do"] == "use_official_path"
-    assert card["url"] == "docs.github.com/en/rest" and card["confidence"]
+    # Changed on purpose by D63: a cached lookup reports no failure and robots is clear, so the card is a proceed answer.
+    assert card["site_host"] == "github.com" and card["do"] == "proceed"
+    assert card["url"] is None and card["confidence"] and card["summary_line"] == PROCEED_OFFICIAL_ROWS["P1"]
     assert card["robots_status"] == "ok" and card["status"] is None and len(card["read_on"]) == 10
     assert card["summary_line"].isascii()
     with TestClient(create_app(settings)) as client:
         en = client.get("/en/").text
         ko = client.get("/ko/").text
-    assert 'class="home-live"' in en and "use_official_path" in en and "docs.github.com/en/rest" in en
-    assert 'class="home-live"' in ko and "use_official_path" in ko
+    assert 'class="home-live"' in en and "proceed" in en
+    assert 'class="home-live"' in ko and "proceed" in ko
     assert counts(settings) == before
 
 
@@ -119,7 +121,7 @@ def same_answer(settings, expected_do):
 def test_parity_profile_only(monkeypatch):
     settings = prepare(monkeypatch)
     seed(settings)
-    same_answer(settings, "use_official_path")
+    same_answer(settings, "proceed")
 
 
 def test_parity_a_fresh_open_incident(monkeypatch):
@@ -134,8 +136,8 @@ def test_parity_a_stale_incident_is_not_a_reason_to_wait_d45(monkeypatch):
     settings = prepare(monkeypatch)
     seed(settings)
     source_row(settings, indicator="major", incident_age_hours=24 * 30, incidents=1)
-    card, answer = same_answer(settings, "use_official_path")
-    assert answer["recommendation"]["action"] == "use_official_path"
+    card, answer = same_answer(settings, "proceed")
+    assert answer["recommendation"]["action"] == "proceed"
 
 
 def test_parity_a_feed_the_robots_gate_hides_gives_the_lookups_answer_without_a_provider(monkeypatch):
@@ -143,7 +145,7 @@ def test_parity_a_feed_the_robots_gate_hides_gives_the_lookups_answer_without_a_
     seed(settings)
     source_row(settings, indicator="major", incident_age_hours=1, incidents=1)
     monkeypatch.setattr("ahn.feed_robots.feed_state", lambda _conn, _url: "disallowed")
-    card, answer = same_answer(settings, "use_official_path")
+    card, answer = same_answer(settings, "proceed")
     assert answer["provider_status"] is None and card["status"] is None
 
 

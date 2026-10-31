@@ -214,7 +214,7 @@ def test_cloudflare_type_keeps_waiting_but_says_the_scope_is_partial():
     assert status["basis"] == "incident"
     assert recommendation(None, status, None, None)["action"] == "wait_provider_incident"  # an incident is announced
     assert partial(indicator, scope)  # its worst impact (minor) is below the page indicator (major)
-    checks = codes(next_checks(None, status, "no_reports", provider_partial=partial(indicator, scope)))
+    checks = codes(next_checks("site_access", status, "no_reports", provider_partial=partial(indicator, scope)))
     assert checks == ["locate_failure_stage", "provider_scope", "provider_scope_partial", "reports_unknown"]
 
 
@@ -230,7 +230,7 @@ def test_rubygems_type_is_components_only_and_not_a_reason_to_wait():
     official = {"api_docs": "https://guides.rubygems.org/rubygems-org-api/"}
     assert recommendation(None, status, None, official)["action"] == "use_official_path"
     assert recommendation("human_verification", status, None, None)["action"] == "hand_off_to_human"
-    checks = codes(next_checks(None, status, "no_reports", provider_partial=partial(indicator, scope)))
+    checks = codes(next_checks("site_access", status, "no_reports", provider_partial=partial(indicator, scope)))
     assert checks == ["locate_failure_stage", "provider_components_only", "reports_unknown"]
 
 
@@ -243,7 +243,7 @@ def test_twilio_type_carrier_groups_make_the_scope_partial():
     status = provider_status(indicator, scope)
     assert status["basis"] == "incident"
     assert recommendation(None, status, None, None)["action"] == "wait_provider_incident"
-    assert codes(next_checks(None, status, "no_reports", provider_partial=partial(indicator, scope)))[1:3] == [
+    assert codes(next_checks("site_access", status, "no_reports", provider_partial=partial(indicator, scope)))[1:3] == [
         "provider_scope", "provider_scope_partial"]
 
 
@@ -255,7 +255,7 @@ def test_one_incident_type_is_unchanged_and_not_partial():
     now = datetime(2026, 10, 21, 3, 0, tzinfo=timezone.utc)  # the fixture's incident was updated 20 minutes before (D45)
     assert recommendation(None, status, None, None, now=now) == {
         "action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_scope"]}
-    assert codes(next_checks(None, status, "no_reports", now=now)) == ["locate_failure_stage", "provider_scope", "reports_unknown"]
+    assert codes(next_checks("site_access", status, "no_reports", now=now)) == ["locate_failure_stage", "provider_scope", "reports_unknown"]
 
 
 def test_a_maintenance_only_page_still_waits_with_the_maintenance_text():
@@ -266,7 +266,7 @@ def test_a_maintenance_only_page_still_waits_with_the_maintenance_text():
     status = provider_status(indicator, scope)
     assert status["basis"] == "maintenance" and scope["affected_regional"] is True  # only data centers
     assert recommendation(None, status, None, None)["action"] == "wait_provider_incident"
-    checks = next_checks(None, status, "no_reports", provider_partial=partial(indicator, scope))
+    checks = next_checks("site_access", status, "no_reports", provider_partial=partial(indicator, scope))
     assert codes(checks)[1:3] == ["provider_scope", "provider_scope_partial"] and "scheduled maintenance" in checks[1]["text"]
 
 
@@ -442,7 +442,7 @@ def test_the_lists_rest_after_failures(failures, error, rest):
 
 def test_stale_components_only_is_still_provider_unknown():
     status = {"indicator": "major", "freshness": "stale", "basis": "components_only"}
-    assert codes(next_checks(None, status, "no_reports", provider_partial=True)) == ["locate_failure_stage", "provider_unknown", "reports_unknown"]
+    assert codes(next_checks("site_access", status, "no_reports", provider_partial=True)) == ["locate_failure_stage", "provider_unknown", "reports_unknown"]
 
 
 @pytest.mark.parametrize("indicator,incidents,impact,regional,expected", [

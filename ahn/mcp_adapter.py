@@ -174,7 +174,8 @@ def check_result(response: CheckResponse):
     lead = response.summary_line
     if response.next_action is not None and response.next_action.url:
         lead += "\nURL: " + response.next_action.url
-    if response.next_action is not None and response.next_action.customer_url:
+    if (response.next_action is not None and response.next_action.customer_url
+            and response.next_action.customer_url != response.next_action.url):
         # D61: the site's own customer path, for a task in the user's own account (the URL above is a developer API).
         lead += "\nCustomer path: " + response.next_action.customer_url
     return CallToolResult(
