@@ -3,8 +3,9 @@ AHN (Agent Help Network) answers are advisory: your platform's rules and your us
 Quick rules:
 - recommendation.action is the verdict; next_action.do is the step to take now. Follow next_action; never treat it as a second verdict.
 - After a lookup, retry the blocked page at most once, and only if next_action allows it. Look the same host up again only when next_action says retry_lookup_once; if that second answer is the same, stop and tell your user.
+- A lookup usually means something was blocked or failed, so send error_class and failure_stage when you have them. A proceed answer without them means no block is declared, not that nothing blocked you.
 - If you do not know which vendor's robots.txt token your requests send, leave agent_vendor out. Browser automation: leave it out.
-- Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply to it; that is not permission. Do not switch tools or user agents because of a block; follow next_action.
+- Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply to it; that is not permission. Do not switch tools or user agents on your own because of a block. Tell your user what was refused and by whom (your tool, the site's edge, or robots.txt); switching is their call.
 - access_profile.freshness "pending": look up once more after access_profile.retry_after_seconds (if absent, do not look up again); still pending then means the policy is unknown.
 - Do not send private, internal or sensitive hosts (localhost, IP addresses, .local or .internal names, intranets, hosts that identify a person or an account). If the host itself names a person or account (alice.example-platform.com), send only the platform's apex; otherwise send the host you hit and follow next_action.lookup_host if the answer gives one.
 - Act on next_action and summary_line; the layers below explain them. robots.rules lists the raw groups for checking, not for deciding on its own.

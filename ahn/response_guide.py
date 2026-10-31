@@ -29,6 +29,8 @@ RETRY_MAX = 3600
 # Constant public pages (D51). A value left empty is left out of the answer; null is never sent.
 FEEDBACK_URL = "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports"
 CHANGELOG_URL = "https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md"
+# Since D64 the link points at the section that says which wording of the verdicts the answer follows (D63 off: the page itself).
+CHANGELOG_ANCHOR = "#d64"
 
 WAIT_SECONDS = FEED_RETRY_MINUTES * 60
 _WAIT_IN = f"look up again in about {FEED_RETRY_MINUTES} minutes"
@@ -50,10 +52,10 @@ ROWS: dict[str, tuple[str, str]] = {
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     "O1": ("use_official_path", "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in {n} s."),
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
-    "O3": ("use_official_path", "The site's robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
+    "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
     "O4": ("use_official_path", "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; use the listed official developer path."),
     "O5": ("use_official_path", "The site refused even a plain automated robots.txt read. Expect page automation to be refused too; use the listed official developer path."),
-    "O6": ("use_official_path", "The site's robots.txt disallows the root for agents it does not name. Do not read that as permission; use the listed official developer path."),
+    "O6": ("use_official_path", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed). Do not read that as permission; use the listed official developer path."),
     "O7": ("use_official_path", "An official developer path is listed for this site. Prefer that documented API or portal over page automation."),
     "O7-N": ("use_official_path", "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation."),
     "O7-K": ("use_official_path", "An official developer API is listed; it needs a key or app registration (official_paths.access.auth). Use one you have; else ask the user before signing up."),
@@ -65,9 +67,9 @@ ROWS: dict[str, tuple[str, str]] = {
     "P3": ("proceed", "This site publishes no robots.txt, so it declares no restriction for agents. Continue with modest requests; not an access guarantee, and the site's terms still apply."),
     "U1": ("retry_lookup_once", "The site's robots.txt is being read now. Look up once more in {n} s; if the answer is still pending then, treat the policy as unknown. Do not poll."),
     "U2": ("no_clear_action", "An earlier read of the site's robots.txt failed and another is queued. Treat its policy as unknown for now; one more lookup in {n} s may help."),
-    "U3": ("stop_if_listed", "The site's robots.txt blocks some agent tokens. If your requests send one in next_action.stop_if_you_are, stop retrying pages; else send agent_vendor."),
+    "U3": ("stop_if_listed", "robots.txt blocks some agent tokens; this applies to requests that send them (next_action.stop_if_you_are). If yours is one, stop retrying pages; else send agent_vendor."),
     "U4": ("no_clear_action", "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; tell the user before automating pages."),
-    "U5": ("no_clear_action", "The site's robots.txt disallows the root for agents it does not name, and no official path is listed. Do not read this as permission."),
+    "U5": ("no_clear_action", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed), and no official path is listed. Do not read this as permission."),
     "U6": ("no_clear_action", "The site refused even a plain automated robots.txt read, and no official path is listed. Expect page automation to be refused; hand off if needed."),
     "U7": ("no_clear_action", "The site's robots.txt could not be read, so no declared policy is known. No official path is listed; follow your operator's rules."),
     "U8": ("lookup_apex_host", "Policy is read only for a site's main domain, not this subdomain. Look up next_action.lookup_host for the site-wide declaration."),
@@ -83,13 +85,20 @@ DO_VALUES = tuple(dict.fromkeys(do for do, _ in ROWS.values()))
 # Each whole sentence stays within LINE_MAX.
 # AHN_PROCEED_WITHOUT_FAILURE=0 (D63 off): the sentences and rules of the table before D63. Only what D63 changed is listed.
 ROWS_BEFORE = {
+    "O3": "The site's robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official developer path instead of page automation.",
+    "O6": "The site's robots.txt disallows the root for agents it does not name. Do not read that as permission; use the listed official developer path.",
+    "U3": "The site's robots.txt blocks some agent tokens. If your requests send one in next_action.stop_if_you_are, stop retrying pages; else send agent_vendor.",
+    "U5": "The site's robots.txt disallows the root for agents it does not name, and no official path is listed. Do not read this as permission.",
     "P1": "The site's robots.txt does not block the agent tokens checked for you at the root. Continue with modest requests; declared policy is not an access guarantee.",
     "P2": "The site's robots.txt blocks some other agents, not the tokens checked for you. Continue with modest requests; this is not an access guarantee.",
     "U7": "The site's robots.txt could not be read, so its agent policy is unknown, not permissive. No official path is listed; follow your operator's rules.",
     "U9": "No declared policy or official path is available for this host. Treat its agent policy as unknown, not as permission.",
 }
 CONSUMER_SEE_TAIL_BEFORE = " The API may not reach the user's own account; the site's page is next_action.customer_url."
+HAND_TAIL_BEFORE = " The API may not reach the user's own account; hand the user next_action.customer_url."
 CONSUMER_ROWS_BEFORE = {
+    "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + HAND_TAIL_BEFORE,
+    "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + HAND_TAIL_BEFORE,
     "O1": "Official path listed; use it instead of page automation. robots.txt is pending: look up once more in {n} s." + CONSUMER_SEE_TAIL_BEFORE,
     "O7": "An official developer API or portal is listed; prefer it over page automation." + CONSUMER_SEE_TAIL_BEFORE,
 }
@@ -100,10 +109,10 @@ _CONSUMER_O7 = "For a task in the user's own account, use the site's customer pa
 CONSUMER_ROWS: dict[str, str] = {
     "O1": "For a task in the user's own account, use the site's customer page (next_action.customer_url). robots.txt is pending: look up once more in {n} s." + CONSUMER_FIRST_TAIL,
     "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + CONSUMER_HAND_TAIL,
-    "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + CONSUMER_HAND_TAIL,
+    "O3": "robots.txt blocks the tokens in next_action.stop_if_you_are, for requests that send them. Use the official path." + CONSUMER_HAND_TAIL,
     "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + CONSUMER_HAND_TAIL,
     "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + CONSUMER_HAND_TAIL,
-    "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + CONSUMER_HAND_TAIL,
+    "O6": "robots.txt disallows the root for tokens not in robots.agents_allowed; not permission. Use the official path." + CONSUMER_HAND_TAIL,
     "O7": _CONSUMER_O7,
     "O7-N": _CONSUMER_O7,
     "O7-K": _CONSUMER_O7,
@@ -245,8 +254,9 @@ def _seconds(value) -> int | None:
     return max(0, min(RETRY_MAX, value))
 
 
-def links() -> dict | None:
-    found = {key: value for key, value in (("feedback", FEEDBACK_URL), ("changelog", CHANGELOG_URL)) if value}
+def links(versioned: bool = True) -> dict | None:
+    changelog = safe_url(CHANGELOG_URL + CHANGELOG_ANCHOR) if versioned and CHANGELOG_URL else CHANGELOG_URL
+    found = {key: value for key, value in (("feedback", FEEDBACK_URL), ("changelog", changelog)) if value}
     return found or None
 
 
@@ -298,7 +308,7 @@ def guide(result: dict, proceed_without_failure: bool = True) -> dict:
     if customer:
         action["customer_url"] = customer
     out = {"summary_line": sentence, "next_action": action}
-    found = links()
+    found = links(on)
     if found:
         out["links"] = found
     return out

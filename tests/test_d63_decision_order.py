@@ -220,7 +220,7 @@ def test_t24_t34_proceed_carries_the_customer_page_and_the_mcp_text_does_not_rep
     assert out["summary_line"] == PROCEED_CONSUMER_ROWS["P1"] and "developer API" not in out["summary_line"]
     response = CheckResponse.model_validate({**envelope(result), **out})
     lines = mcp_adapter.check_result(response).content[0].text.splitlines()
-    assert lines == [out["summary_line"], "URL: " + HELP]
+    assert lines == [out["summary_line"], "URL: " + HELP, mcp_adapter.PROCEED_NOTE]
     only = guide(answer(CONSUMER_ONLY, ABSENT))
     assert only["summary_line"] == PROCEED_CONSUMER_ROWS["P3"]
     assert only["next_action"]["url"] == only["next_action"]["customer_url"] == HELP

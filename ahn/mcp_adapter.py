@@ -165,6 +165,10 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     return check_result(response)
 
 
+PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing blocked you. If your step was refused, the refusal came from "
+                "your tool, the site's edge or a login: tell your user what was refused and by whom.")
+
+
 def check_result(response: CheckResponse):
     """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one and, D61,
     "Customer path: <next_action.customer_url>" when there is one; then the answer as
@@ -179,6 +183,9 @@ def check_result(response: CheckResponse):
             and response.next_action.customer_url != response.next_action.url):
         # D61: the site's own customer path, for a task in the user's own account (the URL above may be a developer API, or this same page).
         lead += "\nCustomer path: " + response.next_action.customer_url
+    if response.next_action is not None and response.next_action.do == "proceed":
+        # Free text, outside the schema: proceed means no block is declared, never that nothing blocked the caller.
+        lead += "\n" + PROCEED_NOTE
     return CallToolResult(
         content=[TextContent(type="text", text=lead),
                  TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],
