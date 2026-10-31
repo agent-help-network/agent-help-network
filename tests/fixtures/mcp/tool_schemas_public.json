@@ -488,6 +488,64 @@
      "title": "CheckObservation",
      "type": "object"
     },
+    "ConsumerPath": {
+     "additionalProperties": true,
+     "properties": {
+      "kind": {
+       "enum": [
+        "customer_help",
+        "official_app",
+        "entry_link"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "source_url": {
+       "maxLength": 200,
+       "pattern": "^https://[^\\s]+$",
+       "title": "Source Url",
+       "type": "string"
+      },
+      "url": {
+       "maxLength": 200,
+       "pattern": "^https://[^\\s]+$",
+       "title": "Url",
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind",
+      "url",
+      "source_url"
+     ],
+     "title": "ConsumerPath",
+     "type": "object"
+    },
+    "ConsumerPaths": {
+     "additionalProperties": true,
+     "properties": {
+      "paths": {
+       "items": {
+        "$ref": "#/$defs/ConsumerPath"
+       },
+       "maxItems": 6,
+       "minItems": 1,
+       "title": "Paths",
+       "type": "array"
+      },
+      "verified_at": {
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+       "title": "Verified At",
+       "type": "string"
+      }
+     },
+     "required": [
+      "paths",
+      "verified_at"
+     ],
+     "title": "ConsumerPaths",
+     "type": "object"
+    },
     "ContentSignals": {
      "additionalProperties": true,
      "description": "Cloudflare Content Signals, normalized; `use` is Cloudflare's experimental fourth signal.",
@@ -1158,6 +1216,19 @@
      "additionalProperties": true,
      "description": "D51: what to do now, computed from the recommendation (never a second verdict).",
      "properties": {
+      "customer_url": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Customer Url"
+      },
       "do": {
        "enum": [
         "wait_for_provider",
@@ -1501,6 +1572,17 @@
        ],
        "default": null,
        "title": "Api Docs"
+      },
+      "consumer": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ConsumerPaths"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
       },
       "developer_portal": {
        "anyOf": [
