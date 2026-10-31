@@ -82,7 +82,7 @@ def format_result(result: Result, site_retry_after: Any = None) -> str:
         data["official_url"] = result.official_url
     if result.blocked_agents:
         data["blocked_agents"] = list(result.blocked_agents)
-    wait = result.wait_seconds(site_retry_after)
+    wait = result.wait_seconds(site_retry_after)  # None after a stop, a hand-off or an official path
     if wait is not None:
         data["retry_after_seconds"] = wait
     if result.next_action is not None:

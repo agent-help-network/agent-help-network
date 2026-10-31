@@ -405,8 +405,18 @@ def test_stop_if_listed_and_a_provider_wait_with_the_sites_retry_after(transport
     calls = transport(body=waiting)
     summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "retry_after": "gt_3600", "http_status": 503}))
     assert data["retry_after_seconds"] == 3600 and data["next_action"]["retry_after_seconds"] == 900
-    assert "wait at least 3600 s" in summary
+    assert "wait more than an hour" in summary
     assert query_of(calls[-1])["retry_after"] == "gt_3600"  # the existing optional code; the merge adds nothing to the request
     ahn_client.clear_cache()
     _, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
     assert data["retry_after_seconds"] == 900
+
+
+def test_a_stop_answer_carries_no_wait_even_with_the_sites_retry_after(transport):
+    stop = {**ANSWER, "recommendation": {"action": "stop_declared_block", "confidence": "high", "reasons": []},
+            "summary_line": "The site's robots.txt explicitly blocks agent user agents at the site root, and no official path is listed. Stop automated retries; hand the step to the user if needed.",
+            "next_action": {"do": "stop_automation", "url": None, "retry_after_seconds": None}}
+    transport(body=stop)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
+    assert "retry_after_seconds" not in data and "Retry-After" not in summary
+    assert data["next_action"] == {"do": "stop_automation"}

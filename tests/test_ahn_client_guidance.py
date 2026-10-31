@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "clients" / "python" / "src"))
 
 import ahn_client as ahn  # noqa: E402
 from ahn_client import _adapter, _client, _result  # noqa: E402
-from ahn_client._result import DO_TO_ACTION, DO_VALUES, MAX_SUMMARY, NextAction, Result  # noqa: E402
+from ahn_client._result import DO_VALUES, SAFETY_TAIL, WAIT_DO, MAX_SUMMARY, NextAction, Result  # noqa: E402
 
 BASE = {
     "site_host": "example.com", "evidence_level": "no_reports", "observations": [], "provider_status": None,
@@ -70,7 +70,7 @@ def parse(body, host="example.com"):
 
 def test_the_client_knows_the_services_nine_values():
     from ahn.response_guide import DO_VALUES as SERVER_DO
-    assert set(DO_VALUES) == set(SERVER_DO) == set(CASES) == set(DO_TO_ACTION)
+    assert set(DO_VALUES) == set(SERVER_DO) == set(CASES)
 
 
 @pytest.mark.parametrize("do", sorted(CASES))
@@ -99,8 +99,8 @@ def test_next_action_values_are_in_the_line():
 
 @pytest.mark.parametrize("do,expected", [
     ("use_official_path", "For example.com, start with the official path: https://developer.example.com/apis"),
-    ("wait_for_provider", "For example.com, a provider issue was reported: wait about 900 s and look up once more instead of retrying."),
-    ("hand_off_to_human", "For example.com, this step needs the user (verification or sign-in): hand it over instead of retrying."),
+    ("wait_for_provider", None),  # a state that passes: not a permanent note
+    ("hand_off_to_human", None),
     ("stop_automation", "For example.com, the site declares agents blocked: do not automate its pages."),
     ("proceed", "For example.com, no declared block was found for the agents checked: continue with modest requests (not an access guarantee)."),
     ("stop_if_listed", "For example.com, if your requests send GPTBot, ClaudeBot, do not automate its pages."),
@@ -131,8 +131,23 @@ def test_an_answer_without_the_keys_works_as_before():
     assert result.summary().startswith("AHN example.com: recommendation=use_official_path (high).")
 
 
+GOLDEN_050 = ("AHN example.com: recommendation=use_official_path (high). Declared policy: ok; blocked agents: GPTBot; llms.txt: absent. "
+              "Official path: https://developer.example.com/apis. Provider status: not connected. Reports: no_reports. "
+              "Next: official_path_available. Full JSON: https://agenthelpnetwork.com/v1/incidents/check?site_host=example.com. "
+              "Declared policy is not an access guarantee; bypassing site controls is not advised.")
+
+
 def test_the_old_line_is_unchanged_without_a_summary_line():
-    assert parse({**answer("use_official_path"), "summary_line": None}).summary() == parse(BASE).summary()
+    # The string is what ahn-client 0.5.0 printed for BASE (taken from origin/main before this change).
+    assert parse(BASE).summary() == GOLDEN_050
+    assert parse({**answer("use_official_path"), "summary_line": None}).summary() == GOLDEN_050
+
+
+def test_the_detail_line_does_not_repeat_the_prefix_or_the_official_url():
+    summary = parse(answer("use_official_path")).summary()
+    assert summary.count("AHN example.com:") == 1
+    assert summary.count("https://developer.example.com/apis") == 1
+    assert "Official path: listed." in summary
 
 
 def test_old_pending_profile_still_gives_its_retry_after():
@@ -156,7 +171,7 @@ def test_bad_fields_inside_next_action_are_dropped():
     action = parse(body).next_action
     assert action.url is None and action.retry_after_seconds is None and action.lookup_host is None
     assert action.stop_if_you_are == ("GPTBot",)
-    for bad in (True, -1, 3601, "900"):
+    for bad in (True, 0, -1, 3601, "900"):
         body["next_action"]["retry_after_seconds"] = bad
         assert parse(body).next_action.retry_after_seconds is None
 
@@ -176,13 +191,16 @@ def test_links_keep_only_https_urls():
 
 # --- the service's do wins over the six-value action ----------------------------------------------------------
 
-def test_the_services_do_wins_when_it_disagrees_with_the_action():
-    body = answer("stop_automation")
-    body["recommendation"]["action"] = "proceed"
+def test_recommendation_is_the_services_verdict_even_when_do_disagrees():
+    body = answer("proceed")
+    body["recommendation"]["action"] = None
     result = parse(body)
-    assert result.recommendation == "stop_declared_block"
+    assert result.recommendation == "unknown"
+    assert result.next_action.do == "proceed"
+    body["recommendation"]["action"] = "stop_declared_block"
+    result = parse(body)
+    assert result.recommendation == "stop_declared_block" and result.next_action.do == "proceed"
     assert "recommendation=stop_declared_block" in result.summary()
-    assert "recommendation=proceed" not in result.summary()
 
 
 def test_a_line_with_control_characters_is_not_used():
@@ -194,6 +212,7 @@ def test_a_line_with_control_characters_is_not_used():
 def test_retry_after_is_filled_for_a_provider_wait_and_for_pending():
     assert parse(answer("wait_for_provider")).retry_after_seconds == 900
     assert parse(answer("retry_lookup_once")).retry_after_seconds == 300
+    assert parse(answer("no_clear_action", next_action={"do": "no_clear_action", "retry_after_seconds": 120})).retry_after_seconds == 120
     assert parse(answer("use_official_path")).retry_after_seconds is None
 
 
@@ -216,7 +235,8 @@ def test_summary_notes_a_longer_site_wait_and_only_then():
     assert "wait at least 1800 s" in result.summary(1800)
     assert "wait at least" not in result.summary(600)
     assert "wait at least" not in result.summary()
-    assert "wait at least 3600 s" in result.summary("gt_3600")
+    assert "wait more than an hour" in result.summary("gt_3600") and "3600" not in result.summary("gt_3600")
+    assert "wait more than an hour" in result.summary(99999)
 
 
 def test_the_site_value_is_never_sent(monkeypatch):
@@ -262,7 +282,7 @@ def test_the_adapter_note_uses_the_retry_after_band_it_already_holds(monkeypatch
     monkeypatch.setattr(_adapter, "bounded_check", fake_check)
     note = _adapter.note_for(RuntimeError("503"), None, adapter="langchain")
     assert note.startswith("AHN example.com: The provider reports an active issue.")
-    assert "wait at least 3600 s" in note
+    assert "wait more than an hour" in note
     assert seen["extra"] == {"http_status": 503, "retry_after": "gt_3600"}  # the same codes as before; nothing new is sent
 
 
@@ -276,3 +296,90 @@ def test_summary_stays_within_700_with_long_values():
 def test_next_action_is_exported():
     assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.0"
     assert _result.NextAction is NextAction
+
+
+# --- a stop, a hand-off or an official path is not "retry in an hour" -----------------------------------------
+
+NO_WAIT = ("stop_automation", "stop_if_listed", "hand_off_to_human", "use_official_path")
+
+
+def test_the_do_sets_are_the_complement_of_each_other():
+    assert set(NO_WAIT) | WAIT_DO == set(DO_VALUES) and not set(NO_WAIT) & WAIT_DO
+
+
+@pytest.mark.parametrize("do", NO_WAIT)
+@pytest.mark.parametrize("site", ["gt_3600", "60_3600", 1800, 99999])
+def test_the_sites_retry_after_is_not_merged_into_a_stop_or_hand_off(do, site):
+    result = parse(answer(do))
+    assert result.retry_after_seconds is None
+    assert result.wait_seconds(site) is None
+    summary = result.summary(site)
+    assert "Retry-After" not in summary and "wait at least" not in summary and "an hour" not in summary
+    assert summary == result.summary()
+
+
+def test_stop_automation_with_gt_3600_and_stop_if_listed_with_a_429():
+    stop = parse(answer("stop_automation"))
+    assert stop.wait_seconds("gt_3600") is None and stop.summary("gt_3600") == stop.summary()
+    listed = parse(answer("stop_if_listed"))
+    assert listed.wait_seconds("gt_3600") is None
+    note = listed.summary("gt_3600")
+    assert "Stop if you are: GPTBot, ClaudeBot." in note and "Retry-After" not in note
+
+
+def test_a_server_retry_on_use_official_path_is_not_carried():
+    body = answer("use_official_path")
+    body["next_action"]["retry_after_seconds"] = 45
+    result = parse(body)
+    assert result.next_action.retry_after_seconds == 45  # as sent
+    assert result.retry_after_seconds is None and result.wait_seconds() is None
+    assert "retry_after_seconds" not in result.next_action.to_dict()
+
+
+@pytest.mark.parametrize("do", sorted(WAIT_DO))
+def test_the_merge_still_applies_to_the_come_back_later_answers(do):
+    assert parse(answer(do)).wait_seconds(1800) == 1800
+
+
+def test_an_older_service_still_merges_the_site_value():
+    assert parse(BASE).wait_seconds(1800) == 1800
+
+
+# --- the cache keeps a pending profile only for its own retry_after_seconds --------------------------------------
+
+def test_a_pending_profile_is_cached_for_its_own_seconds_even_after_a_hand_off(monkeypatch):
+    body = answer("hand_off_to_human")
+    body["access_profile"] = {"robots_status": "pending", "robots": None, "llms_txt_status": "pending",
+                              "freshness": "pending", "retry_after_seconds": 45}
+    result = parse(body)
+    assert result.retry_after_seconds is None  # hand_off_to_human carries no wait
+    calls = []
+    clock = [1000.0]
+
+    def fake_fetch(*args):
+        calls.append(args)
+        return result
+
+    ahn.clear_cache()
+    monkeypatch.delenv("AHN_CLIENT_DISABLE", raising=False)
+    monkeypatch.setattr(_client, "_fetch", fake_fetch)
+    monkeypatch.setattr(_client.time, "monotonic", lambda: clock[0])
+    assert ahn.check("example.com", "human_verification") is result
+    clock[0] += 30
+    ahn.check("example.com", "human_verification")
+    assert len(calls) == 1  # still cached
+    clock[0] += 30  # 60 s: past the profile's 45 s, far short of 600 s
+    ahn.check("example.com", "human_verification")
+    assert len(calls) == 2
+    ahn.clear_cache()
+
+
+# --- length and the closing caution ------------------------------------------------------------------------------
+
+def test_the_closing_caution_survives_a_long_head():
+    body = answer("stop_if_listed")
+    body["next_action"]["stop_if_you_are"] = ["A" * 40] * 16
+    body["next_action"]["url"] = "https://" + "a" * 60 + ".example.com/" + "b" * 100
+    summary = parse(body, "a" * 60 + ".example.com").summary()
+    assert len(summary) <= MAX_SUMMARY and summary.endswith(SAFETY_TAIL)
+    assert parse(answer("proceed")).summary().endswith(SAFETY_TAIL)

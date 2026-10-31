@@ -18,20 +18,19 @@ NEXT_CHECK_NOTES = {
     "robots_names_vendor_alias": "Note: a robots.txt block names your vendor under an unlisted name; not a declared block, not permission: prefer an official path.",
 }
 
-# D51: what the service's next_action.do means for recommendation.action. The service computes `do` from the verdict, so
-# the two agree; when they do not (an odd or mixed answer) the service's `do` wins here.
+# D51: the nine values of next_action.do.
 DO_VALUES = ("wait_for_provider", "hand_off_to_human", "use_official_path", "stop_automation", "proceed", "retry_lookup_once",
              "stop_if_listed", "lookup_apex_host", "no_clear_action")
-DO_TO_ACTION = {
-    "wait_for_provider": "wait_provider_incident", "hand_off_to_human": "hand_off_to_human", "use_official_path": "use_official_path",
-    "stop_automation": "stop_declared_block", "proceed": "proceed", "retry_lookup_once": "unknown", "stop_if_listed": "unknown",
-    "lookup_apex_host": "unknown", "no_clear_action": "unknown",
-}
+# Only for these may the site's own Retry-After be merged into a wait (the answer is "come back later"). After a stop, a
+# hand-off or an official path, a wait would read as "retry in an hour", so there nothing is merged and nothing is carried.
+WAIT_DO = frozenset({"wait_for_provider", "retry_lookup_once", "no_clear_action", "proceed", "lookup_apex_host"})
 MAX_WAIT = 3600  # the largest wait this client reports; a longer one is a reason to hand off
 # The floor of each Retry-After band an adapter already holds (lookup code `retry_after`): the site said at least this long.
 RETRY_BAND_FLOOR = {"none": 0, "lt_60": 0, "60_3600": 60, "gt_3600": MAX_WAIT}
 SERVER_LINE = re.compile(r"^[ -~]{1,200}$")
 HOSTNAME = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+SAFETY_TAIL = "Declared policy is not an access guarantee; bypassing site controls is not advised."
 
 CODE = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
@@ -61,7 +60,12 @@ def _retry_after(profile: Optional[Dict[str, Any]]) -> Optional[int]:
 
 
 def _seconds(value: Any) -> Optional[int]:
-    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_WAIT else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_WAIT else None
+
+
+def site_over(value: Any) -> bool:
+    """True when the site asked for more than an hour (clipped to 3600 by ``site_wait``)."""
+    return value == "gt_3600" or (isinstance(value, int) and not isinstance(value, bool) and value > MAX_WAIT)
 
 
 def site_wait(value: Any) -> Optional[int]:
@@ -106,7 +110,7 @@ class NextAction:
         data: Dict[str, Any] = {"do": self.do}
         if self.url:
             data["url"] = self.url
-        if self.retry_after_seconds is not None:
+        if self.retry_after_seconds is not None and self.do in WAIT_DO:  # not after a stop, a hand-off or an official path
             data["retry_after_seconds"] = self.retry_after_seconds
         if self.stop_if_you_are:
             data["stop_if_you_are"] = list(self.stop_if_you_are)
@@ -115,7 +119,7 @@ class NextAction:
         return data
 
 
-def _head(host: str, line: str, action: Optional[NextAction], site: Optional[int]) -> str:
+def _head(host: str, line: str, action: Optional[NextAction], site_retry_after: Any) -> str:
     """The service's sentence first, then the few next_action values it points at, as fixed text."""
     parts = [f"AHN {host}: {line}"]
     if action and action.url:
@@ -124,12 +128,15 @@ def _head(host: str, line: str, action: Optional[NextAction], site: Optional[int
         parts.append("Stop if you are: " + ", ".join(action.stop_if_you_are[:6]) + ".")
     if action and action.lookup_host:
         parts.append(f"Look up: {action.lookup_host}.")
-    if site and site > ((action.retry_after_seconds or 0) if action else 0):
-        parts.append(f"The site's own Retry-After is longer: wait at least {site} s.")
+    site = site_wait(site_retry_after)
+    if site and (action is None or action.do in WAIT_DO) and site > ((action.retry_after_seconds or 0) if action else 0):
+        parts.append("The site's own Retry-After is longer: wait more than an hour." if site_over(site_retry_after)
+                     else f"The site's own Retry-After is longer: wait at least {site} s.")
     return " ".join(parts)
 
 
-def _summary(host: str, data: Dict[str, Any], url: str, action_code: Optional[str] = None, limit: int = MAX_SUMMARY) -> str:
+def _summary(host: str, data: Dict[str, Any], url: str, action_code: Optional[str] = None, limit: int = MAX_SUMMARY,
+             compact: bool = False) -> str:
     """A line like the Claude Code plugin's, at most MAX_SUMMARY characters, from validated fields only. It differs from the
     plugin's in one way: for the three D48 robots codes (NEXT_CHECK_NOTES) a short sentence follows the link."""
     rec = _dict(data.get("recommendation")) or {}
@@ -171,9 +178,9 @@ def _summary(host: str, data: Dict[str, Any], url: str, action_code: Optional[st
             agents = f"{len(blocked)} agent tokens"
         else:
             agents = ", ".join(blocked[:agent_limit]) + f" (+{len(blocked) - agent_limit} more)"
-        official_text = path if path and show_path else "listed" if path_listed else "none"
+        official_text = path if path and show_path and not compact else "listed" if path_listed else "none"
         full = url if show_url else "GET /v1/incidents/check on agenthelpnetwork.com"
-        return (f"AHN {host}: recommendation={action_code} ({_code(rec.get('confidence'))}). "
+        return (f"{'' if compact else f'AHN {host}: '}recommendation={action_code} ({_code(rec.get('confidence'))}). "
                 f"Declared policy: {robots}; blocked agents: {agents}; llms.txt: {llms}. "
                 f"Official path: {official_text}. Provider status: {status}. "
                 f"Reports: {_code(data.get('evidence_level'))}. Next: {', '.join(codes) or 'none'}. "
@@ -194,7 +201,7 @@ def _summary(host: str, data: Dict[str, Any], url: str, action_code: Optional[st
         text = render(*options)
         if len(text) <= limit:
             return text
-    tail = " Declared policy is not an access guarantee; bypassing site controls is not advised."
+    tail = " " + SAFETY_TAIL
     return text[:limit - len(tail) - 1].rstrip() + "…" + tail
 
 
@@ -213,7 +220,7 @@ class Result:
     From 0.6.0 the service's own guidance is kept (D51): ``summary_line`` (its one-sentence advice, or None),
     ``next_action`` (a ``NextAction``, or None) and ``links`` (``feedback`` and ``changelog`` URLs, or None). A service
     that does not send them (an older one, or ``AHN_RESPONSE_GUIDE=0``) gives None and everything works as before.
-    When ``next_action.do`` and ``recommendation`` disagree the service's ``do`` wins.
+    ``recommendation`` is always the service's verdict; ``next_action`` is kept beside it as sent.
     """
 
     host: str
@@ -247,8 +254,6 @@ class Result:
         links = _dict(data.get("links")) or {}
         links = {name: link for name in ("feedback", "changelog") if (link := _url(links.get(name)))}
         recommendation = action if action in ACTIONS else "unknown"
-        if next_action is not None:
-            recommendation = DO_TO_ACTION[next_action.do]
         return cls(
             host=host,
             recommendation=recommendation,
@@ -268,34 +273,35 @@ class Result:
 
     @property
     def retry_after_seconds(self) -> Optional[int]:
-        """Seconds to wait before repeating the same lookup once, or None. The service's ``next_action.retry_after_seconds``
-        (a pending profile, or a provider incident: 900) when the answer has a ``next_action``; with an older service, the
-        pending profile's own value (``access_profile.freshness`` is ``pending``)."""
+        """Seconds to wait before repeating the same lookup once, or None. With a ``next_action``: its
+        ``retry_after_seconds`` (a provider incident: 900; a profile being read), only when ``do`` means "come back later"
+        (``wait_for_provider``, ``retry_lookup_once``, ``no_clear_action``, ``proceed``, ``lookup_apex_host``); after a stop,
+        a hand-off or an official path it is None. With an older service (no ``next_action``): the pending profile's value."""
         if self.next_action is not None:
-            return self.next_action.retry_after_seconds
+            return self.next_action.retry_after_seconds if self.next_action.do in WAIT_DO else None
         return _retry_after(self.access_profile)
 
     def wait_seconds(self, site_retry_after: Any = None) -> Optional[int]:
         """``retry_after_seconds`` combined with the site's own Retry-After: the larger of the two, at most 3600. Pass the
         site's value as whole seconds, or as the band code (``60_3600``, ``gt_3600``) an adapter holds. The merge happens
-        here only; the site's value is never sent to the service and never changes its answer."""
+        here only; the site's value is never sent to the service and never changes its answer. After a stop, a hand-off or
+        an official path (see ``retry_after_seconds``) there is nothing to wait for and the result is None."""
+        if self.next_action is not None and self.next_action.do not in WAIT_DO:
+            return None
         values = [value for value in (self.retry_after_seconds, site_wait(site_retry_after)) if value]
         return max(values) if values else None
 
     @property
     def remember(self) -> Optional[str]:
         """A fixed one-line note for the next task on this host, made from ``next_action`` alone (no new judgement), or None
-        when there is nothing worth remembering (no ``next_action``, ``retry_lookup_once``, ``no_clear_action``)."""
+        when there is nothing worth remembering: no ``next_action``, or a state that passes (``wait_for_provider``,
+        ``hand_off_to_human``, ``retry_lookup_once``, ``no_clear_action``)."""
         action = self.next_action
         if action is None:
             return None
         host = self.host
         if action.do == "use_official_path":
             return f"For {host}, start with the official path: {action.url}" if action.url else f"For {host}, start with the official path the service lists."
-        if action.do == "wait_for_provider":
-            return f"For {host}, a provider issue was reported: wait about {action.retry_after_seconds or 900} s and look up once more instead of retrying."
-        if action.do == "hand_off_to_human":
-            return f"For {host}, this step needs the user (verification or sign-in): hand it over instead of retrying."
         if action.do == "stop_automation":
             return f"For {host}, the site declares agents blocked: do not automate its pages."
         if action.do == "proceed":
@@ -328,8 +334,12 @@ class Result:
         action_code = self.recommendation if self.recommendation in ACTIONS else None
         if self.summary_line is None:
             return _summary(self.host, self.raw, self.url, action_code)
-        head = _head(self.host, self.summary_line, self.next_action, site_wait(site_retry_after))
+        head = _head(self.host, self.summary_line, self.next_action, site_retry_after)
         room = MAX_SUMMARY - len(head) - 1
-        if room < 230:
-            return head[:MAX_SUMMARY].rstrip()
-        return head + " " + _summary(self.host, self.raw, self.url, action_code, room)
+        if room >= 200:
+            return head + " " + _summary(self.host, self.raw, self.url, action_code, room, compact=True)
+        # No room for the detail line: keep the closing caution, cut the head.
+        tail = " " + SAFETY_TAIL
+        if len(head) + len(tail) <= MAX_SUMMARY:
+            return head + tail
+        return head[:MAX_SUMMARY - len(tail) - 1].rstrip() + "…" + tail
