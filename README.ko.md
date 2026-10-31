@@ -22,8 +22,8 @@ pip install "ahn-client[langchain]"                                    # 또는 
 
 **코딩 에이전트에 설치:** 원격 HTTP 서버이며 계정이나 키가 필요 없다. 저장 전에 각 클라이언트가 확인을 묻는다. 형식은 각 업체 문서를 따랐다: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-- Cursor: [Cursor 에 추가](cursor://anysphere.cursor-deeplink/mcp/install?name=agent-help-network&config=eyJ1cmwiOiJodHRwczovL2FnZW50aGVscG5ldHdvcmsuY29tL21jcCJ9)
-- VS Code: [VS Code 에 설치](vscode:mcp/install?%7B%22name%22%3A%22agent-help-network%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fagenthelpnetwork.com%2Fmcp%22%7D)
+- Cursor, VS Code 원클릭 버튼: [에이전트 안내 화면](https://agenthelpnetwork.com/ko/agents#install) (GitHub 은 `cursor://`, `vscode:` 링크를 표시하지 않고 두 업체 모두 https 리디렉션을 문서화하지 않았다)
+- VS Code, `mcp.json` 에: `{"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}`
 - Cline, `cline_mcp_settings.json` 에: `{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}`
 - Codex, `~/.codex/config.toml` 에:
 

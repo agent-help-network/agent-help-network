@@ -162,7 +162,14 @@ def test_agents_page_and_readmes_install_links_decode_to_the_mcp_url():
 
     mcp = "https://agenthelpnetwork.com/mcp"
 
-    def check(text):
+    def check(text, links=True):
+        if not links:
+            flat = html.unescape(text).replace(chr(13) + chr(10), chr(10))
+            assert '](cursor://' not in text and '](vscode:' not in text
+            assert '{"servers": {"agent-help-network": {"type": "http", "url": "%s"}}}' % mcp in flat
+            assert '"type": "streamableHttp", "url": "%s"' % mcp in flat
+            assert '[mcp_servers.agent-help-network]' + chr(10) + 'url = "%s"' % mcp in flat
+            return
         cur = re.search(r'(cursor://anysphere\.cursor-deeplink/mcp/install\?[^")\s]+)', text)
         assert cur
         params = dict(p.split("=", 1) for p in html.unescape(cur.group(1)).split("?", 1)[1].split("&"))
@@ -183,7 +190,7 @@ def test_agents_page_and_readmes_install_links_decode_to_the_mcp_url():
             check(page.text)
     root = Path(__file__).resolve().parents[1]
     for name in ("README.md", "README.ko.md"):
-        check((root / name).read_text(encoding="utf-8"))
+        check((root / name).read_text(encoding="utf-8"), links=False)
 
 
 def test_connect_page_embeds_the_pinned_demo_video_without_autoplay():

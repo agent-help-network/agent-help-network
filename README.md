@@ -25,8 +25,8 @@ pip install "ahn-client[langchain]"                                    # or [cre
 
 **Install in your coding agent:** remote HTTP server, no account or key. Each client asks you to confirm before saving. Formats are from each vendor's docs: [Cursor](https://cursor.com/docs/context/mcp/install-links), [VS Code](https://code.visualstudio.com/api/extension-guides/ai/mcp), [Cline](https://docs.cline.bot/mcp/adding-and-configuring-servers), [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-- Cursor: [Add to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=agent-help-network&config=eyJ1cmwiOiJodHRwczovL2FnZW50aGVscG5ldHdvcmsuY29tL21jcCJ9)
-- VS Code: [Install in VS Code](vscode:mcp/install?%7B%22name%22%3A%22agent-help-network%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fagenthelpnetwork.com%2Fmcp%22%7D)
+- Cursor and VS Code one-click buttons: the [connect page](https://agenthelpnetwork.com/en/agents#install) (GitHub does not render `cursor://` or `vscode:` links, and the vendors document no https redirect for them)
+- VS Code, in `mcp.json`: `{"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}`
 - Cline, in `cline_mcp_settings.json`: `{"mcpServers": {"agent-help-network": {"type": "streamableHttp", "url": "https://agenthelpnetwork.com/mcp"}}}`
 - Codex, in `~/.codex/config.toml`:
 
