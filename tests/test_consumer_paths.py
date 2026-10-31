@@ -125,7 +125,7 @@ def test_every_entry_passes_the_rules_and_the_model(host):
 
 def test_no_phone_number_or_tel_link_is_copied_into_the_table():
     text = json.dumps(CONSUMER_PATHS)
-    assert not PHONE.search(re.sub(r"/(?:id)?\d+", "", text)), PHONE.search(text)  # store listing identifiers are not phone numbers
+    assert not PHONE.search(re.sub(r"(?<=apps\.apple\.com)(/[^\s\"]*)/id\d+|/(?:categories|articles|sections)/\d+", "", text)), PHONE.search(text)  # store listing identifiers are not phone numbers
     assert "tel:" not in text and "sms:" not in text
 
 
