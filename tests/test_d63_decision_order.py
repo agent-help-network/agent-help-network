@@ -305,5 +305,5 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     blob = json.dumps({"schema": CheckResponse.model_json_schema(),
                        "tools": sorted([t.model_dump(mode="json") for t in tools], key=lambda x: x["name"])},
                       sort_keys=True, default=str)
-    # Hash of the same blob taken from the tree before D63 (the three earlier changes merged).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "0fa71616f301ed1c2f4d644454088da7ad972199b736b2f234f638d4ebe53f9d"
+    # Hash of the same blob taken from the tree before D63 (the three earlier changes merged, #117 at 33fd2b5).
+    assert hashlib.sha256(blob.encode()).hexdigest() == "f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64"
