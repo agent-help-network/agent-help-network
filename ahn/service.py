@@ -477,8 +477,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     if error_class:
         where.append("i.error_class=%s")
         params.append(error_class)
-    # D66 (d65 only): status_check and preflight say why the lookup was made; they are not a step of an observation to filter by.
-    step_is_a_purpose = settings.proceed_without_failure and settings.proceed_mode == "d65" and task_step in LOOKUP_ONLY_STEPS
+    # D66 (any mode): status_check and preflight say why the lookup was made; they are not a step of an observation to filter by.
+    step_is_a_purpose = task_step in LOOKUP_ONLY_STEPS
     if task_step and not step_is_a_purpose:
         where.append("i.task_step=%s")
         params.append(task_step)

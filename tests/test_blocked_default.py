@@ -142,3 +142,13 @@ def test_the_status_check_line_is_in_both_instruction_files():
     line = "send task_step=status_check"
     for name in ("agent_instructions.txt", "llms.txt"):
         assert line in (ROOT / "ahn" / name).read_text(encoding="utf-8"), name
+
+
+def test_the_gate_table_carries_its_evidence_and_the_instructions_name_the_reserved_word():
+    from ahn import mcp_adapter
+    from ahn.official_paths import USABLE_NOW_BLOCKED
+    assert set(USABLE_NOW_BLOCKED) == {"amazon.com", "reddit.com"}
+    for host, entry in USABLE_NOW_BLOCKED.items():
+        assert entry["source_url"].startswith("https://") and re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry["verified_at"]), host
+    assert "send task_step=status_check" in mcp_adapter.mcp.instructions
+    assert "unless it cited robots.txt, which is the site's refusal" in (ROOT / "ahn" / "agent_instructions.txt").read_text(encoding="utf-8")

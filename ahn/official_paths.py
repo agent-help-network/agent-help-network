@@ -2260,7 +2260,12 @@ def access_is_current(access: dict, today: date | None = None) -> bool:
 # these hosts (it would send the caller to an API it cannot use). A host that is not listed here is "unknown": no gate.
 # Evidence: Amazon's developer documentation for the Selling Partner API says individual accounts are not eligible; Reddit's help
 # page on its developer platform says access is for approved developers after an App Review.
-USABLE_NOW_BLOCKED = {"amazon.com": "partner_only", "reddit.com": "approval_required"}
+USABLE_NOW_BLOCKED = {
+    "amazon.com": {"access": "partner_only", "verified_at": "2026-10-31",
+                   "source_url": "https://developer-docs.amazon/sp-api/docs/registering-as-a-developer"},
+    "reddit.com": {"access": "approval_required", "verified_at": "2026-10-31",
+                   "source_url": "https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data"},
+}
 
 
 def official_path_unusable(site_host: str) -> bool:

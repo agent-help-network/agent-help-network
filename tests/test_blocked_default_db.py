@@ -83,14 +83,14 @@ def add_observation(settings, host, task_step="site_open"):
                      (incident, PUBLIC_REPORTER_ID))
 
 
-def test_the_reserved_words_filter_observations_under_d63_but_not_under_d65(monkeypatch):
+def test_the_reserved_words_never_filter_observations_in_any_mode(monkeypatch):
     base = prepare(monkeypatch)
     seed(base, "github.com")
     add_observation(base, "github.com", "site_open")
     d63, d65 = mode(base, "d63"), mode(base, "d65")
     assert len(service.check(d63, "github.com", task_step="site_open")["observations"]) == 1
-    assert service.check(d63, "github.com", task_step="status_check")["observations"] == []  # D63: an ordinary step filter
-    assert len(service.check(d65, "github.com", task_step="status_check")["observations"]) == 1  # d65: a purpose, not a filter
+    assert len(service.check(d63, "github.com", task_step="status_check")["observations"]) == 1  # a purpose in every mode
+    assert len(service.check(d65, "github.com", task_step="status_check")["observations"]) == 1  # a purpose, not a filter
     assert len(service.check(d65, "github.com", task_step="preflight")["observations"]) == 1
     assert service.check(d65, "github.com", task_step="statuscheck")["observations"] == []  # a near miss is an ordinary step
 
