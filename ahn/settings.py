@@ -20,6 +20,17 @@ def report_retention_days_from_env() -> int:
     return days
 
 
+def parse_proceed_mode(raw: str) -> tuple[str, str]:
+    """AHN_PROCEED_WITHOUT_FAILURE as (switch, mode): "0" is off (before D63); "d65" (or "d66") is the blocked-by-default mode; every
+    other value, empty and "1" included, is the D63 answers, as before."""
+    value = raw.strip().lower()
+    if value == "0":
+        return "off", "d63"
+    if value in ("d65", "d66"):
+        return "on", "d65"
+    return "on", "d63"
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = field(repr=False)
@@ -62,6 +73,9 @@ class Settings:
     lookup_feedback: bool = True
     # AHN_PROCEED_WITHOUT_FAILURE=0 restores the answers from before D63: the recommendation, the next_checks codes and texts, the summary line, next_action.url and customer_url. On by default.
     proceed_without_failure: bool = True
+    # AHN_PROCEED_WITHOUT_FAILURE=d65 (D66): a lookup that reports no failure is answered like one that reported site_access, unless
+    # its task_step is status_check or preflight. "1", empty and "d63" keep the D63 answers; only "d65" changes them.
+    proceed_mode: str = "d63"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -112,4 +126,5 @@ class Settings:
                    public_board=public_board, public_board_since=public_board_since,
                    public_board_ahn_check=public_board_ahn_check,
                    lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0",
-                   proceed_without_failure=os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", "").strip() != "0")
+                   proceed_without_failure=parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))[0] != "off",
+                   proceed_mode=parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))[1])

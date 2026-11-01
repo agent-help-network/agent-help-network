@@ -18,7 +18,7 @@ from .provenance import operator_id
 from .settings import Settings
 from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
 from . import response_guide
-from .triage import next_checks, recommendation
+from .triage import LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
 
 LOG = logging.getLogger(__name__)
@@ -440,7 +440,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None, issue_feedback: bool = False):
+          agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -456,7 +456,15 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``agent_vendor`` (D48) is an accepted value (triage.accepted_vendor) or None. It only chooses the recommendation
     and is never stored; AHN_VENDOR_AWARE_BLOCK=0 ignores it.
+
+    ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
+    is answered like a status_check lookup.
     """
+    # D66: with d65 a lookup is judged as blocked unless it says it was not refused (task_step status_check or preflight).
+    lookup_only = plain_view or task_step in LOOKUP_ONLY_STEPS
+    blocked_default = (settings.proceed_without_failure and settings.proceed_mode == "d65"
+                       and not (lookup_only and not failure_observed(error_class, failure_stage)))  # a failure signal beats the word
+    assume_failure = blocked_default and not failure_observed(error_class, failure_stage)
     test_query = settings.test_mode and site_host.endswith(".test")
     public = settings.public_mode and not test_query
     where = ["i.site_host=%s", "o.withdrawn_at IS NULL"]
@@ -468,7 +476,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     if error_class:
         where.append("i.error_class=%s")
         params.append(error_class)
-    if task_step:
+    # D66 (d65 only): status_check and preflight say why the lookup was made; they are not a step of an observation to filter by.
+    step_is_a_purpose = settings.proceed_without_failure and settings.proceed_mode == "d65" and task_step in LOOKUP_ONLY_STEPS
+    if task_step and not step_is_a_purpose:
         where.append("i.task_step=%s")
         params.append(task_step)
     where.append("o.observed_at >= %s")
@@ -624,13 +634,15 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "recommendation": recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                                              provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
                                              vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
-                                             proceed_without_failure=settings.proceed_without_failure),
+                                             proceed_without_failure=settings.proceed_without_failure,
+                                             assume_failure=assume_failure),
             "failure_stage": failure_stage,
             "next_checks": next_checks(error_class, provider_status, level, failure_stage, access_profile, official,
                                        profile_not_read=profile_not_read, host_facts=host_facts,
                                        provider_partial=provider_partial, now=now, agent_vendor=agent_vendor,
                                        vendor_aware=settings.vendor_aware_block,
-                                       proceed_without_failure=settings.proceed_without_failure),
+                                       proceed_without_failure=settings.proceed_without_failure,
+                                       assume_failure=assume_failure),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
@@ -638,7 +650,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
             try:
-                result.update(response_guide.guide(result, settings.proceed_without_failure))
+                result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if (issue_feedback and settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
@@ -684,15 +696,17 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
         feed = feed_view(conn, site_host, now)
     provider_status, provider_regional = feed.provider_status, feed.regional
     official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
+    blocked_card = settings.proceed_without_failure and settings.proceed_mode == "d65"  # D66: the card shows what an agent gets
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
                              vendor_aware=settings.vendor_aware_block,
-                             proceed_without_failure=settings.proceed_without_failure)
+                             proceed_without_failure=settings.proceed_without_failure,
+                             assume_failure=blocked_card)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
                                    "provider_status": provider_status, "official_paths": official,
                                    "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
                                                             if official_page else None)},
-                                  settings.proceed_without_failure)
+                                  settings.proceed_without_failure, blocked_card)
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
     return {

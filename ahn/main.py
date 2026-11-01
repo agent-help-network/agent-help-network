@@ -689,7 +689,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 if not error:
                     signals = check(settings, site_host, selected_class.value if selected_class else None,
                                     window_hours=168, failure_stage=selected_stage.value if selected_stage else None,
-                                    signal=lookup_signal(request, kind="web"), issue_feedback=False)
+                                    signal=lookup_signal(request, kind="web"), issue_feedback=False,
+                                    plain_view=selected_class is None and selected_stage is None)
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,
