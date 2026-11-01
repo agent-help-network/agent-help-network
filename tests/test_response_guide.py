@@ -529,7 +529,7 @@ def test_lookup_host_appears_only_with_lookup_apex_host():
 def test_links_are_two_https_urls_and_a_blank_is_left_out(monkeypatch):
     extra = guide(answer())
     assert set(extra["links"]) == {"feedback", "changelog"} and all(value.startswith("https://") for value in extra["links"].values())
-    assert extra["links"]["changelog"].endswith("docs/feedback-changelog.md#d64")  # the section that dates the wording of the verdicts
+    assert extra["links"]["changelog"].endswith("docs/feedback-changelog.md#wording-1031")  # the section that dates the wording of the verdicts
     assert guide(answer(), False)["links"]["changelog"].endswith("docs/feedback-changelog.md")  # D63 off: the page itself
     assert extra["links"] == guide(answer("other.example.org", error_class="site_access"))["links"]  # the same for every lookup
     monkeypatch.setattr(response_guide, "CHANGELOG_URL", "")

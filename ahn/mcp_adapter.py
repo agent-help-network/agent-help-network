@@ -165,8 +165,8 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     return check_result(response)
 
 
-PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing blocked you. If your step was refused, the refusal came from "
-                "your tool, the site's edge or a login: tell your user what was refused and by whom.")
+PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing blocked you. If your step was refused, the refusal may have come from "
+                "your tool, the site's edge, robots.txt or a login: tell your user what was refused and by whom.")
 
 
 def check_result(response: CheckResponse):

@@ -28,8 +28,9 @@ def instructions() -> str:
 
 def test_rule_4_makes_switching_the_users_call_and_names_who_refused():
     text = instructions()
-    assert "Do not switch tools or user agents on your own because of a block. Tell your user what was refused and by whom " \
-           "(your tool, the site's edge, or robots.txt); switching is their call." in text
+    assert ("Do not switch tools or user agents on your own because of a block. If your own tool refused, tell your user; "
+            "switching is their call. If the site's edge or robots.txt refused, do not retry with another tool or user agent; "
+            "follow next_action (hand the step to your user, or use the official or customer path).") in text
     assert "because of a block; follow next_action" not in text
     quick = text.split("Quick rules:")[1].split("\n\n")[0].lower()
     for word in FORBIDDEN:
@@ -84,9 +85,9 @@ def test_the_official_path_check_names_what_a_developer_api_is_for():
 
 def test_the_changelog_link_points_at_an_anchor_that_exists():
     link = response_guide.links()["changelog"]
-    assert link.endswith("docs/feedback-changelog.md#d64") and SAFE_URL.fullmatch(link) and len(link) <= response_guide.URL_MAX
+    assert link.endswith("docs/feedback-changelog.md#wording-1031") and SAFE_URL.fullmatch(link) and len(link) <= response_guide.URL_MAX
     log = (ROOT / "docs" / "feedback-changelog.md").read_text(encoding="utf-8")
-    assert re.search(r"^#{2,3} D64\s*$", log, re.M)
+    assert re.search(r"^#{2,3} wording-1031\s*$", log, re.M)
 
 
 def test_the_mcp_text_adds_the_proceed_note_only_for_proceed():
@@ -100,5 +101,5 @@ def test_the_mcp_text_adds_the_proceed_note_only_for_proceed():
         assert lines[0] == out["summary_line"]
     assert "not that nothing blocked you" not in out["summary_line"]
     assert "Proceed means the site declares no block, not that nothing blocked you." in mcp_adapter.PROCEED_NOTE
-    assert "tell your user what was refused and by whom" in mcp_adapter.PROCEED_NOTE
+    assert "your tool, the site's edge, robots.txt or a login" in mcp_adapter.PROCEED_NOTE
     assert chr(10) not in mcp_adapter.PROCEED_NOTE

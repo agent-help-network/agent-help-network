@@ -29,8 +29,8 @@ RETRY_MAX = 3600
 # Constant public pages (D51). A value left empty is left out of the answer; null is never sent.
 FEEDBACK_URL = "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports"
 CHANGELOG_URL = "https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md"
-# Since D64 the link points at the section that says which wording of the verdicts the answer follows (D63 off: the page itself).
-CHANGELOG_ANCHOR = "#d64"
+# The link points at the section that says which wording of the verdicts the answer follows (D63 off: the page itself).
+CHANGELOG_ANCHOR = "#wording-1031"
 
 WAIT_SECONDS = FEED_RETRY_MINUTES * 60
 _WAIT_IN = f"look up again in about {FEED_RETRY_MINUTES} minutes"
