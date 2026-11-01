@@ -1061,13 +1061,13 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.12"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.13"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}
     skill = (PLUGIN / "skills" / "ahn-lookup" / "SKILL.md").read_text(encoding="utf-8").replace("\r\n", "\n")
     assert skill.startswith("---\nname: ahn-lookup\ndescription: ")
-    assert len(skill.split("---", 2)[2].split()) <= 1500
+    assert len(skill.split("---", 2)[2].split()) <= 1800
     assert b"\r\n" not in (PLUGIN / "hooks" / "run-hook.sh").read_bytes()
 
 

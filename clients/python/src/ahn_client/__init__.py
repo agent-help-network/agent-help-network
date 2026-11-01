@@ -18,7 +18,10 @@ Muse, dots or any site it describes. This client only reads; it never reports.
 from ._classify import classify, signals
 from ._client import check, clear_cache
 from ._diagnose import diagnose
+from ._digest import Digest, digest_markdown, local_digest, shard_id
+from ._memory import ADVICE, FailureLog
 from ._result import NextAction, Result
 
-__version__ = "0.6.3"
-__all__ = ["check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__"]
+__version__ = "0.6.4"
+__all__ = ["check", "classify", "clear_cache", "diagnose", "signals", "local_digest", "digest_markdown", "shard_id", "Digest",
+           "FailureLog", "ADVICE", "Result", "NextAction", "__version__"]

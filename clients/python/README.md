@@ -49,6 +49,24 @@ answer.wait_seconds(site_retry_after)   # max(site's Retry-After, service's wait
 
 Examples with a real `except` block and a decision per recommendation: [`examples/playwright_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/playwright_example.py), [`examples/browser_use_example.py`](https://github.com/agent-help-network/agent-help-network/blob/main/clients/python/examples/browser_use_example.py). Neither tries to get around a site's controls: they use the official path, hand off to the user, wait, or stop.
 
+## Regular sites: compare offline (0.6.4)
+
+`ahn.local_digest(hosts)` compares the sites you visit every day with the public bundle on your machine. The bundle is cut into 256 small JSON files (`/v1/bundle/shards/<xx>.json`); `xx` is the first byte of the SHA-256 of the lowercase hostname, as two hex digits, which the client computes itself. The service receives no hostname, only GETs for shard files, `manifest.json` and `changes.json`, and the client always requests the same number of shards (`pad_to`, default 16), topping up your own with random ones.
+
+```python
+import ahn_client as ahn
+digest = ahn.local_digest(["example.com", "news.example.org"], cache_dir="ahn-cache")
+print(ahn.digest_markdown(digest))              # a card for your notes: no text copied from sites
+for record in digest.hosts:                     # status: in_bundle | not_in_bundle | unverified | unavailable | skipped | invalid
+    print(record["host"], record["status"], record.get("access"))
+```
+
+- Every shard is checked against the SHA-256 and size in `manifest.json`; a shard that does not match is not used (`status == "unverified"`). If the manifest is signed (Ed25519, as the bundle's records) pass `public_key=` (base64url, 32 bytes) to check it; `digest.signature` is `verified`, `absent` (hash-checked only), `unchecked` (signed, no key given) or `invalid` (nothing is used). `require_signature=True` refuses shards unless the signature verified. The check is pure Python; there is still no dependency.
+- `cache_dir` keeps the downloads and asks again with `If-None-Match`, so an unchanged file costs a 304. Cached files are verified like new ones. Without it nothing is written to disk.
+- A host the bundle does not list is `not_in_bundle`: use `ahn.check` (live lookup) if a step fails. Private and malformed names are not looked up. `changes=True` (default) also marks, per host, sections that changed in the last 7 days; `digest.changes_covers_since` says from when changes could be seen. The shard files carry `valid_until`; `digest.stale` is set past it.
+- `digest_markdown(digest)` writes only fixed words, hostnames, short enum words, https URLs and short curated names (at most 5 words and 40 characters, markup removed), so the card is safe to keep in a memory file. Agents that cannot run Python can do the same by hand: compute the shard id and fetch `https://agenthelpnetwork.com/v1/bundle/shards/<xx>.json`.
+- Failure notes, optional and local only: `ahn.FailureLog(path)` keeps, per site, the last 14 days of `(date, hour, branch, hint)` in one file (`record(host, branch, hint, error_class=...)`; `branch` is `policy_closed`, `transient` or `undetermined`, as in a lookup's `cause` field where the service supports it). `advice(host)` returns codes (`stop_automatic_visits`, `move_visit_time`, `reduce_frequency`, `ask_user_to_log_in`, `check_tool_and_path`, `restore_original_method`) whose text is in `ahn.ADVICE`. Nothing is sent to the service.
+
 ## Diagnose a response
 
 Playwright's `page.goto`, `page.request`, httpx and requests hand back a 403 or a challenge page as an ordinary response, not as an exception, so `classify(exc)` never sees it. `ahn.diagnose(response)` reads such an object (`status_code` or `status`, `headers`, `text` or `content`; nothing is imported, nothing is installed) and gives the lookup's codes:
@@ -156,10 +174,10 @@ At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
-User-Agent: ahn-client/0.6.3 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.6.4 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.6.3 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.6.4 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
 - From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
@@ -186,7 +204,7 @@ The adapters send `User-Agent: ahn-client/0.6.3 (+langchain; +https://agenthelpn
 | `AHN_CLIENT_DISABLE=1` | `check` never sends anything |
 | `AHN_CLIENT_SKIP_HOSTS=corp.example.com,other.example.org` | Never look up these hosts or their subdomains |
 
-Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk. From version 0.2.0, an answer whose declared policy is still being read (`access_profile.freshness` is `pending`, next check `profile_pending`) is kept only for the profile's own `retry_after_seconds`, whatever `next_action` says, so the one repeat lookup the service asks for reaches it, and the summary line says when to look once more. Redirects from the service are not followed.
+Answers are cached in memory for 10 minutes (a failed lookup for 1 minute); nothing is written to disk (except by `local_digest` with `cache_dir`, and `FailureLog`, which you point at a file). From version 0.2.0, an answer whose declared policy is still being read (`access_profile.freshness` is `pending`, next check `profile_pending`) is kept only for the profile's own `retry_after_seconds`, whatever `next_action` says, so the one repeat lookup the service asks for reaches it, and the summary line says when to look once more. Redirects from the service are not followed.
 
 ## Development
 

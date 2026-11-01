@@ -722,7 +722,8 @@ def test_redirects_are_not_followed():
 
 
 def test_package_has_no_dependencies_and_exports():
-    assert set(ahn.__all__) == {"check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__"}
+    assert set(ahn.__all__) == {"check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__",
+                              "local_digest", "digest_markdown", "shard_id", "Digest", "FailureLog", "ADVICE"}
     pyproject = (ROOT / "clients" / "python" / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "ahn-client"' in pyproject and "dependencies = []" in pyproject and 'license = "Apache-2.0"' in pyproject
 
