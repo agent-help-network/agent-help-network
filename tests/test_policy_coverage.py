@@ -370,8 +370,8 @@ TABLES = {
         Phrase("kept for {days} days to count separate clients", "{days}일 보관합니다")),
     # Signal history for curated hosts (migration 024, ahn/signal_history.py): host facts, no request or client data.
     "robots_read_events": Pruned(Phrase(
-        "History of robots.txt reads for curated public hostnames (time, host read, status, label, classification, operator, declared network location, and whether the read's window was held and why): {days} days",
-        "큐레이션한 공개 호스트명별 robots.txt 읽기 이력(시각, 읽은 호스트, 상태, 라벨, 분류, 운영자, 선언한 네트워크 위치, 그 구간의 보류 여부와 사유): {days}일")),
+        "and of home-page checks of them from our daily check list (the same fields, a mark that it was a home-page check and, for an answer, its response-time range): {days} days",
+        "일일 점검 목록에서 나온 홈 페이지 확인 이력(같은 항목, 홈 페이지 확인이라는 표시, 응답이면 응답 시간 범위): {days}일")),
     "outage_episodes": Pruned(Phrase(
         "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
         "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
@@ -379,8 +379,8 @@ TABLES = {
         "Periods in which a curated host's robots.txt could not be read or its provider reported a problem, and each change in a provider's published status: {days} days",
         "큐레이션한 호스트의 robots.txt 를 읽지 못한 구간이나 업체가 문제를 발표한 구간, 그리고 업체가 발표한 상태의 각 변화: {days}일")),
     "robots_read_daily": Pruned(Phrase(
-        "Daily per-host totals of robots.txt reads, answers, failures, refusals and held reads, with the number of reads that followed a lookup and of seed-list reads: {days} days",
-        "호스트별 일일 robots.txt 읽기·응답·실패·거절·보류 합계와 조회 뒤 읽기 수·시드 목록 읽기 수: {days}일")),
+        "Daily per-host totals of robots.txt reads, answers, failures, refusals and held reads, with the number of reads that followed a lookup and of seed-list reads and the number of home-page checks: {days} days",
+        "호스트별 일일 robots.txt 읽기·응답·실패·거절·보류 합계와 조회 뒤 읽기 수·시드 목록 읽기 수·홈 페이지 확인 수: {days}일")),
     # AHN server check of home pages (migration 033, ahn/site_probe.py, D67): codes about public hosts, no client data.
     "site_probe": Pruned(Phrase("never the page, a header value, a cookie or a path: {days} days after the request",
                                 "페이지·헤더 값·쿠키·경로는 저장하지 않습니다: 요청 {days}일 뒤까지")),
@@ -808,6 +808,11 @@ COLUMNS = {
     "observations.origin_operator": _RECEIVED_BY,
     "observations.origin_observation_id": _RECEIVED_BY,
     "observations.received_channel": Phrase("which interface it arrived through", "제보마다 들어온 경로"),
+    "robots_read_events.source": Phrase("a mark that it was a home-page check", "홈 페이지 확인이라는 표시"),
+    "robots_read_events.rt_band": Phrase(
+        "its response-time range (under 1 second, 1 to 3 seconds, or 3 seconds or more; no exact time is kept here)",
+        "응답 시간 범위(1초 미만, 1~3초, 3초 이상. 정확한 시간은 여기에 두지 않음)"),
+    "robots_read_daily.home_reads": Phrase("the daily totals also count home-page checks", "일일 합계에는 홈 페이지 확인 수도 셉니다"),
 }
 
 
@@ -983,15 +988,20 @@ def test_signal_history_is_described_as_host_facts_kept_private_for_now():
     for table in ("outage_episodes", "provider_status_events", "robots_read_daily"):
         assert periods_in_prune_analytics()[table] == signal_history.ROLLUP_RETENTION_DAYS == 90
     wanted = {
-        "scope": Phrase("For curated public hostnames only", "큐레이션한 공개 호스트명"),
+        "scope": Phrase("For listed public hostnames only", "목록에 있는 공개 호스트명"),
+        "scope_lists": Phrase("in our public check list (ahn/probe_hosts.txt) or in our consumer-paths table; never an IP address "
+                              "or a name without a public suffix",
+                              "공개 점검 목록(ahn/probe_hosts.txt), 소비자 경로 표에 있는 호스트. IP 주소나 공개 접미사가 없는 이름은 제외"),
         "what": Phrase("a DNS, connection, TLS, timeout or server (5xx) error", "DNS·연결·TLS·시간 초과·서버 오류(5xx)"),
-        "refusal": Phrase("A refused read (401, 403, 429 or 503) is never counted as a problem with the site",
-                          "거절된 읽기(401·403·429·503)는 사이트의 문제로 세지 않습니다"),
+        "refusal": Phrase("A refused read or check (401, 403, 429 or 503, a bot challenge or a login wall) is never counted as "
+                          "a problem with the site",
+                          "거절된 읽기·확인(401·403·429·503, 봇 확인 페이지, 로그인 벽)은 사이트의 문제로 세지 않으며"),
         "no_people": Phrase("they contain no lookup, report, IP address or client information",
                             "조회·제보·IP 주소·클라이언트 정보가 없으며"),
         "trigger": Phrase("whether a read followed a lookup is kept only as a daily count per host",
                           "읽기가 조회 뒤의 읽기였는지는 호스트별 일일 개수로만 둡니다"),
-        "no_request": Phrase("Keeping them adds no request to any site", "어떤 사이트에도 요청이 늘지 않습니다"),
+        "no_request": Phrase("Keeping them adds no request to any site beyond the reads and checks described here",
+                             "이 기록 때문에 여기 적은 읽기와 확인 밖으로 어떤 사이트에도 요청이 늘지 않습니다"),
         "owner_view": Phrase("a private dashboard that shows the hostnames of current problem candidates",
                              "현재 문제 후보의 호스트명과 집계를 보여 주는 비공개 화면"),
         "private": Phrase("they are not shown on public pages or in lookup answers", "공개 페이지나 조회 응답에는 나오지 않습니다"),
@@ -1205,3 +1215,26 @@ def test_the_home_page_check_states_the_one_www_redirect_it_follows():
     for lang, stale in (("en", "no cookies, no sign-in and no redirect followed"), ("ko", "리다이렉트는 따라가지 않음, 요청 빈도는")):
         assert stale not in section(lang, "04")
     assert "the kind of redirect" in section("en", "03") and "리다이렉트 종류" in section("ko", "03")
+
+
+def test_home_check_history_constants_match_the_policy():
+    """D68: the 7-day refusal exclusion, the single retry, the response-time ranges and the confirmation rule are stated
+    in the policy with the numbers the code uses."""
+    from ahn import signal_history, site_probe
+    assert site_probe.REFUSED_EXCLUDE_DAYS == 7
+    assert site_probe.TRANSIENT_RETRIES == 1
+    assert [code for _bound, code in signal_history.RT_BANDS] == ["lt1s", "1to3s", "3s_plus"]
+    stage = signal_history.STAGES["1"]  # the stage in use (stage 3 is not built)
+    assert (stage.n_fail, stage.t_min, stage.n_ok) == (2, timedelta(minutes=45), 1)
+    assert signal_history.rt_band(999) == "lt1s" and signal_history.rt_band(1000) == "1to3s"
+    assert signal_history.rt_band(2999) == "1to3s" and signal_history.rt_band(3000) == "3s_plus"
+    wanted = {
+        "exclude": Phrase("a host that refuses a home-page check is not checked again for 7 days",
+                          "홈 페이지 확인을 거절한 호스트는 7일 동안 다시 확인하지 않습니다"),
+        "retry": Phrase("is asked once more, after the usual pause, before it counts",
+                        "평소 간격을 둔 뒤 한 번 더 묻고 나서 셉니다"),
+        "bands": Phrase("under 1 second, 1 to 3 seconds, or 3 seconds or more", "1초 미만, 1~3초, 3초 이상"),
+        "confirm": Phrase("only after at least 2 failed reads or checks at least 45 minutes apart, and the next answer ends it",
+                          "45분 이상 떨어진 실패한 읽기·확인이 2번 이상 있어야 열리고, 다음 응답이 닫습니다"),
+    }
+    assert_phrases("home check history", {lang: policy_text(lang) for lang in LANGS}, wanted)

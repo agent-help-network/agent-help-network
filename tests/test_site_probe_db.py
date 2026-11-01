@@ -213,17 +213,19 @@ def test_e3_a_second_check_of_a_host_within_6_hours_is_not_made(db, monkeypatch)
     assert len(home.calls) == 1
 
 
-def test_e3_a_failing_host_is_retried_no_sooner_than_6_hours_and_a_refusal_waits_72(db, monkeypatch):
+def test_e3_a_failing_host_is_retried_no_sooner_than_6_hours_and_a_refusal_waits_7_days(db, monkeypatch):
     read_profile(db, monkeypatch)
     now = datetime.now(timezone.utc)
     stored = measure(db, home=Home(label="connect_timeout"), now=now)
     assert stored["outcome"] == "unreachable" and stored["next_due_at"] == now + timedelta(hours=6)
-    # Past the due time: refused with no marker is a refusal, 72 hours.
+    # Past the due time: refused with no marker is a refusal, off the list for 7 days, flat.
     stored = measure(db, home=Home(status=403), now=now + timedelta(hours=7))
-    assert stored["outcome"] == "refused" and stored["next_due_at"] - (now + timedelta(hours=7)) == timedelta(hours=72)
-    read_profile(db, monkeypatch, now=now + timedelta(hours=80))     # the robots.txt verdict is re-read (it is only good for 24 h)
-    stored = measure(db, home=Home(status=403), now=now + timedelta(hours=80))
-    assert stored["consecutive_refusals"] == 2 and stored["next_due_at"] - (now + timedelta(hours=80)) == timedelta(hours=144)
+    assert stored["outcome"] == "refused" and stored["next_due_at"] - (now + timedelta(hours=7)) == timedelta(days=7)
+    assert measure(db, home=Home(status=403), now=now + timedelta(days=7, hours=6)) is None
+    later = now + timedelta(days=7, hours=8)
+    read_profile(db, monkeypatch, now=later)     # the robots.txt verdict is re-read (it is only good for 24 h)
+    stored = measure(db, home=Home(status=403), now=later)
+    assert stored["consecutive_refusals"] == 2 and stored["next_due_at"] - later == timedelta(days=7)
 
 
 def test_e3_daily_cap_boundary_and_the_lookup_cap(db, monkeypatch):
@@ -1056,3 +1058,126 @@ def test_retention_30_days_for_the_row_and_35_for_the_counts(db):
     platform_metrics.prune_analytics(TEST_URL)
     assert [r["site_host"] for r in rows(db, "SELECT site_host FROM site_probe")] == ["new-example.org"]
     assert len(rows(db, "SELECT * FROM site_probe_daily")) == 1 and len(rows(db, "SELECT * FROM probe_breaker_daily")) == 1
+
+
+# --- D68: list-driven checks feed the "Site problems right now" history -----------------------------------------------------------
+
+from ahn import signal_history  # noqa: E402
+
+
+class Sequence:
+    """Answers in turn (the last one repeats): stands in for fetch_home across a retry."""
+
+    def __init__(self, *homes):
+        self.homes, self.calls = list(homes), []
+
+    def __call__(self, host):
+        self.calls.append(host)
+        home = self.homes[min(len(self.calls), len(self.homes)) - 1]
+        return home(host)
+
+
+@pytest.fixture
+def history(db, monkeypatch):
+    """HOST counts as listed; the history tables start empty."""
+    monkeypatch.setattr(signal_history, "listed_hosts", lambda: frozenset({HOST}))
+    with connect(db) as conn:
+        conn.execute("TRUNCATE robots_read_events, robots_read_daily, outage_episodes RESTART IDENTITY")
+    return db
+
+
+def events(settings):
+    return rows(settings, "SELECT site_host,read_host,robots_status,detail,a_outcome,source,rt_band FROM robots_read_events "
+                         "WHERE source='home' ORDER BY id")   # the profile read of a listed host is recorded too, as before
+
+
+def test_d68_a_list_driven_check_of_a_listed_host_is_recorded_as_a_home_event_with_codes_only(history, monkeypatch):
+    read_profile(history, monkeypatch)
+    site_probe.measure(history, HOST, "set_O", reader=Home(status=200), paced=True)
+    assert events(history) == [{"site_host": HOST, "read_host": HOST, "robots_status": "home", "detail": "http_200",
+                                "a_outcome": "responding", "source": "home", "rt_band": "lt1s"}]
+    assert rows(history, "SELECT home_reads FROM robots_read_daily") == [{"home_reads": 1}]
+
+
+def test_d68_a_lookup_check_and_an_unlisted_host_are_not_recorded(history, monkeypatch):
+    read_profile(history, monkeypatch)
+    measure(history, home=Home(label="connect_error"))                     # a lookup's own check
+    read_profile(history, monkeypatch, host="other-example.org")
+    site_probe.measure(history, "other-example.org", "set_R", reader=Home(label="connect_error"), paced=True)
+    assert events(history) == [] and rows(history, "SELECT site_host FROM robots_read_daily WHERE home_reads IS NOT NULL") == []
+
+
+def test_d68_a_transient_failure_is_asked_once_more_and_only_the_second_answer_is_recorded(history, monkeypatch):
+    read_profile(history, monkeypatch)
+    reader = Sequence(Home(label="connect_timeout"), Home(status=200))
+    row = site_probe.measure(history, HOST, "set_O", reader=reader, paced=True)
+    assert reader.calls == [HOST, HOST] and row["outcome"] == "reachable"
+    assert [(e["a_outcome"], e["detail"]) for e in events(history)] == [("responding", "http_200")]
+
+
+def test_d68_two_failures_still_count_as_one_check_and_a_retry_never_follows_www(history, monkeypatch):
+    read_profile(history, monkeypatch)
+    access_profile.get_profile(history, WWW, now=datetime.now(timezone.utc), reader=Profiles())
+    reader = Sequence(Home(status=500), Home(status=301, headers=TO_WWW))
+    site_probe.measure(history, HOST, "set_O", reader=reader, paced=True)
+    assert reader.calls == [HOST, HOST]                                     # two requests at most
+    with connect(history) as conn:
+        conn.execute("DELETE FROM site_probe")
+    failing = Sequence(Home(status=502), Home(label="read_timeout"))
+    site_probe.measure(history, HOST, "set_O", reader=failing, paced=True)
+    assert failing.calls == [HOST, HOST]
+    assert [e["a_outcome"] for e in events(history)][-1] == "no_response:timeout"
+    assert rows(history, "SELECT home_reads FROM robots_read_daily") == [{"home_reads": 2}]
+
+
+@pytest.mark.parametrize("home", [Home(status=503), Home(status=403), Home(status=429), Home(status=404),
+                                  Home(status=403, headers={"cf-mitigated": "challenge"})])
+def test_d68_a_refusal_or_an_ordinary_answer_is_not_asked_again(history, monkeypatch, home):
+    read_profile(history, monkeypatch)
+    reader = Sequence(home, Home(status=200))
+    site_probe.measure(history, HOST, "set_O", reader=reader, paced=True)
+    assert reader.calls == [HOST]
+    [event] = events(history)
+    assert event["a_outcome"] in ("refused", "responding")
+
+
+def test_d68_a_lookup_and_an_unpaced_check_are_never_retried(history, monkeypatch):
+    read_profile(history, monkeypatch)
+    reader = Sequence(Home(label="connect_error"), Home(status=200))
+    measure(history, home=reader)                                           # lookup, unpaced
+    assert reader.calls == [HOST]
+    with connect(history) as conn:
+        conn.execute("DELETE FROM site_probe")
+    reader = Sequence(Home(label="connect_error"), Home(status=200))
+    site_probe.measure(history, HOST, "set_O", reader=reader, paced=False)
+    assert reader.calls == [HOST]
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "::ffff:127.0.0.1", "192.168.1.5"])
+def test_d68_ssrf_a_name_that_resolves_to_a_private_or_metadata_address_is_never_requested_or_recorded(history, monkeypatch, address):
+    read_profile(history, monkeypatch)
+    monkeypatch.setattr(access_profile, "_resolve", lambda *_a, **_k: [address])
+    sent = []
+    monkeypatch.setattr(site_probe.ap, "tracked_pool", lambda *a, **k: sent.append(1) or pytest.fail("no request may be made"))
+    row = site_probe.measure(history, HOST, "set_O", paced=True)                # the real reader, up to its address check
+    assert sent == [] and row["outcome"] == "not_measured" and row["not_measured_reason"] == "not_eligible"
+    assert events(history) == []
+
+
+def test_d68_a_confirmed_home_check_period_leaves_the_lookup_answer_unchanged(history, monkeypatch):
+    warm(history, monkeypatch)
+    before = strip(service.check(history, HOST))
+    for _ in range(2):
+        with connect(history) as conn:
+            conn.execute("DELETE FROM site_probe")
+        assert site_probe.measure(history, HOST, "set_O", reader=Home(label="connect_error"), paced=True) is not None
+    with connect(history) as conn:
+        # the two failures 60 minutes apart (the checks themselves ran just now)
+        conn.execute("UPDATE robots_read_events SET read_at=read_at-interval '60 minutes' "
+                     "WHERE id=(SELECT min(id) FROM robots_read_events WHERE source='home')")
+        conn.execute("UPDATE robots_read_events SET read_at=read_at-interval '120 minutes' WHERE source IS NULL")  # the profile read
+        signal_history.rollup(conn, now=datetime.now(timezone.utc) + timedelta(hours=1), thresholds=signal_history.STAGES["1"])
+        conn.commit()
+    [period] = rows(history, "SELECT confirmed_at FROM outage_episodes WHERE signal='A'")
+    assert period["confirmed_at"] is not None
+    assert strip(service.check(history, HOST)) == before

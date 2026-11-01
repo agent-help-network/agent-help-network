@@ -449,3 +449,79 @@ def test_owner_board_json_and_card_use_the_owner_gate(db):
         assert zipped.status_code == 200 and zipped.headers["content-encoding"] == "gzip"
         assert zipped.headers["content-type"].startswith("application/json") and zipped.headers["cache-control"] == "private, no-store"
         assert zipped.json()["days"] == 7 and zipped.json()["infra_feeds"] == body["infra_feeds"]
+
+
+# --- D68: home-page checks in the same history ---------------------------------------------------------------------------
+
+
+def home(settings, host, at, outcome, status=None, label=None, ms=80):
+    with connect(settings) as conn:
+        written = signal_history.record_home_check(conn, host, host, at, outcome, status, label, ms)
+        conn.commit()
+    return written
+
+
+def test_d68_two_home_check_failures_45_minutes_apart_confirm_a_period_and_one_answer_ends_it(db):
+    host = CURATED[0]
+    assert home(db, host, T0, "unreachable", label="connect_timeout")
+    assert home(db, host, T0 + timedelta(minutes=30), "server_error", status=502)
+    rollup(db, T0 + timedelta(hours=1))
+    [suspect] = episodes(db)
+    assert suspect["confirmed_at"] is None                                      # 30 minutes is under t_min
+    assert home(db, host, T0 + timedelta(minutes=45), "unreachable", label="read_timeout")
+    rollup(db, T0 + timedelta(hours=2))
+    [down] = episodes(db)
+    assert down["confirmed_at"] == T0 + timedelta(minutes=45) and down["ended_at"] is None
+    summary = board(db, T0 + timedelta(hours=2))
+    assert summary["reads"]["by_trigger"]["home"] == 3 and summary["reads"]["failed"] == 3
+    assert home(db, host, T0 + timedelta(minutes=170), "reachable", status=200, ms=1500)
+    rollup(db, T0 + timedelta(hours=4))
+    [ended] = episodes(db)
+    assert ended["ended_at"] == T0 + timedelta(minutes=170) and ended["ended_reason"] == "answered"
+    bands = [row["rt_band"] for row in q(db, "SELECT rt_band FROM robots_read_events ORDER BY id")]
+    assert bands == [None, "lt1s", None, "1to3s"]                               # a failure to connect has no time
+
+
+@pytest.mark.parametrize("outcome,status", [("refused", 403), ("rate_limited", 429), ("bot_challenge", 403),
+                                            ("login_wall", 200), ("server_error", 503)])
+def test_d68_a_refused_home_check_never_opens_a_period(db, outcome, status):
+    host = CURATED[0]
+    for minutes in (0, 60, 120, 180):
+        assert home(db, host, T0 + timedelta(minutes=minutes), outcome, status=status)
+    rollup(db, T0 + timedelta(hours=5))
+    assert episodes(db) == []
+    assert {row["a_outcome"] for row in q(db, "SELECT a_outcome FROM robots_read_events")} == {"refused"}
+    totals = q(db, "SELECT sum(failed)::int AS f,sum(refused)::int AS x,sum(home_reads)::int AS h FROM robots_read_daily")
+    assert totals == [{"f": 0, "x": 4, "h": 4}]
+
+
+def test_d68_nothing_measured_and_unlisted_hosts_are_not_recorded(db):
+    host = CURATED[0]
+    assert not home(db, host, T0, "not_measured")
+    assert not home(db, host, T0, "unreachable", label="not_public")
+    assert not home(db, host, T0, "unreachable", label="invalid_input")
+    assert not home(db, "unlisted-example.org", T0, "unreachable", label="connect_error")
+    assert not home(db, "10.0.0.1", T0, "unreachable", label="connect_error")
+    assert q(db, "SELECT count(*) AS n FROM robots_read_events") == [{"n": 0}]
+
+
+def test_d68_checked_names_which_requests_failed_on_the_board_and_in_the_public_snapshot(db):
+    from ahn import public_board
+
+    both, only_home = CURATED[0], CURATED[1]
+    day = timedelta(days=1)
+    add_reads(db, [(host, T0 - 10 * day + timedelta(hours=h), "responding") for host in (both, only_home) for h in range(20)])
+    rollup(db, T0 - 8 * day)
+    add_reads(db, [(both, T0, "no_response:connect")])
+    home(db, both, T0 + timedelta(minutes=60), "unreachable", label="connect_error")
+    home(db, only_home, T0, "server_error", status=500)
+    home(db, only_home, T0 + timedelta(minutes=60), "server_error", status=500)
+    rollup(db, T0 + timedelta(hours=2))
+    summary = board(db, T0 + timedelta(hours=2))
+    checked = {c["site_host"]: c["ahn_check"].get("checked") for c in summary["candidates"]}
+    assert checked == {both: ["home_page", "robots_txt"], only_home: ["home_page"]}
+    body = public_board.snapshot(summary, ahn_check=True, now=T0 + timedelta(hours=2))
+    shown = {line["site_host"]: line["ahn_check"]["checked"] for line in body["problems"]}
+    assert shown == checked
+    # Without the AHN-check column nothing of it is shown.
+    assert all("ahn_check" not in line for line in public_board.snapshot(summary, ahn_check=False, now=T0)["problems"])

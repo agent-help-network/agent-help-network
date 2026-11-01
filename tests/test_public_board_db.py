@@ -321,11 +321,11 @@ def test_policy_llms_and_sitemap_describe_the_board_only_while_on(db):
         shown = max(POLICY_UPDATED, ON["public_board_since"])  # the board date moves "Last updated" only when it is later
         assert f"Last updated {shown:%B} {shown.day}, {shown.year}" in client.get("/en/policy").text
         llms = client.get("/llms.txt").text
-        assert "## Site problems now" in llms and "/v1/now" in llms and "robots.txt AHN could not read" not in llms
+        assert "## Site problems now" in llms and "/v1/now" in llms and "hosts AHN could not connect to" not in llms
         assert "https://agenthelpnetwork.com/ko/now" in client.get("/sitemap.xml").text
     with TestClient(create_app(settings(**ON, public_board_ahn_check=True))) as client:
         assert str(escape(public_board.policy_sentences(True)["en"][1])) in client.get("/en/policy").text
-        assert "robots.txt AHN could not read" in client.get("/llms.txt").text
+        assert "hosts AHN could not connect to" in client.get("/llms.txt").text
 
 
 def test_the_time_shown_is_the_time_judged(db):

@@ -12,7 +12,9 @@ Manners (docs/decisions.md D67; the privacy policy repeats the numbers and tests
   requests at most, see below); every other redirect is recorded and not followed;
 * the robots.txt verdict for "/" was decided in memory when the profile was read (access_profile.home_gate) and is
   used only while that read is under 24 hours old; a refused, unreadable or disallowing robots.txt means no request;
-* one check per host per 6 hours at most, a refusal or challenge is not asked again for 72 hours (doubling to 7 days),
+* one check per host per 6 hours at most, a refusal, challenge, rate limit, login wall or 503 takes the host off the
+  list for 7 days (REFUSED_EXCLUDE_DAYS), a 5xx other than 503 or a connection failure is asked once more after the usual pause
+  in a paced check (TRANSIENT_RETRIES) before it counts,
   a failing host is checked again after 6 to 24 hours; 60 checks an hour and 800 a day in all, 300 a day and 40 an
   hour started by lookups; all checks stop while the bandwidth guard is at its warning level or has no recent record;
 * the one redirect followed: the first answer is a redirect whose Location host is exactly ``www.<host>`` and the www
@@ -80,12 +82,12 @@ HOURLY_CAP = 60
 DAILY_CAP = 800
 LOOKUP_DAILY_CAP = 300
 LOOKUP_HOURLY_CAP = 40
-BACKOFF_REFUSED_HOURS = 72
-BACKOFF_REFUSED_MAX_DAYS = 7
+# A refusal (401, 403, 429 or any 503), a bot challenge, a rate limit or a login wall takes the host off
+# the check list for this long, flat: the host answered and declined, and asking again sooner adds load for no signal.
+REFUSED_EXCLUDE_DAYS = 7
 BACKOFF_FAILED_HOURS = 6
 BACKOFF_FAILED_MAX_HOURS = 24
 SUCCESS_INTERVAL_HOURS = 24
-LOGIN_BACKOFF_HOURS = 72
 ROW_RETENTION_DAYS = 30
 DAILY_RETENTION_DAYS = 35
 RESPONSE_MAX_BYTES = BODY_CAP_CHALLENGE
@@ -108,6 +110,9 @@ CRON_SAFE_SECONDS = 280.0
 CRON_TIME_BUDGET_SECONDS = 40.0
 CRON_PROBES_PER_RUN = 2
 CRON_CANDIDATES = 60
+# A paced check (queue, cron) whose answer is a 5xx other than 503 or a connection failure asks once more, after the
+# usual pause, before the result is kept: one passing blip should not count. A lookup's short check never retries.
+TRANSIENT_RETRIES = 1
 
 # A lookup waits at most this long for its own host's check, DNS and request included; the web process runs at most
 # SYNC_CONCURRENCY such checks at a time and one per host however many lookups arrive together.
@@ -124,6 +129,8 @@ SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared b
 
 OUTCOMES = ("reachable", "redirected_same_host", "bot_challenge", "refused", "rate_limited", "login_wall",
             "redirected_offsite", "server_error", "unreachable", "other_status")
+# Outcomes in which the host answered and declined: never a failure, and the host is off the list for REFUSED_EXCLUDE_DAYS.
+REFUSAL_OUTCOMES = frozenset({"bot_challenge", "refused", "rate_limited", "login_wall"})
 NOT_MEASURED_REASONS = ("robots_disallowed", "robots_refused", "robots_unreadable", "robots_stale", "not_eligible",
                         "budget", "backoff", "disabled")
 # Reasons that leave a row behind (the host's own answer, not our limits).
@@ -359,7 +366,7 @@ def _retry_after_seconds(value: str | None, now: datetime) -> int | None:
             seconds = int((parsedate_to_datetime(value) - now).total_seconds())
         except (TypeError, ValueError):
             return None
-    return max(0, min(seconds, BACKOFF_REFUSED_MAX_DAYS * 86400))
+    return max(0, min(seconds, REFUSED_EXCLUDE_DAYS * 86400))
 
 
 def classify(site_host: str, fetched: dict, now: datetime) -> dict:
@@ -410,20 +417,18 @@ def classify(site_host: str, fetched: dict, now: datetime) -> dict:
     return result
 
 
-def schedule(outcome: str, previous: dict | None, retry_after: int | None) -> tuple[timedelta, int, int]:
-    """(wait until the next check, consecutive_refusals, consecutive_failures) after a check with this outcome."""
+def schedule(outcome: str, previous: dict | None, retry_after: int | None,
+             http_status: int | None = None) -> tuple[timedelta, int, int]:
+    """(wait until the next check, consecutive_refusals, consecutive_failures) after a check with this outcome. A 503 is
+    a server_error outcome but counts as a refusal here, as it does in the history (often a deliberate refusal)."""
     refusals = previous["consecutive_refusals"] if previous else 0
     failures = previous["consecutive_failures"] if previous else 0
-    if outcome in ("bot_challenge", "refused"):
-        refusals += 1
-        wait = min(timedelta(hours=BACKOFF_REFUSED_HOURS) * 2 ** (refusals - 1), timedelta(days=BACKOFF_REFUSED_MAX_DAYS))
-        wait = max(wait, timedelta(seconds=retry_after or 0))
-        return min(wait, timedelta(days=BACKOFF_REFUSED_MAX_DAYS)), refusals, 0
-    if outcome == "rate_limited":
-        wait = max(timedelta(hours=BACKOFF_REFUSED_HOURS), timedelta(seconds=retry_after or 0))
-        return min(wait, timedelta(days=BACKOFF_REFUSED_MAX_DAYS)), 0, 0
-    if outcome == "login_wall":
-        return timedelta(hours=LOGIN_BACKOFF_HOURS), 0, 0
+    if outcome in REFUSAL_OUTCOMES or (outcome == "server_error" and http_status == 503):
+        # Off the list for REFUSED_EXCLUDE_DAYS, flat. A Retry-After is never longer (it is capped there) and a shorter
+        # one is not taken as an invitation to ask sooner.
+        if outcome in ("bot_challenge", "refused"):
+            refusals += 1
+        return timedelta(days=REFUSED_EXCLUDE_DAYS), refusals, 0
     if outcome in ("server_error", "unreachable"):
         failures += 1
         wait = min(timedelta(hours=BACKOFF_FAILED_HOURS) * 2 ** (failures - 1), timedelta(hours=BACKOFF_FAILED_MAX_HOURS))
@@ -683,6 +688,17 @@ def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadlin
     return (fetched, classify(www_host, fetched, now)), False
 
 
+def transient(fetched: dict, classified: dict) -> bool:
+    """Pure. Whether one answer may be a passing blip worth asking again once (TRANSIENT_RETRIES): a 5xx other than 503
+    (a 503 is often a deliberate refusal) or a failure to connect at all (DNS, connection, TLS, timeout). A refusal, a
+    challenge, any other answer, a non-public address and a name the reader refused are never asked again."""
+    if fetched.get("label") in ("not_public", "invalid_input"):
+        return False
+    if classified["outcome"] == "server_error":
+        return classified["http_status"] != 503
+    return classified["outcome"] == "unreachable"
+
+
 def measure(settings, site_host: str, trigger: str, *, now: datetime | None = None, reader=None, job: dict | None = None,
             paced: bool = True, deadline: float | None = None) -> dict | None:
     """Decide, request and store one check of ``site_host``; returns the stored row, or None when nothing was checked
@@ -719,12 +735,20 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
             read_host = context["read_host"]
             reserve_www = False   # only a check that followed the redirect itself reserves the www read
             fetched = reader(read_host)
+            retried = 0
+            while (paced and trigger.startswith("set_") and retried < TRANSIENT_RETRIES
+                   and fetched.get("label") != "not_public" and transient(fetched, classify(read_host, fetched, now))):
+                # One passing blip should not count: ask once more after the usual pause and keep the second answer.
+                # A check that retried never follows a www redirect, so it is still two requests at most.
+                retried += 1
+                _pace()
+                fetched = reader(read_host)
             if fetched.get("label") == "not_public":
                 row = _row(read_host, now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
                            next_due=now + timedelta(hours=MIN_GAP_HOURS))
             else:
                 classified = classify(read_host, fetched, now)
-                www = _www_target(read_host, fetched, classified)
+                www = None if retried else _www_target(read_host, fetched, classified)
                 followed, no_verdict = _follow_www(conn, www, now, reader, paced, deadline) if www else (None, False)
                 if followed is not None:
                     first = classified["redirect"]
@@ -733,12 +757,19 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                     classified["redirect"] = {**(classified["redirect"] or first), "followed_www": True}
                     read_host = www
                     reserve_www = True
-                wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"])
+                wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"],
+                                                    classified["http_status"])
                 if no_verdict:
                     wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
                 row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)
+            if trigger.startswith("set_"):
+                # The list-driven check also feeds the "Site problems right now" history (D68): codes and a time range
+                # only, for listed hosts only, in the same transaction. It never raises.
+                from .signal_history import record_home_check
+                record_home_check(conn, site_host, row["read_host"], now, row["outcome"], row["http_status"],
+                                  fetched.get("label"), row["response_ms"])
             conn.commit()
             if reserve_www:
                 _reserve_www_read(conn, row["read_host"], row["next_due_at"], now)
