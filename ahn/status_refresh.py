@@ -755,6 +755,12 @@ SOURCES: dict[str, Source] = {
     # Weekly re-verification 2026-10-27: upgraded from link after the feed parsed.
     "gcore.com": Source("Gcore Status", "https://status.gcore.com/", "https://status.gcore.com/summary.json", "instatus"),
     "verisoul.ai": Source("Verisoul Status", "https://status.verisoul.ai/", "https://status.verisoul.ai/index.json", "betterstack"),
+    # Tranco ranks 41-5,000 batch: status host on the publisher's domain, or its documentation names the page; the public feed parsed on one read.
+    "cloudflare-dns.com": Source("Cloudflare Status", "https://www.cloudflarestatus.com/", "https://www.cloudflarestatus.com/api/v2/status.json"),
+    "incognia.com": Source("Incognia Status", "https://status.incognia.com/", "https://status.incognia.com/api/v2/status.json"),
+    "lastpass.com": Source("LastPass Status", "https://status.lastpass.com/", "https://status.lastpass.com/api/v2/status.json"),
+    "replit.com": Source("Replit Status", "https://status.replit.com/", "https://status.replit.com/api/v2/status.json"),
+    "viator.com": Source("Viator Status", "https://status.viator.com/", "https://status.viator.com/api/v2/status.json"),
 }
 # D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
 # Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
@@ -1126,6 +1132,27 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "photoshelter.com": ("Photoshelter Status", "https://status.photoshelter.com/"),
     "rcsb.org": ("Rcsb Status", "https://status.rcsb.org/"),
     "uni-muenster.de": ("University of Münster Status", "https://status.uni-muenster.de/"),
+    # Tranco ranks 41-5,000 batch: the page is on the publisher's domain or the publisher's own status.<host> redirects to it; no compatible feed verified.
+    "centos.org": ("CentOS Infra Status", "https://status.centos.org/"),
+    "coinmarketcap.com": ("CoinMarketCap API Status", "https://status.coinmarketcap.com/"),
+    "dhl.com": ("DHL API Service Status", "https://status.api.dhl.com/"),
+    "foursquare.com": ("Foursquare Developer Status", "https://status.foursquare.com/"),
+    "home-assistant.io": ("Home Assistant Status", "https://status.home-assistant.io/"),
+    "illuminateed.com": ("Renaissance Learning Status", "https://status.renaissance.com/"),
+    "infura.io": ("Infura Status", "https://status.infura.io/"),
+    "ionos.de": ("IONOS Status", "https://www.ionos-status.de/"),
+    "ipapi.co": ("ipapi.co Status", "https://status.ipapi.co/"),
+    "judge.me": ("Judge.me Status", "https://status.judge.me/"),
+    "myanimelist.net": ("MyAnimeList Status", "https://status.myanimelist.net/"),
+    "ninjarmm.com": ("NinjaOne Status", "https://status.ninjaone.com/"),
+    "northwestern.edu": ("Northwestern IT Status", "https://northwesternuniversity.statuspage.io/"),
+    "semanticscholar.org": ("Semantic Scholar API Status", "https://status.api.semanticscholar.org/"),
+    "shodan.io": ("Shodan Status", "https://status.shodan.io/"),
+    "smartthings.com": ("SmartThings Status", "https://status.smartthings.com/"),
+    "tally.so": ("Tally Status", "https://status.tally.so/"),
+    "wordpress.org": ("WordPress.org Status", "https://status.wordpress.org/"),
+    "yammer.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
+    "zearn.org": ("Zearn Status", "https://status.zearn.org/"),
 }
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 # Robots.txt decision before every feed request (D50, ahn/feed_robots.py). The four places that read a feed (the
