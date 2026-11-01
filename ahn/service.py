@@ -16,7 +16,7 @@ from .models import ObservationIn, OutcomeIn
 from .official_paths import official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
+from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SIGN_IN_STATUS_PAGES, SOURCES, register_source
 from . import response_guide
 from .triage import LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
@@ -401,6 +401,16 @@ class FeedView(NamedTuple):
     blocked_page: tuple | None    # (name, url) of a page whose feed its own robots.txt does not allow: a link, never a reading
 
 
+def official_page_view(official_page: tuple[str, str] | None, host: str) -> dict | None:
+    """The official_status_page object. requires_sign_in (D72) is set only for a curated listing of that host, never for a robots-blocked feed page."""
+    if not official_page:
+        return None
+    view = {"source_name": official_page[0], "source_url": official_page[1]}
+    if host in SIGN_IN_STATUS_PAGES and OFFICIAL_STATUS_PAGES.get(host) == official_page:
+        view["requires_sign_in"] = True
+    return view
+
+
 def feed_view(conn, host: str, now: datetime) -> FeedView:
     """The provider layer of an answer, from database rows only: no request, no queue insert, no write. check() and the
     home page's real-answer card both read the feed through this one function, so they cannot disagree about it."""
@@ -637,7 +647,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "provider_status": provider_status,
             "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
             "provider_discovery_attempted_at": provider_discovery_attempted_at,
-            "official_status_page": {"source_name": official_page[0], "source_url": official_page[1]} if official_page else None,
+            "official_status_page": official_page_view(official_page, host),
             "lookup_activity": lookup_activity,
             "access_profile": access_profile,
             "official_paths": official,
@@ -737,8 +747,7 @@ def _home_card(settings: Settings, site_host: str) -> dict | None:
                              assume_failure=blocked_card)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
                                    "provider_status": provider_status, "official_paths": official,
-                                   "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
-                                                            if official_page else None)},
+                                   "official_status_page": official_page_view(official_page, site_host)},
                                   settings.proceed_without_failure, blocked_card)
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None

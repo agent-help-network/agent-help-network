@@ -928,3 +928,29 @@ def test_the_status_check_switch_is_read_from_the_environment(monkeypatch):
     for value, expected in (("0", False), (" 0 ", False), ("1", True), ("", True), ("off", True)):
         monkeypatch.setenv("AHN_STATUS_CHECK_GUIDE", value)
         assert Settings.from_env().status_check_guide is expected
+
+
+def signin_page(url=PAGE_URL) -> dict:
+    return {**page(url), "requires_sign_in": True}
+
+
+def test_t3s_a_sign_in_status_page_is_handed_to_the_user():
+    out = guide(status_answer(official_page=signin_page(), official=OFFICIAL), status_check=True)
+    assert out["summary_line"] == response_guide.STATUS_ROWS["T3-S"] and out["next_action"]["status_url"] == PAGE_URL
+    assert "next_action.status_url" in out["summary_line"] and "sign-in" in out["summary_line"]
+
+
+def test_t3s_is_not_chosen_without_the_flag_or_with_a_feed():
+    assert guide(status_answer(official_page=page(), official=OFFICIAL), status_check=True)["summary_line"] == response_guide.STATUS_ROWS["T3"]
+    flagged = status_answer(provider_status=fresh_none(), official_page=signin_page(), official=OFFICIAL)
+    assert guide(flagged, status_check=True)["summary_line"] == response_guide.STATUS_ROWS["T1"]
+
+
+def test_t3s_falls_to_t4_when_the_status_url_is_unsafe():
+    out = guide(status_answer(official_page=signin_page("http://status.example.com/"), official=OFFICIAL), status_check=True)
+    assert out["summary_line"] == response_guide.STATUS_ROWS["T4"] and "status_url" not in out["next_action"]
+
+
+def test_t3s_is_not_used_outside_a_status_check():
+    plain = guide(status_answer(official_page=signin_page(), official=OFFICIAL))
+    assert plain["summary_line"] not in response_guide.STATUS_ROWS.values() and "status_url" not in plain["next_action"]
