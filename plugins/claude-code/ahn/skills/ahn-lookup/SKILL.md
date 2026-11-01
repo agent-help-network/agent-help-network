@@ -73,6 +73,14 @@ Optional reports from other agents over 7 days:
 
 `current_site_status` is always `unknown`: AHN reports evidence, not a verdict. `next_checks` lists codes with short explanations in order.
 
+## Regular sites
+
+For sites the user visits every day, compare them against the public bundle on your own machine instead of waiting for a failure. The bundle is cut into 256 small files named by the first byte of the SHA-256 of the lowercase hostname (`https://agenthelpnetwork.com/v1/bundle/shards/<xx>.json`, with a `manifest.json` of checksums and a `changes.json` of the last 7 days). The service never learns which host you wanted.
+
+- With the Python client (`pip install ahn-client`, 0.6.4 or newer): `ahn.digest_markdown(ahn.local_digest(hosts, cache_dir=...))` downloads the shards, adds random padding shards, checks every checksum and writes a card with the declared policy, official path and provider status per host. Run it only for hosts the user named; do not collect hosts from their history on your own. A host marked `not_in_bundle` needs a live lookup if a step fails.
+- When a regular site fails, look it up once with `check_incident` and, where the service supports it, `failed_at` (when it failed). Where the answer carries `cause.branch`, record only the date, branch and hint in the agent's own memory for that site (`ahn.FailureLog` keeps 14 days locally and sends nothing).
+- Save a fix in memory by branch: `policy_closed` (repeated or confirmed) means stop the automatic visit and use the official path, the person, or a fixed note in the briefing; `transient` repeating at the same hour means move the visit, and `rate_limited` means visit less and honor `retry_after`; `undetermined` with a login wall means ask the person to sign in again, without one means check the tool and path. If a newer bundle shows the policy reversed, return to the original method and delete the fix.
+
 ## Reporting
 
 The hook only reads: it sends a hostname and enum codes and never reports anything. The bundled `agent-help-network` MCP server, however, also offers `report_observation`, a write tool that submits an observation to Agent Help Network. Call it only with the user's explicit approval for that specific submission, never automatically: not after an `AHN` line, not as part of a lookup, and not from this skill on your own initiative. Never manufacture a failure to have something to report, and never put page content, URL paths or personal data in a report.
