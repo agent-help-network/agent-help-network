@@ -110,3 +110,12 @@ def test_redirects_share_the_request_limiter_and_stay_small():
         limited = next(r for r in responses if r.status_code == 429)
         assert limited.headers["retry-after"] == "60"
         assert all(len(r.content) < 1024 for r in responses)
+
+
+def test_phone_nav_is_a_grid_not_a_space_between_wrap():
+    """Below 520px the nav wraps into equal columns so a second row lines up with the first."""
+    css = (STATIC_DIR / "site.css").read_text(encoding="utf-8")
+    blocks = re.findall(r"@media\(max-width:520px\)\{(.*?)\}\}", css + "}")
+    nav = "".join(re.findall(r"\.site-header nav\{([^}]*)\}", "".join(b + "}" for b in blocks)))
+    assert "display:grid" in nav and "grid-template-columns:repeat(3,minmax(0,1fr))" in nav
+    assert "justify-content:normal" in nav and "flex-wrap" not in nav
