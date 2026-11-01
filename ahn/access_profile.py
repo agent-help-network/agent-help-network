@@ -1074,8 +1074,28 @@ def _site_declared_field(robots_status, stored, read_host, fetched_at, freshness
 
 def _cache_window(row, max_age: timedelta) -> timedelta:
     """A transport failure is retried after ERROR_RETRY; every definitive answer keeps the caller's max_age."""
-    failed_last = row["last_error_at"] is not None and (row["fetched_at"] is None or row["last_error_at"] > row["fetched_at"])
-    return min(max_age, ERROR_RETRY) if failed_last else max_age
+    return min(max_age, ERROR_RETRY) if _failed_last(row) else max_age
+
+
+def _failed_last(row) -> bool:
+    return row["last_error_at"] is not None and (row["fetched_at"] is None or row["last_error_at"] > row["fetched_at"])
+
+
+# The cache lookup also asks whether the row carries the in-memory robots.txt verdict for "/" (home_gate, D67).
+_CACHE_QUERY = f"SELECT {_ROW_COLUMNS},home_gate IS NOT NULL AS has_home_gate FROM host_access_profile WHERE site_host=%s"
+
+
+def _read_due(row, now: datetime, max_age: timedelta) -> bool:
+    """Whether get_profile reads the host now. A definitive answer stored before home_gate existed (NULL) is read again
+    while the AHN server check is on: that check waits for home_gate and would otherwise stay pending for up to
+    max_age. A row whose last read failed keeps its ERROR_RETRY window."""
+    latest = max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
+    if latest is None or latest < now - _cache_window(row, max_age):
+        return True
+    if ("has_home_gate" in row and row["has_home_gate"]) or _failed_last(row):
+        return False
+    from . import site_probe
+    return site_probe.enabled()
 
 
 def pending_profile(site_host: str, retry_after_seconds: int | None) -> dict:
@@ -1101,12 +1121,10 @@ def cached_profile(conn, site_host: str, *, now: datetime | None = None, max_age
     """
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(hours=max_age_hours)
-    row = conn.execute(f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
+    row = conn.execute(_CACHE_QUERY, (site_host,)).fetchone()
     if not row:
         return None, True
-    latest = max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
-    due = latest is None or latest < now - _cache_window(row, max_age)
-    return _as_profile(site_host, row, now, max_age), due
+    return _as_profile(site_host, row, now, max_age), _read_due(row, now, max_age)
 
 
 def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, reader=fetch_public_file,
@@ -1118,16 +1136,13 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
     """
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(hours=max_age_hours)
-    query = f"SELECT {_ROW_COLUMNS} FROM host_access_profile WHERE site_host=%s"
     with _LOCKS_GUARD:
         lock = _HOST_LOCKS.setdefault(site_host, threading.Lock())
     with lock:
         with connect(settings) as conn:
-            row = conn.execute(query, (site_host,)).fetchone()
-        if row:
-            latest = max((t for t in (row["fetched_at"], row["last_error_at"]) if t is not None), default=None)
-            if latest is not None and latest >= now - _cache_window(row, max_age):
-                return _as_profile(site_host, row, now, max_age)
+            row = conn.execute(_CACHE_QUERY, (site_host,)).fetchone()
+        if row and not _read_due(row, now, max_age):
+            return _as_profile(site_host, row, now, max_age)
         profile = build_profile(site_host, reader=reader)
         with connect(settings) as conn:
             if profile["robots_status"] == "error":
