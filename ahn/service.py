@@ -591,8 +591,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         if access_profile is not None:
             access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
         ahn_check = None
-        if (site_probe.enabled() and public and eligible and registered and not test_query
-                and host not in lookup_signals.EXAMPLE_HOSTS):
+        if site_probe.enabled() and public and eligible and registered and not test_query and host in lookup_signals.EXAMPLE_HOSTS:
+            # Documentation example hosts are never requested: an explicit in-memory view instead of a missing field.
+            ahn_check = site_probe._valid(site_probe.not_measured_view("not_eligible"))
+        elif site_probe.enabled() and public and eligible and registered and not test_query:
             # D67: AHN's own server check of the home page. A short synchronous attempt (waits at most 3 seconds, the one
             # place a lookup may wait on a third-party host), otherwise queued with no delay and shown as pending. Decided
             # after the recommendation inputs above and added below after the recommendation: it changes none of them.
