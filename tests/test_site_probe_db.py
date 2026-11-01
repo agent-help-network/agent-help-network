@@ -152,6 +152,35 @@ def test_e5b_no_stored_verdict_or_one_over_24_hours_old_means_no_request(db, mon
     assert measure(db, home=home) is None and home.calls == []           # a verdict from 25 hours ago
 
 
+def test_e5b_a_fresh_profile_from_before_d67_is_read_again_so_the_check_does_not_wait_a_day(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET home_gate=NULL")
+        assert cached_profile(conn, HOST)[1] is True                    # the lookup path queues the read
+    _profile, stub = read_profile(db, monkeypatch)                       # within the 24-hour cache window
+    assert stub.calls[:1] == [(HOST, "/robots.txt")]
+    assert measure(db)["outcome"] == "reachable"
+    with connect(db) as conn:
+        assert cached_profile(conn, HOST)[1] is False
+    _profile, again = read_profile(db, monkeypatch)                      # home_gate stored: a cache hit again
+    assert again.calls == []
+
+
+def test_e5b_a_profile_without_home_gate_keeps_its_cache_when_the_check_is_off_or_the_read_failed(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET home_gate=NULL")
+    monkeypatch.setenv("AHN_SITE_PROBE", "0")
+    _profile, stub = read_profile(db, monkeypatch)
+    assert stub.calls == []
+    monkeypatch.setenv("AHN_SITE_PROBE", "1")
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET last_error_at=now()")  # the last read failed: ERROR_RETRY applies
+        assert cached_profile(conn, HOST)[1] is False
+    _profile, stub = read_profile(db, monkeypatch)
+    assert stub.calls == []
+
+
 def test_e5b_the_profile_read_makes_no_new_request_and_its_bytes_do_not_change(db, monkeypatch):
     profile, stub = read_profile(db, monkeypatch)
     assert [path for _host, path in stub.calls][:2] == ["/robots.txt", "/llms.txt"] and "/" not in [p for _h, p in stub.calls]
