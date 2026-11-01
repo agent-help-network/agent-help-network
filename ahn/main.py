@@ -22,7 +22,8 @@ from . import server_card
 from .adoption import parse_days as parse_adoption_days
 from .models import CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome, FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
-from .owner_hosts import OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, parse_days, recent_hosts
+from .owner_hosts import (OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, OWNER_HOSTS_ORDERS, blocked_hosts, parse_days,
+                          parse_order, parse_unmapped, recent_hosts)
 from .rate_limit import RequestLimiter
 from .service import ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
@@ -482,11 +483,22 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if days is None:
             return JSONResponse({"error": "invalid_days", "min": 1, "max": OWNER_HOSTS_MAX_DAYS, "default": OWNER_HOSTS_DEFAULT_DAYS},
                                 status_code=422, headers=OWNER_HEADERS)
+        order = parse_order(request.query_params.get("order"))
+        if order is None:
+            return JSONResponse({"error": "invalid_order", "allowed": list(OWNER_HOSTS_ORDERS)},
+                                status_code=422, headers=OWNER_HEADERS)
+        unmapped = parse_unmapped(request.query_params.get("unmapped"))
+        if unmapped is None:
+            return JSONResponse({"error": "invalid_unmapped", "allowed": ["1"]}, status_code=422, headers=OWNER_HEADERS)
         try:
-            hosts = recent_hosts(settings, days)
+            if order == "blocked":  # host, sources, lookups; tab-separated
+                lines = ["\t".join((host, str(sources), str(lookups)))
+                         for host, sources, lookups in blocked_hosts(settings, days, unmapped=unmapped)]
+            else:
+                lines = recent_hosts(settings, days, unmapped=unmapped)
         except Exception:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
-        body = "".join(host + "\n" for host in hosts)
+        body = "".join(line + "\n" for line in lines)
         return Response(body, media_type="text/plain; charset=utf-8", headers=OWNER_HEADERS)
 
     if settings.public_bundle:  # off by default: the paths then do not exist (404)
