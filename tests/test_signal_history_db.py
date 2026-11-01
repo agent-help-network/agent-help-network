@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from ahn import platform_metrics, signal_history
 from ahn.access_profile import get_profile
 from ahn.db import connect, migrate
+from ahn.site_declared import paths as site_declared_paths  # D59: the standard files follow the robots read
 from ahn.main import create_app
 from ahn.settings import Settings
 from ahn.status_refresh import SOURCES, refresh_one, register_source
@@ -81,8 +82,8 @@ def test_a_read_of_a_curated_host_is_recorded_without_any_extra_request(db):
     curated, plain = Reader(), Reader()
     get_profile(db, host, now=T0, reader=curated, trigger="seed")
     get_profile(db, "not-curated-example.org", now=T0, reader=plain)
-    # Same requests as an unrecorded host: robots.txt and llms.txt, nothing else.
-    assert [path for _, path in curated.calls] == [path for _, path in plain.calls] == ["/robots.txt", "/llms.txt"]
+    # Same requests as an unrecorded host: robots.txt, llms.txt and the D59 standard files, nothing else.
+    assert [path for _, path in curated.calls] == [path for _, path in plain.calls] == ["/robots.txt", "/llms.txt", *site_declared_paths()]
     rows = q(db, "SELECT site_host,read_at,read_host,robots_status,detail,a_outcome,origin_operator FROM robots_read_events")
     assert rows == [{"site_host": host, "read_at": T0, "read_host": host, "robots_status": "ok", "detail": "http_200",
                      "a_outcome": "responding", "origin_operator": "agenthelpnetwork.com"}]
@@ -93,7 +94,7 @@ def test_a_read_of_a_curated_host_is_recorded_without_any_extra_request(db):
         {"day": T0.date(), "lookup_reads": 0, "seed_reads": 1, "reads": 0}]
     # A cached answer is not a read and records nothing.
     get_profile(db, host, now=T0 + timedelta(hours=1), reader=curated)
-    assert len(q(db, "SELECT id FROM robots_read_events")) == 1 and len(curated.calls) == 2
+    assert len(q(db, "SELECT id FROM robots_read_events")) == 1 and len(curated.calls) == 2 + len(site_declared_paths())
     get_profile(db, host, now=T0 + timedelta(days=1, hours=1), reader=curated)  # a lookup read the next day
     assert q(db, "SELECT lookup_reads,seed_reads FROM robots_read_daily ORDER BY day") == [
         {"lookup_reads": 0, "seed_reads": 1}, {"lookup_reads": 1, "seed_reads": 0}]

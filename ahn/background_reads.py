@@ -52,7 +52,10 @@ MAX_BACKOFF_MINUTES = 60
 MIN_READ_INTERVAL = 0.5    # seconds between external reads in one process: at most 2 per second
 POLL_SECONDS = 30.0
 WORKER_THREADS = 2
-JOB_SECONDS = 2.0          # rough time of one job for the retry estimate (paced reads plus network)
+# Rough time of one job for the retry estimate: an access_profile job is now robots.txt, llms.txt and the three D59
+# standard files, five reads 0.5 s apart (MIN_READ_INTERVAL) with two 0.5 s site_declared pauses among them, plus
+# typical network time: about 4 s. A status job is shorter; the estimate errs late, never early.
+JOB_SECONDS = 4.0
 RETRY_AFTER_MIN = 5
 RETRY_AFTER_MAX = 300      # also what a lookup says while only the 5-minute cron processes the queue
 FEED_STALE_HOURS = 2       # a feed is refreshed behind a lookup once its answer would read as stale

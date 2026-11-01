@@ -13,6 +13,7 @@ from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import json
+import logging
 import re
 import socket
 import ssl
@@ -26,6 +27,8 @@ from psycopg.types.json import Jsonb
 
 from .db import connect
 from .provenance import operator_id, sha256_hex, vantage
+
+LOG = logging.getLogger(__name__)
 
 # A declared block is judged on a vendor's governing tokens (D48, GOVERNING_TOKENS below): its user_agent tokens, or its
 # search_crawler tokens when it documents no user_agent token. A training_crawler token is reported but never blocks.
@@ -664,9 +667,22 @@ def _resolve(site_host: str, timeout: float) -> set[str]:
 
 MAX_ADDRESSES_TRIED = 3
 CONNECT_BUDGET_FACTOR = 2  # all connection attempts of one read share timeout_connect * this
+DNS_TIMEOUT_SECONDS = 2.0
+TIMEOUT_CONNECT_SECONDS = 2.0  # fetch_public_file's defaults
+TIMEOUT_READ_SECONDS = 3.0
 # Whole-body time limit. The per-receive read timeout alone lets a host that trickles one byte at a
 # time hold a reader indefinitely; past this budget the read ends as read_timeout.
 BODY_READ_BUDGET = 10.0
+# Worst time of one request with the default limits: DNS, the shared connect budget, the wait for the response headers
+# (one read timeout), the body budget, and the one receive that may still be running when the budget runs out
+# (read_capped checks the budget between receives). 2 + 4 + 3 + 10 + 3 = 22 seconds.
+REQUEST_WORST_SECONDS = (DNS_TIMEOUT_SECONDS + TIMEOUT_CONNECT_SECONDS * CONNECT_BUDGET_FACTOR + TIMEOUT_READ_SECONDS
+                         + BODY_READ_BUDGET + TIMEOUT_READ_SECONDS)
+# Worst time of one host's profile read (D59): requests that can each run to REQUEST_WORST_SECONDS are the apex
+# robots.txt and its www fallback, llms.txt, and the three standard files (a redirect hop is a fast answer followed by
+# one such request, so it adds no slow request of its own); plus site_declared's two pauses and, in the background
+# worker, up to five 0.5-second pacing waits: 6 * 22 + 1 + 2.5 = 135.5, rounded up to 136.
+HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
 _clock = time.monotonic  # patched in tests
 
 
@@ -734,20 +750,23 @@ ERROR_RETRY = timedelta(hours=1)
 
 
 def fetch_public_file(
-    site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0, timeout_read: float = 3.0,
-    _hop: int = 0,
+    site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
+    timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0, accept: str = "text/plain,*/*;q=0.5",
+    headers_out: dict | None = None,
 ) -> tuple[str, bytes | None, str | None]:
     """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures.
 
     Returns (status, body, detail). detail is a short machine label such as
-    'http_503', 'dns_timeout' or 'connect_error' so the answer can say why.
+    'http_503', 'dns_timeout' or 'connect_error' so the answer can say why. When ``headers_out`` is a dict, the
+    TDMRep response headers (tdm-reservation, tdm-policy; site_declared.TDM_HEADERS) of the response that ended the
+    read are put in it, lowercased names, values cut to 300 characters; no other header is kept.
     """
     site_host = site_host.strip().rstrip(".").lower()
     if not _HOST_RE.match(site_host) or not path.startswith("/") or "//" in path or cap_bytes < 1:
         return ("error", None, "invalid_input")
     try:
         try:
-            addresses = _resolve(site_host, 2.0)
+            addresses = _resolve(site_host, DNS_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
             return ("error", None, "dns_timeout")
         except (OSError, socket.gaierror):
@@ -772,7 +791,7 @@ def fetch_public_file(
             try:
                 try:
                     response = pool.request(
-                        "GET", path, headers={"Host": site_host, "User-Agent": USER_AGENT, "Accept": "text/plain,*/*;q=0.5"},
+                        "GET", path, headers={"Host": site_host, "User-Agent": USER_AGENT, "Accept": accept},
                         redirect=False, preload_content=False,
                     )
                 except urllib3.exceptions.ConnectTimeoutError as exc:
@@ -787,6 +806,11 @@ def fetch_public_file(
                 raise
             try:
                 status = response.status
+                if headers_out is not None:
+                    from .site_declared import TDM_HEADERS
+                    headers_out.clear()
+                    headers_out.update({name: str(response.headers.get(name))[:300] for name in TDM_HEADERS
+                                        if response.headers.get(name) is not None})
                 if status in (404, 410):
                     return ("absent", None, f"http_{status}")
                 if 300 <= status < 400:
@@ -796,7 +820,7 @@ def fetch_public_file(
                         response.release_conn()
                         pool.close()
                         return fetch_public_file(www, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
-                                                 timeout_read=timeout_read, _hop=1)
+                                                 timeout_read=timeout_read, _hop=1, accept=accept, headers_out=headers_out)
                     target = urlparse((response.headers.get("Location") or "").strip()).hostname or ""
                     return ("redirected", None, (f"redirect:{target}" if target else f"http_{status}")[:32])
                 if status in REFUSAL_STATUSES:
@@ -820,8 +844,8 @@ def fetch_public_file(
         return ("error", None, _transport_label(exc))
 
 
-def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = 2.0,
-                     timeout_read: float = 3.0, _hop: int = 0) -> tuple[str, bytes | None]:
+def read_public_file(site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
+                     timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0) -> tuple[str, bytes | None]:
     status, body, _detail = fetch_public_file(site_host, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
                                               timeout_read=timeout_read, _hop=_hop)
     return (status, body)
@@ -835,31 +859,40 @@ def _read(reader, site_host: str, path: str, cap_bytes: int, **options) -> tuple
     return (result[0], result[1], result[2])
 
 
-def llms_gate(robots_status: str, robots_body: bytes | None, robots_detail: str | None) -> tuple[bool, str | None]:
-    """Pure. May /llms.txt be requested on the host whose /robots.txt result this is (D56)? Returns (True, None) or
-    (False, 'robots_disallowed' | 'robots_unreadable'). Same interpreter and failure rules as the status feeds (D50):
-    a readable file decides by its rules (the stricter of the two groupings), an absent file, a web page or a 4xx other
-    than 429 allows (RFC 9309 2.3.1.3), anything else (429, 5xx, transport failure, redirect, over the cap) forbids (2.3.1.4)."""
+def path_gates(robots_status: str, robots_body: bytes | None, robots_detail: str | None, paths) -> dict:
+    """Pure. May each path be requested on the host whose /robots.txt result this is (D56, D59)? Maps each path to
+    (True, None) or (False, 'robots_disallowed' | 'robots_unreadable'). Same interpreter and failure rules as the
+    status feeds (D50): a readable file decides by its rules (the stricter of the two groupings), an absent file, a web
+    page or a 4xx other than 429 allows (RFC 9309 2.3.1.3), anything else (429, 5xx, transport failure, redirect, over
+    the cap) forbids (2.3.1.4)."""
     from .feed_robots import classify, decide_paths  # feed_robots imports this module
+    paths = tuple(paths)
     if robots_status == "ok" and robots_body is not None:
-        if decide_paths(robots_body, ["/llms.txt"])["/llms.txt"]["allowed"]:
-            return True, None
-        return False, "robots_disallowed"
-    if classify(robots_status, robots_detail)[1]:
-        return True, None
-    return False, "robots_unreadable"
+        decided = decide_paths(robots_body, paths)
+        return {path: (True, None) if decided[path]["allowed"] else (False, "robots_disallowed") for path in paths}
+    readable = classify(robots_status, robots_detail)[1]
+    return {path: (True, None) if readable else (False, "robots_unreadable") for path in paths}
+
+
+def llms_gate(robots_status: str, robots_body: bytes | None, robots_detail: str | None) -> tuple[bool, str | None]:
+    """Pure. May /llms.txt be requested on the host whose /robots.txt result this is (D56)? See path_gates."""
+    return path_gates(robots_status, robots_body, robots_detail, ["/llms.txt"])["/llms.txt"]
 
 
 def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
-    robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP)
+    robots_headers: dict = {}
+    robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP, headers_out=robots_headers)
     read_host = site_host
     www_attempt = None
     if robots_status in ("error", "refused", "redirected", "invalid") and not site_host.startswith("www."):
         # Apex failed or refused: the www alias is still the host's own file and often the one that answers.
         # The apex->www step is the one redirect hop a read may spend: the www host has to answer itself.
-        alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP, _hop=1)
+        alt_headers: dict = {}
+        alt_status, alt_body, alt_detail = _read(reader, f"www.{site_host}", "/robots.txt", ROBOTS_CAP, _hop=1,
+                                                 headers_out=alt_headers)
         if alt_status in ("ok", "absent", "too_large"):
             robots_status, robots_body, robots_detail, read_host = alt_status, alt_body, alt_detail, f"www.{site_host}"
+            robots_headers = alt_headers
         else:
             # Not stored with the profile. The signal history uses it to tell "the www alias answered (a refusal,
             # a redirect, a web page)" from a failure of the whole host; the requests made are the same.
@@ -870,8 +903,10 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     content_use = {**parse_content_use(robots_body), "robots_sha256": sha256_hex(robots_body)} if robots is not None else None
     # D56: llms.txt is read only where this host's own robots.txt allows it for us; /robots.txt itself is always read.
     llms_allowed, llms_block = llms_gate(robots_status, robots_body, robots_detail)
+    llms_headers: dict = {}
     if llms_allowed:
-        llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, **({"_hop": 1} if read_host != site_host else {}))
+        llms_status, llms_body, llms_detail = _read(reader, read_host, "/llms.txt", LLMS_CAP, headers_out=llms_headers,
+                                                    **({"_hop": 1} if read_host != site_host else {}))
     elif robots_status == "not_public":
         llms_status, llms_body, llms_detail = "not_public", None, None  # the host itself is not eligible: same state, no request
     else:
@@ -886,7 +921,21 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
         "robots_sha256": sha256_hex(robots_body) if robots_status == "ok" else None,
         "llms_sha256": sha256_hex(llms_body) if llms_status == "ok" else None,
         "www_attempt": www_attempt,
+        # D59, not stored as such: what get_profile needs for the standard-file reads after the profile row is written
+        # (robots.txt decides each path; the robots.txt body itself is not kept), and TDM headers already seen.
+        "_site_declared": _declared_inputs(site_host, read_host, robots_status, robots_body, robots_detail,
+                                           (("/robots.txt", robots_headers), ("/llms.txt", llms_headers))),
     }
+
+
+def _declared_inputs(site_host, read_host, robots_status, robots_body, robots_detail, seen) -> dict | None:
+    from . import site_declared
+    if not site_declared.enabled() or robots_status in ("error", "not_public", "pending", "refused"):
+        return None  # refused: the edge refused even robots.txt (401/403); its other files are not requested
+    headers = [header for path, raw in seen
+               if (header := site_declared.tdm_header(path, raw, f"https://{read_host}{path}")) is not None]
+    return {"read_host": read_host, "hop": 1 if read_host != site_host else 0, "headers": headers,
+            "gates": path_gates(robots_status, robots_body, robots_detail, site_declared.paths())}
 
 
 def _freshness(fetched_at, error_at, now: datetime, max_age: timedelta) -> str:
@@ -897,7 +946,8 @@ def _freshness(fetched_at, error_at, now: datetime, max_age: timedelta) -> str:
     return "stale"
 
 
-_ROW_COLUMNS = "fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,content_use,robots_sha256"
+_ROW_COLUMNS = ("fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,content_use,"
+                "robots_sha256,site_declared")
 
 
 def _as_profile(site_host: str, row, now: datetime, max_age: timedelta) -> dict:
@@ -912,7 +962,15 @@ def _as_profile(site_host: str, row, now: datetime, max_age: timedelta) -> dict:
         "fetched_at": row["fetched_at"], "freshness": freshness,
         "content_use": content_use_view(row["robots_status"], row.get("content_use"), read_host, row["fetched_at"], freshness,
                                         row.get("robots_sha256")),
+        **_site_declared_field(row["robots_status"], row.get("site_declared"), read_host, row["fetched_at"], freshness),
     }
+
+
+def _site_declared_field(robots_status, stored, read_host, fetched_at, freshness) -> dict:
+    """{"site_declared": view} or {} (AHN_SITE_DECLARED=0): the field is left out, never null."""
+    from . import site_declared
+    declared = site_declared.view(robots_status, stored, read_host, fetched_at, freshness)
+    return {} if declared is None else {"site_declared": declared}
 
 
 def _cache_window(row, max_age: timedelta) -> timedelta:
@@ -929,6 +987,7 @@ def pending_profile(site_host: str, retry_after_seconds: int | None) -> dict:
         "source_urls": {"robots_txt": f"https://{site_host}/robots.txt", "llms_txt": f"https://{site_host}/llms.txt"},
         "fetched_at": None, "freshness": "pending",
         "content_use": content_use_view("pending", None, site_host, None, "pending"),
+        **_site_declared_field("pending", None, site_host, None, "pending"),
     }
     if retry_after_seconds is not None:
         profile["retry_after_seconds"] = retry_after_seconds
@@ -986,19 +1045,61 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 # Provenance travels with the definitive answer it describes; a later transport failure keeps both.
                 row = conn.execute(
                     f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
-                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                                                         origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use,
+                                                         site_declared)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
                         robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host,
                         origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
-                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use
+                        robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use,
+                        site_declared=EXCLUDED.site_declared
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
                      profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"],
                      operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
-                     Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None),
+                     Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None,
+                     _pending_site_declared(profile, now)),
                 ).fetchone()
             from .signal_history import record_read
             record_read(conn, site_host, profile, now, trigger)
+        declared = profile.get("_site_declared")
+        if declared is not None and profile["robots_status"] != "error":
+            # D59: the standard files are read after the profile row is written, so a lookup waiting for the robots
+            # answer does not wait for them too. Still inside the host lock, once per profile read.
+            row = _store_site_declared(settings, site_host, declared, reader, now) or row
         return _as_profile(site_host, row, now, max_age)
+
+
+def _pending_site_declared(profile: dict, now: datetime):
+    """D59: the marker stored with a new profile row whose standard files are about to be read, else NULL (nothing
+    will be read: refused, not public, or AHN_SITE_DECLARED=0), which also drops a previous read's result."""
+    if profile.get("_site_declared") is None:
+        return None
+    from .site_declared import pending_marker
+    return Jsonb(pending_marker(now.isoformat()))
+
+
+def _store_site_declared(settings, site_host: str, declared: dict, reader, now: datetime):
+    """Read the standard files the host's robots.txt allows and store the parsed result with this read; never raises.
+
+    Written only while the row still describes this read (fetched_at = now), so a slower reader never puts its
+    result next to a newer robots.txt read. Returns the updated row, or None."""
+    from . import site_declared
+    try:
+        stored = site_declared.read_all(declared["read_host"], declared["gates"], reader, hop=declared["hop"],
+                                        header_seen=declared["headers"], read_at=now.isoformat())
+        with connect(settings) as conn:
+            return conn.execute(
+                f"UPDATE host_access_profile SET site_declared=%s WHERE site_host=%s AND fetched_at=%s RETURNING {_ROW_COLUMNS}",
+                (Jsonb(stored), site_host, now)).fetchone()
+    except Exception as exc:  # the profile is already stored; this layer must never fail the read
+        LOG.warning("site_declared_store_failed host=%s error=%s", site_host, type(exc).__name__)
+    try:  # replace the pending marker, so the answer says store_failed instead of a pending that would not end
+        with connect(settings) as conn:
+            return conn.execute(
+                f"UPDATE host_access_profile SET site_declared=%s WHERE site_host=%s AND fetched_at=%s RETURNING {_ROW_COLUMNS}",
+                (Jsonb(site_declared.store_failed_marker(now.isoformat())), site_host, now)).fetchone()
+    except Exception as exc:
+        LOG.warning("site_declared_marker_failed host=%s error=%s", site_host, type(exc).__name__)
+        return None

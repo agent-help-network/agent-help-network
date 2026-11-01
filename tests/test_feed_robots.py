@@ -259,6 +259,9 @@ REQUEST_SITES = {
     ("access_profile.py", "read_public_file", "ref:fetch_public_file"): 1,
     ("background_reads.py", "_paced_reader", "read_profile_file"): 1,
     ("background_reads.py", "read_profile_file", "fetch_public_file"): 1,
+    # D59: a dict lookup of a parsed Server Card's remote "url" (the scan's url-like heuristic), not a request. The
+    # standard-file reads themselves go through get_profile's reader above.
+    ("site_declared.py", "_card_remotes", "get"): 1,
     # The three entry points that reach the feed readers; see test_only_gated_code_reaches_a_feed for what stands before them.
     ("background_reads.py", "_run", "refresh_feed"): 1,
     ("background_reads.py", "discover", "discover_source"): 1,
@@ -389,17 +392,18 @@ LIBRARY_MODULES = {
 # reached through `self.client`, an alias, a variable), so most entries below are dictionary lookups, not requests; a new
 # or changed count fails and has to be looked at.
 VERB_SITES = {
-    ("access_profile.py", "_as_profile", "get"): 2,
+    ("access_profile.py", "_as_profile", "get"): 3,
     ("access_profile.py", "_merge_use", "get"): 1,
+    ("access_profile.py", "_pending_site_declared", "get"): 1,
     ("access_profile.py", "_says_no_ai_input", "get"): 2,
     ("access_profile.py", "_signals_shape", "get"): 4,
     ("access_profile.py", "_usage_shape", "get"): 3,
     ("access_profile.py", "_www_redirect_target", "get"): 1,
     ("access_profile.py", "ai_input_declared_no", "get"): 2,
     ("access_profile.py", "content_use_view", "get"): 4,
-    ("access_profile.py", "fetch_public_file", "get"): 1,
+    ("access_profile.py", "fetch_public_file", "get"): 3,
     ("access_profile.py", "fetch_public_file", "request"): 1,
-    ("access_profile.py", "get_profile", "get"): 3,
+    ("access_profile.py", "get_profile", "get"): 4,
     ("access_profile.py", "parse_content_use", "get"): 4,
     ("bandwidth_guard.py", "_is_service_suspended", "get"): 3,
     ("bandwidth_guard.py", "_suspend_service", "post"): 1,

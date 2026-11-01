@@ -288,6 +288,17 @@
        "title": "Robots Status",
        "type": "string"
       },
+      "site_declared": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/SiteDeclared"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
       "source_urls": {
        "additionalProperties": {
         "type": "string"
@@ -429,6 +440,114 @@
      "title": "AgentVendor",
      "type": "string"
     },
+    "ApiCatalog": {
+     "additionalProperties": true,
+     "description": "/.well-known/api-catalog (RFC 9727). Fields other than status and source_url appear only when declared.",
+     "properties": {
+      "apis": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/CatalogApi"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Apis"
+      },
+      "apis_total": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Apis Total"
+      },
+      "items": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Items"
+      },
+      "items_total": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Items Total"
+      },
+      "nested_catalogs": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Nested Catalogs"
+      },
+      "reason": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Reason"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "status": {
+       "enum": [
+        "declared",
+        "none_declared",
+        "not_read"
+       ],
+       "title": "Status",
+       "type": "string"
+      }
+     },
+     "required": [
+      "status",
+      "source_url"
+     ],
+     "title": "ApiCatalog",
+     "type": "object"
+    },
     "AttemptActor": {
      "enum": [
       "agent",
@@ -446,6 +565,86 @@
      ],
      "title": "AttemptEnv",
      "type": "string"
+    },
+    "CatalogApi": {
+     "additionalProperties": true,
+     "description": "One API of an RFC 9727 catalog: its anchor and RFC 8631 links as published (at most 3 per relation).",
+     "properties": {
+      "anchor": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Anchor"
+      },
+      "service_desc": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Service Desc"
+      },
+      "service_doc": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Service Doc"
+      },
+      "service_meta": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Service Meta"
+      },
+      "status": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Status"
+      }
+     },
+     "title": "CatalogApi",
+     "type": "object"
     },
     "CheckObservation": {
      "additionalProperties": true,
@@ -1210,6 +1409,160 @@
       "volume_band"
      ],
      "title": "LookupActivity",
+     "type": "object"
+    },
+    "McpCatalogServer": {
+     "additionalProperties": true,
+     "properties": {
+      "card_url": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Card Url"
+      },
+      "identifier": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Identifier"
+      },
+      "inline_card": {
+       "anyOf": [
+        {
+         "const": true,
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Inline Card"
+      },
+      "name": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Name"
+      },
+      "remote_urls": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Remote Urls"
+      }
+     },
+     "title": "McpCatalogServer",
+     "type": "object"
+    },
+    "McpDiscovery": {
+     "additionalProperties": true,
+     "description": "Experimental: MCP Server Card entries of the host's /.well-known/ai-catalog.json (MCP SEP-2127 discovery).",
+     "properties": {
+      "experimental": {
+       "const": true,
+       "default": true,
+       "title": "Experimental",
+       "type": "boolean"
+      },
+      "reason": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Reason"
+      },
+      "servers": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/McpCatalogServer"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Servers"
+      },
+      "servers_total": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Servers Total"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "spec_version": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Spec Version"
+      },
+      "status": {
+       "enum": [
+        "declared",
+        "none_declared",
+        "not_read"
+       ],
+       "title": "Status",
+       "type": "string"
+      }
+     },
+     "required": [
+      "status",
+      "source_url"
+     ],
+     "title": "McpDiscovery",
      "type": "object"
     },
     "NextAction": {
@@ -2006,6 +2359,70 @@
      "title": "RobotsSummary",
      "type": "object"
     },
+    "SiteDeclared": {
+     "additionalProperties": true,
+     "description": "What the host publishes for agents at standard locations (D59); information only, never in the recommendation.",
+     "properties": {
+      "api_catalog": {
+       "$ref": "#/$defs/ApiCatalog"
+      },
+      "fetched_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Fetched At"
+      },
+      "freshness": {
+       "enum": [
+        "fresh",
+        "stale",
+        "pending"
+       ],
+       "title": "Freshness",
+       "type": "string"
+      },
+      "mcp_discovery": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/McpDiscovery"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "note": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Note"
+      },
+      "tdm": {
+       "$ref": "#/$defs/TdmReservation"
+      }
+     },
+     "required": [
+      "api_catalog",
+      "tdm",
+      "freshness"
+     ],
+     "title": "SiteDeclared",
+     "type": "object"
+    },
     "SuffixRule": {
      "additionalProperties": true,
      "properties": {
@@ -2034,6 +2451,227 @@
       "source_url"
      ],
      "title": "SuffixRule",
+     "type": "object"
+    },
+    "TdmHeader": {
+     "additionalProperties": true,
+     "description": "tdm-reservation / tdm-policy response headers seen on the response to one of the files read.",
+     "properties": {
+      "path": {
+       "title": "Path",
+       "type": "string"
+      },
+      "tdm_policy": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Tdm Policy"
+      },
+      "tdm_reservation": {
+       "anyOf": [
+        {
+         "enum": [
+          0,
+          1
+         ],
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Tdm Reservation"
+      }
+     },
+     "required": [
+      "path"
+     ],
+     "title": "TdmHeader",
+     "type": "object"
+    },
+    "TdmReservation": {
+     "additionalProperties": true,
+     "description": "/.well-known/tdmrep.json and TDM response headers (W3C TDMRep). Quoted as declared, never a legal reading.",
+     "properties": {
+      "any_reserved": {
+       "anyOf": [
+        {
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Any Reserved"
+      },
+      "file_reason": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "File Reason"
+      },
+      "file_status": {
+       "anyOf": [
+        {
+         "enum": [
+          "none_declared",
+          "not_read"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "File Status"
+      },
+      "headers": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/TdmHeader"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Headers"
+      },
+      "reason": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Reason"
+      },
+      "root_reservation": {
+       "anyOf": [
+        {
+         "enum": [
+          0,
+          1
+         ],
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Root Reservation"
+      },
+      "rules": {
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/TdmRule"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules"
+      },
+      "rules_total": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules Total"
+      },
+      "source_url": {
+       "title": "Source Url",
+       "type": "string"
+      },
+      "status": {
+       "enum": [
+        "declared",
+        "none_declared",
+        "not_read"
+       ],
+       "title": "Status",
+       "type": "string"
+      }
+     },
+     "required": [
+      "status",
+      "source_url"
+     ],
+     "title": "TdmReservation",
+     "type": "object"
+    },
+    "TdmRule": {
+     "additionalProperties": true,
+     "properties": {
+      "location": {
+       "title": "Location",
+       "type": "string"
+      },
+      "tdm_policy": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Tdm Policy"
+      },
+      "tdm_reservation": {
+       "anyOf": [
+        {
+         "enum": [
+          0,
+          1
+         ],
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Tdm Reservation"
+      }
+     },
+     "required": [
+      "location"
+     ],
+     "title": "TdmRule",
      "type": "object"
     }
    },

@@ -643,6 +643,34 @@ def test_scheduled_status_feed_reads_in_the_policy_match_the_code():
         assert old not in section(lang, "05"), f"the {lang} policy still says every read follows a lookup"
 
 
+def test_site_declared_storage_limits_match_the_policy():
+    # D59: the numbers come from ahn/site_declared.py, so the policy and the stored shape cannot drift apart.
+    from ahn import site_declared as sd
+    limits = {
+        "en": ["/.well-known/api-catalog", "/.well-known/tdmrep.json", "/.well-known/ai-catalog.json",
+               f"at most {sd.DECLARED_CAP // 1024} KB", "each at most once per robots.txt read",
+               f"at most {sd.MAX_APIS} APIs from its API catalog with at most {sd.MAX_LINKS} links of each kind",
+               f"at most {sd.MAX_ITEMS} bookmark links and at most {sd.MAX_LINKS} links to further catalogs",
+               f"at most {sd.MAX_TDM_RULES} text-and-data-mining reservation rules and at most {sd.MAX_TDM_HEADERS} reservation headers",
+               f"at most {sd.MAX_MCP_SERVERS} MCP server entries", f"each link is at most {sd.MAX_URL_CHARS} characters",
+               f"each name or pattern at most {sd.MAX_TEXT_CHARS}", "The files themselves are not kept"],
+        "ko": ["/.well-known/api-catalog", "/.well-known/tdmrep.json", "/.well-known/ai-catalog.json",
+               f"최대 {sd.DECLARED_CAP // 1024} KB", "robots.txt 읽기마다 각각 최대 한 번",
+               f"API 최대 {sd.MAX_APIS}개와 종류별 링크 최대 {sd.MAX_LINKS}개",
+               f"북마크 링크 최대 {sd.MAX_ITEMS}개와 다른 목록 링크 최대 {sd.MAX_LINKS}개",
+               f"유보 규칙 최대 {sd.MAX_TDM_RULES}개와 유보 헤더 최대 {sd.MAX_TDM_HEADERS}개", f"MCP 서버 항목 최대 {sd.MAX_MCP_SERVERS}개",
+               f"링크는 각 {sd.MAX_URL_CHARS}자", f"이름·패턴은 각 {sd.MAX_TEXT_CHARS}자", "파일 자체는 저장하지 않습니다"],
+    }
+    for lang in LANGS:
+        missing = [phrase for phrase in limits[lang] if phrase not in policy_text(lang)]
+        assert not missing, f"the {lang} policy lacks {missing}"
+    assert sd.DECLARED_CAP == 65_536
+    # The header list is cut where it is stored.
+    stored = sd.read_all("example.com", {path: (False, "robots_disallowed") for path in sd.paths()}, None, hop=0,
+                         header_seen=[{"path": "/robots.txt", "tdm_reservation": 1}] * 9, read_at="x")
+    assert len(stored["tdm_headers"]) == sd.MAX_TDM_HEADERS
+
+
 def test_feed_robots_decisions_in_the_policy_match_the_code():
     # D50: the status host's own robots.txt is read before any feed request; what is stored and for how long.
     from datetime import timedelta as _td
@@ -750,6 +778,9 @@ COLUMNS = {
     "host_access_profile.content_use": Phrase(
         "content-use preferences it declares (Content-Signal and Content-Usage lines) as normalized yes, no or unset values",
         "콘텐츠 이용 선호(Content-Signal·Content-Usage 줄)를 yes·no·unset 으로 정규화한 값"),
+    "host_access_profile.site_declared": Phrase(
+        "what the host publishes for agents at those three standard locations",
+        "호스트가 그 세 표준 위치에 에이전트용으로 공개한 것"),
     "status_cache.origin_operator": _READ_BY,
     "status_cache.vantage": _READ_BY,
     "status_cache.reader_version": _READ_BY,
