@@ -2,11 +2,12 @@
 -- of public hosts, unless the host's robots.txt disallows "/" for us. Codes only are kept: never the page, a header
 -- value, a cookie value or a redirect path.
 -- New tables plus one nullable column and a wider CHECK on the small work-queue table: nothing here rewrites a large table.
--- Rollback: DROP TABLE site_probe, site_probe_daily, probe_breaker_daily, site_probe_set, probe_state;
+-- Rollback: first deploy the code without this change (or leave AHN_SITE_PROBE unset), then run:
+--           DROP TABLE site_probe, site_probe_daily, probe_breaker_daily, site_probe_set, probe_state;
 --           ALTER TABLE host_access_profile DROP COLUMN home_gate;
 --           (and, with no site_probe row left in background_reads, restore the three-kind CHECK on background_reads.kind)
 --           DELETE FROM schema_migrations WHERE version=33;
--- The application keeps working with these objects missing: every use is in a savepoint that logs and carries on.
+-- With AHN_SITE_PROBE unset nothing reads or writes these objects; do not drop them while the code that uses them runs.
 
 -- The robots.txt verdict for "/", decided in memory while the profile is read (no extra request) and kept with the
 -- profile row: allowed, why not, the deciding rule line (at most 80 characters), the host read and the read time.

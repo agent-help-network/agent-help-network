@@ -340,7 +340,7 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # updated once for D59 (#114), which adds only access_profile.site_declared and its SiteDeclared definitions
     # (before D59: f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64), then again for D67, which adds only
     # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "1e83c38cff6832a69a9c1d2992aba8a14281c2a5486fc6f1573472fea931f555"
+    assert hashlib.sha256(blob.encode()).hexdigest() == "e4ae022ca1def25749d7c93fe729b02a89deebcc6425878d0199d18a12dde1c6"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

@@ -686,6 +686,72 @@ REQUEST_WORST_SECONDS = (DNS_TIMEOUT_SECONDS + TIMEOUT_CONNECT_SECONDS * CONNECT
 HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
 _clock = time.monotonic  # patched in tests
 
+# One request (DNS, connect, headers, body) ends after this much wall-clock time whatever the server does. urllib3's
+# timeouts apply to each receive, so a server that sends one byte a second would otherwise hold the thread for a minute.
+WALL_SECONDS = 8.0
+
+
+def tracked_pool(base):
+    """``base`` (a urllib3 connection pool class) that remembers the connections it opens, so WallClock can close them.
+    A stand-in without ``_new_conn`` is returned as it is."""
+    if not hasattr(base, "_new_conn"):
+        return base
+
+    class Tracked(base):
+        def _new_conn(self):
+            conn = super()._new_conn()
+            self.__dict__.setdefault("_made_connections", []).append(conn)
+            return conn
+    return Tracked
+
+
+class WallClock:
+    """``with WallClock(seconds) as wall: ... wall.watch(pool)``: once ``seconds`` have passed, the sockets of the watched
+    pools are shut down and closed from a timer thread, which makes a blocked receive in the request thread fail at
+    once; ``fired`` says it happened."""
+
+    def __init__(self, seconds: float = WALL_SECONDS):
+        self.seconds = seconds
+        self.fired = False
+        self._pools: list = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+
+    def watch(self, pool) -> None:
+        with self._lock:
+            self._pools.append(pool)
+            if self.fired:
+                self._close(pool)
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired = True
+            for pool in self._pools:
+                self._close(pool)
+
+    @staticmethod
+    def _close(pool) -> None:
+        for conn in list(getattr(pool, "_made_connections", ())):
+            sock = getattr(conn, "sock", None)
+            try:
+                if sock is not None:
+                    sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        self._timer.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._timer.cancel()
+        return False
+
 
 def read_capped(response, cap_bytes: int, *, budget: float = BODY_READ_BUDGET, clock=None) -> tuple[bytes | None, str | None]:
     """Read at most cap_bytes + 1 bytes of a streamed urllib3 response within ``budget`` seconds.
@@ -753,7 +819,7 @@ ERROR_RETRY = timedelta(hours=1)
 def fetch_public_file(
     site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
     timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0, accept: str = "text/plain,*/*;q=0.5",
-    headers_out: dict | None = None,
+    headers_out: dict | None = None, _wall: WallClock | None = None,
 ) -> tuple[str, bytes | None, str | None]:
     """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures.
 
@@ -765,6 +831,14 @@ def fetch_public_file(
     site_host = site_host.strip().rstrip(".").lower()
     if not _HOST_RE.match(site_host) or not path.startswith("/") or "//" in path or cap_bytes < 1:
         return ("error", None, "invalid_input")
+    if _wall is None:  # the whole read, a www redirect included, ends within WALL_SECONDS
+        with WallClock(WALL_SECONDS) as wall:
+            result = fetch_public_file(site_host, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
+                                       timeout_read=timeout_read, _hop=_hop, accept=accept, headers_out=headers_out,
+                                       _wall=wall)
+        if wall.fired and result[0] == "error":
+            return ("error", None, "read_timeout")
+        return result
     try:
         try:
             addresses = _resolve(site_host, DNS_TIMEOUT_SECONDS)
@@ -785,10 +859,11 @@ def fetch_public_file(
             if connect_budget <= 0:
                 break
             started = _clock()
-            pool = urllib3.HTTPSConnectionPool(
+            pool = tracked_pool(urllib3.HTTPSConnectionPool)(
                 address, port=443, server_hostname=site_host, assert_hostname=site_host,
                 timeout=urllib3.Timeout(connect=min(timeout_connect, connect_budget), read=timeout_read), retries=False,
             )
+            _wall.watch(pool)
             try:
                 try:
                     response = pool.request(
@@ -821,7 +896,8 @@ def fetch_public_file(
                         response.release_conn()
                         pool.close()
                         return fetch_public_file(www, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
-                                                 timeout_read=timeout_read, _hop=1, accept=accept, headers_out=headers_out)
+                                                 timeout_read=timeout_read, _hop=1, accept=accept, headers_out=headers_out,
+                                                 _wall=_wall)
                     target = urlparse((response.headers.get("Location") or "").strip()).hostname or ""
                     return ("redirected", None, (f"redirect:{target}" if target else f"http_{status}")[:32])
                 if status in REFUSAL_STATUSES:

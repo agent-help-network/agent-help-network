@@ -266,6 +266,7 @@ class AhnCheck(StrictModel):
     redirect: AhnCheckRedirect | None = Field(default=None, exclude_if=_omit_none)
     login_signal: Literal["http_auth", "redirect", "form"] | None = Field(default=None, exclude_if=_omit_none)
     response_ms: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    retry_after_seconds: int | None = Field(default=None, ge=0, le=3600, exclude_if=_omit_none)
     not_measured_reason: Literal["robots_disallowed", "robots_refused", "robots_unreadable", "robots_stale", "not_eligible",
                                  "budget", "backoff", "disabled"] | None = Field(default=None, exclude_if=_omit_none)
     fingerprint_version: str = Field(max_length=16)

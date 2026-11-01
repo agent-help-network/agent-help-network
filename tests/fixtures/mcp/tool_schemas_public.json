@@ -642,6 +642,20 @@
        "default": null,
        "title": "Response Ms"
       },
+      "retry_after_seconds": {
+       "anyOf": [
+        {
+         "maximum": 3600,
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Retry After Seconds"
+      },
       "status": {
        "enum": [
         "measured",

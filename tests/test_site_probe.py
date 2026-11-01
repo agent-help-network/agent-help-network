@@ -207,8 +207,130 @@ def test_a_private_address_is_never_requested(monkeypatch):
     assert site_probe.fetch_home("example.com")["label"] == "not_public"
 
 
-def test_worst_case_time_of_one_check_is_17_seconds():
-    assert site_probe.REQUEST_WORST_SECONDS == 17.0 and site_probe.PROBE_WORST_SECONDS == 19.0
+class _Trickle:
+    """A local TCP server that answers one request by sending a header one byte every ``gap`` seconds."""
+
+    def __init__(self, gap=0.5):
+        import socket
+        import threading
+        self.server = socket.socket()
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(5)
+        self.port = self.server.getsockname()[1]
+        self.gap = gap
+        self.stop = threading.Event()
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        import time
+        try:
+            conn, _ = self.server.accept()
+            conn.recv(4096)
+            for byte in b"HTTP/1.1 200 OK\r\nX-Pad: " + b"a" * 4000:
+                if self.stop.is_set():
+                    return
+                conn.send(bytes([byte]))
+                time.sleep(self.gap)
+        except OSError:
+            return
+
+    def close(self):
+        self.stop.set()
+        self.server.close()
+
+
+def _local_pool_class(port):
+    import urllib3
+
+    class Pool(urllib3.HTTPConnectionPool):
+        def __init__(self, address, port=None, server_hostname=None, assert_hostname=None, **kw):
+            super().__init__("127.0.0.1", port=PORT[0], **kw)
+    PORT = [port]
+    return Pool
+
+
+def test_h2_a_server_that_trickles_its_header_is_cut_off_at_the_wall_clock_limit():
+    import time
+    import urllib3
+    server = _Trickle(gap=0.5)             # under the 3 second receive timeout: urllib3 alone would wait for a minute
+    try:
+        pool = access_profile.tracked_pool(urllib3.HTTPConnectionPool)("127.0.0.1", port=server.port, retries=False,
+                                                                       timeout=urllib3.Timeout(connect=1, read=3))
+        started = time.monotonic()
+        with access_profile.WallClock(1.0) as wall:
+            wall.watch(pool)
+            with pytest.raises(Exception):
+                pool.request("GET", "/", preload_content=False)
+        assert wall.fired and time.monotonic() - started < 2.5
+    finally:
+        server.close()
+
+
+def test_h2_fetch_home_ends_within_the_wall_clock_limit_whatever_the_server_does(monkeypatch):
+    import time
+    server = _Trickle(gap=0.5)
+    try:
+        monkeypatch.setattr(site_probe.urllib3, "HTTPSConnectionPool", _local_pool_class(server.port))
+        monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+        monkeypatch.setattr(site_probe, "WALL_SECONDS", 1.0)
+        started = time.monotonic()
+        out = site_probe.fetch_home("example.com")
+        assert time.monotonic() - started < 2.5
+        assert out["status"] is None and out["label"] == "read_timeout"
+    finally:
+        server.close()
+
+
+def test_h2_the_robots_reader_has_the_same_wall_clock_limit(monkeypatch):
+    import time
+    server = _Trickle(gap=0.5)
+    try:
+        monkeypatch.setattr(access_profile.urllib3, "HTTPSConnectionPool", _local_pool_class(server.port))
+        monkeypatch.setattr(access_profile, "_resolve", lambda host, timeout: {"93.184.216.34"})
+        monkeypatch.setattr(access_profile, "WALL_SECONDS", 1.0)
+        started = time.monotonic()
+        status, body, detail = access_profile.fetch_public_file("example.com", "/robots.txt", cap_bytes=1000)
+        assert time.monotonic() - started < 2.5
+        assert (status, body, detail) == ("error", None, "read_timeout")
+    finally:
+        server.close()
+
+
+def test_h2_the_wall_clock_limit_bounds_the_stated_worst_case():
+    assert site_probe.REQUEST_WORST_SECONDS == site_probe.WALL_SECONDS == access_profile.WALL_SECONDS
+    assert site_probe.PROBE_WORST_SECONDS == site_probe.WALL_SECONDS + site_probe.PAUSE_SECONDS
+
+
+@pytest.mark.parametrize("status", [600, 999, 1000, 99, 0, -1])
+def test_h1_a_status_outside_100_to_599_is_other_status_with_no_code_kept(status):
+    out = run(status=status)
+    assert out["outcome"] == "other_status" and out["http_status"] is None and out["bot_vendor"] is None
+    assert out["redirect"] is None and out["login_signal"] is None
+    assert AhnCheck(**site_probe.view(site_probe_row(out), NOW))      # the answer schema accepts what is shown
+
+
+def site_probe_row(classified):
+    return {"probed_at": NOW, "outcome": classified["outcome"], "http_status": classified["http_status"], "bot_vendor": None,
+            "bot_signal": None, "bot_confidence": None, "edge_vendors": [], "redirect": None, "login_signal": None,
+            "response_ms": 10, "not_measured_reason": None, "fingerprint_version": "ahn-fp/1", "vantage": None}
+
+
+def test_h1_an_invalid_view_is_dropped_not_raised():
+    assert site_probe._valid({"status": "measured", "http_status": 999}) is None
+    assert site_probe._valid(None) is None
+
+
+def test_m5_a_widget_script_on_a_page_that_was_served_is_not_a_challenge():
+    for widget in (b"https://www.google.com/recaptcha/api.js", b"https://js.hcaptcha.com/1/api.js",
+                   b"https://challenges.cloudflare.com/turnstile/v0/api.js"):
+        page = b"<html><form><script src='" + widget + b"'></script></form></html>"
+        assert run(status=200, body=page)["outcome"] == "reachable"
+        assert run(status=403, body=page)["outcome"] == "bot_challenge"        # on a blocked response it still counts
+
+
+def test_l7_a_pending_view_says_when_to_ask_again():
+    assert site_probe.pending_view()["retry_after_seconds"] == 60
+    assert AhnCheck(**site_probe.pending_view()).retry_after_seconds == 60
 
 
 # --- the stored view, the MCP line, the words (T-S, T-B2, T-B4) -------------------------------------------------

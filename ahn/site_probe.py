@@ -77,15 +77,17 @@ ROW_RETENTION_DAYS = 30
 DAILY_RETENTION_DAYS = 35
 RESPONSE_MAX_BYTES = BODY_CAP_CHALLENGE
 
-# Time limits of one request (shorter than the robots.txt reader's): 2 + 4 + 3 + 5 + 3 = 17 seconds at the worst.
+# Time limits of one request: each step has its own limit, and the whole request ends after WALL_SECONDS of wall-clock
+# time whatever the server does (access_profile.WallClock closes its sockets), so a trickling server cannot hold a thread.
 DNS_TIMEOUT_SECONDS = 2.0
 CONNECT_TIMEOUT_SECONDS = 2.0
 READ_TIMEOUT_SECONDS = 3.0
 BODY_BUDGET_SECONDS = 5.0
-REQUEST_WORST_SECONDS = (DNS_TIMEOUT_SECONDS + CONNECT_TIMEOUT_SECONDS * ap.CONNECT_BUDGET_FACTOR + READ_TIMEOUT_SECONDS
-                         + BODY_BUDGET_SECONDS + READ_TIMEOUT_SECONDS)
+WALL_SECONDS = ap.WALL_SECONDS
+REQUEST_WORST_SECONDS = WALL_SECONDS
 PAUSE_SECONDS = 2.0
 PROBE_WORST_SECONDS = REQUEST_WORST_SECONDS + PAUSE_SECONDS  # one request per check
+PENDING_RETRY_SECONDS = 60   # shown on a pending view: ask again after this long, once
 PROBE_JOB_SECONDS = 3        # the queue's wait estimate for one check
 CRON_SAFE_SECONDS = 280.0
 CRON_TIME_BUDGET_SECONDS = 40.0
@@ -173,6 +175,15 @@ def _cookie_names(response) -> list[str]:
 
 
 def fetch_home(site_host: str) -> dict:
+    """The request below, ended after WALL_SECONDS of wall-clock time at the latest (a cut-off one counts as read_timeout)."""
+    with ap.WallClock(WALL_SECONDS) as wall:
+        result = _fetch_home(site_host, wall)
+    if wall.fired and result["status"] is None:
+        return _failed("read_timeout")
+    return result
+
+
+def _fetch_home(site_host: str, wall: "ap.WallClock") -> dict:
     """One ``GET /`` of a public host from a pinned public IP; never raises. Returns a dict: ``label`` (None, or why no
     answer came: dns_failed, dns_timeout, not_public, connect_error, connect_timeout, tls_error, read_timeout,
     read_error, invalid_input), ``status``, ``headers`` (tracked names only, values cut to 200 characters), ``cookies``
@@ -199,10 +210,11 @@ def fetch_home(site_host: str) -> dict:
             if connect_budget <= 0:
                 break
             started = _clock()
-            pool = urllib3.HTTPSConnectionPool(
+            pool = ap.tracked_pool(urllib3.HTTPSConnectionPool)(
                 address, port=443, server_hostname=site_host, assert_hostname=site_host,
                 timeout=urllib3.Timeout(connect=min(CONNECT_TIMEOUT_SECONDS, connect_budget), read=READ_TIMEOUT_SECONDS),
                 retries=False)
+            wall.watch(pool)
             try:
                 try:
                     response = pool.request(
@@ -308,6 +320,8 @@ def fingerprint(status: int, headers: dict, cookies: list[str], body: bytes, com
                 continue
             if marker.statuses is not None and status not in marker.statuses:
                 continue
+            if vendor.code == "generic_captcha" and status not in BLOCK_STATUSES:
+                continue  # a widget script on a page that was served (a login or contact form) is not a challenge
             if marker.kind == "body" and not (status in BLOCK_STATUSES or (status == 200 and complete)):
                 continue
             confidence = marker.confidence if not (marker.kind == "body" and status == 200) else "medium"
@@ -337,6 +351,12 @@ def classify(site_host: str, fetched: dict, now: datetime) -> dict:
     """Pure. The stored codes for one fetch_home result: outcome, http_status, bot_vendor/bot_signal/bot_confidence,
     edge_vendors, redirect, login_signal, retry_after (seconds, or None)."""
     status = fetched["status"]
+    if status is not None and not 100 <= status <= 599:
+        # Not an HTTP status the answer schema can carry: counted as an answer, no code kept (a host may send anything).
+        fetched = {**fetched, "status": 599}
+        out = classify(site_host, fetched, now)
+        return {**out, "outcome": "other_status", "http_status": None, "bot_vendor": None, "bot_signal": None,
+                "bot_confidence": None, "redirect": None, "login_signal": None}
     result = {"outcome": "unreachable", "http_status": status, "bot_vendor": None, "bot_signal": None, "bot_confidence": None,
               "edge_vendors": [], "redirect": None, "login_signal": None, "retry_after": None}
     if status is None:
@@ -430,11 +450,12 @@ def _guard_ok(conn) -> bool:
 
 
 def _breaker_stopped(conn) -> bool:
+    """The automatic stop is on. If its state cannot be read it counts as on: unknown means stop."""
     try:
         with conn.transaction():
             row = conn.execute("SELECT value FROM probe_state WHERE name='breaker'").fetchone()
     except Exception:
-        return False
+        return True
     return bool(row and row["value"].get("stopped"))
 
 
@@ -481,7 +502,7 @@ def decide(conn, site_host: str, trigger: str, now: datetime) -> tuple[str, str 
         return "skip", "budget", None
     if not _guard_ok(conn):
         return "skip", "budget", None
-    if trigger.startswith("set") and _breaker_stopped(conn):
+    if _breaker_stopped(conn):  # lookup-started checks stop with the list-driven ones
         return "skip", "budget", None
     return "go", None, {"previous": previous, "read_host": gate.get("read_host") or profile["read_host"] or site_host}
 
@@ -650,12 +671,17 @@ def run_queued(settings, site_host: str, job: dict) -> None:
 def start_sync(settings, site_host: str, *, now: datetime | None = None, reader=None):
     """The in-flight check of ``site_host`` (a Future of the stored row or None), started on a thread if there is none;
     None when this process already runs SYNC_CONCURRENCY checks. Lookups that arrive while a check runs share it."""
+    return _start(settings, site_host, now=now, reader=reader)[0]
+
+
+def _start(settings, site_host: str, *, now: datetime | None = None, reader=None):
+    """(future or None, started): ``started`` is False when the future was already running for another lookup."""
     with _INFLIGHT_LOCK:
         existing = _INFLIGHT.get(site_host)
         if existing is not None:
-            return existing
+            return existing, False
         if not _SLOTS.acquire(blocking=False):
-            return None
+            return None, False
         future: concurrent.futures.Future = concurrent.futures.Future()
         _INFLIGHT[site_host] = future
 
@@ -677,16 +703,19 @@ def start_sync(settings, site_host: str, *, now: datetime | None = None, reader=
             _INFLIGHT.pop(site_host, None)
         _SLOTS.release()
         raise
-    return future
+    return future, True
 
 
 def sync_measure(settings, site_host: str, *, wait: float | None = None, now: datetime | None = None, reader=None):
-    """(row or None, why): waits at most ``wait`` seconds (SYNC_WAIT_SECONDS) for the check. why: 'done', 'busy' (no free
-    slot) or 'timeout' (the check goes on in the background and stores its own result)."""
+    """(row or None, why): waits at most ``wait`` seconds (SYNC_WAIT_SECONDS) for the check, only the lookup that started
+    it; a lookup that finds the host's check already running does not wait. why: 'done', 'busy' (no free slot), 'joined'
+    (another lookup's check is running) or 'timeout' (the check goes on in the background and stores its own result)."""
     wait = SYNC_WAIT_SECONDS if wait is None else wait
-    future = start_sync(settings, site_host, now=now, reader=reader)
+    future, started = _start(settings, site_host, now=now, reader=reader)
     if future is None:
         return None, "busy"
+    if not started:
+        return (future.result(timeout=0), "done") if future.done() else (None, "joined")
     try:
         return future.result(timeout=wait), "done"
     except concurrent.futures.TimeoutError:
@@ -699,7 +728,7 @@ def _lookup_wanted(conn, site_host: str, now: datetime) -> bool:
     row = conn.execute("SELECT outcome,next_due_at,probed_at FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
     if row and (row["next_due_at"] > now or (row["outcome"] != "not_measured" and row["probed_at"] > now - timedelta(hours=MIN_GAP_HOURS))):
         return False
-    return caps_ok(conn, "lookup", now) is None and _guard_ok(conn)
+    return caps_ok(conn, "lookup", now) is None and _guard_ok(conn) and not _breaker_stopped(conn)
 
 
 def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile: dict | None) -> dict | None:
@@ -712,18 +741,21 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
         row = conn.execute("SELECT * FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
         if row is not None and _fresh_or_waiting(row, now):
             conn.commit()
-            return view(row, now)
+            return _valid(view(row, now))
         wanted = _lookup_wanted(conn, site_host, now)
         conn.commit()
         if not wanted:
-            return view(row, now) if row is not None else None
+            return _valid(view(row, now)) if row is not None else None
         profile_ready = bool(access_profile) and access_profile.get("freshness") == "fresh"
         if profile_ready:
-            done, _why = sync_measure(settings, site_host, now=None)
+            # The lookup's transaction is closed above: nothing of this connection is held while it waits.
+            done, why = sync_measure(settings, site_host, now=None)
             if done is not None:
-                return view(done, datetime.now(timezone.utc))
+                return _valid(view(done, datetime.now(timezone.utc)))
+            if why == "joined":
+                return _valid(view(row, now) if row is not None else pending_view())
         _queue(conn, site_host)
-        return view(row, now) if row is not None else pending_view()
+        return _valid(view(row, now) if row is not None else pending_view())
     except Exception:
         LOG.warning("site_probe_lookup_unavailable")
         try:
@@ -731,6 +763,19 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
         except Exception:
             pass
         return None
+
+
+def _valid(shown: dict | None) -> dict | None:
+    """The view only if the answer schema accepts it; otherwise no ahn_check (the lookup itself never fails for it)."""
+    if shown is None:
+        return None
+    from .models import AhnCheck
+    try:
+        AhnCheck(**shown)
+    except Exception:
+        LOG.warning("site_probe_view_invalid")
+        return None
+    return shown
 
 
 def _fresh_or_waiting(row: dict, now: datetime) -> bool:
@@ -756,7 +801,8 @@ def _queue(conn, site_host: str) -> None:
 
 def pending_view() -> dict:
     return {"status": "pending", "basis": "ahn_server", "vantage": _vantage_codes(), "ua_token": "AgentHelpNetwork",
-            "path_kind": "home", "fingerprint_version": FINGERPRINT_VERSION, "note": SHOW_VIEW_NOTE}
+            "path_kind": "home", "fingerprint_version": FINGERPRINT_VERSION, "note": SHOW_VIEW_NOTE,
+            "retry_after_seconds": PENDING_RETRY_SECONDS}
 
 
 def view(row: dict, now: datetime) -> dict | None:
@@ -899,11 +945,31 @@ BREAKER_MIN_READS = 20       # robots.txt reads in a day for its rate to count
 BREAKER_FEED_MIN = 10        # failed feed reads (403/429) in the last two days for the doubling to count
 
 
+BREAKER_RELEASE_AFTER = timedelta(hours=24)   # a stop is lifted by the next evaluation after this if its cause is gone
+
+
 def evaluate_breaker(conn, now: datetime) -> str | None:
-    """Stop the list-driven checks when our own reads of unrelated hosts start being refused more (a sign our address is
-    being marked as a bot), or status-feed 403/429 failures double. Returns the reason when it stops (also stored), else None."""
-    if _breaker_stopped(conn):
+    """Stop every check when our own reads of unrelated hosts start being refused more (a sign our address is being
+    marked as a bot), or status-feed 403/429 failures double. Returns the reason when it stops (also stored), else None.
+    A stop is lifted again (and logged) by an evaluation at least a day later at which no cause is left."""
+    row = conn.execute("SELECT value FROM probe_state WHERE name='breaker'").fetchone()
+    if row and row["value"].get("stopped"):
+        since = _parse_time(row["value"].get("since"))
+        if since is not None and now - since >= BREAKER_RELEASE_AFTER and _breaker_cause(conn, now) is None:
+            conn.execute("UPDATE probe_state SET value=%s,updated_at=now() WHERE name='breaker'",
+                         (Jsonb({"stopped": False, "released_at": now.isoformat(), "was": row["value"].get("reason")}),))
+            LOG.warning("site_probe_breaker_released reason=%s", row["value"].get("reason"))
         return None
+    reason = _breaker_cause(conn, now)
+    if reason:
+        conn.execute("INSERT INTO probe_state (name,value) VALUES ('breaker',%s) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value,updated_at=now()",
+                     (Jsonb({"stopped": True, "reason": reason, "since": now.isoformat()}),))
+    return reason
+
+
+def _breaker_cause(conn, now: datetime) -> str | None:
+    """'control_refusals', 'feed_refusals' or None for the last full days. The feed comparison needs the seven days
+    before the last two to have been counted, i.e. the first baseline to be at least nine days old."""
     base = conn.execute("SELECT value FROM probe_state WHERE name='baseline'").fetchone()
     today = _utc_day(now)
     reason = None
@@ -915,16 +981,14 @@ def evaluate_breaker(conn, now: datetime) -> str | None:
             rates.append(row["robots_refused"] / row["robots_reads"] if row and row["robots_reads"] >= BREAKER_MIN_READS else None)
         if all(rate is not None and rate >= base["value"]["rate"] + BREAKER_MARGIN for rate in rates):
             reason = "control_refusals"
-    if reason is None:
+    taken = _parse_time(base["value"].get("taken_at")) if base else None
+    if reason is None and taken is not None and now - taken >= timedelta(days=9):
         recent = conn.execute("SELECT COALESCE(sum(feed_403+feed_429),0) AS n FROM probe_breaker_daily WHERE grp='feed' AND day>=%s AND day<%s",
                               (today - timedelta(days=2), today)).fetchone()["n"]
         before = conn.execute("SELECT COALESCE(sum(feed_403+feed_429),0) AS n FROM probe_breaker_daily WHERE grp='feed' AND day>=%s AND day<%s",
                               (today - timedelta(days=9), today - timedelta(days=2))).fetchone()["n"]
         if recent >= BREAKER_FEED_MIN and recent >= 2 * (before / 7 * 2):
             reason = "feed_refusals"
-    if reason:
-        conn.execute("INSERT INTO probe_state (name,value) VALUES ('breaker',%s) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value,updated_at=now()",
-                     (Jsonb({"stopped": True, "reason": reason, "since": now.isoformat()}),))
     return reason
 
 
@@ -981,9 +1045,9 @@ def run_cron(settings, *, cron_started: float | None = None, now: datetime | Non
     cron_started = started if cron_started is None else cron_started
     now = now or datetime.now(timezone.utc)
     with connect(settings) as conn:
-        ensure_baseline(conn, now)
-        if _set_due(conn, now):
+        if _set_due(conn, now):  # the list first: the baseline leaves its hosts out
             compute_set(conn, now)
+        ensure_baseline(conn, now)
         conn.commit()
         stopped = evaluate_breaker(conn, now)
         conn.commit()
@@ -1000,7 +1064,7 @@ def run_cron(settings, *, cron_started: float | None = None, now: datetime | Non
     for candidate in candidates:
         if result["done"] >= limit or _clock() - started >= time_budget:
             break
-        if result["done"] and (_clock() - cron_started) + PROBE_WORST_SECONDS > CRON_SAFE_SECONDS:
+        if (_clock() - cron_started) + PROBE_WORST_SECONDS > CRON_SAFE_SECONDS:
             break
         host = candidate["site_host"]
         try:

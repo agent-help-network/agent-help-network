@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Look up a public hostname's agent access profile: declared robots.txt policy for agents, the official API path, provider status, and optional observations.",
   "author": {
     "name": "Agent Help Network",
@@ -20,7 +20,7 @@
       "interface": {
         "displayName": "Agent Help Network",
         "shortDescription": "Check what hosts allow agents",
-        "longDescription": "When a web step is blocked, check a public hostname for what the host allows agents to do: its declared robots.txt policy per agent token and llms.txt presence (declared policy, not an access guarantee), the official API or developer path, the provider's own status, and optional published observations. no_reports is normal and leaves current access status unknown. The plugin never attempts the task, never visits other pages, and never bypasses login or human verification.",
+        "longDescription": "When a web step is blocked, check a public hostname for what the host allows agents to do: its declared robots.txt policy per agent token and llms.txt presence (declared policy, not an access guarantee), the official API or developer path, the provider's own status, and optional published observations. no_reports is normal and leaves current access status unknown. The plugin never attempts the task and never bypasses login or human verification. The service may request the host's home page from its own server unless the host's robots.txt disallows it, and says so in the answer (ahn_check).",
         "developerName": "Agent Help Network",
         "category": "Productivity",
         "capabilities": [

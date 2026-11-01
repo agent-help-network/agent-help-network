@@ -408,6 +408,59 @@ def test_a_robots_txt_that_disallows_the_home_page_is_never_measured_on_the_look
     assert "outcome" not in shown and "http_status" not in shown
 
 
+def test_h1_a_host_that_answers_with_status_999_does_not_break_the_lookup(db, monkeypatch):
+    warm(db, monkeypatch)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM site_probe")
+    home = Home(status=999)
+    monkeypatch.setattr(site_probe, "fetch_home", home)
+    answer = service.check(db, HOST)
+    shown = answer["ahn_check"]
+    assert shown["status"] == "measured" and shown["outcome"] == "other_status" and "http_status" not in shown
+    assert CheckResponse(**answer).model_dump(mode="json")["ahn_check"]["outcome"] == "other_status"
+    stored, = rows(db, "SELECT outcome,http_status FROM site_probe")
+    assert (stored["outcome"], stored["http_status"]) == ("other_status", None)
+    monkeypatch.setattr(site_probe, "fetch_home", lambda host: pytest.fail("fetched twice"))
+    assert service.check(db, HOST)["ahn_check"]["outcome"] == "other_status"      # served from the row, not measured again
+
+
+def test_h2_only_the_lookup_that_started_the_check_waits_for_it(db, monkeypatch):
+    import concurrent.futures
+    warm(db, monkeypatch)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM site_probe")
+    running = concurrent.futures.Future()
+    with site_probe._INFLIGHT_LOCK:
+        site_probe._INFLIGHT[HOST] = running
+    try:
+        started = time.monotonic()
+        row, why = site_probe.sync_measure(db, HOST, wait=3.0)
+        assert (row, why) == (None, "joined") and time.monotonic() - started < 0.5
+        with connect(db) as conn:
+            started = time.monotonic()
+            shown = site_probe.for_lookup(db, conn, HOST, datetime.now(timezone.utc), access_profile={"freshness": "fresh"})
+            assert time.monotonic() - started < 0.5 and shown["status"] == "pending" and shown["retry_after_seconds"] == 60
+    finally:
+        with site_probe._INFLIGHT_LOCK:
+            site_probe._INFLIGHT.pop(HOST, None)
+
+
+def test_h2_the_lookup_holds_no_transaction_while_it_waits_for_the_check(db, monkeypatch):
+    import psycopg
+    warm(db, monkeypatch)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM site_probe")
+    seen = []
+    with connect(db) as lookup_conn:
+        def home(host):
+            seen.append(lookup_conn.info.transaction_status)
+            return Home().result
+        monkeypatch.setattr(site_probe, "fetch_home", home)
+        shown = site_probe.for_lookup(db, lookup_conn, HOST, datetime.now(timezone.utc), access_profile={"freshness": "fresh"})
+    assert shown["status"] == "measured"
+    assert seen == [psycopg.pq.TransactionStatus.IDLE]
+
+
 def test_the_switch_off_leaves_the_answer_as_it_was(db, monkeypatch):
     warm(db, monkeypatch)
     monkeypatch.delenv("AHN_SITE_PROBE")
@@ -424,7 +477,7 @@ def strip(result):
     return {key: value for key, value in result.items() if key not in ("generated_at", "ahn_check", "lookup_activity", "feedback_token")}
 
 
-@pytest.mark.parametrize("home", [Home(), Home(status=403, headers={"cf-mitigated": "challenge"}), Home(status=429),
+@pytest.mark.parametrize("home", [Home(), Home(status=403, headers={"cf-mitigated": "challenge"}), Home(status=429), Home(status=999),
                                   Home(status=302, headers={"location": "https://accounts." + HOST + "/login"}), Home(label="dns_failed")])
 def test_b3_whatever_the_measurement_the_recommendation_and_next_steps_do_not_change(db, monkeypatch, home):
     warm(db, monkeypatch)
@@ -496,8 +549,11 @@ def test_e6_a_second_check_starts_only_if_it_still_ends_before_the_cron_deadline
     clock = {"now": 1000.0}
     monkeypatch.setattr(site_probe, "_clock", lambda: clock["now"])
     monkeypatch.setattr(site_probe, "_last_request_at", 0.0)
-    started = clock["now"] - (site_probe.CRON_SAFE_SECONDS - site_probe.PROBE_WORST_SECONDS) - 1   # 1 second too late for a second one
-    result = site_probe.run_cron(db, cron_started=started, now=datetime.now(timezone.utc).replace(hour=9), reader=home)
+
+    def slow_home(host):                                  # the first check takes so long that no second one fits
+        clock["now"] += site_probe.CRON_SAFE_SECONDS - site_probe.PROBE_WORST_SECONDS + 1
+        return home(host)
+    result = site_probe.run_cron(db, cron_started=clock["now"], now=datetime.now(timezone.utc).replace(hour=9), reader=slow_home, time_budget=10_000)
     assert result["done"] == 1 and len(home.calls) == 1
 
 
@@ -521,7 +577,8 @@ def test_e7_the_breaker_stops_the_list_after_two_days_of_more_refusals_among_con
     assert result["breaker"] == "on:control_refusals" and home.calls == [] and result["done"] == 0
     assert rows(db, "SELECT value FROM probe_state WHERE name='breaker'")[0]["value"]["stopped"] is True
     assert measure(db, trigger="set_O", home=home) is None                                 # list-driven checks stay stopped
-    assert measure(db, trigger="lookup", home=home) is not None                            # a lookup's own check still runs
+    assert measure(db, trigger="lookup", home=home) is None                                # so does a lookup's own: the stop is for all
+    assert home.calls == []
 
 
 def test_e7_one_bad_day_or_a_small_sample_does_not_stop_it(db, monkeypatch):
@@ -532,9 +589,73 @@ def test_e7_one_bad_day_or_a_small_sample_does_not_stop_it(db, monkeypatch):
         assert site_probe.evaluate_breaker(conn, datetime.now(timezone.utc)) is None
 
 
+def feed_refusals(conn):
+    for back in range(2, 9):
+        conn.execute("INSERT INTO probe_breaker_daily (day,grp,feed_403) VALUES (CURRENT_DATE-%s,'feed',1)", (back,))
+    for back in (1, 2):
+        conn.execute("INSERT INTO probe_breaker_daily (day,grp,feed_403,feed_429) VALUES (CURRENT_DATE-%s,'feed',5,3) ON CONFLICT (day,grp) DO UPDATE SET feed_403=5,feed_429=3", (back,))
+
+
+def baseline_taken(conn, days_ago):
+    taken = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    conn.execute("INSERT INTO probe_state (name,value) VALUES ('baseline',%s) ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value",
+                 (json.dumps({"n": 0, "refused": 0, "rate": 0.0, "taken_at": taken}),))
+
+
+def test_m3_the_feed_comparison_waits_until_seven_days_before_the_last_two_have_been_counted(db):
+    with connect(db) as conn:
+        baseline_taken(conn, 5)
+        feed_refusals(conn)
+        assert site_probe.evaluate_breaker(conn, datetime.now(timezone.utc)) is None
+        assert conn.execute("SELECT 1 FROM probe_state WHERE name='breaker'").fetchone() is None
+        baseline_taken(conn, 10)
+        assert site_probe.evaluate_breaker(conn, datetime.now(timezone.utc)) == "feed_refusals"
+
+
+def test_m3_a_stop_is_lifted_by_a_later_evaluation_when_its_cause_is_gone(db):
+    now = datetime.now(timezone.utc)
+    with connect(db) as conn:
+        baseline_taken(conn, 20)
+        conn.execute("INSERT INTO probe_state (name,value) VALUES ('breaker',%s)",
+                     (json.dumps({"stopped": True, "reason": "feed_refusals", "since": (now - timedelta(hours=2)).isoformat()}),))
+        assert site_probe.evaluate_breaker(conn, now) is None and site_probe._breaker_stopped(conn)       # too early to lift
+        conn.execute("UPDATE probe_state SET value=%s WHERE name='breaker'",
+                     (json.dumps({"stopped": True, "reason": "feed_refusals", "since": (now - timedelta(days=2)).isoformat()}),))
+        feed_refusals(conn)
+        assert site_probe.evaluate_breaker(conn, now) is None and site_probe._breaker_stopped(conn)       # the cause is still there
+        conn.execute("DELETE FROM probe_breaker_daily")
+        assert site_probe.evaluate_breaker(conn, now) is None and not site_probe._breaker_stopped(conn)   # lifted
+
+
+def test_m2_when_the_stop_state_cannot_be_read_the_check_stops():
+    class Broken:
+        def transaction(self):
+            raise RuntimeError("no table")
+    assert site_probe._breaker_stopped(Broken()) is True
+
+
+def test_m4_the_list_is_made_before_the_baseline(db, monkeypatch):
+    order = []
+    monkeypatch.setattr(site_probe, "compute_set", lambda conn, now: order.append("set") or {})
+    monkeypatch.setattr(site_probe, "ensure_baseline", lambda conn, now: order.append("baseline"))
+    site_probe.run_cron(db, now=datetime.now(timezone.utc).replace(hour=9), reader=Home())
+    assert order == ["set", "baseline"]
+
+
+def test_l3_even_the_first_check_of_a_pass_needs_time_before_the_safety_line(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    put_set(db, [HOST])
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(site_probe, "_clock", lambda: clock["now"])
+    started = clock["now"] - site_probe.CRON_SAFE_SECONDS            # no room left for any check
+    home = Home()
+    result = site_probe.run_cron(db, cron_started=started, now=datetime.now(timezone.utc).replace(hour=9), reader=home)
+    assert result["done"] == 0 and home.calls == []
+
+
 def test_e7_feed_refusals_that_double_stop_it(db, monkeypatch):
     with connect(db) as conn:
-        conn.execute("INSERT INTO probe_state (name,value) VALUES ('baseline','{\"n\":0,\"refused\":0,\"rate\":0.0}') ON CONFLICT DO NOTHING")
+        baseline_taken(conn, 10)
         for back in range(2, 9):
             conn.execute("INSERT INTO probe_breaker_daily (day,grp,feed_403) VALUES (CURRENT_DATE-%s,'feed',1)", (back,))
         for back in (1, 2):

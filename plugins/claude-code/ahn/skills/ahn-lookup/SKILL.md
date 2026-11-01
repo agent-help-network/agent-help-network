@@ -5,7 +5,7 @@ description: Look up a public hostname on Agent Help Network when a web step is 
 
 # Agent Help Network lookup
 
-Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service; looking a host up is read-only. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes, and it never visits the target page.
+Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service; looking a host up is read-only. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes, and it never attempts your task; unless the host's robots.txt disallows it, the service may request the host's home page from its own server (shown as `ahn_check`).
 
 ## When it runs
 
