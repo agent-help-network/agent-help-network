@@ -173,6 +173,14 @@ def main() -> None:
             print(line)
         except Exception as exc:  # the seed pre-read is best effort and must not fail the review cron
             print(f"profile_warm failed={type(exc).__name__}")
+    # D67: the AHN server check of home pages on today's list, a couple per run (off unless AHN_SITE_PROBE=1).
+    from . import site_probe
+    if site_probe.enabled():
+        try:
+            print("site_probe " + site_probe.format_result(
+                site_probe.run_cron(Settings(database_url, "unused-by-status-refresh"), cron_started=cron_started)))
+        except Exception as exc:  # e.g. migration 033 not applied yet: nothing else in the cron depends on this step
+            print(f"site_probe failed={type(exc).__name__}")
     # Last, because it does real work only about once a day: the public government domain lists
     # (U.S. .gov daily, UK .gov.uk monthly). A failed or odd download keeps the stored version.
     try:

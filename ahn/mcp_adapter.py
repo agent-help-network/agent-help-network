@@ -170,6 +170,38 @@ PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing bloc
                 "your tool, the site's edge, robots.txt or a login: tell your user what was refused and by whom.")
 
 
+_VENDOR_NAMES = {"cloudflare": "Cloudflare", "datadome": "DataDome", "perimeterx": "PerimeterX", "aws_waf": "AWS WAF",
+                 "vercel": "Vercel", "generic_captcha": "a human-verification widget", "unknown": "an unidentified provider"}
+_CHECK_CAVEAT = "This is what AHN's data-center server got; your network may get a different answer."
+
+
+def _age_text(seconds: int) -> str:
+    if seconds < 300:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86400:
+        return f"{seconds // 3600} h ago"
+    return f"{seconds // 86400} days ago"
+
+
+def ahn_check_line(check) -> str | None:
+    """D67: one line for the first text block when AHN's own server has a measurement of the host's home page; None for
+    a pending or not-measured check. It states what was received, the age and the vantage; it advises nothing."""
+    if check is None or check.status != "measured" or check.outcome is None or check.age_seconds is None:
+        return None
+    status = f"{check.http_status}, " if check.http_status else ""
+    if check.outcome == "bot_challenge":
+        vendor = f" ({_VENDOR_NAMES.get(check.bot_defense.vendor, 'unknown')})" if check.bot_defense else ""
+        what = f"{status}bot challenge{vendor}"
+    else:
+        what = {"reachable": f"{status}home page answered", "redirected_same_host": f"{status}redirected within the site",
+                "refused": f"{status}refused", "rate_limited": f"{status}rate limited", "login_wall": "leads to a sign-in page",
+                "redirected_offsite": f"{status}redirected to another site", "server_error": f"{status}server error",
+                "unreachable": "could not connect", "other_status": f"{status}other answer".strip(", ")}[check.outcome]
+    return f"AHN server check {_age_text(check.age_seconds)}: {what}. {_CHECK_CAVEAT}"
+
+
 def check_result(response: CheckResponse):
     """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one and, D61,
     "Customer path: <next_action.customer_url>" when there is one; then the answer as
@@ -187,6 +219,9 @@ def check_result(response: CheckResponse):
     if response.next_action is not None and response.next_action.do == "proceed" and "tell your user" not in lead:  # D66 sentences say it
         # Free text, outside the schema: proceed means no block is declared, never that nothing blocked the caller.
         lead += "\n" + PROCEED_NOTE
+    check_line = ahn_check_line(response.ahn_check)
+    if check_line:
+        lead += "\n" + check_line  # D67: only when a measurement exists; information, not a verdict
     return CallToolResult(
         content=[TextContent(type="text", text=lead),
                  TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],

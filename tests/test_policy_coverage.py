@@ -234,6 +234,8 @@ CHECK_RESPONSE_FIELDS = {
     "observations": Phrase("published observations without any reporter identity", "제보자 신원이 없는 공개 관찰"),
     "lookup_activity": Phrase("coarse lookup-activity band", "대략적인 조회 활동 구간"),
     "host_facts": Phrase("registry facts about the domain", "도메인에 관한 레지스트리 사실"),
+    "ahn_check": Phrase("what our own server received when it requested the host's home page",
+                        "우리 서버가 그 호스트의 홈 페이지(/)를 쿠키와 로그인 없이 한 번 요청해 받은 것"),
     "site_host": Exempt("echo of the hostname the caller sent"),
     "generated_at": Exempt("time of the answer"),
     "synthetic": Exempt("flag copied from the stored observations"),
@@ -379,6 +381,17 @@ TABLES = {
     "robots_read_daily": Pruned(Phrase(
         "Daily per-host totals of robots.txt reads, answers, failures, refusals and held reads, with the number of reads that followed a lookup and of seed-list reads: {days} days",
         "호스트별 일일 robots.txt 읽기·응답·실패·거절·보류 합계와 조회 뒤 읽기 수·시드 목록 읽기 수: {days}일")),
+    # AHN server check of home pages (migration 033, ahn/site_probe.py, D67): codes about public hosts, no client data.
+    "site_probe": Pruned(Phrase("never the page, a header value, a cookie or a path: {days} days after the request",
+                                "페이지·헤더 값·쿠키·경로는 저장하지 않습니다: 요청 {days}일 뒤까지")),
+    "site_probe_daily": Pruned(Phrase("and the daily counts (with no hostname) that drive the automatic stop: {days} days",
+                                      "자동 중지에 쓰는 일별 집계(호스트명 없음): {days}일")),
+    "probe_breaker_daily": Pruned(Phrase("and the daily counts (with no hostname) that drive the automatic stop: {days} days",
+                                         "자동 중지에 쓰는 일별 집계(호스트명 없음): {days}일")),
+    "site_probe_set": Replaced(
+        Phrase("The day's list of hostnames to measure (hostname, list and rank)", "그날 잴 호스트명 목록(호스트명, 목록, 순위)"),
+        Phrase("is replaced each day", "매일 교체됩니다")),
+    "probe_state": Exempt("operator state of the home-page check: the baseline refusal rate and the stop flag, no request data"),
     "render_metric_samples": Pruned(  # hosting-provider totals, no per-request detail
         Phrase("hosting-usage samples from Render (CPU, memory and request totals): {days} days",
                "시간별 사용량 표본(CPU·메모리·요청 합계): {days}일")),
@@ -491,6 +504,8 @@ def test_deleted_tables_match_the_policy_mapping():
     assert expiring_in_prune_analytics() == {t for t, v in TABLES.items() if isinstance(v, UntilExpiry)}
     # A replaced list copy is rewritten in place by ahn/gov_registry.py; only the domain rows are deleted from.
     expected_deleted |= {"gov_domain_registry"}
+    # The day's host list is rebuilt once a day by ahn/site_probe.py (D67); the policy says it is replaced each day.
+    expected_deleted |= {"site_probe_set"}
     # Kept without a period, but a provider that leaves the status-mapping table is unregistered (D44,
     # status_refresh.sync_curated_sources); the policy says so next to "no automatic deletion date".
     expected_deleted |= {"status_cache", "status_sources"}
@@ -778,6 +793,8 @@ COLUMNS = {
     "host_access_profile.content_use": Phrase(
         "content-use preferences it declares (Content-Signal and Content-Usage lines) as normalized yes, no or unset values",
         "콘텐츠 이용 선호(Content-Signal·Content-Usage 줄)를 yes·no·unset 으로 정규화한 값"),
+    "host_access_profile.home_gate": Phrase(
+        "whether the host's robots.txt allows the home page", "그 호스트의 robots.txt 가 홈 페이지를 허용하는지"),
     "host_access_profile.site_declared": Phrase(
         "what the host publishes for agents at those three standard locations",
         "호스트가 그 세 표준 위치에 에이전트용으로 공개한 것"),

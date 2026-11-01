@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, status_scope
+from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, site_probe, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -590,6 +590,13 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             access_profile = {**access_profile, "retry_after_seconds": retry_after}
         if access_profile is not None:
             access_profile = {**access_profile, "note": ACCESS_PROFILE_NOTE}
+        ahn_check = None
+        if (site_probe.enabled() and public and eligible and registered and not test_query
+                and host not in lookup_signals.EXAMPLE_HOSTS):
+            # D67: AHN's own server check of the home page. A short synchronous attempt (waits at most 3 seconds, the one
+            # place a lookup may wait on a third-party host), otherwise queued with no delay and shown as pending. Decided
+            # after the recommendation inputs above and added below after the recommendation: it changes none of them.
+            ahn_check = site_probe.for_lookup(settings, conn, host, now, access_profile=access_profile)
         recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
         stale = bool(rows) and not recent
         selected = recent if recent else (rows[:20] if stale else [])
@@ -654,6 +661,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default))
             except Exception:
                 LOG.warning("response_guide_unavailable")
+        if ahn_check is not None:
+            result["ahn_check"] = ahn_check  # D67: after the recommendation and the guide are final; informs, never decides
         if (issue_feedback and settings.lookup_feedback and settings.collect_lookup_metrics and error_class and not test_query
                 and eligible and host not in lookup_signals.EXAMPLE_HOSTS and (not public or registered)):
             # D58: added last, after the answer is decided; a signed value, so nothing is written here. A lookup that is not

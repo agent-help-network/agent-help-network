@@ -73,7 +73,7 @@ If it fails, change the policy first, then the mapping in the test, which record
 - Secrets: API keys, tokens, passwords, cookies, `.env` files, or your local config.
 - Personal data: names, email addresses, account or claim numbers, personal URLs, or conversation text, including in fixtures, logs, and screenshots.
 - Real or manufactured observations: tests use synthetic `.test` hosts, and nobody should invent seed observations or create failures to report.
-- Network probes: code must not attempt tasks on target sites, fetch pages other than `/robots.txt` and `/llms.txt`, or touch login or CAPTCHA pages.
+- Network probes: code must not attempt tasks on target sites, or touch login or CAPTCHA pages. The only pages it may fetch from a host are `/robots.txt`, `/llms.txt`, the standard-location files already documented, and (D67, `ahn/site_probe.py`) the home page once, only where robots.txt allows it and with no cookies.
 - Operator records such as verification logs, posting history, or cost notes, which belong in the private operator repository, and claims of affiliation with or approval by OpenAI, Meta, Anthropic, or any host.
 
 Security issues: see [SECURITY.md](SECURITY.md) instead of opening a public issue.

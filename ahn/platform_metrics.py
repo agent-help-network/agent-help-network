@@ -168,6 +168,15 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM robots_read_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"signal_history_prune failed={type(exc).__name__}")
+    # AHN server check of home pages (migration 033, ahn/site_probe.py, D67): the current row per host 30 days after its
+    # check, daily counts and the automatic-stop counters 35 days. Own transaction, as above.
+    try:
+        with connect_url(database_url) as conn:
+            conn.execute("DELETE FROM site_probe WHERE probed_at < now() - interval '30 days'")
+            conn.execute("DELETE FROM site_probe_daily WHERE day < CURRENT_DATE - 34")
+            conn.execute("DELETE FROM probe_breaker_daily WHERE day < CURRENT_DATE - 34")
+    except psycopg.Error as exc:
+        print(f"site_probe_prune failed={type(exc).__name__}")
     # Lookup signals (migration 027, ahn/lookup_signals.py, D47): hourly counts per host 35 days, the host- and
     # day-specific source digests 2 days (today and yesterday). The literals match lookup_signals.HOURLY_RETENTION_DAYS
     # and SOURCES_RETENTION_DAYS; tests/test_lookup_signals.py and the policy-coverage test check that.
