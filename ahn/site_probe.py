@@ -1,7 +1,7 @@
 """The AHN server check of a host's home page (D67).
 
-For a limited set of public hosts our server requests the home page once (``GET /``), where the host's own robots.txt
-allows "/" for us, and keeps codes only: the HTTP status, whether a known bot-protection provider issued a challenge,
+Our server requests a public host's home page (``GET /``) unless the host's own robots.txt disallows "/" for us (an
+absent file or a 404 does not disallow; a refused or unreadable file does), and keeps codes only: the HTTP status, whether a known bot-protection provider issued a challenge,
 whether the page leads to a sign-in, and the response time. Never the page, a header value, a cookie value or a
 redirect path.
 
@@ -101,7 +101,7 @@ QUEUE_GIVE_UP = timedelta(hours=1)   # a queued check whose host profile never s
 DEFER_SECONDS = 30
 LOCK_DEFER_SECONDS = 10
 
-SHOW_VIEW_NOTE = ("Measured once from AHN's server (a data-center address, declared bot user agent, no cookies or scripts); "
+SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared bot user agent, no cookies or scripts); "
                   "your agent's network and browser may get a different answer. Information only: it does not change "
                   "recommendation.")
 

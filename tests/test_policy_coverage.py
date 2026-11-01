@@ -235,7 +235,7 @@ CHECK_RESPONSE_FIELDS = {
     "lookup_activity": Phrase("coarse lookup-activity band", "대략적인 조회 활동 구간"),
     "host_facts": Phrase("registry facts about the domain", "도메인에 관한 레지스트리 사실"),
     "ahn_check": Phrase("what our own server received when it requested the host's home page",
-                        "우리 서버가 그 호스트의 홈 페이지(/)를 쿠키와 로그인 없이 한 번 요청해 받은 것"),
+                        "우리 서버가 그 호스트의 홈 페이지(/)를 쿠키와 로그인 없이 요청해 받은 것"),
     "site_host": Exempt("echo of the hostname the caller sent"),
     "generated_at": Exempt("time of the answer"),
     "synthetic": Exempt("flag copied from the stored observations"),

@@ -97,7 +97,7 @@ pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-ag
     <div class="home-layer"><p class="home-layer-tag">observations</p><h3>{{ 'Other agents’ reports' if en else '다른 에이전트의 제보' }}</h3><p>{{ 'Reviewed, de-identified attempts. Usually empty, and empty does not mean the site works.' if en else '검토를 거친 비식별 시도입니다. 대개 비어 있으며, 비어 있다고 사이트가 정상이라는 뜻은 아닙니다.' }}</p></div>
   </div>
   <div class="home-foot">
-    <p>{{ 'We read a host’s robots.txt and llms.txt, may request its home page once from our server where robots.txt allows it, cache the answer for 24 hours, and never attempt the task or touch login or CAPTCHA pages.' if en else '호스트의 robots.txt 와 llms.txt 를 읽고, robots.txt 가 허용하면 우리 서버에서 홈 페이지를 한 번 요청할 수 있으며, 답을 24시간 캐시하고, 작업을 대신 시도하거나 로그인·CAPTCHA 페이지를 건드리지 않습니다.' }} <a href="/{{ lang }}/agents#how-we-read">{{ 'How we read hosts →' if en else '호스트를 읽는 방법 →' }}</a></p>
+    <p>{{ 'We read a host’s robots.txt and llms.txt, may request its home page from our server unless its robots.txt disallows it, cache the answer for 24 hours, and never attempt the task or touch login or CAPTCHA pages.' if en else '호스트의 robots.txt 와 llms.txt 를 읽고, robots.txt 가 금지하지 않으면 우리 서버에서 홈 페이지를 필요할 때 요청할 수 있으며, 답을 24시간 캐시하고, 작업을 대신 시도하거나 로그인·CAPTCHA 페이지를 건드리지 않습니다.' }} <a href="/{{ lang }}/agents#how-we-read">{{ 'How we read hosts →' if en else '호스트를 읽는 방법 →' }}</a></p>
     <p>{{ 'Hit a wall yourself? Agents may send a' if en else '직접 막히셨습니까? 에이전트는' }} <a href="/{{ lang }}/agents">{{ 'firsthand report' if en else '직접 관찰 제보' }}</a>{{ '.' if en else '를 보낼 수 있습니다.' }} {{ 'People can use the' if en else '사람은' }} <a href="/{{ lang }}/human">{{ 'human view' if en else 'Human 화면' }}</a>{{ '.' if en else '을 쓰십시오.' }}</p>
   </div>
 </section>

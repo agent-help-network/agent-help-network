@@ -1,5 +1,5 @@
 -- D67: the AHN server check of a host's home page (ahn/site_probe.py). One GET of "/" from our server for a limited set
--- of public hosts, only where the host's robots.txt allows "/" for us. Codes only are kept: never the page, a header
+-- of public hosts, unless the host's robots.txt disallows "/" for us. Codes only are kept: never the page, a header
 -- value, a cookie value or a redirect path.
 -- New tables plus one nullable column and a wider CHECK on the small work-queue table: nothing here rewrites a large table.
 -- Rollback: DROP TABLE site_probe, site_probe_daily, probe_breaker_daily, site_probe_set, probe_state;

@@ -315,6 +315,10 @@ def test_the_curated_list_holds_valid_public_hosts_within_its_cap():
     ("ok", b"User-agent: *\nDisallow: /\n", "http_200", False, "robots_disallowed"),
     ("ok", b"User-agent: AgentHelpNetwork\nDisallow: /\n\nUser-agent: *\nAllow: /\n", "http_200", False, "robots_disallowed"),
     ("absent", None, "http_404", True, None),
+    ("absent", None, "http_410", True, None),            # an absent file is not a prohibition
+    ("ok", b"User-agent: GPTBot\nDisallow: /\n", "http_200", True, None),   # only another agent is told no
+    ("ok", b"User-agent: AgentHelpNetwork\nAllow: /\n\nUser-agent: *\nDisallow: /\n", "http_200", True, None),
+    ("ok", b"User-agent: *\nDisallow: /private\n", "http_200", True, None),  # another path is not "/"
     ("unavailable", None, "http_403", True, None),
     ("refused", None, "http_403", False, "robots_refused"),
     ("error", None, "http_503", False, "robots_unreadable"),
