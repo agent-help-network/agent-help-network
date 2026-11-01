@@ -63,13 +63,26 @@ def test_a_failure_after_a_success_waits_for_both_rules():
 
 
 def test_batch_limits_fit_the_cron_and_the_per_host_rate():
-    # 580 distinct feeds hourly need about 49 reads per 5-minute run; one run may read up to FEED_BATCH_MAX.
+    # Every distinct feed is read about hourly (12 runs), so one run reads distinct / 12 of them; one run may read up to FEED_BATCH_MAX.
     distinct = len({source.api_url for source in status_refresh.SOURCES.values()})
     assert distinct <= 12 * status_refresh.FEED_BATCH_MAX * 0.7
-    assert status_refresh.FEED_BATCH_SECONDS <= 60 and status_refresh.CRON_IDLE == HOUR
+    assert status_refresh.FEED_BATCH_SECONDS <= 100 and status_refresh.CRON_IDLE == HOUR
     assert background_reads.MIN_READ_INTERVAL >= 0.5 and status_refresh.SCOPE_GAP_SECONDS >= 1.0
     with pytest.raises(ValueError):
         status_refresh.refresh_batch(None, limit=status_refresh.FEED_BATCH_MAX + 1)
+    with pytest.raises(ValueError):
+        status_refresh.refresh_batch(None, limit=0)
+
+
+def test_feed_budget_fits_the_5_minute_cron_with_the_other_steps():
+    # The feed step, then the queue and seed pre-read (their own budget), then the site check (its own budget), in 300 s.
+    # A full batch at the 2-per-second process pace must fit its own time, so the limit and the budget agree.
+    from ahn import profile_warm, site_probe
+    assert status_refresh.FEED_BATCH_MAX * background_reads.MIN_READ_INTERVAL <= status_refresh.FEED_BATCH_SECONDS
+    worst = status_refresh.FEED_BATCH_SECONDS + profile_warm.TIME_BUDGET_SECONDS + site_probe.CRON_TIME_BUDGET_SECONDS
+    assert worst <= profile_warm.CRON_SAFE_SECONDS
+    # About 1,500 hosts sharing feeds as the curated table does (about 93% distinct) still fit one hourly pass.
+    assert 1500 * 0.93 / 12 <= status_refresh.FEED_BATCH_MAX * 0.7
 
 
 # --- freshness of the last statement (D46) -------------------------------------------------------------
