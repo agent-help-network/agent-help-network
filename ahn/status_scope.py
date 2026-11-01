@@ -41,6 +41,9 @@ _MAINTENANCE_ACTIVE = frozenset({"in_progress", "verifying"})
 # Atlassian Statuspage page ids are short lowercase base-36 strings (yh6f0r4529hb); incident.io's
 # Statuspage-compatible status.json carries a 26-character upper-case ULID and no time_zone.
 _PAGE_ID = re.compile(r"[a-z0-9]{8,32}")
+# Some Statuspage-shaped pages (Replit Status, read 2026-11-01) carry a lowercase UUID page id and a time_zone,
+# and answer both lists in the same shape, with the same page id on every incident.
+_UUID_PAGE_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]+")
 _SMALLINT = 32_767
 
@@ -66,12 +69,14 @@ REGIONAL_GROUPS: dict[str, dict[str, str]] = {
 
 
 def statuspage_page_id(body) -> str | None:
-    """The page id when a status.json body is Atlassian Statuspage's own (page.id and page.time_zone), else None."""
+    """The page id when a status.json body is Statuspage-shaped (page.id and page.time_zone), else None."""
     page = body.get("page") if isinstance(body, dict) else None
     if not isinstance(page, dict) or "time_zone" not in page:
         return None
     page_id = page.get("id")
-    return page_id if isinstance(page_id, str) and _PAGE_ID.fullmatch(page_id) else None
+    if not isinstance(page_id, str):
+        return None
+    return page_id if _PAGE_ID.fullmatch(page_id) or _UUID_PAGE_ID.fullmatch(page_id) else None
 
 
 def _aware(raw) -> datetime:
