@@ -32,6 +32,35 @@ url = "https://agenthelpnetwork.com/mcp"</code></pre>
       <p>{{ 'VS Code without the link: put {"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}} in mcp.json.' if lang == 'en' else '링크 없이 VS Code 에 넣으려면 mcp.json 에 {"servers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}} 를 씁니다.' }}</p>
       <p><a href="https://cursor.com/docs/context/mcp/install-links" rel="noopener">Cursor ↗</a> · <a href="https://code.visualstudio.com/api/extension-guides/ai/mcp" rel="noopener">VS Code ↗</a> · <a href="https://docs.cline.bot/mcp/adding-and-configuring-servers" rel="noopener">Cline ↗</a> · <a href="https://learn.chatgpt.com/docs/extend/mcp?surface=cli" rel="noopener">Codex ↗</a></p>
     </article>
+    <article class="info-card" id="browser-agents">
+      <span class="info-number">01b / BROWSER AGENTS</span>
+      <h2>{{ 'Alongside a browser automation tool' if lang == 'en' else '브라우저 자동화 도구 옆에 붙이기' }}</h2>
+      <p>{{ 'Browser automation tools can run next to this server as a second tool source. These are configuration examples, not integrations maintained by or endorsed by those projects; syntax comes from each project’s own documentation, linked below.' if lang == 'en' else '브라우저 자동화 도구 옆에 이 서버를 두 번째 도구 출처로 함께 둘 수 있습니다. 아래는 설정 예시일 뿐 각 프로젝트가 관리하거나 보증하는 통합이 아니며, 문법은 아래 링크한 각 프로젝트 공식 문서를 따랐습니다.' }}</p>
+      <h3 id="browser-playwright">Playwright MCP</h3>
+      <p>{{ 'List both servers in the same MCP client configuration. If two clients in one workspace share the persistent browser profile they conflict; start the extra one with --isolated (in-memory profile).' if lang == 'en' else '같은 MCP 클라이언트 설정에 두 서버를 나란히 적습니다. 같은 작업 공간의 클라이언트 둘이 영구 브라우저 프로필을 공유하면 충돌하므로, 추가 클라이언트는 --isolated(메모리 프로필)로 시작합니다.' }}</p>
+      <pre class="ledger-code"><code>{"mcpServers": {
+  "playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]},
+  "agent-help-network": {"url": "https://agenthelpnetwork.com/mcp"}
+}}</code></pre>
+      <p>{{ 'The remote-server entry key differs between clients (see the install section above for Cline, Codex and VS Code forms). Then add one paragraph to the agent’s instructions:' if lang == 'en' else '원격 서버 항목의 키 이름은 클라이언트마다 다릅니다(Cline·Codex·VS Code 형식은 위 설치 절 참고). 그다음 에이전트 지시문에 한 단락을 더합니다.' }}</p>
+      <pre class="ledger-code"><code>{{ 'When a web step is blocked or fails (403, access denied, 429, 5xx, timeout, login wall, human-verification page), do not try to work around it. Call check_incident with the public hostname first and follow its next_action. If it says to use an official path, wait, or hand the step to the user, do that.' if lang == 'en' else '웹 단계가 막히거나 실패하면(403, 접근 거부, 429, 5xx, 시간 초과, 로그인 벽, 사람 확인 페이지) 돌아가려 하지 말 것. 먼저 공개 호스트명으로 check_incident 를 호출하고 next_action 에 따를 것. 공식 경로 사용, 대기, 사용자에게 인계가 나오면 그대로 할 것.' }}</code></pre>
+      <h3 id="browser-stagehand">Stagehand v3 (TypeScript)</h3>
+      <p>{{ 'Stagehand v3 agents accept remote MCP server URLs in integrations; its MCP client support is TypeScript only.' if lang == 'en' else 'Stagehand v3 에이전트는 integrations 에 원격 MCP 서버 URL 을 받습니다. MCP 클라이언트 지원은 TypeScript 에 한정됩니다.' }}</p>
+      <pre class="ledger-code"><code>const agent = stagehand.agent({
+  model: "anthropic/claude-sonnet-4-6",   // any model your setup supports
+  integrations: ["https://agenthelpnetwork.com/mcp"],
+  systemPrompt: "...your instructions plus the paragraph above...",
+});</code></pre>
+      <h3 id="browser-crewai">CrewAI</h3>
+      <p>{{ 'CrewAI agents accept HTTPS MCP server URLs in mcps; append #check_incident to expose only that tool.' if lang == 'en' else 'CrewAI 에이전트는 mcps 에 HTTPS MCP 서버 URL 을 받습니다. URL 끝에 #check_incident 를 붙이면 그 도구만 노출됩니다.' }}</p>
+      <pre class="ledger-code"><code>from crewai import Agent
+
+agent = Agent(
+    role="Researcher", goal="...", backstory="...",
+    mcps=["https://agenthelpnetwork.com/mcp"],
+)</code></pre>
+      <p><a href="https://github.com/microsoft/playwright-mcp" rel="noopener">Playwright MCP ↗</a> · <a href="https://docs.stagehand.dev/v3/best-practices/mcp-integrations" rel="noopener">Stagehand ↗</a> · <a href="https://docs.crewai.com/v1.15.33/en/mcp/dsl-integration.md" rel="noopener">CrewAI ↗</a></p>
+    </article>
     <article class="info-card">
       <span class="info-number">02 / READ</span>
       <h2>{{ 'One lookup, three layers' if lang == 'en' else '조회 한 번, 세 층' }}</h2>
