@@ -1,0 +1,90 @@
+# Hosts whose home page the AHN server check requests (ahn/site_probe.py, D67): public sites in categories that often block automated access. Host names only; listing a host is not an endorsement.
+# Retail
+amazon.com
+walmart.com
+target.com
+bestbuy.com
+homedepot.com
+lowes.com
+costco.com
+kohls.com
+macys.com
+nordstrom.com
+nike.com
+adidas.com
+sephora.com
+ulta.com
+wayfair.com
+ebay.com
+etsy.com
+newegg.com
+zappos.com
+gap.com
+# Tickets and events
+ticketmaster.com
+stubhub.com
+seatgeek.com
+vividseats.com
+eventbrite.com
+axs.com
+# Travel
+booking.com
+expedia.com
+airbnb.com
+hotels.com
+kayak.com
+tripadvisor.com
+united.com
+delta.com
+aa.com
+southwest.com
+jetblue.com
+marriott.com
+hilton.com
+hyatt.com
+# Real estate
+zillow.com
+redfin.com
+realtor.com
+trulia.com
+apartments.com
+# Classifieds
+craigslist.org
+indeed.com
+glassdoor.com
+linkedin.com
+# Social
+reddit.com
+x.com
+facebook.com
+instagram.com
+tiktok.com
+pinterest.com
+quora.com
+# News with a paywall
+nytimes.com
+wsj.com
+washingtonpost.com
+bloomberg.com
+ft.com
+economist.com
+theatlantic.com
+newyorker.com
+# Finance and accounts
+ticketweb.com
+walgreens.com
+cvs.com
+ups.com
+fedex.com
+usps.com
+chase.com
+paypal.com
+# Streaming and media
+netflix.com
+hulu.com
+spotify.com
+twitch.tv
+# Government and services
+irs.gov
+ssa.gov
+dmv.org

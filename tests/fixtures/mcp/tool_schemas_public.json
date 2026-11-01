@@ -440,6 +440,361 @@
      "title": "AgentVendor",
      "type": "string"
     },
+    "AhnCheck": {
+     "additionalProperties": true,
+     "description": "D67: the outcome of AHN's own server's check of the host's home page, as codes. Information only; it is added after\nthe recommendation is decided and changes none of it. Fields that do not apply are left out, never null.",
+     "properties": {
+      "age_seconds": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Age Seconds"
+      },
+      "basis": {
+       "const": "ahn_server",
+       "title": "Basis",
+       "type": "string"
+      },
+      "bot_defense": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/AhnCheckBotDefense"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "edge_vendors_seen": {
+       "anyOf": [
+        {
+         "items": {
+          "enum": [
+           "cloudflare",
+           "datadome",
+           "perimeterx",
+           "aws_waf",
+           "vercel",
+           "generic_captcha",
+           "unknown"
+          ],
+          "type": "string"
+         },
+         "maxItems": 5,
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Edge Vendors Seen"
+      },
+      "fingerprint_version": {
+       "maxLength": 16,
+       "title": "Fingerprint Version",
+       "type": "string"
+      },
+      "freshness": {
+       "anyOf": [
+        {
+         "enum": [
+          "fresh",
+          "stale"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Freshness"
+      },
+      "http_status": {
+       "anyOf": [
+        {
+         "maximum": 599,
+         "minimum": 100,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Http Status"
+      },
+      "login_signal": {
+       "anyOf": [
+        {
+         "enum": [
+          "http_auth",
+          "redirect",
+          "form"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Login Signal"
+      },
+      "measured_at": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Measured At"
+      },
+      "not_measured_reason": {
+       "anyOf": [
+        {
+         "enum": [
+          "robots_disallowed",
+          "robots_refused",
+          "robots_unreadable",
+          "robots_stale",
+          "not_eligible",
+          "budget",
+          "backoff",
+          "disabled"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Not Measured Reason"
+      },
+      "note": {
+       "title": "Note",
+       "type": "string"
+      },
+      "outcome": {
+       "anyOf": [
+        {
+         "enum": [
+          "reachable",
+          "redirected_same_host",
+          "bot_challenge",
+          "refused",
+          "rate_limited",
+          "login_wall",
+          "redirected_offsite",
+          "server_error",
+          "unreachable",
+          "other_status"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Outcome"
+      },
+      "path_kind": {
+       "const": "home",
+       "title": "Path Kind",
+       "type": "string"
+      },
+      "redirect": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/AhnCheckRedirect"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "response_ms": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Response Ms"
+      },
+      "retry_after_seconds": {
+       "anyOf": [
+        {
+         "maximum": 3600,
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Retry After Seconds"
+      },
+      "status": {
+       "enum": [
+        "measured",
+        "pending",
+        "not_measured"
+       ],
+       "title": "Status",
+       "type": "string"
+      },
+      "ua_token": {
+       "const": "AgentHelpNetwork",
+       "title": "Ua Token",
+       "type": "string"
+      },
+      "vantage": {
+       "$ref": "#/$defs/AhnCheckVantage"
+      }
+     },
+     "required": [
+      "status",
+      "basis",
+      "vantage",
+      "ua_token",
+      "path_kind",
+      "fingerprint_version",
+      "note"
+     ],
+     "title": "AhnCheck",
+     "type": "object"
+    },
+    "AhnCheckBotDefense": {
+     "additionalProperties": true,
+     "properties": {
+      "confidence": {
+       "enum": [
+        "high",
+        "medium"
+       ],
+       "title": "Confidence",
+       "type": "string"
+      },
+      "signal": {
+       "enum": [
+        "header",
+        "cookie",
+        "body"
+       ],
+       "title": "Signal",
+       "type": "string"
+      },
+      "vendor": {
+       "enum": [
+        "cloudflare",
+        "datadome",
+        "perimeterx",
+        "aws_waf",
+        "vercel",
+        "generic_captcha",
+        "unknown"
+       ],
+       "title": "Vendor",
+       "type": "string"
+      }
+     },
+     "required": [
+      "vendor",
+      "signal",
+      "confidence"
+     ],
+     "title": "AhnCheckBotDefense",
+     "type": "object"
+    },
+    "AhnCheckRedirect": {
+     "additionalProperties": true,
+     "properties": {
+      "followed_www": {
+       "title": "Followed Www",
+       "type": "boolean"
+      },
+      "path_class": {
+       "enum": [
+        "login",
+        "locale",
+        "other"
+       ],
+       "title": "Path Class",
+       "type": "string"
+      },
+      "to_relation": {
+       "enum": [
+        "same_host",
+        "www_alias",
+        "same_site",
+        "other_site"
+       ],
+       "title": "To Relation",
+       "type": "string"
+      }
+     },
+     "required": [
+      "followed_www",
+      "to_relation",
+      "path_class"
+     ],
+     "title": "AhnCheckRedirect",
+     "type": "object"
+    },
+    "AhnCheckVantage": {
+     "additionalProperties": true,
+     "properties": {
+      "kind": {
+       "enum": [
+        "datacenter",
+        "residential",
+        "mobile",
+        "unknown"
+       ],
+       "title": "Kind",
+       "type": "string"
+      },
+      "region": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Region"
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "title": "AhnCheckVantage",
+     "type": "object"
+    },
     "ApiCatalog": {
      "additionalProperties": true,
      "description": "/.well-known/api-catalog (RFC 9727). Fields other than status and source_url appear only when declared.",
@@ -2681,6 +3036,17 @@
      "anyOf": [
       {
        "$ref": "#/$defs/AccessProfile"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "ahn_check": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/AhnCheck"
       },
       {
        "type": "null"

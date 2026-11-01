@@ -17,7 +17,7 @@ byte caps, a whole-body time limit, the 24-hour cache and one-hour retry after a
 per-host locks).
 
 Queue rules: at most QUEUE_CAP rows (a lookup that would exceed it queues nothing); jobs run in the
-order access_profile, status_discovery, status_feed, oldest first. A claim takes rows with
+order access_profile, status_discovery, status_feed, site_probe (D67, the AHN server check of a home page), oldest first. A claim takes rows with
 ``SELECT ... FOR UPDATE SKIP LOCKED``, counts the attempt and sets a lease (``claimed_at``), and the
 lease is renewed just before the job starts, so two processes or threads never read the same row
 twice. A read that ends in any result, a transport failure included, is a finished job: the cache
@@ -42,7 +42,7 @@ from .db import as_utc, connect
 from .provenance import operator_id, vantage
 
 LOG = logging.getLogger(__name__)
-KINDS = ("access_profile", "status_discovery", "status_feed")  # also the processing order
+KINDS = ("access_profile", "status_discovery", "status_feed", "site_probe")  # also the processing order
 QUEUE_CAP = 2000
 CLAIM_BATCH = 5            # the cron's claim size; the web worker claims one job at a time
 WEB_CLAIM_BATCH = 1
@@ -64,7 +64,7 @@ FEED_RETRY_MINUTES = 15    # ... but not again within this long after the last a
 # lookup path and in the cron (status_refresh.refresh_batch): a resolved problem must not read as active
 # for hours. The minimum gap between two attempts stays FEED_RETRY_MINUTES.
 FEED_ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS
-_PRIORITY = "CASE {col} WHEN 'access_profile' THEN 0 WHEN 'status_discovery' THEN 1 ELSE 2 END"
+_PRIORITY = "CASE {col} WHEN 'access_profile' THEN 0 WHEN 'status_discovery' THEN 1 WHEN 'status_feed' THEN 2 ELSE 3 END"
 
 _wake = threading.Event()
 _pace_lock = threading.Lock()
@@ -330,6 +330,24 @@ def _release(settings, jobs: list[dict]) -> None:
             )
 
 
+class Deferred(Exception):
+    """A job that cannot run yet (its host's profile read is still queued): put back ``seconds`` later, attempt not counted."""
+
+    def __init__(self, seconds: float):
+        super().__init__("deferred")
+        self.seconds = seconds
+
+
+def _defer(settings, job: dict, seconds: float) -> None:
+    with connect(settings) as conn:
+        conn.execute(
+            """UPDATE background_reads SET claimed_at=NULL, attempts=greatest(attempts-1,0),
+                   not_before=now() + %s * interval '1 second'
+               WHERE kind=%s AND site_host=%s AND claimed_at=%s""",
+            (max(1.0, seconds), job["kind"], job["site_host"], job["claimed_at"]),
+        )
+
+
 def _store_discovered(settings, site_host: str, found, digest: dict) -> None:
     source, indicator, updated_at = found
     with connect(settings) as conn:
@@ -373,6 +391,9 @@ def _run(settings, job: dict) -> None:
         found = discover(site_host, digest, settings=settings)
         if found:
             _store_discovered(settings, site_host, found, digest)
+    elif kind == "site_probe":
+        from . import site_probe
+        site_probe.run_queued(settings, site_host, job)  # may raise Deferred; its own reads are paced inside
 
 
 def _empty_result() -> dict:
@@ -403,7 +424,12 @@ def process_due(settings, *, limit: int = CLAIM_BATCH, time_budget: float | None
                 result["skipped"] += 1
                 continue
             job = {**job, "claimed_at": stamp}
-            _run(settings, job)
+            try:
+                _run(settings, job)
+            except Deferred as later:
+                _defer(settings, job, later.seconds)
+                result["deferred"] = result.get("deferred", 0) + 1  # a key only when it happened: other callers compare the dict
+                continue
             _finish(settings, job)
         except Exception as exc:  # one host or a brief database error must not stop the queue
             LOG.warning("background_read_failed kind=%s error=%s", job["kind"], type(exc).__name__)

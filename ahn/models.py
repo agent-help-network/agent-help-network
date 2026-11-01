@@ -226,6 +226,53 @@ def _omit_none(value) -> bool:
     return value is None
 
 
+VENDOR_CODES = ("cloudflare", "datadome", "perimeterx", "aws_waf", "vercel", "generic_captcha", "unknown")
+VendorCode = Literal["cloudflare", "datadome", "perimeterx", "aws_waf", "vercel", "generic_captcha", "unknown"]
+
+
+class AhnCheckVantage(StrictModel):
+    kind: Literal["datacenter", "residential", "mobile", "unknown"]
+    region: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class AhnCheckBotDefense(StrictModel):
+    vendor: VendorCode
+    signal: Literal["header", "cookie", "body"]
+    confidence: Literal["high", "medium"]
+
+
+class AhnCheckRedirect(StrictModel):
+    followed_www: bool
+    to_relation: Literal["same_host", "www_alias", "same_site", "other_site"]
+    path_class: Literal["login", "locale", "other"]
+
+
+class AhnCheck(StrictModel):
+    """D67: the outcome of AHN's own server's check of the host's home page, as codes. Information only; it is added after
+    the recommendation is decided and changes none of it. Fields that do not apply are left out, never null."""
+    status: Literal["measured", "pending", "not_measured"]
+    basis: Literal["ahn_server"]
+    vantage: AhnCheckVantage
+    ua_token: Literal["AgentHelpNetwork"]
+    path_kind: Literal["home"]
+    measured_at: datetime | None = Field(default=None, exclude_if=_omit_none)
+    age_seconds: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    freshness: Literal["fresh", "stale"] | None = Field(default=None, exclude_if=_omit_none)
+    outcome: Literal["reachable", "redirected_same_host", "bot_challenge", "refused", "rate_limited", "login_wall",
+                     "redirected_offsite", "server_error", "unreachable", "other_status"] | None = Field(default=None, exclude_if=_omit_none)
+    http_status: int | None = Field(default=None, ge=100, le=599, exclude_if=_omit_none)
+    bot_defense: AhnCheckBotDefense | None = Field(default=None, exclude_if=_omit_none)
+    edge_vendors_seen: list[VendorCode] | None = Field(default=None, max_length=5, exclude_if=_omit_none)
+    redirect: AhnCheckRedirect | None = Field(default=None, exclude_if=_omit_none)
+    login_signal: Literal["http_auth", "redirect", "form"] | None = Field(default=None, exclude_if=_omit_none)
+    response_ms: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    retry_after_seconds: int | None = Field(default=None, ge=0, le=3600, exclude_if=_omit_none)
+    not_measured_reason: Literal["robots_disallowed", "robots_refused", "robots_unreadable", "robots_stale", "not_eligible",
+                                 "budget", "backoff", "disabled"] | None = Field(default=None, exclude_if=_omit_none)
+    fingerprint_version: str = Field(max_length=16)
+    note: str
+
+
 class ProviderStatus(StrictModel):
     source_name: str
     source_url: str
@@ -642,6 +689,8 @@ class CheckResponse(StrictModel):
     provider_source_state: Literal["feed_connected", "official_page_only", "not_verified_by_current_methods"]
     provider_discovery_attempted_at: datetime | None = None
     official_status_page: OfficialStatusPage | None = None
+    # D67: present only while AHN_SITE_PROBE=1 and a check exists or is pending for the host; left out (never null) otherwise.
+    ahn_check: AhnCheck | None = Field(default=None, exclude_if=_omit_none)
     lookup_activity: LookupActivity | None = None
     access_profile: AccessProfile | None = None
     official_paths: OfficialPaths | None = None

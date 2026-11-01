@@ -4,8 +4,9 @@ Safety posture: only eligible public apex hosts and their own www. alias, only p
 IP addresses, at most one redirect followed (a single hop from the host to its own www. alias
 for the same path; any other 3xx is recorded as ``redirected`` and not followed), hard byte
 caps, one read attempt per host per cache window (24 hours for a lookup, ERROR_RETRY after a
-transport failure), and never a probe: the two well-known files are the only paths ever
-requested (and llms.txt only where that host's robots.txt allows it), and the result is reported as DECLARED policy, never as an access guarantee.
+transport failure). This module requests no other path than robots.txt, llms.txt and the D59 standard files (llms.txt
+and those only where the host's robots.txt allows them); the home-page check is ahn/site_probe.py (D67). The result is
+reported as DECLARED policy, never as an access guarantee.
 """
 
 from __future__ import annotations
@@ -685,6 +686,72 @@ REQUEST_WORST_SECONDS = (DNS_TIMEOUT_SECONDS + TIMEOUT_CONNECT_SECONDS * CONNECT
 HOST_READ_WORST_SECONDS = 6 * REQUEST_WORST_SECONDS + 4.0
 _clock = time.monotonic  # patched in tests
 
+# One request (DNS, connect, headers, body) ends after this much wall-clock time whatever the server does. urllib3's
+# timeouts apply to each receive, so a server that sends one byte a second would otherwise hold the thread for a minute.
+WALL_SECONDS = 8.0
+
+
+def tracked_pool(base):
+    """``base`` (a urllib3 connection pool class) that remembers the connections it opens, so WallClock can close them.
+    A stand-in without ``_new_conn`` is returned as it is."""
+    if not hasattr(base, "_new_conn"):
+        return base
+
+    class Tracked(base):
+        def _new_conn(self):
+            conn = super()._new_conn()
+            self.__dict__.setdefault("_made_connections", []).append(conn)
+            return conn
+    return Tracked
+
+
+class WallClock:
+    """``with WallClock(seconds) as wall: ... wall.watch(pool)``: once ``seconds`` have passed, the sockets of the watched
+    pools are shut down and closed from a timer thread, which makes a blocked receive in the request thread fail at
+    once; ``fired`` says it happened."""
+
+    def __init__(self, seconds: float = WALL_SECONDS):
+        self.seconds = seconds
+        self.fired = False
+        self._pools: list = []
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+
+    def watch(self, pool) -> None:
+        with self._lock:
+            self._pools.append(pool)
+            if self.fired:
+                self._close(pool)
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired = True
+            for pool in self._pools:
+                self._close(pool)
+
+    @staticmethod
+    def _close(pool) -> None:
+        for conn in list(getattr(pool, "_made_connections", ())):
+            sock = getattr(conn, "sock", None)
+            try:
+                if sock is not None:
+                    sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        self._timer.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._timer.cancel()
+        return False
+
 
 def read_capped(response, cap_bytes: int, *, budget: float = BODY_READ_BUDGET, clock=None) -> tuple[bytes | None, str | None]:
     """Read at most cap_bytes + 1 bytes of a streamed urllib3 response within ``budget`` seconds.
@@ -752,7 +819,7 @@ ERROR_RETRY = timedelta(hours=1)
 def fetch_public_file(
     site_host: str, path: str, *, cap_bytes: int, timeout_connect: float = TIMEOUT_CONNECT_SECONDS,
     timeout_read: float = TIMEOUT_READ_SECONDS, _hop: int = 0, accept: str = "text/plain,*/*;q=0.5",
-    headers_out: dict | None = None,
+    headers_out: dict | None = None, _wall: WallClock | None = None,
 ) -> tuple[str, bytes | None, str | None]:
     """Fetch one well-known file from a pinned public IP; never raises for network, DNS, TLS or HTTP failures.
 
@@ -764,6 +831,14 @@ def fetch_public_file(
     site_host = site_host.strip().rstrip(".").lower()
     if not _HOST_RE.match(site_host) or not path.startswith("/") or "//" in path or cap_bytes < 1:
         return ("error", None, "invalid_input")
+    if _wall is None:  # the whole read, a www redirect included, ends within WALL_SECONDS
+        with WallClock(WALL_SECONDS) as wall:
+            result = fetch_public_file(site_host, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
+                                       timeout_read=timeout_read, _hop=_hop, accept=accept, headers_out=headers_out,
+                                       _wall=wall)
+        if wall.fired and result[0] == "error":
+            return ("error", None, "read_timeout")
+        return result
     try:
         try:
             addresses = _resolve(site_host, DNS_TIMEOUT_SECONDS)
@@ -784,10 +859,11 @@ def fetch_public_file(
             if connect_budget <= 0:
                 break
             started = _clock()
-            pool = urllib3.HTTPSConnectionPool(
+            pool = tracked_pool(urllib3.HTTPSConnectionPool)(
                 address, port=443, server_hostname=site_host, assert_hostname=site_host,
                 timeout=urllib3.Timeout(connect=min(timeout_connect, connect_budget), read=timeout_read), retries=False,
             )
+            _wall.watch(pool)
             try:
                 try:
                     response = pool.request(
@@ -820,7 +896,8 @@ def fetch_public_file(
                         response.release_conn()
                         pool.close()
                         return fetch_public_file(www, path, cap_bytes=cap_bytes, timeout_connect=timeout_connect,
-                                                 timeout_read=timeout_read, _hop=1, accept=accept, headers_out=headers_out)
+                                                 timeout_read=timeout_read, _hop=1, accept=accept, headers_out=headers_out,
+                                                 _wall=_wall)
                     target = urlparse((response.headers.get("Location") or "").strip()).hostname or ""
                     return ("redirected", None, (f"redirect:{target}" if target else f"http_{status}")[:32])
                 if status in REFUSAL_STATUSES:
@@ -879,6 +956,27 @@ def llms_gate(robots_status: str, robots_body: bytes | None, robots_detail: str 
     return path_gates(robots_status, robots_body, robots_detail, ["/llms.txt"])["/llms.txt"]
 
 
+HOME_PATH = "/"
+
+
+def home_gate(robots_status: str, robots_body: bytes | None, robots_detail: str | None, read_host: str) -> dict:
+    """Pure (D67). May "/" be requested on the host whose /robots.txt result this is? Decided in memory from the bytes
+    already read, so it costs no request; get_profile stores it with the read time. ``reason`` is None when allowed,
+    else robots_disallowed, robots_unreadable, robots_refused (the edge refused robots.txt itself, 401/403) or
+    not_eligible (not a public host). ``rule`` is the deciding rule line, at most 80 characters."""
+    rule = None
+    if robots_status == "not_public":
+        allowed, reason = False, "not_eligible"
+    elif robots_status == "refused":
+        allowed, reason = False, "robots_refused"
+    else:
+        allowed, reason = path_gates(robots_status, robots_body, robots_detail, [HOME_PATH])[HOME_PATH]
+        if robots_status == "ok" and robots_body is not None:
+            from .feed_robots import decide_paths
+            rule = decide_paths(robots_body, [HOME_PATH])[HOME_PATH]["rule"]
+    return {"allowed": bool(allowed), "reason": reason, "rule": rule[:80] if rule else None, "read_host": read_host}
+
+
 def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
     robots_headers: dict = {}
     robots_status, robots_body, robots_detail = _read(reader, site_host, "/robots.txt", ROBOTS_CAP, headers_out=robots_headers)
@@ -921,6 +1019,7 @@ def build_profile(site_host: str, *, reader=fetch_public_file) -> dict:
         "robots_sha256": sha256_hex(robots_body) if robots_status == "ok" else None,
         "llms_sha256": sha256_hex(llms_body) if llms_status == "ok" else None,
         "www_attempt": www_attempt,
+        "home_gate": home_gate(robots_status, robots_body, robots_detail, read_host),
         # D59, not stored as such: what get_profile needs for the standard-file reads after the profile row is written
         # (robots.txt decides each path; the robots.txt body itself is not kept), and TDM headers already seen.
         "_site_declared": _declared_inputs(site_host, read_host, robots_status, robots_body, robots_detail,
@@ -1046,23 +1145,25 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 row = conn.execute(
                     f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
                                                          origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use,
-                                                         site_declared)
-                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
+                                                         site_declared,home_gate)
+                        VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (site_host) DO UPDATE SET
                         fetched_at=EXCLUDED.fetched_at,robots_status=EXCLUDED.robots_status,robots=EXCLUDED.robots,
                         llms_txt_status=EXCLUDED.llms_txt_status,last_error_at=NULL,
                         robots_detail=EXCLUDED.robots_detail,llms_detail=EXCLUDED.llms_detail,read_host=EXCLUDED.read_host,
                         origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,reader_version=EXCLUDED.reader_version,
                         robots_sha256=EXCLUDED.robots_sha256,llms_sha256=EXCLUDED.llms_sha256,content_use=EXCLUDED.content_use,
-                        site_declared=EXCLUDED.site_declared
+                        site_declared=EXCLUDED.site_declared,home_gate=EXCLUDED.home_gate
                         RETURNING {_ROW_COLUMNS}""",
                     (site_host, now, profile["robots_status"], Jsonb(profile["robots"]) if profile["robots"] is not None else None,
                      profile["llms_txt_status"], profile["robots_detail"], profile["llms_detail"], profile["read_host"],
                      operator_id(), Jsonb(vantage()), USER_AGENT, profile.get("robots_sha256"), profile.get("llms_sha256"),
                      Jsonb(profile["content_use"]) if profile.get("content_use") is not None else None,
-                     _pending_site_declared(profile, now)),
+                     _pending_site_declared(profile, now), Jsonb({**profile["home_gate"], "fetched_at": now.isoformat()})),
                 ).fetchone()
             from .signal_history import record_read
             record_read(conn, site_host, profile, now, trigger)
+            from . import site_probe
+            site_probe.record_robots_read(conn, site_host, profile["robots_status"], now)
         declared = profile.get("_site_declared")
         if declared is not None and profile["robots_status"] != "error":
             # D59: the standard files are read after the profile row is written, so a lookup waiting for the robots

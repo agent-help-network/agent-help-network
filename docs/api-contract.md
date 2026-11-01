@@ -285,6 +285,16 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - 시드 선읽기: 크론(`python -m ahn.auto_review`)이 5분마다 기본 10개(`AHN_WARM_BATCH`, 0이면 끔), 호스트별 주 1회 재읽기, 시드 목록 = `ahn/seed_hosts.txt`(공개 저장소의 공개 목록). 아직 읽지 않은 호스트가 먼저이고, 전송 실패는 이미 답이 있던 호스트라도 이 선읽기에서는 24시간 뒤에 다시 시도한다(조회 경로는 1시간). 조회되지 않은 호스트도 읽으며 읽기 한도는 조회 경로와 같다(`ahn/profile_warm.py`).
 - MCP `check_incident` 는 호출자 관점에서 읽기 전용·멱등으로 주석한다(`readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`). 서버 측 부수효과(호스트 등록, 일별 조회 집계, 뒤에서 하는 robots/llms·상태 피드 읽기 — 확정 답은 24시간 재사용, 전송 실패는 1시간 뒤 재시도)는 호출자가 보는 결과를 바꾸지 않는다.
 
+## 우리 서버의 홈 페이지 확인 (`ahn_check`, D67)
+
+정보일 뿐이며 판정이 정해진 뒤에 붙는다: `recommendation`·`next_action`·`next_checks`·`summary_line` 은 하나도 바뀌지 않는다. 운영자가 `AHN_SITE_PROBE=1` 을 켠 동안(기본 꺼짐. 꺼져 있으면 응답은 바이트 단위로 이전과 같다), 등록된 적격 공개 apex 호스트에만 이 필드가 있다. AHN 서버가 `AgentHelpNetwork` 사용자 에이전트로, 쿠키·로그인 없이, 리다이렉트를 따라가지 않고, 데이터센터 주소에서 그 호스트의 홈 페이지(`GET /`)를 요청해 받은 것을 알린다(`vantage.kind: datacenter`. 다른 네트워크에서는 다른 답을 받을 수 있다).
+
+- **언제 하나.** 그 호스트의 `robots.txt` 가 `AgentHelpNetwork`(또는 `*`)에 `/` 를 금지하지 않는 한. 파일이 없거나(404) 401/403 이 아닌 다른 4xx 는 금지가 아니다. 거절(401/403)되었거나 읽지 못한(5xx·시간 초과) `robots.txt` 는 금지로 보고 요청하지 않는다. 판정(`home_gate`)은 프로필을 읽을 때 메모리에서 정해 프로필과 함께 저장하며 24시간 유효하다. 신선한 판정이 없으면 요청하지 않는다(`not_measured_reason: robots_stale`). 조회 중에는 합산 3초까지만 동기로 시도하고, 웹 프로세스당 동시에 4개까지, 같은 호스트를 동시에 조회해도 요청은 하나를 함께 쓴다. 시간 안에 끝나지 않으면 다음 백그라운드 패스(종류 `site_probe`, 가장 낮은 우선순위, 지연 없음)에서 하고 답에는 `status: pending` 이 실린다. 요청 빈도는 내부 예절 한도(호스트별 최소 간격, 시간당·하루 상한, 거절·도전 뒤 물러나기)로 조절한다. 이는 설정이며 바뀔 수 있고 약속이 아니다.
+- **모양.** `status`(`measured`·`pending`·`not_measured`), `basis: ahn_server`, `vantage`, `ua_token`, `path_kind: home`, `fingerprint_version`, `note`. 측정됐으면 `measured_at`, `age_seconds`, `freshness`(24시간 안이면 `fresh`, 그 뒤 8일까지 `stale`), `outcome`(`reachable`·`redirected_same_host`·`bot_challenge`·`refused`·`rate_limited`·`login_wall`·`redirected_offsite`·`server_error`·`unreachable`·`other_status`), `http_status`(100~599 의 실제 상태 코드만. 그 밖의 숫자는 코드 없이 `other_status`), `response_ms`, 해당하면 `bot_defense`(`vendor`: `cloudflare`·`datadome`·`perimeterx`·`aws_waf`·`vercel`·`generic_captcha`·`unknown`, `signal`, `confidence`), `edge_vendors_seen`(도전이 아닌 업체 존재 표지), `redirect`(`followed_www`·`to_relation`·`path_class`, 경로 자체는 없음), `login_signal`. 해당하지 않는 필드는 null 이 아니라 빠진다. `pending` 이면 `retry_after_seconds`(60)가 붙는다: 그 뒤 한 번 다시 묻는다. 요청 하나는 호스트가 무엇을 보내든 벽시계 8초에 끝난다. `not_measured` 이면 `not_measured_reason` 이 `robots_disallowed`·`robots_refused`·`robots_unreadable`·`robots_stale`·`not_eligible`·`budget`·`backoff`·`disabled` 중 하나다.
+- **저장하는 것.** 코드뿐이다: 페이지·헤더 값·쿠키·경로는 저장하지 않는다. 호스트별 현재 행은 확인 30일 뒤, 일별 집계는 35일 뒤 삭제한다(처리방침 참고). 지문은 버전(`ahn-fp/1`)이 있고 각각 출처 URL·확인일이 `ahn/probe_fingerprints.py` 에 있다.
+- **MCP.** 측정이 있으면 `check_incident` 가 첫 텍스트 블록에 한 줄을 더한다. 예: `AHN server check just now: 403, bot challenge (DataDome).` 뒤에 데이터센터 단서가 붙는다. `structuredContent` 에도 같은 `ahn_check` 객체가 있다.
+- **자동 중지.** 통제군(측정하지 않는 시드 호스트)의 robots.txt 거절 비율이 첫 확인 전에 잡은 기준보다 3%p 넘게 이틀 연속 오르거나 상태 피드 403/429 가 두 배가 되면 목록 기반 측정을 멈춘다. 대역폭 가드가 정상이 아니거나 최근 기록이 없어도 멈춘다.
+
 ## 호스트 사실 (`host_facts`, 정부 도메인 등록부)
 
 `host_facts` 는 **도메인에 관한 레지스트리 사실**을 담는다. 어느 공개 정부 도메인 목록에 그 도메인이 있는지와 목록이 적은 기관명, 그리고 접미사가 정부 기관 전용이라는 레지스트리 규칙이다. 누가 그 이름을 등록했는지에 대한 사실일 뿐, 사이트·페이지·링크가 진짜이거나 안전하다는 말이 아니다. `recommendation` 을 바꾸지 않으며, 필드가 없다는 것은 사이트에 대해 아무것도 말하지 않는다. 정부 목록이나 정부 전용 접미사 규칙이 그 호스트에 해당할 때만 붙고 **그 밖에는 응답에서 키 자체가 빠진다**(`null` 아님). 일반 호스트의 응답은 길어지지 않는다.
@@ -518,13 +528,14 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 ## 뒤에서 읽기 (stale-while-revalidate, 2026-10-19)
 
-조회는 제3자 호스트를 기다리지 않는다. `GET /v1/incidents/check` 와 MCP `check_incident` 는 연결 하나로 데이터베이스에서만 답한다. 기록(호스트 등록·호스트별 조회 수)을 먼저 커밋하고, 답에 필요한 읽기를 하고, 마지막에 큐에 넣는다. 대상 호스트·상태 업체를 읽는 일은 모두 조회 뒤에서 한다.
+조회가 제3자 호스트를 기다리는 일은 거의 없다. `GET /v1/incidents/check` 와 MCP `check_incident` 는 연결 하나로 데이터베이스에서 답한다. 기록(호스트 등록·호스트별 조회 수)을 먼저 커밋하고, 답에 필요한 읽기를 하고, 마지막에 큐에 넣는다. 한 가지 예외는 홈 페이지 확인(`ahn_check`, D67)이다: 운영자가 `AHN_SITE_PROBE=1` 로 켰고 그 호스트의 `robots.txt` 가 금지하지 않으면, 조회는 우리 서버의 홈 페이지 요청을 **최대 3초** 기다린다(DB 트랜잭션을 쥐지 않은 채. 같은 호스트의 다른 조회가 이미 하고 있으면 기다리지 않고 `pending`). 그 밖에 대상 호스트·상태 업체를 읽는 일은 모두 조회 뒤에서 한다.
 
 - **넣는 것.** `background_reads` 에 종류와 호스트마다 한 행이므로 같은 조회가 여러 번 와도 읽기는 하나다. 조회 등록 목록 상한(`QUERIED_HOST_CAP`) 안의 적격 호스트 가운데 캐시가 없거나 캐시 창(24시간, 전송 실패 뒤에는 1시간) 밖인 호스트의 `robots.txt`·`llms.txt` 프로필, 피드가 없는 호스트의 하루 한 번 Statuspage 발견, 그리고 연결된 피드 가운데 나이로 `stale`(2시간, 캐시된 `indicator` 가 활성이면 15분)이 됐거나 한 번도 읽지 않은 피드의 갱신(마지막 시도 뒤 15분 안에는 다시 넣지 않음)이다. 큐는 최대 2,000행이며 가득 차면 새 작업을 넣지 않는다. 큐에 쓰지 못해도 조회는 답한다.
 - **읽는 것.** 웹 프로세스 안의 작은 작업자(스레드 둘, 한 번에 작업 하나씩 가져감, 행을 넣은 조회가 깨우고 30초마다 확인)와 5분 검토 크론(`python -m ahn.auto_review`, 한 번에 다섯 개씩, 120초 예산 안에서 큐를 먼저, 시드 목록을 나중에; 예산이 다 되면 진행 중인 읽기가 있어도 돌아온다)이다. 처리 순서는 프로필, 발견, 피드이고 같은 종류는 오래된 것부터다. 가져갈 때 `SELECT ... FOR UPDATE SKIP LOCKED` 로 잡고 시도 횟수를 올리며 5분 임대를 걸고, 작업 직전에 임대를 다시 확인하므로 두 프로세스·스레드가 같은 행을 읽지 않는다. `AHN_BACKGROUND_READS=0` 이면 웹 작업자를 끄고 크론만 처리한다. 외부 읽기는 프로세스당 초당 최대 두 번이다.
 - **읽기 규칙은 그대로다**(결정 D27~D29): 같은 `robots.txt`·`llms.txt` 리더·상한·리디렉션 규칙·호스트별 잠금·24시간 캐시·전송 실패 뒤 1시간 재시도, 같은 피드 리더와 Statuspage 발견. 본문 읽기(`robots.txt`, `llms.txt`, 피드, 발견한 상태 페이지)마다 전체 10초 시간 상한도 있어서, 한 바이트씩 흘려보내는 호스트는 리더를 붙잡지 못하고 `read_timeout`(피드는 `timeout`)으로 끝난다.
 - **결과.** 어떤 결과로 끝난 읽기든(전송 실패 포함) 끝난 작업이다. 캐시에 기록하고 행을 지운다. 처리 자체가 예외로 실패했거나 처리자가 도중에 멈춘 작업은 2·4·8·16분 뒤(2^시도 분, 최대 60분) 다시 하고 다섯 번째 시도 뒤 지운다.
 - **호출자가 보는 것.** 처음 보는 적격 호스트의 첫 조회는 `robots_status: pending`, `llms_txt_status: pending`, `freshness: pending`, `fetched_at: null` 인 `access_profile` 을 돌려준다. 그 읽기가 큐에 들어 있으면 `retry_after_seconds` 도 붙는다. 큐 안의 위치와 가장 이른 시작 시각으로 셈한 5~300 사이 값이며(크론만 처리하면 300), 이때 `recommendation`·`next_checks` 에 `profile_pending` 이 들어간다. 그 초만큼 기다린 뒤 한 번만 다시 조회하고 반복 폴링은 하지 않는다. 큐에 넣지 못했으면(큐가 가득 참, 등록 목록 밖의 호스트, 데이터베이스 오류) 이 필드는 없고 프로필은 미상으로 읽힌다. 만료된 프로필은 캐시값을 `freshness: stale` 로 돌려주며 뒤에서 다시 읽는다. 실패한 피드는 마지막 발표를 유지하고(2시간 이내면 `fresh` 와 `error_detail`, 그 뒤에는 `stale`), 오래된 피드는 `stale` 이다. 연결됐지만 아직 읽지 않은 피드는 `provider_status.freshness: pending`, `indicator: null` 이다. 첫 발견은 `not_verified_by_current_methods` 로 보이고, `provider_discovery_attempted_at` 은 발견이 실제로 실행될 때 기록되며, 확인된 출처는 그 뒤 조회부터 보인다. 응답은 200 이므로 `Retry-After` 헤더는 쓰지 않고 본문 필드만 쓴다.
+- **홈 페이지 확인(D67).** 네 번째 종류 `site_probe` 는 가장 낮은 우선순위이고 지연이 없다: 저장된 `home_gate` 가 금지하지 않는 한 호스트의 홈 페이지를 요청한다(`ahn_check` 참고). 신선한 프로필이 없으면 시도 횟수를 쓰지 않고 기다리며 한 시간이 지나도 없으면 버린다. 조회는 먼저 같은 확인을 최대 3초 동기로 시도하고, 끝나지 않을 때만 행을 큐에 넣는다.
 
 ## 내보내기 v1 (운영자 CLI, 2026-10-19)
 

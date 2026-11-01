@@ -1694,6 +1694,8 @@ def _store_failure(conn, site_host: str, label: str) -> None:
            failures=LEAST(COALESCE(status_cache.failures,0)+1,32767)""",
         (site_host, label),
     )
+    from . import site_probe  # D67: 403/429 feed failures feed the automatic stop's counters (no host kept)
+    site_probe.record_feed_failure(conn, label)
 
 
 def _read_and_store(settings: Settings, hosts: list[str], source: Source, client: httpx.Client | None, *,

@@ -127,7 +127,7 @@ def outer_request_headers(ctx: Context | None) -> dict:
 
 
 @mcp.tool(
-    description="Call this when a web step is blocked or failing for no clear reason (a 403 or access denied, a 429, a 5xx or a timeout, a login wall, a \"verify you are human\" or CAPTCHA page), or when asked \"is this site down?\" or whether its robots rules block agents. Skip it when the page opened normally or your own tool or platform already said why it refused (e.g. robots.txt or policy). Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add the optional codes only when you observed them: error_class (site_access, login_auth, human_verification, service_error), failure_stage (before_target_response, response_observed, access_denial_observed, unknown), http_status, challenge, retry_after, via. Send agent_vendor only when you know which vendor's documented robots.txt token your requests send: openai, anthropic (Claude-User), google, perplexity, meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other if none. Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply; leave agent_vendor out then, and whenever unsure. It sets which robots.txt groups count (not stored). The answer: summary_line, next_action (do, url, retry_after_seconds), recommendation.action, access_profile (declared policy, not an access guarantee), official_paths, provider_status and observations. A no_reports result means no observations, not a healthy site. Then follow next_action: it may say to continue, wait for the provider, use a listed official path, hand the step to the user, stop retrying, or look up once more. On 'pending', look up once more after retry_after_seconds; do not poll. Read-only: it may fetch the host's public robots.txt, llms.txt and status feed, and never changes the target site or your data; lookups and the codes you send are counted anonymously per host and hour. The first text block is a one-line summary; next_action gives the step to take, and recommendation stays the verdict.",
+    description="Call this when a web step is blocked or failing for no clear reason (a 403 or access denied, a 429, a 5xx or a timeout, a login wall, a \"verify you are human\" or CAPTCHA page), or when asked \"is this site down?\" or whether its robots rules block agents. Skip it when the page opened normally or your own tool or platform already said why it refused (e.g. robots.txt or policy). Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add codes only when you observed them: error_class (site_access, login_auth, human_verification, service_error), failure_stage (before_target_response, response_observed, access_denial_observed, unknown), http_status, challenge, retry_after, via. Send agent_vendor only when you know which vendor's documented robots.txt token your requests send: openai, anthropic (Claude-User), google, perplexity, meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other if none. Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply; leave agent_vendor out then, and whenever unsure. It selects robots.txt groups (not stored). The answer: summary_line, next_action (do, url, retry_after_seconds), recommendation.action, access_profile (declared policy), official_paths, provider_status and observations. A no_reports result means no observations, not a healthy site. Then follow next_action: it may say to continue, wait for the provider, use a listed official path, hand the step to the user, stop retrying, or look up once more. On 'pending', look up once more after retry_after_seconds; do not poll. Read-only: it may fetch the host's public robots.txt, llms.txt and status feed, and the home page unless robots.txt bars it (ahn_check), never changes the target site or your data; lookups and the codes you send are counted anonymously per host and hour. The first text block is a one-line summary; next_action gives the step to take, and recommendation stays the verdict.",
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
@@ -170,6 +170,38 @@ PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing bloc
                 "your tool, the site's edge, robots.txt or a login: tell your user what was refused and by whom.")
 
 
+_VENDOR_NAMES = {"cloudflare": "Cloudflare", "datadome": "DataDome", "perimeterx": "PerimeterX", "aws_waf": "AWS WAF",
+                 "vercel": "Vercel", "generic_captcha": "a human-verification widget", "unknown": "an unidentified provider"}
+_CHECK_CAVEAT = "This is what AHN's data-center server got; your network may get a different answer."
+
+
+def _age_text(seconds: int) -> str:
+    if seconds < 300:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86400:
+        return f"{seconds // 3600} h ago"
+    return f"{seconds // 86400} days ago"
+
+
+def ahn_check_line(check) -> str | None:
+    """D67: one line for the first text block when AHN's own server has a measurement of the host's home page; None for
+    a pending or not-measured check. It states what was received, the age and the vantage; it advises nothing."""
+    if check is None or check.status != "measured" or check.outcome is None or check.age_seconds is None:
+        return None
+    status = f"{check.http_status}, " if check.http_status else ""
+    if check.outcome == "bot_challenge":
+        vendor = f" ({_VENDOR_NAMES.get(check.bot_defense.vendor, 'unknown')})" if check.bot_defense else ""
+        what = f"{status}bot challenge{vendor}"
+    else:
+        what = {"reachable": f"{status}home page answered", "redirected_same_host": f"{status}redirected within the site",
+                "refused": f"{status}refused", "rate_limited": f"{status}rate limited", "login_wall": "leads to a sign-in page",
+                "redirected_offsite": f"{status}redirected to another site", "server_error": f"{status}server error",
+                "unreachable": "could not connect", "other_status": f"{status}other answer".strip(", ")}[check.outcome]
+    return f"AHN server check {_age_text(check.age_seconds)}: {what}. {_CHECK_CAVEAT}"
+
+
 def check_result(response: CheckResponse):
     """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one and, D61,
     "Customer path: <next_action.customer_url>" when there is one; then the answer as
@@ -187,6 +219,9 @@ def check_result(response: CheckResponse):
     if response.next_action is not None and response.next_action.do == "proceed" and "tell your user" not in lead:  # D66 sentences say it
         # Free text, outside the schema: proceed means no block is declared, never that nothing blocked the caller.
         lead += "\n" + PROCEED_NOTE
+    check_line = ahn_check_line(response.ahn_check)
+    if check_line:
+        lead += "\n" + check_line  # D67: only when a measurement exists; information, not a verdict
     return CallToolResult(
         content=[TextContent(type="text", text=lead),
                  TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())],

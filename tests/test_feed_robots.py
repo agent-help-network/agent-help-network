@@ -250,9 +250,8 @@ def test_the_matcher_agrees_with_the_regular_expression_it_replaced_and_cannot_b
 REQUEST_SITES = {
     # The declared-policy layer's own reads of /robots.txt and /llms.txt of a looked-up apex host.
     ("access_profile.py", "build_profile", "ref:fetch_public_file"): 1,
-    ("access_profile.py", "fetch_public_file", "HTTPSConnectionPool"): 1,
-    ("access_profile.py", "fetch_public_file", "fetch_public_file"): 1,
-    ("access_profile.py", "fetch_public_file", "ref:fetch_public_file"): 1,
+    ("access_profile.py", "fetch_public_file", "fetch_public_file"): 2,
+    ("access_profile.py", "fetch_public_file", "ref:fetch_public_file"): 2,
     ("access_profile.py", "fetch_public_file", "request"): 1,
     ("access_profile.py", "get_profile", "ref:fetch_public_file"): 1,
     ("access_profile.py", "read_public_file", "fetch_public_file"): 1,
@@ -262,6 +261,11 @@ REQUEST_SITES = {
     # D59: a dict lookup of a parsed Server Card's remote "url" (the scan's url-like heuristic), not a request. The
     # standard-file reads themselves go through get_profile's reader above.
     ("site_declared.py", "_card_remotes", "get"): 1,
+    # D67: the home-page check (ahn/site_probe.py) requests "/" of a looked-up host, only after the stored robots.txt verdict
+    # (home_gate) allowed it (decide() in site_probe.py; tests/test_site_probe_db.py), never a feed. `_row.get` is a dict
+    # lookup of the stored redirect (the scan's url-like heuristic), not a request.
+    ("site_probe.py", "_row", "get"): 1,
+    ("site_probe.py", "_fetch_home", "request"): 1,
     # The three entry points that reach the feed readers; see test_only_gated_code_reaches_a_feed for what stands before them.
     ("background_reads.py", "_run", "refresh_feed"): 1,
     ("background_reads.py", "discover", "discover_source"): 1,
@@ -386,12 +390,33 @@ LIBRARY_MODULES = {
     "gov_registry.py": {"urllib3"},
     "mcp_adapter.py": {"httpx"},
     "platform_metrics.py": {"httpx"},
+    "site_probe.py": {"socket", "urllib3"},  # D67: the home-page check; fetch_home is the only request, behind home_gate
     "status_refresh.py": {"httpx", "socket", "urllib3"},
 }
 # Inside those modules every `.get/.post/.send/.stream/.request/...` call is counted whatever its receiver (a client
 # reached through `self.client`, an alias, a variable), so most entries below are dictionary lookups, not requests; a new
 # or changed count fails and has to be looked at.
 VERB_SITES = {
+    # D67: dictionary and environment lookups in the home-page check and its MCP line, plus its one request (fetch_home).
+    ('mcp_adapter.py', 'ahn_check_line', 'get'): 1,
+    ('site_probe.py', '_breaker_cause', 'get'): 1,
+    ('site_probe.py', '_breaker_stopped', 'get'): 1,
+    ('site_probe.py', '_cookie_names', 'get'): 2,
+    ('site_probe.py', '_row', 'get'): 9,
+    ('site_probe.py', '_wait_for_profile', 'get'): 1,
+    ('site_probe.py', 'evaluate_breaker', 'get'): 4,
+    ('site_probe.py', 'classify', 'get'): 2,
+    ('site_probe.py', 'daily_cap', 'get'): 1,
+    ('site_probe.py', 'decide', 'get'): 5,
+    ('site_probe.py', 'enabled', 'get'): 1,
+    ('site_probe.py', '_fetch_home', 'get'): 2,
+    ('site_probe.py', '_fetch_home', 'request'): 1,
+    ('site_probe.py', 'fingerprint', 'get'): 1,
+    ('site_probe.py', 'for_lookup', 'get'): 1,
+    ('site_probe.py', 'measure', 'get'): 1,
+    ('site_probe.py', 'run_cron', 'get'): 1,
+    ('site_probe.py', '_start', 'get'): 1,
+    ('site_probe.py', 'view', 'get'): 1,
     ("access_profile.py", "_as_profile", "get"): 3,
     ("access_profile.py", "_merge_use", "get"): 1,
     ("access_profile.py", "_pending_site_declared", "get"): 1,
