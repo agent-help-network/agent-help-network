@@ -130,6 +130,22 @@ def test_incident_io_pages_get_one_request_and_no_scope():
     assert recommendation(None, provider_status("minor", scope), None, None)["action"] == "wait_provider_incident"
 
 
+def test_a_uuid_page_id_statuspage_gets_its_scope_read():
+    # A page whose old page-wide updated_at would hide a current incident: the scope carries the incident's own time.
+    page = fixture("single_incident")
+    uuid = "c0e43449-112f-4c8d-8a00-3dac671ec84c"
+    for key in ("status", "unresolved", "maintenances"):
+        page[key]["page"]["id"] = uuid
+        page[key]["page"]["updated_at"] = "2026-07-15T23:59:30.000Z"
+    for incident in page["unresolved"]["incidents"]:
+        incident["page_id"] = uuid
+    indicator, _at, scope, seen = read(page)
+    assert indicator == "major" and len(seen) == 3
+    assert scope["active_incidents"] == 1 and scope["max_incident_impact"] == "major"
+    assert scope["incident_updated_at"] == datetime(2026, 10, 21, 2, 40, tzinfo=timezone.utc)
+    assert provider_status("major", scope)["basis"] == "incident"
+
+
 def test_other_feed_kinds_and_calls_without_scope_make_one_request():
     page = fixture("single_incident")
     assert read(page, Source("I", "https://status.example.com/", "https://status.example.com/api/v2/status.json", "instatus"),
@@ -142,6 +158,11 @@ def test_other_feed_kinds_and_calls_without_scope_make_one_request():
 
 @pytest.mark.parametrize("page,expected", [
     ({"page": {"id": "yh6f0r4529hb", "time_zone": "Etc/UTC"}}, "yh6f0r4529hb"),
+    ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c", "time_zone": "America/Los_Angeles"}},
+     "c0e43449-112f-4c8d-8a00-3dac671ec84c"),                                       # lowercase UUID
+    ({"page": {"id": "C0E43449-112F-4C8D-8A00-3DAC671EC84C", "time_zone": "Etc/UTC"}}, None),   # upper-case UUID
+    ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c"}}, None),                # UUID, no time_zone
+    ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c/../x", "time_zone": "Etc/UTC"}}, None),
     ({"page": {"id": "01JMDK9XYNY6RXSED6SDWW50WY", "time_zone": "Etc/UTC"}}, None),   # ULID
     ({"page": {"id": "yh6f0r4529hb"}}, None),                                        # no time_zone
     ({"page": {"id": "../../x", "time_zone": "Etc/UTC"}}, None),
