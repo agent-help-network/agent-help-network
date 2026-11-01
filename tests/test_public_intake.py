@@ -1223,6 +1223,91 @@ def test_owner_hosts_days_parser():
     assert [parse_days(v) for v in (None, "1", "30", "0", "31", "x", "")] == [8, 1, 30, None, None, None, None]
 
 
+def seed_signal_rows(settings, rows):
+    """rows: (host, age as a Postgres interval string, error_class, sources, lookups); the other codes are 'unspecified'.
+    Replaces whatever earlier tests left in the table (the shared fixture does not empty it)."""
+    with connect(settings) as conn:
+        conn.execute("DELETE FROM lookup_signals_hourly")
+        for number, (host, age, error_class, sources, lookups) in enumerate(rows):
+            conn.execute(
+                """INSERT INTO lookup_signals_hourly (hour,site_host,error_class,failure_stage,http_status_class,challenge,
+                                                      retry_after,via,client_kind,action,after_action,lookups,sources)
+                   VALUES (date_trunc('hour', now()) - %s::interval,%s,%s,'unspecified','unspecified','unspecified',
+                           'unspecified','unspecified',%s,'proceed','none',%s,%s)""",
+                (age, host, error_class, f"k{number}", lookups, sources))
+
+
+def test_owner_hosts_blocked_order_counts_blocked_lookups_by_source(public_client):
+    settings, _ = public_client
+    seed_signal_rows(settings, [
+        ("many-sources.example", "1 hour", "site_access", 5, 6),
+        ("many-sources.example", "2 hours", "human_verification", 2, 2),   # summed with the row above: 7 sources, 8 lookups
+        ("one-loud-client.example", "1 hour", "site_access", 1, 40),       # many lookups from one source rank below
+        ("tie-b.example", "3 hours", "login_auth", 2, 3),
+        ("tie-a.example", "3 hours", "service_error", 2, 3),               # same counts: by name
+        ("plain-only.example", "1 hour", "unspecified", 50, 50),           # no error class: not a blocked lookup
+        ("folded.example", "1 hour", "overflow", 9, 9),                    # folded codes: cannot tell
+        ("(overflow)", "1 hour", "overflow", 9, 9),
+        ("example.com", "1 hour", "site_access", 9, 9),                    # documentation example host
+        ("old.example", "9 days", "site_access", 9, 9),                    # outside the default 8 days
+    ])
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        response = client.get("/owner/hosts?order=blocked", headers=headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "text/plain; charset=utf-8"
+        assert response.headers["cache-control"] == "private, no-store"
+        assert response.text.splitlines() == [
+            "many-sources.example\t7\t8", "tie-a.example\t2\t3", "tie-b.example\t2\t3", "one-loud-client.example\t1\t40"]
+        assert client.get("/owner/hosts?order=blocked&days=1", headers=headers).text.split("\n")[0] == "many-sources.example\t7\t8"
+        assert "old.example\t9\t9" in client.get("/owner/hosts?order=blocked&days=10", headers=headers).text.splitlines()
+        # The default order is unchanged: the lookup register, one host per line.
+        assert client.get("/owner/hosts?order=recent", headers=headers).text == client.get("/owner/hosts", headers=headers).text
+
+
+def test_owner_hosts_unmapped_leaves_out_hosts_with_a_status_mapping(public_client):
+    from ahn.status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+
+    feed = sorted(SOURCES)[0]
+    link = sorted(set(OFFICIAL_STATUS_PAGES) - set(SOURCES))[0]
+    settings, _ = public_client
+    seed_signal_rows(settings, [(feed, "1 hour", "site_access", 9, 9), (link, "1 hour", "site_access", 8, 8),
+                                ("unmapped.example", "1 hour", "site_access", 1, 1)])
+    seed_queried_hosts(settings, [(feed, "1 minute"), (link, "2 minutes"), ("unmapped.example", "3 minutes")])
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        assert client.get("/owner/hosts?order=blocked", headers=headers).text.splitlines() == [
+            f"{feed}\t9\t9", f"{link}\t8\t8", "unmapped.example\t1\t1"]
+        assert client.get("/owner/hosts?order=blocked&unmapped=1", headers=headers).text == "unmapped.example\t1\t1\n"
+        assert client.get("/owner/hosts?unmapped=1", headers=headers).text == "unmapped.example\n"
+        assert client.get("/owner/hosts", headers=headers).text.split() == [feed, link, "unmapped.example"]
+
+
+def test_owner_hosts_rejects_bad_order_and_unmapped_after_the_gate(public_client):
+    settings, _ = public_client
+    seed_signal_rows(settings, [])
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        for bad in ("", "Blocked", "newest", "blocked "):
+            response = client.get("/owner/hosts", params={"order": bad}, headers=headers)
+            assert (response.status_code, response.json()) == (422, {"error": "invalid_order", "allowed": ["recent", "blocked"]})
+            assert response.headers["cache-control"] == "private, no-store"
+        for bad in ("", "0", "true", "yes", "2"):
+            response = client.get("/owner/hosts", params={"order": "blocked", "unmapped": bad}, headers=headers)
+            assert (response.status_code, response.json()) == (422, {"error": "invalid_unmapped", "allowed": ["1"]})
+        assert client.get("/owner/hosts?order=blocked", headers=headers).text == ""  # nothing recorded yet
+        # A caller who is not allowed cannot tell the route exists by sending bad values.
+        for query in ("order=bad", "unmapped=bad", "order=blocked"):
+            assert client.get(f"/owner/hosts?{query}", headers={"CF-Connecting-IP": "203.0.113.8"}).json() == {"error": "not_found"}
+
+
+def test_owner_hosts_order_and_unmapped_parsers():
+    from ahn.owner_hosts import parse_order, parse_unmapped
+
+    assert [parse_order(v) for v in (None, "recent", "blocked", "", "x")] == ["recent", "recent", "blocked", None, None]
+    assert [parse_unmapped(v) for v in (None, "1", "0", "")] == [False, True, None, None]
+
+
 def test_owner_allowed_ip_setting_rejects_ranges(monkeypatch):
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://localhost/ahn_test")
     monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 40)
