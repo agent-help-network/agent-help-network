@@ -107,6 +107,15 @@ def test_parse_bandwidth_allow_empty_still_requires_exactly_one_matching_series(
         parse_bandwidth(bad_unit, RESOURCE, NOW - timedelta(hours=1), NOW, allow_empty=True)
 
 
+def test_parse_bandwidth_allow_empty_accepts_a_window_with_no_point_anywhere():
+    window = (RESOURCE, NOW - timedelta(hours=1), NOW)
+    unlabeled = [{"labels": [], "values": [], "unit": "GB"}]
+    for data in ([], unlabeled):
+        assert parse_bandwidth(data, *window, allow_empty=True) == []
+        with pytest.raises(ValueError):
+            parse_bandwidth(data, *window)
+
+
 def test_threshold_env_defaults_when_unset_or_blank(monkeypatch):
     monkeypatch.delenv("AHN_GUARD_WARNING_GB", raising=False)
     assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("4")) == Decimal("4")

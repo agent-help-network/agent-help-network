@@ -58,13 +58,15 @@ def parse_bandwidth(data: object, resource_id: str, start: datetime, end: dateti
                     allow_empty: bool = False) -> list[tuple[datetime, Decimal]]:
     """Accept only byte-unit time series for the exact configured Render service.
 
-    allow_empty tolerates a matching series with no point inside the window (new billing month);
-    a missing or duplicated series stays an error.
+    allow_empty (new billing month) tolerates a window with no point at all: an empty list, a matching
+    series with no point in the window, or series that carry no point and so cannot be matched. A
+    duplicated matching series, a point from another resource or a bad unit stays an error.
     """
-    if not isinstance(data, list) or not data:
+    if not isinstance(data, list) or (not data and not allow_empty):
         raise ValueError("bandwidth series missing")
     samples: dict[datetime, Decimal] = {}
     matching = 0
+    pointless = 0
     for series in data:
         if not isinstance(series, dict):
             raise ValueError("bandwidth series invalid")
@@ -78,6 +80,8 @@ def parse_bandwidth(data: object, resource_id: str, start: datetime, end: dateti
             raise ValueError("bandwidth labels invalid")
         label_map = {item.get("field"): item.get("value") for item in labels if isinstance(item, dict)}
         if label_map.get("resource", label_map.get("service")) != resource_id:
+            if "values" in series and series["values"] == []:
+                pointless += 1
             continue
         matching += 1
         values = series.get("values")
@@ -99,6 +103,8 @@ def parse_bandwidth(data: object, resource_id: str, start: datetime, end: dateti
                 if at in samples:
                     raise ValueError("duplicate bandwidth point")
                 samples[at] = amount
+    if allow_empty and not samples and matching == 0 and pointless == len(data):
+        return []
     if matching != 1 or (not samples and not allow_empty):
         raise ValueError("one matching bandwidth series with samples required")
     return sorted(samples.items())

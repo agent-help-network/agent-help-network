@@ -956,10 +956,23 @@ def test_bandwidth_guard_new_month_grace_does_not_excuse_a_wrong_series(public_c
     resource = "srv-db0hnkfavr4c73fp6et0"
     boundary = datetime(2026, 11, 1, 0, 30, tzinfo=timezone.utc)
     client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
-        lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": "srv-other"}], "values": [], "unit": "GB"}])
+        lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": "srv-other"}],
+                                                   "values": [{"timestamp": "2026-11-01T00:00:00Z", "value": 1}], "unit": "GB"}])
     ))
     with pytest.raises(ValueError, match="one matching bandwidth series"):
         run_guard(TEST_URL, "fake-test-key", resource, now=boundary, client=client)
+
+
+@pytest.mark.parametrize("payload", [[], [{"labels": [], "values": [], "unit": "GB"}]])
+def test_bandwidth_guard_new_month_grace_covers_a_window_with_no_series_or_no_point(public_client, payload):
+    resource = "srv-db0hnkfavr4c73fp6et0"
+    boundary = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=payload)))
+    result = run_guard(TEST_URL, "fake-test-key", resource, now=boundary + timedelta(minutes=45), client=client)
+    assert result["no_samples_yet"] is True and result["state"] == "normal"
+    with pytest.raises(ValueError):
+        run_guard(TEST_URL, "fake-test-key", resource, now=boundary + timedelta(hours=3), client=client)
 
 
 def test_bandwidth_guard_api_error_redacts_key(public_client):
