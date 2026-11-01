@@ -1,0 +1,301 @@
+"""Why did the step fail: a policy block, a temporary problem, or not yet known (D73).
+
+A lookup that reports a failure (``error_class`` or ``failure_stage``) may get an optional ``cause`` object. It is
+computed after the recommendation is final, from tables AHN already keeps for public hosts, and it changes none of the
+answer: ``recommendation`` and ``next_action.do`` are what they would be without it (AHN_CAUSE_HINT=0 leaves ``cause`` out).
+
+Inputs (read only, one savepoint, no network): ``provider_status_events``, ``outage_episodes`` (signal A), ``site_probe``,
+``site_probe_daily`` and ``lookup_signals_hourly``, plus the optional codes the caller sent (``failed_at``, ``http_status``,
+``retry_after``). Nothing is stored. ``line`` is a fixed English template filled with times only: no text from a site and
+no hostname ever reaches it.
+
+Rules that hold for every hint:
+
+* A refusal AHN measured (bot challenge, 403, login wall, rate limit on the home page) is never evidence of a temporary
+  problem (D68). It is counted on the policy side, separately, and only as ``consecutive_refusals`` >= 2.
+* One refusal is never a policy change: it gives ``undetermined``; the second measurement in a row gives ``policy_closed``.
+* Hints that need a history of access-profile changes (robots.txt now disallows, terms signal changed, new bot defense)
+  are not here: that history is not stored yet.
+
+Time handling: ``failed_at`` is an ISO 8601 time. Without it the failure is taken to be now. It is not stored or counted.
+Raw measurements are kept 14 days, provider status changes 90 days, so a time older than 14 days is answered from the
+provider's status history alone. A value that cannot be used (bad format, more than five minutes in the future) gives no
+``cause`` at all, never a cause for a different time.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from .signal_history import PROVIDER_PROBLEMS, STALE_AFTER
+
+LINE_MAX = 120                         # a cause line, so an agent can put it into a briefing as it is
+RAW_DAYS = 14                          # tables with raw measurements are pruned after this long
+FUTURE_SKEW = timedelta(minutes=5)     # a failed_at this far ahead is a clock difference, not a prediction
+PROVIDER_MAX_AGE = timedelta(days=3)   # a status-page problem older than this at the failure time is not "temporary"
+MEASURE_WINDOW = timedelta(hours=12)   # how close a home-page check must be to the failure time to describe it
+PROBE_FRESH = timedelta(days=8)        # a refusal is re-measured after 7 days (site_probe.REFUSED_EXCLUDE_DAYS)
+OTHERS_MIN_SOURCES = 3                 # other clients seen with service errors in the failure hour: "several"
+OTHERS_MEDIUM_SOURCES = 10
+RATE_CONFIRM_SOURCES = 2               # clients seen with a 429 in the failure hour that make a rate limit more certain
+PERSISTENT_DAYS = 3                    # separate UTC days of refused lookups
+PERSISTENT_MIN_SOURCES = 2             # distinct clients in one hour of such a day (one client looping cannot make a day)
+
+GATE_OUTCOMES = frozenset({"bot_challenge", "refused", "login_wall"})   # rate_limited is neither gate nor outage
+NORMAL_OUTCOMES = frozenset({"reachable", "redirected_same_host"})
+OUTAGE_KINDS = frozenset({"no_response", "tls_error", "server_error"})
+REFUSAL_CLASSES = ("login_auth", "human_verification")
+
+BRANCHES = ("policy_closed", "transient", "undetermined")
+HINTS = {
+    "policy_closed": ("home_now_gated", "persistent_refusal"),
+    "transient": ("provider_incident", "site_errors", "recovered", "rate_limited", "others_failing_same_hour"),
+    "undetermined": ("your_side_likely", "no_measurement", "home_gate_unconfirmed"),
+}
+CONFIDENCES = ("high", "medium", "low")
+BASIS = ("provider_status_events", "outage_episodes", "site_probe", "site_probe_daily", "lookup_signals_hourly", "caller_codes")
+
+# Fixed sentences. "{win}" is a time window or empty. Every line is printable ASCII and at most LINE_MAX characters.
+LINES: dict[str, str] = {
+    "provider_incident": "Temporary: provider status page shows a problem {win}. Retry later.",
+    "provider_maintenance": "Temporary: provider maintenance {win}. Retry after it ends.",
+    "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
+    "site_errors": "Temporary: AHN could not reach the site {win}. Retry later.",
+    "recovered_site": "Temporary: AHN could not reach the site {win}; it answers again. Retry.",
+    "rate_limited": "Temporary: rate limited. Wait for Retry-After if given, then retry.",
+    "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
+    "home_now_gated": "Likely a policy block: the site refused AHN's last two home-page checks.",
+    "persistent_refusal": "Likely a policy block: clients were refused on 3 or more separate days.",
+    "your_side_likely": "Not determined: AHN's check was normal then; the cause may be on your side. AHN reads no page content.",
+    "no_measurement": "Not determined: AHN has no measurement of this site around that time.",
+    "home_gate_unconfirmed": "Not determined: the site refused AHN's last home-page check once; one more would confirm a block.",
+    "too_old": "Not determined: that time is past the 14 days of measurements kept; only provider status history was read.",
+}
+
+_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?$")
+
+
+@dataclass(frozen=True)
+class When:
+    """The failure time the cause is judged at. ``sent`` is False when the caller gave none (then it is now)."""
+    at: datetime
+    sent: bool
+    old: bool
+
+
+def parse_failed_at(raw, now: datetime) -> When | None:
+    """The time to judge at, or None when a value was sent and cannot be used (no cause is then given).
+
+    Not sent (None, empty or blank): now. A time without an offset is read as UTC. More than FUTURE_SKEW ahead of ``now``
+    is unusable; within it, it is taken as now. Older than RAW_DAYS is accepted and marked ``old``."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return When(now, False, False)
+    if not isinstance(raw, str) or len(raw) > 40 or not _TIME.fullmatch(raw.strip()):
+        return None
+    text = raw.strip()
+    try:
+        at = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    except ValueError:
+        return None
+    at = at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at.astimezone(timezone.utc)
+    if at > now + FUTURE_SKEW:
+        return None
+    at = min(at, now)
+    return When(at, True, at < now - timedelta(days=RAW_DAYS))
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _stamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%m-%d %H:%M")
+
+
+def _window_text(start: datetime, end: datetime | None) -> str:
+    start = start.astimezone(timezone.utc)
+    if end is None:
+        return f"(since {_stamp(start)} UTC)"
+    end = end.astimezone(timezone.utc)
+    if end.date() == start.date():
+        return f"({_stamp(start)}-{end:%H:%M} UTC)"
+    return f"({_stamp(start)} to {_stamp(end)} UTC)"
+
+
+def line_for(key: str, start: datetime | None = None, end: datetime | None = None) -> str:
+    text = LINES[key]
+    if "{win}" in text:
+        text = text.replace("{win}", _window_text(start, end)) if start is not None else text.replace(" {win}", "")
+        if len(text) > LINE_MAX:
+            text = LINES[key].replace(" {win}", "")
+    return text
+
+
+def _cause(branch: str, hint: str, confidence: str, basis: list[str], line_key: str, *, start: datetime | None = None,
+           end: datetime | None = None, recheck: datetime | None = None) -> dict:
+    out = {"branch": branch, "hint": hint, "confidence": confidence, "basis": basis}
+    if start is not None:
+        out["window"] = {"from": _iso(start), **({"to": _iso(end)} if end is not None else {})}
+    out["line"] = line_for(line_key, start, end)
+    if recheck is not None:
+        out["recheck_after"] = _iso(recheck)
+    return out
+
+
+def _floor_hour(value: datetime) -> datetime:
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def _rate_limited(conn, host: str, when: When, observed: dict) -> dict | None:
+    """The caller itself saw a 429 or a Retry-After. More certain when other clients saw a 429 in the same hour."""
+    if not (observed.get("http_status") == 429 or observed.get("retry_after") in ("lt_60", "60_3600", "gt_3600")):
+        return None
+    confidence, basis = "medium", ["caller_codes"]
+    if not when.old:
+        row = conn.execute(
+            "SELECT COALESCE(sum(sources),0) AS n FROM lookup_signals_hourly WHERE site_host=%s AND hour=%s AND http_status_class='429'",
+            (host, _floor_hour(when.at))).fetchone()
+        if row["n"] >= RATE_CONFIRM_SOURCES:
+            confidence, basis = "high", ["caller_codes", "lookup_signals_hourly"]
+    return _cause("transient", "rate_limited", confidence, basis, "rate_limited")
+
+
+def _provider(conn, host: str, when: When, now: datetime, refusal_like: bool) -> dict | None:
+    """A problem on the provider's status page at the failure time; ``recovered`` once it has cleared."""
+    last = conn.execute(
+        "SELECT at,to_indicator FROM provider_status_events WHERE site_host=%s AND at <= %s ORDER BY at DESC, id DESC LIMIT 1",
+        (host, when.at)).fetchone()
+    if last is None or last["to_indicator"] not in PROVIDER_PROBLEMS or when.at - last["at"] > PROVIDER_MAX_AGE:
+        return None
+    following = conn.execute(
+        "SELECT at FROM provider_status_events WHERE site_host=%s AND at > %s ORDER BY at, id LIMIT 1", (host, when.at)).fetchone()
+    end = following["at"] if following and following["at"] <= now else None
+    severe = last["to_indicator"] in ("major", "critical")
+    # A login or challenge page is not what a status-page problem usually looks like: one step less certain.
+    confidence = "high" if severe and not refusal_like else "medium"
+    if end is not None:
+        return _cause("transient", "recovered", confidence, ["provider_status_events"], "recovered_provider", start=last["at"], end=end)
+    return _cause("transient", "provider_incident", confidence, ["provider_status_events"],
+                  "provider_maintenance" if last["to_indicator"] == "maintenance" else "provider_incident", start=last["at"])
+
+
+def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
+    """AHN's own reads could not reach the host (not a refusal: D68) over a period that covers the failure time."""
+    row = conn.execute(
+        """SELECT kind,first_fail_at,confirmed_at,ended_at,ended_reason,last_event_at,held_overlap FROM outage_episodes
+           WHERE site_host=%s AND signal='A' AND first_fail_at <= %s AND (ended_at IS NULL OR ended_at > %s)
+           ORDER BY first_fail_at DESC LIMIT 1""",
+        (host, when.at, when.at)).fetchone()
+    if row is None or row["kind"] not in OUTAGE_KINDS or row["held_overlap"]:
+        return None  # a period that overlapped many hosts failing at once is held back as a problem on AHN's side
+    if row["ended_at"] is None and row["last_event_at"] < now - STALE_AFTER:
+        return None
+    confidence = "high" if row["confirmed_at"] is not None else "medium"
+    ended = row["ended_at"] if row["ended_at"] is not None and row["ended_at"] <= now else None
+    if ended is not None and row["ended_reason"] == "answered":
+        return _cause("transient", "recovered", confidence, ["outage_episodes"], "recovered_site", start=row["first_fail_at"], end=ended)
+    return _cause("transient", "site_errors", confidence, ["outage_episodes"], "site_errors", start=row["first_fail_at"], end=ended)
+
+
+def _probe(conn, host: str):
+    return conn.execute(
+        "SELECT outcome,probed_at,next_due_at,consecutive_refusals FROM site_probe WHERE site_host=%s", (host,)).fetchone()
+
+
+def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
+    """Two refusals in a row of AHN's own home-page check. One refusal alone is undetermined."""
+    if probe is None or probe["outcome"] not in GATE_OUTCOMES or error_class == "service_error" or probe["probed_at"] < now - PROBE_FRESH:
+        return None
+    if probe["consecutive_refusals"] >= 2:
+        return _cause("policy_closed", "home_now_gated", "medium", ["site_probe"], "home_now_gated")
+    recheck = probe["next_due_at"] if probe["next_due_at"] > now else None
+    return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"], "home_gate_unconfirmed", recheck=recheck)
+
+
+def _persistent(conn, host: str, when: When, error_class: str | None, failure_stage: str | None) -> dict | None:
+    """Lookups refused on PERSISTENT_DAYS separate UTC days, each day with several distinct clients in one hour."""
+    if not (error_class in ("site_access", "human_verification") or failure_stage == "access_denial_observed"):
+        return None
+    first = _floor_hour(when.at).replace(hour=0) - timedelta(days=6)
+    rows = conn.execute(
+        """SELECT day, max(hs) AS most FROM (
+               SELECT (hour AT TIME ZONE 'UTC')::date AS day, hour, sum(sources) AS hs FROM lookup_signals_hourly
+               WHERE site_host=%s AND hour >= %s AND hour <= %s
+                 AND (http_status_class IN ('403','451','402')
+                      OR (http_status_class NOT IN ('429','401','407','5xx','408')
+                          AND (challenge='header' OR error_class IN ('site_access','human_verification'))))
+               GROUP BY 1, 2) hourly GROUP BY day""",
+        (host, first, when.at)).fetchall()
+    if sum(1 for row in rows if row["most"] >= PERSISTENT_MIN_SOURCES) >= PERSISTENT_DAYS:
+        return _cause("policy_closed", "persistent_refusal", "medium", ["lookup_signals_hourly"], "persistent_refusal")
+    return None
+
+
+def _others(conn, host: str, when: When, error_class: str | None, failure_stage: str | None) -> dict | None:
+    """Several distinct clients with a service error for this host in the failure hour."""
+    if error_class not in (None, "service_error") or failure_stage == "access_denial_observed":
+        return None
+    row = conn.execute(
+        """SELECT COALESCE(sum(sources),0) AS n FROM lookup_signals_hourly WHERE site_host=%s AND hour=%s
+             AND http_status_class NOT IN ('429','401','403','407','451','402')
+             AND (error_class='service_error' OR http_status_class IN ('5xx','408'))""",
+        (host, _floor_hour(when.at))).fetchone()
+    if row["n"] < OTHERS_MIN_SOURCES:
+        return None
+    return _cause("transient", "others_failing_same_hour", "medium" if row["n"] >= OTHERS_MEDIUM_SOURCES else "low",
+                  ["lookup_signals_hourly"], "others_failing_same_hour")
+
+
+def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
+    """(any home-page check around the failure time, and all of them normal). AHN reads no page content."""
+    if probe is not None and probe["outcome"] != "not_measured" and abs(probe["probed_at"] - when.at) <= MEASURE_WINDOW:
+        return True, probe["outcome"] in NORMAL_OUTCOMES
+    rows = conn.execute(
+        "SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0",
+        (host, when.at.astimezone(timezone.utc).date())).fetchall()
+    if not rows:
+        return False, False
+    return True, all(row["outcome"] in NORMAL_OUTCOMES for row in rows)
+
+
+def compute(conn, host: str, now: datetime, when: When, *, error_class: str | None = None, failure_stage: str | None = None,
+            observed: dict | None = None) -> dict | None:
+    """The ``cause`` object for a failed step at ``when``, or None when nothing can be said. Reads only; the caller
+    runs it in a savepoint and leaves ``cause`` out on any error.
+
+    Order: what the caller saw itself (a 429), then the provider's status page, then AHN's own reads of the host, then the
+    two policy signals, then other clients' lookups, and last the cases that stay undetermined."""
+    observed = observed or {}
+    refusal_like = error_class in REFUSAL_CLASSES or failure_stage == "access_denial_observed"
+    found = _rate_limited(conn, host, when, observed)
+    if found:
+        return found
+    found = _provider(conn, host, when, now, refusal_like)
+    if found:
+        return found
+    if when.old:
+        return _cause("undetermined", "no_measurement", "low", ["provider_status_events"], "too_old")
+    if not refusal_like:
+        found = _site_errors(conn, host, when, now)
+        if found:
+            return found
+    probe = _probe(conn, host)
+    gate = _gated(probe, now, error_class)
+    if gate and gate["branch"] == "policy_closed":
+        return gate
+    for check in (lambda: _persistent(conn, host, when, error_class, failure_stage),
+                  lambda: _others(conn, host, when, error_class, failure_stage)):
+        found = check()
+        if found:
+            return found
+    if gate:
+        return gate
+    recheck = probe["next_due_at"] if probe is not None and probe["next_due_at"] > now else None
+    measured, normal = _measurement(conn, host, probe, when)
+    if not measured:
+        return _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement", recheck=recheck)
+    if normal and (failure_stage == "before_target_response" or refusal_like):
+        return _cause("undetermined", "your_side_likely", "low", ["site_probe"], "your_side_likely", recheck=recheck)
+    return None

@@ -340,8 +340,10 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # updated once for D59 (#114), which adds only access_profile.site_declared and its SiteDeclared definitions
     # (before D59: f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64), then again for D67, which adds only
     # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85).
-    # and once more for D69, which adds only the optional `next_action.status_url` (before D69: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46"
+    # and once more for D69, which adds only the optional `next_action.status_url` (before D69: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2),
+    # and for D73, which adds only the optional `cause` object to the answer schema and the optional `failed_at` input of check_incident
+    # (before D73: a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46).
+    assert hashlib.sha256(blob.encode()).hexdigest() == "6e0a9a6ef8ef0456105c4d30ac4bc2c00d6c6534ba74d32bd6b7b2a7883ba578"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

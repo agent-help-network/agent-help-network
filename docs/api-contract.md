@@ -17,7 +17,7 @@
 
 ## `GET /v1/incidents/check`
 
-필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`, `failure_stage`, 조회 신호 코드 `http_status`, `challenge`, `retry_after`, `via`([아래](#조회-신호-코드)), `agent_vendor`([아래](#에이전트-벤더-agent_vendor-d48)). MCP `check_incident` 는 `window_hours` 를 받지 않고(항상 기본 24시간) 나머지 입력과 응답 구조는 같다. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다. 아래 예시는 관찰 층까지만 보인 것이며, 실제 응답은 영어 계약의 전체 예시와 같은 최상위 키(`provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, `recommendation`, `failure_stage`, `next_checks`)를 모두 가진다. 로컬 시험 모드에서는 공개 전용 층이 `null` 이다.
+필수 `site_host`; 선택 `error_class`, `task_step`, `window_hours`, `failure_stage`, 조회 신호 코드 `http_status`, `challenge`, `retry_after`, `via`([아래](#조회-신호-코드)), `failed_at`([아래](#실패-원인-cause-d73)), `agent_vendor`([아래](#에이전트-벤더-agent_vendor-d48)). MCP `check_incident` 는 `window_hours` 를 받지 않고(항상 기본 24시간) 나머지 입력과 응답 구조는 같다. 공개 운영 모드에서는 승인된 공개 관찰만 사용한다. 로컬 시험 모드에서는 합성 관찰을 별도로 읽을 수 있으며 반드시 `synthetic: true`를 반환한다. 두 모드를 한 응답에 혼합하지 않는다. 아래 예시는 관찰 층까지만 보인 것이며, 실제 응답은 영어 계약의 전체 예시와 같은 최상위 키(`provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, `recommendation`, `failure_stage`, `next_checks`)를 모두 가진다. 로컬 시험 모드에서는 공개 전용 층이 `null` 이다.
 
 **`www.` 와 루트 호스트.** `site_host` 가 공개 집계에 적합한 공개 루트 호스트 앞에 `www.` 라벨 하나만 붙은 이름(`www.nytimes.com`, `www.bbc.co.uk`)이면, 호스트 단위 층은 루트 호스트를 조회한 것과 똑같이 루트 호스트 기준으로 답한다: `provider_status`, `provider_source_state`, `provider_discovery_attempted_at`, `official_status_page`, `lookup_activity`, `access_profile`, `official_paths`, 그리고 이들로 정하는 `recommendation` 과 `next_checks`. 등록·집계·읽기 대상은 루트 호스트이며 `www.` 이름으로는 아무것도 저장하지 않는다. 관찰 층은 합치지 않는다: `observations`, `evidence_level`, 각 집계 수, 사건과 사건 페이지는 정확한 `site_host` 를 키로 유지하고, 응답의 `site_host` 는 조회한 호스트 그대로다. 제보는 한 호스트에서 직접 겪은 사건이고, `www.` 앞단은 루트와 다른 경계(edge) 뒤에 있을 수 있으며, 저장된 사건의 키를 바꾸면 공개된 사건 페이지가 바뀌므로, 사이트 전체를 설명하는 선언·공식 층만 공유한다. 공개 제보의 자동 검토도 `www.<루트>` 제보를 루트 호스트처럼 공개 대상으로 보고, 15분 집중·24시간 공개 창에서는 두 이름을 한 호스트로 센다. 제보는 정확한 호스트로 저장·공개된다. 앞의 `www.` 라벨 하나만, 그리고 그 호스트 자체가 적합한 루트 호스트가 아니고 남은 이름이 적합한 루트 호스트일 때만 뗀다: `www.co.uk`(`co.uk` 아래의 루트 호스트), `www.user123.example.org`, `www2.example.com`, `www.www.example.com` 등 다른 모든 서브도메인은 그대로다. `valid_host` 규칙은 바뀌지 않으며 `www.` 이름도 이전처럼 받아 답한다.
 
@@ -434,6 +434,20 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `status_url`(D69)은 선택 필드이며 상태 페이지를 알 때만 붙는다. `provider_status.source_url`, 없으면 `official_status_page.source_url` 이고 200자 이하의 `https` URL 이다. `task_step=status_check` 이면서 실패 신호가 없는 조회의 `summary_line` 은 네 가지 상태 문장 중 하나다(T1: 업체 피드가 활성 문제 없음을 알림, T2: 피드는 있으나 현재 상태가 분명하지 않음, T3: 읽는 피드는 없고 공식 상태 페이지만 앎, T4: 아는 상태 페이지 없음). 단 `do` 가 `wait_for_provider`·`hand_off_to_human`·`stop_automation` 이면 그 문장이 그대로 남고, 상태 페이지를 모르는 하위 도메인 조회도 `lookup_apex_host` 문장을 유지한다(사이트 전체 조회가 업체 상태를 줄 수 있어서). `do`·`url`·`retry_after_seconds`·`recommendation` 은 다른 조회와 같고 `status_url` 만 더해진다. 상태 문장에는 호스트나 URL 이 들어가지 않는다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
+
+### 실패 원인 (`cause`, D73)
+
+실패를 알리는 조회(`error_class` 또는 `failure_stage`)는 선택 필드 `cause` 를 받을 수 있다. AHN 이 저장해 둔 호스트 단위 측정만으로 단계가 왜 실패했는지 말해 주는 정보다. 권고가 확정된 뒤에 붙으므로 `recommendation` 과 `next_action.do` 는 켜도 꺼도 같다. 말할 것이 없거나 실패 신호가 없는 조회에서는 필드를 `null` 이 아니라 아예 뺀다.
+
+- `branch`: `policy_closed`(호스트가 자동 읽기를 거절), `transient`(일시 문제), `undetermined`.
+- `hint`: `home_now_gated`·`persistent_refusal`(policy_closed), `provider_incident`·`site_errors`·`recovered`·`rate_limited`·`others_failing_same_hour`(transient), `your_side_likely`·`no_measurement`·`home_gate_unconfirmed`(undetermined).
+- `confidence`(`high`·`medium`·`low`), `basis`(쓴 저장 출처: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`, `caller_codes`), 선택 `window`(`from`, 진행 중이면 `to` 없음, UTC), 선택 `recheck_after`(저장된 다음 측정 시각이 있을 때만), `line`: 시각만 채운 120자 이하 출력 가능 ASCII 영어 고정 문장. 사이트 글이나 호스트 이름은 들어가지 않는다.
+- AHN 이 잰 거절(봇 확인, 403, 로그인 벽, 홈 페이지 속도 제한)은 일시 문제의 증거로 읽지 않는다(D68). 거절 한 번은 `undetermined`(`home_gate_unconfirmed`)이고, `policy_closed` 는 다음 측정이 일치하거나 연속 거절이 둘 이상일 때만 나온다.
+- `failed_at`(선택, ISO 8601, UTC 오프셋 유무 무관)은 실패 시각이다. 없으면 지금으로 본다. 받기만 하고 저장하거나 세지 않는다. 원측정은 14일 보관하므로 그보다 오래된 값은 업체 상태 이력만으로 답한다. 쓸 수 없는 값(형식 오류, 5분 넘는 미래)은 다른 시각의 원인을 말하지 않도록 `cause` 를 주지 않는다.
+- 확정된 원인(`policy_closed`·`transient`)이 있고 길이가 맞으면 `summary_line` 이 `cause.line` 으로 시작한다. 한도를 넘으면 붙이지 않는다.
+- 아직 없음: 접근 프로필 변경 이력이 필요한 hint(robots.txt 가 이제 막음, 약관 신호 변경, 새 봇 방어).
+
+`AHN_CAUSE_HINT=0`(D73)이면 `cause` 가 빠지고 답이 이전과 같아진다. 기본은 켜짐.
 
 ### 링크 (`links`)
 

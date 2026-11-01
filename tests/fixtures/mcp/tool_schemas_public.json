@@ -43,6 +43,13 @@
      "title": "Error Class",
      "type": "string"
     },
+    "failed_at": {
+     "default": null,
+     "description": "When the step failed, as an ISO 8601 time such as 2026-11-01T07:10:00Z (UTC if no offset). Leave it out for a failure that just happened. Only used to choose the cause shown in the answer; not stored.",
+     "maxLength": 40,
+     "title": "Failed At",
+     "type": "string"
+    },
     "failure_stage": {
      "default": "",
      "title": "Failure Stage",
@@ -999,6 +1006,131 @@
       }
      },
      "title": "CatalogApi",
+     "type": "object"
+    },
+    "Cause": {
+     "additionalProperties": true,
+     "description": "D73: why the step failed, from AHN's own stored host-level measurements. Information only: it is added after the\nrecommendation is final and changes none of it. ``line`` is a fixed English sentence with times and no site text.",
+     "properties": {
+      "basis": {
+       "items": {
+        "enum": [
+         "provider_status_events",
+         "outage_episodes",
+         "site_probe",
+         "site_probe_daily",
+         "lookup_signals_hourly",
+         "caller_codes"
+        ],
+        "type": "string"
+       },
+       "maxItems": 6,
+       "title": "Basis",
+       "type": "array"
+      },
+      "branch": {
+       "enum": [
+        "policy_closed",
+        "transient",
+        "undetermined"
+       ],
+       "title": "Branch",
+       "type": "string"
+      },
+      "confidence": {
+       "enum": [
+        "high",
+        "medium",
+        "low"
+       ],
+       "title": "Confidence",
+       "type": "string"
+      },
+      "hint": {
+       "enum": [
+        "home_now_gated",
+        "persistent_refusal",
+        "provider_incident",
+        "site_errors",
+        "recovered",
+        "rate_limited",
+        "others_failing_same_hour",
+        "your_side_likely",
+        "no_measurement",
+        "home_gate_unconfirmed"
+       ],
+       "title": "Hint",
+       "type": "string"
+      },
+      "line": {
+       "maxLength": 120,
+       "minLength": 1,
+       "pattern": "^[ -~]+$",
+       "title": "Line",
+       "type": "string"
+      },
+      "recheck_after": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Recheck After"
+      },
+      "window": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/CauseWindow"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      }
+     },
+     "required": [
+      "branch",
+      "hint",
+      "confidence",
+      "basis",
+      "line"
+     ],
+     "title": "Cause",
+     "type": "object"
+    },
+    "CauseWindow": {
+     "additionalProperties": true,
+     "description": "D73: the period of the measurement the cause rests on (UTC). ``to`` is left out while it is still going on.",
+     "properties": {
+      "from": {
+       "format": "date-time",
+       "title": "From",
+       "type": "string"
+      },
+      "to": {
+       "anyOf": [
+        {
+         "format": "date-time",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "To"
+      }
+     },
+     "required": [
+      "from"
+     ],
+     "title": "CauseWindow",
      "type": "object"
     },
     "CheckObservation": {
@@ -3060,6 +3192,17 @@
      "anyOf": [
       {
        "$ref": "#/$defs/AhnCheck"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "cause": {
+     "anyOf": [
+      {
+       "$ref": "#/$defs/Cause"
       },
       {
        "type": "null"

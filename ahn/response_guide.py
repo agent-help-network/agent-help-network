@@ -360,6 +360,13 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
         if do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not (do == "lookup_apex_host" and status_url is None):
             sentence = STATUS_ROWS[status_row(provider_status, result.get("official_status_page"), status_url)]
+    cause = result.get("cause")
+    if cause and cause.get("branch") != "undetermined" and not status_check:
+        # D73: a settled cause leads the line when the whole line still fits; otherwise the sentence stays as it is and the
+        # cause is only in the `cause` object. Never shortens or rewrites the sentence of the row.
+        lead = f"{cause['line']} {sentence}"
+        if len(lead) <= LINE_MAX:
+            sentence = lead
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:

@@ -17,7 +17,7 @@ This is the English version of the [Korean API contract](api-contract.md); both 
 
 ## `GET /v1/incidents/check`
 
-Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`, the lookup signal codes `http_status`, `challenge`, `retry_after`, `via` ([below](#lookup-signal-codes)), and `agent_vendor` ([below](#agent-vendor-agent_vendor-d48)).
+Required: `site_host`. Optional: `error_class`, `task_step`, `window_hours`, `failure_stage`, the lookup signal codes `http_status`, `challenge`, `retry_after`, `via` ([below](#lookup-signal-codes)), `failed_at` ([below](#failure-cause-cause-d73)), and `agent_vendor` ([below](#agent-vendor-agent_vendor-d48)).
 
 Public mode uses only published, non-synthetic observations. Local test mode can read synthetic observations for `.test` hosts and then always returns `synthetic: true`. The two modes are never mixed in one response. MCP `check_incident` takes the same inputs except `window_hours` (it always uses the default 24 hours) and returns the same structure.
 
@@ -484,6 +484,20 @@ Every lookup answer also carries `summary_line` and `next_action` (D51). Both ar
 - `status_url` (D69) is optional and present only when a status page is known: `provider_status.source_url`, else `official_status_page.source_url`, as an `https` URL of at most 200 characters. For a lookup with `task_step=status_check` and no failure signal, `summary_line` is one of four status sentences (T1: the provider feed reports no active issue; T2: a feed is listed but gives no clear current state; T3: no feed is read, only an official status page is known; T4: no status page is known) unless `do` is `wait_for_provider`, `hand_off_to_human` or `stop_automation`, whose sentences stay; a subdomain lookup with no known status page also keeps the `lookup_apex_host` sentence, because the site-wide lookup may carry the provider status. `do`, `url`, `retry_after_seconds` and `recommendation` are the same as for any other lookup; `status_url` is added next to them. The status sentences name no host or URL.
 - If the three keys cannot be produced, they are left out and the rest of the answer is unchanged. The OpenAPI schema always lists `summary_line`, `next_action` and `links` as optional properties, whether or not they are present.
 - `do` never says more or less than `recommendation.action`. The four values that split `unknown` all mean that no verdict exists; they only say what can be done now.
+
+### Failure cause (`cause`, D73)
+
+A lookup that reports a failure (`error_class` or `failure_stage`) may carry an optional `cause`: why the step failed, as far as AHN's own stored host-level measurements say. It is information only. It is added after the recommendation is final, so `recommendation` and `next_action.do` are the same with it on or off. The field is left out (never `null`) when there is nothing to say, and for a lookup without a failure signal.
+
+- `branch`: `policy_closed` (the host refuses automated readers), `transient` (a temporary problem), or `undetermined`.
+- `hint`: `home_now_gated` and `persistent_refusal` (policy_closed); `provider_incident`, `site_errors`, `recovered`, `rate_limited`, `others_failing_same_hour` (transient); `your_side_likely`, `no_measurement`, `home_gate_unconfirmed` (undetermined).
+- `confidence` (`high`, `medium`, `low`), `basis` (the stored sources used: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`, `caller_codes`), optional `window` (`from`, and `to` while still going on, UTC), optional `recheck_after` (only when a stored next measurement time exists), and `line`: a fixed English sentence of at most 120 printable ASCII characters, filled with times only. No site text and no hostname reaches it.
+- A refusal AHN measured (bot challenge, 403, login wall, rate limit on the home page) is never read as a temporary problem (D68). One refusal gives `undetermined` (`home_gate_unconfirmed`); `policy_closed` needs the next measurement to agree or at least two refusals in a row.
+- `failed_at` (optional, ISO 8601, with or without a UTC offset) names the time of the failure; without it the failure is taken to be now. It is received but not stored or counted. Raw measurements are kept 14 days, so a `failed_at` older than that is answered from the provider's status history alone. A value that cannot be used (bad format, or more than five minutes in the future) gives no `cause`, never a cause for a different time.
+- When a settled cause (`policy_closed` or `transient`) exists and fits, `summary_line` starts with `cause.line`; the line is not added when the result would exceed the `summary_line` limit.
+- Not included yet: hints that need a history of access-profile changes (robots.txt now disallows, terms signal changed, new bot defense).
+
+Setting `AHN_CAUSE_HINT=0` (D73) leaves `cause` out and makes the answer equal to the one before it. On by default.
 
 ### Links
 

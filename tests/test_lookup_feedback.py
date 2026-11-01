@@ -402,9 +402,9 @@ def test_the_description_lists_the_codes_and_answer_fields_without_changing_the_
                                               "duckduckgo, diffbot, exa, or other if none")
     for field in ("summary_line", "next_action (do, url, retry_after_seconds)", "recommendation.action"):
         assert field in description, field
-    # Text only: the advertised input schema is the one already listed (no new or renamed argument, same required list).
-    assert sorted(schema["properties"]) == ["agent_vendor", "challenge", "error_class", "failure_stage", "http_status", "retry_after",
-                                            "site_host", "task_step", "via"]
+    # The description text is unchanged; D73 added one optional input (failed_at), described in the schema itself. Same required list.
+    assert sorted(schema["properties"]) == ["agent_vendor", "challenge", "error_class", "failed_at", "failure_stage", "http_status",
+                                            "retry_after", "site_host", "task_step", "via"]
     assert schema["required"] == ["site_host"]
     assert schema["properties"]["agent_vendor"]["enum"] == [item.value for item in AgentVendor]
     # The notices the description keeps: what the service reads, and that the lookup changes nothing.
