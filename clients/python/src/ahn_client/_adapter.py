@@ -182,7 +182,7 @@ def _spawn(host: str, error_class: str, stage: Optional[str], adapter: str, time
     A second lookup for the same host, class and stage while one still runs is not started, so a stuck network never
     piles up threads. ``done`` must not raise.
     """
-    key = (host, error_class, stage)
+    key = (host, error_class, stage, (extra or {}).get("task_step"))
     with _inflight_lock:
         if key in _inflight:
             return False

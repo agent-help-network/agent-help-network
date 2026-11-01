@@ -367,6 +367,22 @@ def test_home_shows_the_real_answer_card_only_when_the_cache_gave_one(monkeypatc
             assert 'class="ledger-search"' in page and "claude plugin install" in page
 
 
+def test_home_card_lists_other_cached_answers_and_merges_equal_urls(monkeypatch):
+    card = dict(CARD, url="www.example.com/help", customer_url="www.example.com/help",
+                others=[{"site_host": "amazon.com", "do": "use_official_path", "summary_line": "robots.txt blocks some agent tokens."}])
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: dict(card))
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for lang in ("en", "ko"):
+            page = client.get(f"/{lang}/").text
+            assert page.count("www.example.com/help") == 1 and "next_action.url<br>customer_url" in page
+            assert "home-others" in page and "amazon.com" in page and "robots.txt blocks some agent tokens." in page
+            assert 'href="/' + lang + '/search?site_host=amazon.com" rel="nofollow"' in page
+    monkeypatch.setattr("ahn.main.home_example", lambda _settings: dict(CARD))
+    with TestClient(create_app(settings)) as client:
+        assert "home-others" not in client.get("/en/").text.split("</aside>")[1].split("</section>")[0]
+
+
 def test_home_survives_a_failing_cache_read_and_makes_no_lookup(monkeypatch):
     def boom(_settings):
         raise RuntimeError("database down")

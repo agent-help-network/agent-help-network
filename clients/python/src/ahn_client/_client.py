@@ -17,6 +17,9 @@ from ._signals import AGENT_VENDORS, valid_signals
 
 __all__ = ["check", "clear_cache", "lookup_url"]
 
+# The only task_step words a client may send: a lookup that says nothing was refused (status or readiness check).
+LOOKUP_STEPS = ("status_check", "preflight")
+
 API_URL = "https://agenthelpnetwork.com/v1/incidents/check"
 # The framework adapters name themselves in the User-Agent: "ahn-client/0.4.0 (+langchain; +https://agenthelpnetwork.com)".
 ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
@@ -25,7 +28,7 @@ FAILURE_TTL_SECONDS = 60
 CACHE_MAX_ENTRIES = 200
 MAX_RESPONSE_BYTES = 262_144
 
-_cache: Dict[Tuple[str, Optional[str], Optional[str], Optional[str]], Tuple[float, Optional[Result]]] = {}
+_cache: Dict[Tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]], Tuple[float, Optional[Result]]] = {}
 _lock = threading.Lock()
 
 
@@ -48,13 +51,16 @@ def clear_cache() -> None:
 
 
 def lookup_url(host: str, error_class: Optional[str], failure_stage: Optional[str],
-               signals: Optional[Dict[str, object]] = None, agent_vendor: Optional[str] = None) -> str:
+               signals: Optional[Dict[str, object]] = None, agent_vendor: Optional[str] = None,
+               task_step: Optional[str] = None) -> str:
     query = {"site_host": host}
     if error_class:
         query["error_class"] = error_class
     if failure_stage:
         query["failure_stage"] = failure_stage
     query.update({name: str(value) for name, value in valid_signals(signals).items()})
+    if task_step in LOOKUP_STEPS:  # not a signal code either: it changes the answer (D66), it is not a failure report
+        query["task_step"] = task_step
     if agent_vendor in AGENT_VENDORS:  # not a signal code: it is neither counted nor stored, it only decides the answer
         query["agent_vendor"] = agent_vendor
     return API_URL + "?" + urllib.parse.urlencode(query)
@@ -70,12 +76,12 @@ def user_agent(adapter: Optional[str] = None) -> str:
 
 def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], timeout: float,
            adapter: Optional[str] = None, signals: Optional[Dict[str, object]] = None,
-           agent_vendor: Optional[str] = None) -> Optional[Result]:
+           agent_vendor: Optional[str] = None, task_step: Optional[str] = None) -> Optional[Result]:
     # The signal codes ride on the request only. The URL the Result keeps (the "Full JSON" link an agent sees) has none,
     # so following it counts nothing twice. ``agent_vendor`` is kept in it: it is not counted, and the link then gives
     # the answer the line shows.
-    url = lookup_url(host, error_class, failure_stage, None, agent_vendor)
-    request = urllib.request.Request(lookup_url(host, error_class, failure_stage, signals, agent_vendor), headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
+    url = lookup_url(host, error_class, failure_stage, None, agent_vendor, task_step)
+    request = urllib.request.Request(lookup_url(host, error_class, failure_stage, signals, agent_vendor, task_step), headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
     try:
         with _urlopen(request, timeout) as response:
             if getattr(response, "status", 200) != 200:
@@ -91,7 +97,8 @@ def _fetch(host: str, error_class: Optional[str], failure_stage: Optional[str], 
 def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optional[str] = None, *,
           timeout: float = 4.0, adapter: Optional[str] = None, http_status: Optional[int] = None,
           challenge: Optional[str] = None, retry_after: Optional[str] = None,
-          via: Optional[str] = None, agent_vendor: Optional[str] = None) -> Optional[Result]:
+          via: Optional[str] = None, agent_vendor: Optional[str] = None,
+          task_step: Optional[str] = None) -> Optional[Result]:
     """Ask Agent Help Network about the host of ``host_or_url``; None when there is no answer.
 
     Only the bare hostname, ``error_class``, ``failure_stage`` and the four optional codes below are sent: scheme,
@@ -121,6 +128,11 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
     when unsure. Unlike the other optional codes it is checked here: any other value (including another case or
     surrounding spaces) raises ``ValueError`` before anything is sent. It is not counted or stored, and the
     verdict is the service's: this function decides nothing about robots.txt.
+
+    ``task_step`` is ``"status_check"`` or ``"preflight"`` when the lookup only checks whether a site is up (or is
+    ready) and nothing was refused. Without a failure signal (``error_class`` or ``failure_stage``) the service answers
+    a lookup as if the step had been refused, so send one of these words for a pure status check; after a failure
+    send ``error_class`` and ``failure_stage`` instead (they win over the word). Any other value is dropped.
     """
     if agent_vendor is not None and (not isinstance(agent_vendor, str) or agent_vendor not in AGENT_VENDORS):
         raise ValueError("agent_vendor must be one of: " + ", ".join(AGENT_VENDORS))
@@ -132,14 +144,15 @@ def check(host_or_url, error_class: Optional[str] = None, failure_stage: Optiona
         host = eligible_host(host_or_url)
         if host is None:
             return None
-        key = (host, error_class, failure_stage, agent_vendor)
+        step = task_step if task_step in LOOKUP_STEPS else None
+        key = (host, error_class, failure_stage, agent_vendor, step)
         extra = valid_signals({"http_status": http_status, "challenge": challenge, "retry_after": retry_after, "via": via})
         now = time.monotonic()
         with _lock:
             hit = _cache.get(key)
             if hit and hit[0] > now:
                 return hit[1]
-        result = _fetch(host, error_class, failure_stage, timeout, adapter, extra, agent_vendor)
+        result = _fetch(host, error_class, failure_stage, timeout, adapter, extra, agent_vendor, step)
         now = time.monotonic()
         with _lock:
             for stale in [k for k, (expires, _) in _cache.items() if expires <= now]:

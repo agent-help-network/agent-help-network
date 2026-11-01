@@ -237,7 +237,7 @@ def test_the_real_client_cache_does_not_swallow_the_repeat_lookup(monkeypatch):
     ready = dict(BASE, summary_line="Policy read.", next_action={"do": "use_official_path", "url": "https://developer.example.com/docs"},
                  recommendation={"action": "use_official_path", "confidence": "high", "reasons": []})
 
-    def fake_fetch(host, ec, fs, timeout, adapter=None, signals=None, agent_vendor=None):
+    def fake_fetch(host, ec, fs, timeout, adapter=None, signals=None, agent_vendor=None, task_step=None):
         calls.append(host)
         return Result.from_response(host, "https://agenthelpnetwork.com/x", pending if len(calls) == 1 else ready)
 

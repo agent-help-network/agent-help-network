@@ -22,18 +22,27 @@
       </form>
     </div>
     {% if example %}
+    <div class="home-side">
     <aside class="home-live" aria-label="{{ 'Real answer for ' ~ example.site_host if en else example.site_host ~ ' 실제 응답' }}">
       <p class="home-live-label"><span class="home-live-dot" aria-hidden="true"></span>{{ 'Real answer' if en else '실제 응답' }} · {{ example.site_host }}</p>
       <p class="home-live-line" lang="en">{{ example.summary_line }}</p>
       <dl class="home-live-rows">
         <div><dt>next_action.do</dt><dd class="home-live-do">{{ example.do }}</dd></div>
-        {% if example.url %}<div><dt>next_action.url</dt><dd>{{ example.url }}</dd></div>{% endif %}
-        {% if example.customer_url %}<div><dt>next_action.customer_url</dt><dd>{{ example.customer_url }}</dd></div>{% endif %}
+        {% if example.url and example.url == example.customer_url %}<div><dt>next_action.url<br>customer_url</dt><dd>{{ example.url }}</dd></div>
+        {% else %}{% if example.url %}<div><dt>next_action.url</dt><dd>{{ example.url }}</dd></div>{% endif %}
+        {% if example.customer_url %}<div><dt>next_action.customer_url</dt><dd>{{ example.customer_url }}</dd></div>{% endif %}{% endif %}
         {% if example.confidence %}<div><dt>confidence</dt><dd>{{ example.confidence }}</dd></div>{% endif %}
         <div><dt>layers</dt><dd>robots {{ example.robots_status }} · llms.txt {{ example.llms_txt_status }} · {{ 'status' if en else '상태' }}: {% if example.status %}{{ example.status }}{% elif example.provider_name %}{{ example.provider_name }} ({{ 'history feed, ' if en else '이력 피드, ' }}{% if example.open_incidents %}{% if en %}{{ example.open_incidents }} open incident{{ 's' if example.open_incidents != 1 else '' }}{% else %}열린 사건 {{ example.open_incidents }}건{% endif %}{% else %}{{ 'no open incident listed' if en else '게시된 열린 사건 없음' }}{% endif %}){% else %}{{ 'no feed' if en else '피드 없음' }}{% endif %}</dd></div>
       </dl>
       <p class="home-live-foot"><span>{{ 'Rendered from the cached answer, read ' ~ example.read_on ~ ' (UTC). The line above is the API’s own text.' if en else '캐시된 응답(' ~ example.read_on ~ ' UTC 에 읽음)에서 그립니다. 위 문장은 API 가 돌려주는 원문(영어)입니다.' }}</span> <a href="/openapi.json">{{ 'Response format ↗' if en else '응답 형식 ↗' }}</a></p>
     </aside>
+    {% if example.others %}
+    <div class="home-others">
+      <p class="home-others-label">{{ 'Other real answers' if en else '다른 실제 응답' }}</p>
+      <ul>{% for o in example.others %}<li><a href="/{{ lang }}/search?site_host={{ o.site_host }}" rel="nofollow">{{ o.site_host }}</a> <code>{{ o.do }}</code> <span lang="en">{{ o.summary_line }}</span></li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    </div>
     {% endif %}
   </div>
 </section>
@@ -74,7 +83,7 @@ pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-ag
     <tr><td><code>use_official_path</code></td><td>{{ 'A documented API or developer portal exists. Switch to it.' if en else '문서화된 API 나 개발자 포털이 있습니다. 그쪽으로 전환하십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">official_paths</td></tr>
     <tr><td><code>hand_off_to_human</code></td><td>{{ 'Human verification or the user’s own sign-in. Do not bypass it; hand off.' if en else '사람 확인이나 사용자 본인 로그인이 필요합니다. 우회하지 말고 사용자에게 넘기십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">error_class</td></tr>
     <tr><td><code>wait_provider_incident</code></td><td>{{ 'The provider reports a fresh incident. Wait, then retry.' if en else '업체가 새 장애를 발표했습니다. 기다린 뒤 다시 시도하십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">provider_status</td></tr>
-    <tr><td><code>proceed</code></td><td>{{ 'No declared block for your token. Continue modestly and honor Crawl-delay.' if en else '에이전트의 토큰에 선언된 차단이 없습니다. 절제해서 진행하고 Crawl-delay 를 지키십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">robots.txt</td></tr>
+    <tr><td><code>proceed</code></td><td>{{ 'No declared block for your token: that is not a guarantee that nothing blocked you. If a page refused you, that came from your tool, the site’s edge or a login; tell your user. Otherwise continue modestly and honor Crawl-delay.' if en else '에이전트의 토큰에 선언된 차단이 없다는 뜻이지, 막히지 않았다는 보장은 아닙니다. 페이지가 거부했다면 도구·사이트 가장자리·로그인 쪽이니 사용자에게 알리십시오. 그 밖에는 절제해서 진행하고 Crawl-delay 를 지키십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">robots.txt</td></tr>
     <tr><td><code>unknown</code></td><td>{{ 'The policy could not be read or gives no permission. Treat it as unknown, not allowed.' if en else '정책을 읽지 못했거나 허용을 주지 않습니다. 허용이 아니라 미상으로 취급하십시오.' }}</td><td class="ledger-actions-from" data-label="{{ 'From' if en else '근거' }}">robots.txt</td></tr>
   </tbody></table></div>
   <p class="home-sub">{{ 'Send agent_vendor so the answer reads your own robots.txt token. Reason codes and edge cases:' if en else '자신의 robots.txt 토큰으로 판정하려면 agent_vendor 를 보내십시오. 판정 이유 코드와 예외 사례:' }} <a href="/{{ lang }}/agents">{{ 'agent instructions →' if en else '에이전트 지침 →' }}</a></p>

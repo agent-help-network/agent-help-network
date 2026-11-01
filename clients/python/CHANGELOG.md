@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+- `ahn.check(..., task_step=...)`: `"status_check"` or `"preflight"` tells the service that the lookup only checks whether a site is up
+  (or ready) and nothing was refused. The service now answers a lookup that sends neither `error_class` nor `failure_stage` as
+  if the step had been refused, so a pure status check should send one of these words; after a failure keep sending `error_class`
+  and `failure_stage` (they win). Any other value is dropped. The word is part of the cache key. No other behavior changes.
+
 ## 0.6.2
 
 - `ahn.signals(exc)` now reads AWS WAF's `x-amzn-waf-action` header, as `diagnose` already did: a 403 or 451 with `challenge` or

@@ -35,7 +35,8 @@ NO_ANSWER = (
 DESCRIPTION = (
     "Look up a public website's hostname on Agent Help Network when a web step is blocked or failing: a 403 or "
     "'access denied', a login wall, a CAPTCHA or 'verify you are human' page, a 429, a 5xx or a timeout, or when "
-    "asked whether a site is down or blocks agents. Returns the host's declared agent policy (robots.txt, "
+    "asked whether a site is down or blocks agents. After a failure, send error_class and failure_stage; for a pure "
+    "up/down check where nothing was refused, send task_step='status_check'. Returns the host's declared agent policy (robots.txt, "
     "llms.txt), its official developer path, provider status and one recommended action, as one summary line "
     "plus JSON. Read-only. Only the hostname and the optional codes are sent, never a URL path, query or content. "
     "The answer points to official paths, waiting, or a person; it never explains how to get around a site's controls."
@@ -62,6 +63,10 @@ class AHNLookupInput(BaseModel):
         default=None, description="The Retry-After the site sent, as a band in seconds. Leave out if unknown.")
     via: Optional[Literal["http_fetch", "browser", "unknown"]] = Field(
         default=None, description="How the page was requested. Leave out if unknown.")
+    task_step: Optional[Literal["status_check"]] = Field(
+        default=None,
+        description="Send 'status_check' only when you are just checking whether the site is up (or re-checking an "
+        "earlier answer) and nothing was refused. Leave out after a failure: send error_class and failure_stage instead.")
 
 
 def format_result(result: Result, site_retry_after: Any = None) -> str:
@@ -112,7 +117,7 @@ def _unexpected(error: Exception) -> str:
 
 
 def _target(hostname: str, error_class: Any, failure_stage: Any, http_status: Any, challenge: Any,
-            retry_after: Any, via: Any) -> Any:
+            retry_after: Any, via: Any, task_step: Any = None) -> Any:
     """``(host, error_class, failure_stage, codes)``, or None when nothing may be sent."""
     if not isinstance(hostname, str):
         return None
@@ -123,6 +128,8 @@ def _target(hostname: str, error_class: Any, failure_stage: Any, http_status: An
     if host is None:
         return None
     codes = valid_signals({"http_status": http_status, "challenge": challenge, "retry_after": retry_after, "via": via})
+    if task_step == "status_check":  # the one word this tool sends; the service reads it as "nothing was refused"
+        codes = {**codes, "task_step": task_step}
     return host, error_class, failure_stage, codes or None
 
 
@@ -137,9 +144,9 @@ class AHNLookupTool(BaseTool):
 
     def _run(self, hostname: str, error_class: Optional[str] = None, failure_stage: Optional[str] = None,
              http_status: Optional[int] = None, challenge: Optional[str] = None, retry_after: Optional[str] = None,
-             via: Optional[str] = None, run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+             via: Optional[str] = None, task_step: Optional[str] = None, run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
         try:
-            target = _target(hostname, error_class, failure_stage, http_status, challenge, retry_after, via)
+            target = _target(hostname, error_class, failure_stage, http_status, challenge, retry_after, via, task_step)
             if target is None:
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target
@@ -150,9 +157,9 @@ class AHNLookupTool(BaseTool):
 
     async def _arun(self, hostname: str, error_class: Optional[str] = None, failure_stage: Optional[str] = None,
                     http_status: Optional[int] = None, challenge: Optional[str] = None, retry_after: Optional[str] = None,
-                    via: Optional[str] = None, run_manager: Optional[AsyncCallbackManagerForToolRun] = None) -> str:
+                    via: Optional[str] = None, task_step: Optional[str] = None, run_manager: Optional[AsyncCallbackManagerForToolRun] = None) -> str:
         try:
-            target = _target(hostname, error_class, failure_stage, http_status, challenge, retry_after, via)
+            target = _target(hostname, error_class, failure_stage, http_status, challenge, retry_after, via, task_step)
             if target is None:
                 return NOT_LOOKED_UP
             host, ec, stage, codes = target

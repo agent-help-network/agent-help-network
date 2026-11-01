@@ -442,6 +442,30 @@ def test_agent_vendor_is_sent_when_given(transport, vendor):
     assert result.url.endswith("&agent_vendor=" + vendor)  # the "Full JSON" link gives the answer the line shows
 
 
+@pytest.mark.parametrize("step", ["status_check", "preflight"])
+def test_task_step_is_sent_only_for_the_two_lookup_words(transport, step):
+    calls = transport()
+    result = ahn.check("example.com", task_step=step)
+    (request, _), = calls
+    assert query(request) == {"site_host": ["example.com"], "task_step": [step]}
+    assert result.url.endswith("&task_step=" + step)
+
+
+@pytest.mark.parametrize("step", ["other", "STATUS_CHECK", "", 1, None])
+def test_any_other_task_step_is_dropped_and_not_cached_apart(transport, step):
+    calls = transport()
+    ahn.check("example.com", task_step=step)
+    (request, _), = calls
+    assert query(request) == {"site_host": ["example.com"]}
+
+
+def test_a_status_check_lookup_is_not_served_from_the_failure_answer_cache(transport):
+    calls = transport()
+    ahn.check("example.com", "site_access")
+    ahn.check("example.com", task_step="status_check")
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize("vendor", ["Anthropic", "ANTHROPIC", " anthropic", "anthropic ", "", "claude", "unknown", "openai,google", 1, True, b"anthropic", ["anthropic"]])
 def test_a_wrong_vendor_raises_before_anything_is_sent(transport, vendor):
     calls = transport()
