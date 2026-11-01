@@ -127,7 +127,7 @@ def test_tool_identity():
 def test_status_check_is_sent_and_nothing_else_is_accepted(transport):
     calls = transport()
     AHNLookupTool().invoke({"hostname": "example.com", "task_step": "status_check"})
-    (request, _), = calls
+    request, = calls
     assert "task_step=status_check" in request.full_url and "error_class" not in request.full_url
     with pytest.raises(Exception):
         AHNLookupTool().invoke({"hostname": "example.com", "task_step": "preflight"})
