@@ -442,7 +442,7 @@ def test_d57_an_open_incident_from_the_atom_history_is_listed_without_a_level_an
         for host in ("brevo.com", "sendinblue.com"):
             put_atom(conn, host, incidents=1, incident_updated=now - timedelta(hours=3))
     summary = board(db, now)
-    assert [c["site_host"] for c in summary["provider_candidates"]] == ["brevo.com", "github.com", "sendinblue.com"]
+    assert [c["site_host"] for c in summary["provider_candidates"]] == ["github.com", "brevo.com", "sendinblue.com"]  # newest update first
     with TestClient(create_app(settings(**ON))) as client:
         body = client.get("/v1/now").json()
         assert body["maintenance"] == []
