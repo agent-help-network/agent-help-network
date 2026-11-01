@@ -700,6 +700,7 @@ def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict
         "summary_line": answer["summary_line"],
         "do": action["do"],
         "url": (action.get("url") or "").removeprefix("https://").removeprefix("http://").rstrip("/") or None,
+        "customer_url": (action.get("customer_url") or "").removeprefix("https://").removeprefix("http://").rstrip("/") or None,
         "confidence": verdict.get("confidence"),
         "robots_status": access_profile["robots_status"],
         "llms_txt_status": access_profile["llms_txt_status"],

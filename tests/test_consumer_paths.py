@@ -259,7 +259,7 @@ def test_a_consumer_only_host_never_becomes_use_official_path():
         result, plain = guide(with_only), guide(bare)
         if result["next_action"]["do"] == "proceed":
             # D63: a proceed answer points at the site's own customer page when one is listed; nothing else moves.
-            assert result["next_action"]["customer_url"] == result["next_action"]["url"] == customer_url(CONSUMER_ONLY), case
+            assert result["next_action"]["customer_url"] == customer_url(CONSUMER_ONLY) and result["next_action"]["url"] is None, case  # D65: no url on proceed
             stripped = {k: v for k, v in result["next_action"].items() if k not in ("customer_url", "url")}
             assert stripped == {k: v for k, v in plain["next_action"].items() if k != "url"}, case
             # D63 swaps the proceed summary for the shorter one naming the customer page; never the developer tail.
@@ -309,6 +309,8 @@ def test_only_use_official_path_and_proceed_answers_gain_the_customer_branch_and
             assert len(after["summary_line"]) <= LINE_MAX
             if row in CUSTOMER_FIRST_ROWS:
                 assert after["next_action"]["url"] == HELP, (row, case)
+            elif do == "proceed":
+                assert after["next_action"]["url"] is None, (row, case)  # D65
             else:
                 assert after["next_action"]["url"] == before["next_action"]["url"], (row, case)
             if do == "proceed":
@@ -430,8 +432,8 @@ def test_mcp_first_block_adds_a_customer_path_line(monkeypatch):
     monkeypatch.setattr(mcp_adapter, "call_api", fake)
     result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.com"}))
     # Changed on purpose by D63: this is a proceed answer whose `url` is the customer page, so one URL line, no repeat.
-    assert payload["next_action"]["do"] == "proceed" and payload["next_action"]["url"] == HELP
-    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + HELP, mcp_adapter.PROCEED_NOTE]
+    assert payload["next_action"]["do"] == "proceed" and payload["next_action"]["url"] is None and payload["next_action"]["customer_url"] == HELP
+    assert result.content[0].text.splitlines() == [payload["summary_line"], "Customer path: " + HELP, mcp_adapter.PROCEED_NOTE]
     assert json.loads(result.content[-1].text) == result.structured_content
     # Where robots.txt blocks pages, `url` stays the developer path and the customer page is the extra line.
     blocked = _payload(WITH_CONSUMER, robots("User-agent: *\nDisallow: /\n"))
