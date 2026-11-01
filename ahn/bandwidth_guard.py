@@ -18,6 +18,10 @@ RENDER_METRIC_RETENTION = timedelta(days=7)
 # Longer than this without a stored check and the retained window can no
 # longer reconstruct the billing month: the computed usage is a lower bound.
 COVERAGE_GAP = timedelta(days=6)
+# Render publishes each hourly point only after its hour has closed (the point stamped at the hour
+# end), so right after the UTC month boundary the new month legitimately has no point yet. Within
+# this window an empty but otherwise valid series reads as zero usage; later it fails closed.
+NEW_MONTH_GRACE = timedelta(hours=3)
 LOCK_KEY = 81260531004
 # Monthly outbound-transfer defaults (AHN_GUARD_WARNING_GB / AHN_GUARD_STOP_GB override them). The
 # warning sits just under the plan's included allowance; the stop leaves room for metric delay.
@@ -50,8 +54,13 @@ def _api_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def parse_bandwidth(data: object, resource_id: str, start: datetime, end: datetime) -> list[tuple[datetime, Decimal]]:
-    """Accept only byte-unit time series for the exact configured Render service."""
+def parse_bandwidth(data: object, resource_id: str, start: datetime, end: datetime, *,
+                    allow_empty: bool = False) -> list[tuple[datetime, Decimal]]:
+    """Accept only byte-unit time series for the exact configured Render service.
+
+    allow_empty tolerates a matching series with no point inside the window (new billing month);
+    a missing or duplicated series stays an error.
+    """
     if not isinstance(data, list) or not data:
         raise ValueError("bandwidth series missing")
     samples: dict[datetime, Decimal] = {}
@@ -90,7 +99,7 @@ def parse_bandwidth(data: object, resource_id: str, start: datetime, end: dateti
                 if at in samples:
                     raise ValueError("duplicate bandwidth point")
                 samples[at] = amount
-    if matching != 1 or not samples:
+    if matching != 1 or (not samples and not allow_empty):
         raise ValueError("one matching bandwidth series with samples required")
     return sorted(samples.items())
 
@@ -152,12 +161,16 @@ def run_guard(database_url: str, api_key: str, resource_id: str, *, now: datetim
             # Only the short provider error body, never request headers or key.
             detail = " ".join(response.text.replace(api_key, "[redacted]").split())[:240]
             raise RuntimeError(f"Render bandwidth API HTTP {response.status_code}: {detail}")
-        samples = parse_bandwidth(response.json(), resource_id, month_start, now)
+        in_grace = now - month_start < NEW_MONTH_GRACE
+        samples = parse_bandwidth(response.json(), resource_id, month_start, now, allow_empty=in_grace)
     finally:
         if own_client:
             client.close()
-    latest_sample = max(at for at, _ in samples)
-    if latest_sample < now - timedelta(hours=4):
+    no_samples_yet = not samples
+    latest_sample = max((at for at, _ in samples), default=None)
+    # Inside the grace window every sample is newer than month_start, hence newer than now-3h, so the
+    # 4-hour staleness limit below cannot trip there; an empty result skips it.
+    if latest_sample is not None and latest_sample < now - timedelta(hours=4):
         raise RuntimeError("Render bandwidth metrics are stale")
     with connect_url(database_url, row_factory=dict_row) as conn:
         if not conn.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (LOCK_KEY,)).fetchone()["ok"]:
@@ -213,8 +226,11 @@ def run_guard(database_url: str, api_key: str, resource_id: str, *, now: datetim
                  warning_gb=EXCLUDED.warning_gb,stop_gb=EXCLUDED.stop_gb""",
             (month_start, now, latest_sample, usage, state, warning_sent, suspended_at, gap_since, warning_gb, stop_gb),
         )
-    return {"state": state, "usage_gb": usage, "action": action,
-            "coverage_gap": gap_since is not None, "coverage_gap_new": coverage_gap_new}
+    result = {"state": state, "usage_gb": usage, "action": action,
+              "coverage_gap": gap_since is not None, "coverage_gap_new": coverage_gap_new}
+    if no_samples_yet:
+        result["no_samples_yet"] = True
+    return result
 
 
 def main() -> None:
@@ -228,7 +244,8 @@ def main() -> None:
     from .settings import report_retention_days_from_env
     prune_analytics(database_url, report_retention_days_from_env())
     result = run_guard(database_url, api_key, resource_id, warning_gb=warning_gb, stop_gb=stop_gb)
-    print(f"bandwidth_guard state={result['state']} usage_gb={result['usage_gb']} action={result['action']} coverage_gap={result['coverage_gap']}")
+    print(f"bandwidth_guard state={result['state']} usage_gb={result['usage_gb']} action={result['action']} coverage_gap={result['coverage_gap']}"
+          + (" no_samples_yet" if "no_samples_yet" in result else ""))
     metrics = collect_render_metrics(database_url, api_key, resource_id)
     print("render_metrics " + " ".join(f"{name}={state}" for name, state in metrics.items()))
     # Signal history rollup (ahn/signal_history.py): closed 15-minute windows of recorded reads, no network.
