@@ -5,16 +5,21 @@ reporting_sources, current_site_status or the recommendation:
 
 * P, provider: a change in the indicator of a connected official status feed, recorded where
   ``status_refresh.refresh_one`` stores a successful read.
-* A, AHN check: the transport outcome of a robots.txt read that already happens (after a lookup, or the
-  weekly seed-list read), recorded where ``access_profile.get_profile`` stores the result. A refused read
-  (401, 403, 429, 503) is never a failure here (D27). When the apex fails but its www alias answers (a
-  refusal, a redirect, a web page), the read counts as that answer, not as a failure.
+* A, AHN check: whether AHN could connect to the host from its one declared vantage. Two kinds of request
+  that already happen feed it: a robots.txt read (after a lookup, or the weekly seed-list read), recorded
+  where ``access_profile.get_profile`` stores the result, and a list-driven home-page check of ``site_probe``
+  (D67/D68, one GET of "/"), recorded where ``site_probe.measure`` stores its row (``record_home_check``,
+  ``source='home'``). A refused answer (401, 403, 429, 503, a bot challenge, a login wall) is never a failure
+  here (D27). When the apex fails but its www alias answers (a refusal, a redirect, a web page), the read
+  counts as that answer, not as a failure.
 
-Recording adds no request to any site: it is one statement next to the write the read already makes (the
-event row, plus the day's lookup-or-seed counter of that host), inside a savepoint, so a failed history
-write never changes or stops the read. Only curated hosts are recorded (``board_hosts``): the curated part
-of the seed list, the official-paths table and the status mappings. Hosts that were only looked up, hosts
-linked only by Statuspage discovery, and hosts that appear only in the seed list's Tranco block are not.
+Recording adds no request to any site: it is one statement next to the write the request already makes (the
+event row, plus the day's lookup, seed or home-check counter of that host), inside a savepoint, so a failed
+history write never changes or stops the request. Only listed hosts are recorded (``listed_hosts``): the
+curated part of the seed list, the official-paths table, the status mappings, the public home-page check list
+(ahn/probe_hosts.txt) and the consumer-paths table. Hosts that were only looked up, hosts linked only by
+Statuspage discovery, and hosts that appear only in the seed list's Tranco block are not, nor are IP
+literals or names outside the public suffix list.
 
 The rollup (``rollup``) runs in the 15-minute cleanup cron. It judges each closed 15-minute window once
 (``hold_decision``; a row that arrives later for a judged window follows that judgement), feeds the reads
@@ -120,6 +125,32 @@ def board_hosts() -> frozenset[str]:
     return frozenset(seeds | set(OFFICIAL_PATHS) | set(OFFICIAL_ACCESS) | set(SOURCES) | set(OFFICIAL_STATUS_PAGES))
 
 
+def _public_name(host: str) -> bool:
+    """A valid public hostname under a public suffix: no IP literal, no private or reserved name, no example host."""
+    from .lookup_signals import EXAMPLE_HOSTS
+    from .models import valid_host
+    from .service import aggregate_eligible_host
+
+    try:
+        valid_host(host)
+    except ValueError:
+        return False
+    return aggregate_eligible_host(host) and host not in EXAMPLE_HOSTS
+
+
+@functools.lru_cache(maxsize=1)
+def listed_hosts() -> frozenset[str]:
+    """Hosts whose AHN-check history is kept (D68): the curated hosts (``board_hosts``, as before), plus the public
+    home-page check list (ahn/probe_hosts.txt) and the consumer-paths table, each of those only when it is a public
+    name (no IP literal, no private or non-public suffix, no example host). Hosts that were only looked up are not
+    listed even when the home-page check measured them: their name on the board would say someone looked them up."""
+    from .official_paths import CONSUMER_PATHS
+    from .site_probe import curated_hosts
+
+    added = {host for host in set(curated_hosts()) | set(CONSUMER_PATHS) if _public_name(host)}
+    return frozenset(board_hosts()) | frozenset(added)
+
+
 def classify(robots_status: str | None, detail: str | None) -> str | None:
     """The A outcome of one robots.txt read (design 2.2); None when the read is not recorded at all."""
     if robots_status in RESPONDING_STATUSES:
@@ -166,21 +197,31 @@ def _savepoint(conn, write) -> bool:
         return False
 
 
-def _curated(site_host: str) -> bool:
+def _in(scope, site_host: str) -> bool:
     try:
-        return site_host in board_hosts()
+        return site_host in scope()
     except Exception as exc:  # never let the scope check break the read that called it
         LOG.warning("signal_history_scope_unavailable error=%s", type(exc).__name__)
         return False
 
 
+def _curated(site_host: str) -> bool:
+    """Provider changes are recorded for the curated hosts only, as before D68."""
+    return _in(board_hosts, site_host)
+
+
+def _listed(site_host: str) -> bool:
+    """AHN-check events (robots.txt reads and home-page checks) are recorded for the listed hosts (D68)."""
+    return _in(listed_hosts, site_host)
+
+
 def record_read(conn, site_host: str, profile: dict, read_at: datetime, trigger: str) -> bool:
-    """One event row for a robots.txt read of a curated host, and +1 on that host's daily lookup or seed counter.
+    """One event row for a robots.txt read of a listed host, and +1 on that host's daily lookup or seed counter.
 
     One statement. Whether the read followed a lookup is kept only as that daily count, never on the event.
     True when written. Never raises.
     """
-    if not _curated(site_host):
+    if not _listed(site_host):
         return False
     try:
         found = read_outcome(site_host, profile)
@@ -205,6 +246,78 @@ def record_read(conn, site_host: str, profile: dict, read_at: datetime, trigger:
                  seed_reads=robots_read_daily.seed_reads+EXCLUDED.seed_reads""",
             (site_host, read_at, read_host, status, str(detail)[:32] if detail else None, outcome,
              operator_id(), Jsonb(vantage()), 1 - seed, seed),
+        )
+        return True
+
+    return _savepoint(conn, write)
+
+
+# Home-page check outcomes (site_probe.OUTCOMES) as the history counts them. A refusal, a bot challenge, a rate limit, a
+# login wall and a 503 say the host answered and declined: never a failure (D27), and a reason to stop checking it for a
+# while (site_probe.REFUSED_EXCLUDE_DAYS), not a sign the site is down.
+HOME_ANSWERED = frozenset({"reachable", "redirected_same_host", "redirected_offsite", "other_status"})
+HOME_REFUSED = frozenset({"refused", "bot_challenge", "rate_limited", "login_wall"})
+# Response-time ranges of an answered home-page check: (upper bound in milliseconds, code). No exact time is kept.
+RT_BANDS = ((1000, "lt1s"), (3000, "1to3s"), (None, "3s_plus"))
+
+
+def rt_band(ms) -> str | None:
+    """The response-time range code of an answer that took ``ms`` milliseconds; None when there is no usable time."""
+    if not isinstance(ms, (int, float)) or isinstance(ms, bool) or ms < 0:
+        return None
+    for bound, code in RT_BANDS:
+        if bound is None or ms < bound:
+            return code
+    return None
+
+
+def home_outcome(outcome: str | None, http_status, label: str | None) -> tuple[str, str] | None:
+    """(a_outcome, detail) of one home-page check as the history records it, or None when it is not recorded (nothing
+    was measured: the robots.txt gate, a non-public address, a name the reader refused, or a limit)."""
+    if outcome in HOME_ANSWERED:
+        return "responding", (f"http_{http_status}" if isinstance(http_status, int) else outcome)
+    if outcome in HOME_REFUSED:
+        return "refused", (f"http_{http_status}" if isinstance(http_status, int) else outcome)
+    if outcome == "server_error":
+        if http_status == 503:
+            return "refused", "http_503"
+        return "server_error", (f"http_{http_status}" if isinstance(http_status, int) else "server_error")
+    if outcome == "unreachable":
+        if label in (None, "not_public", "invalid_input"):
+            return None
+        return _DETAIL_OUTCOMES.get(label, "other"), str(label)[:32]
+    return None
+
+
+def record_home_check(conn, site_host: str, read_host: str, read_at: datetime, outcome: str | None, http_status,
+                      label: str | None, ms) -> bool:
+    """One event row (``source='home'``) for a list-driven home-page check of a listed host, and +1 on that host's daily
+    home-check counter. The row says what the check got (a code, a range of response time), never the page, a header,
+    a path or an address. One statement, inside a savepoint; True when written. Never raises."""
+    if not _listed(site_host):
+        return False
+    try:
+        found = home_outcome(outcome, http_status, label)
+    except Exception:
+        found = None
+    if found is None:
+        return False
+    a_outcome, detail = found
+    band = rt_band(ms) if a_outcome in ("responding", "refused", "server_error") else None
+
+    def write():
+        from .provenance import operator_id, vantage
+
+        conn.execute(
+            """WITH event AS (
+                   INSERT INTO robots_read_events (site_host,read_at,read_host,robots_status,detail,a_outcome,
+                                                   origin_operator,vantage,source,rt_band)
+                   VALUES (%s,%s,%s,'home',%s,%s,%s,%s,'home',%s) RETURNING site_host,read_at)
+               INSERT INTO robots_read_daily (site_host,day,home_reads)
+               SELECT site_host,(read_at AT TIME ZONE 'UTC')::date,1 FROM event
+               ON CONFLICT (site_host,day) DO UPDATE SET home_reads=COALESCE(robots_read_daily.home_reads,0)+1""",
+            (site_host, read_at, read_host or site_host, detail[:32] if detail else None, a_outcome,
+             operator_id(), Jsonb(vantage()), band),
         )
         return True
 
@@ -768,6 +881,7 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
                                         "ahn_check": {"kind": row["kind"], "since": _iso(row["first_fail_at"]),
                                                       "confirmed_at": _iso(row["confirmed_at"]), "failed_reads": row["reads"],
                                                       "last_read_at": _iso(row["last_event_at"]), "baseline": state}}
+    _add_checked(conn, candidates, {row["site_host"]: row["first_fail_at"] for row in confirmed_open})
     for host, row in provider.items():
         entry = candidates.setdefault(host, {"site_host": host, "provider": None, "ahn_check": None})
         entry["provider"] = {"indicator": row["indicator"], "source_name": row["source_name"], "source_url": row["source_url"],
@@ -822,7 +936,8 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
         """SELECT COALESCE(sum(reads),0)::bigint AS reads,COALESCE(sum(responding),0)::bigint AS responding,
                   COALESCE(sum(failed),0)::bigint AS failed,COALESCE(sum(refused),0)::bigint AS refused,
                   COALESCE(sum(held),0)::bigint AS held,COALESCE(sum(lookup_reads),0)::bigint AS lookup,
-                  COALESCE(sum(seed_reads),0)::bigint AS seed,count(DISTINCT site_host) FILTER (WHERE reads > 0)::bigint AS hosts
+                  COALESCE(sum(seed_reads),0)::bigint AS seed,COALESCE(sum(home_reads),0)::bigint AS home,
+                  count(DISTINCT site_host) FILTER (WHERE reads > 0)::bigint AS hosts
            FROM robots_read_daily WHERE day >= %s""", (since_day,)).fetchone()
     pending = conn.execute("SELECT count(*)::bigint AS n FROM robots_read_events WHERE applied_at IS NULL").fetchone()["n"]
 
@@ -864,7 +979,7 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
                   "refused": int(reads["refused"]), "held": int(reads["held"]),
                   "refused_ratio": round(int(reads["refused"]) / total_reads, 4) if total_reads else None,
                   "failure_ratio": round(int(reads["failed"]) / total_reads, 4) if total_reads else None,
-                  "by_trigger": {"lookup": int(reads["lookup"]), "seed": int(reads["seed"])}, "not_yet_applied": int(pending)},
+                  "by_trigger": {"lookup": int(reads["lookup"]), "seed": int(reads["seed"]), "home": int(reads["home"])}, "not_yet_applied": int(pending)},
         "a_episodes": len(episodes_in), "a_episodes_by_kind": kinds, "a_ended_by": ended_by,
         "a_feed_connected": sum(1 for row in episodes_in if row["feed_connected"]),
         "a_matched_feed": len(matched),
@@ -873,11 +988,29 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
                                        and not row["any_provider_problem"] and row["reads"] <= 2),
         "a_unverifiable": sum(1 for row in episodes_in if not row["feed_connected"]),
         "p_episodes": sum(p_kinds.values()), "p_episodes_by_kind": p_kinds,
-        "notes": ["AHN check = AHN's own robots.txt reads from one declared vantage, updated only when a read happens.",
+        "notes": ["AHN check = AHN's own connection checks from one declared vantage (robots.txt reads and list-driven "
+                  "home-page checks), updated only when a check happens; 'checked' says which of the two failed.",
                   "Baseline and the empty ratio use today's baseline for past slots; provider periods ignore feed staleness.",
                   "A confirmed period with no read for 48 hours is counted as stale, not as a candidate.",
                   "Held-window counts come from raw events, kept 14 days; reads by trigger are daily totals."],
     }
+
+
+def _add_checked(conn, candidates: dict, started: dict) -> None:
+    """Add ``checked`` to each AHN-check candidate: which requests failed since its period began, ``robots_txt`` and/or
+    ``home_page`` (D68). Read from the raw events (kept 14 days); a candidate whose failures have aged out keeps none."""
+    hosts = [host for host, entry in candidates.items() if entry["ahn_check"] and host in started]
+    if not hosts:
+        return
+    rows = conn.execute(
+        """SELECT e.site_host,bool_or(e.source IS NULL) AS robots,bool_or(e.source='home') AS home
+           FROM robots_read_events e JOIN unnest(%s::text[],%s::timestamptz[]) AS s(site_host,since) USING (site_host)
+           WHERE e.read_at >= s.since AND e.a_outcome=ANY(%s) GROUP BY e.site_host""",
+        (hosts, [started[host] for host in hosts], sorted(FAILURE_OUTCOMES))).fetchall()
+    for row in rows:
+        checked = [name for name, hit in (("home_page", row["home"]), ("robots_txt", row["robots"])) if hit]
+        if checked:
+            candidates[row["site_host"]]["ahn_check"]["checked"] = checked
 
 
 def _thresholds_view(t: Thresholds) -> dict:

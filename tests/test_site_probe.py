@@ -128,23 +128,29 @@ def previous(refusals=0, failures=0):
     return {"consecutive_refusals": refusals, "consecutive_failures": failures}
 
 
-def test_e4_a_refusal_waits_72_hours_doubles_and_stops_at_7_days():
-    waits = []
+def test_e4_a_refusal_takes_the_host_off_the_list_for_7_days_flat():
+    # D68: a refusal, challenge, rate limit, login wall or 503 is not a failure; the host is simply not asked for a week.
     prev = None
-    for _ in range(5):
-        wait, refusals, failures = site_probe.schedule("bot_challenge", prev, None)
-        waits.append(wait)
+    for outcome in ("bot_challenge", "refused", "rate_limited", "login_wall", "bot_challenge"):
+        wait, refusals, failures = site_probe.schedule(outcome, prev, None)
+        assert wait == timedelta(days=site_probe.REFUSED_EXCLUDE_DAYS) == timedelta(days=7)
+        assert failures == 0
         prev = previous(refusals, failures)
-    assert waits[0] == timedelta(hours=72) and waits[1] == timedelta(hours=144) and waits[2] == timedelta(days=7)
-    assert max(waits) == timedelta(days=7)
+    assert prev["consecutive_refusals"] == 3  # bot_challenge and refused still feed the refusal count
+    wait, refusals, failures = site_probe.schedule("server_error", previous(0, 2), None, 503)
+    assert (wait, failures) == (timedelta(days=7), 0)
+    # a 500 is a failure, not a refusal
+    assert site_probe.schedule("server_error", None, None, 500)[0] == timedelta(hours=6)
 
 
-def test_e4_retry_after_longer_than_the_backoff_is_followed_up_to_7_days():
-    assert site_probe.schedule("rate_limited", None, 5 * 86400)[0] == timedelta(days=5)
+def test_e4_retry_after_neither_lengthens_nor_shortens_the_7_days():
+    assert site_probe.schedule("rate_limited", None, 5 * 86400)[0] == timedelta(days=7)
     assert site_probe.schedule("rate_limited", None, 40 * 86400)[0] == timedelta(days=7)
-    assert site_probe.schedule("refused", None, 10 * 3600)[0] == timedelta(hours=72)
+    assert site_probe.schedule("rate_limited", None, 60)[0] == timedelta(days=7)
+    assert site_probe.schedule("refused", None, 10 * 3600)[0] == timedelta(days=7)
     assert site_probe._retry_after_seconds("120", NOW) == 120
     assert site_probe._retry_after_seconds("Sun, 01 Nov 2026 14:00:00 GMT", NOW) == 7200
+    assert site_probe._retry_after_seconds(str(40 * 86400), NOW) == 7 * 86400
 
 
 def test_failing_hosts_are_checked_again_after_6_to_24_hours_and_a_success_resets():
@@ -451,3 +457,80 @@ def test_home_gate_follows_the_same_interpreter_as_the_other_paths(status, body,
     gate = access_profile.home_gate(status, body, detail, "example.com")
     assert (gate["allowed"], gate["reason"]) == (allowed, reason)
     assert gate["read_host"] == "example.com" and (gate["rule"] is None or len(gate["rule"]) <= 80)
+
+
+# --- D68: what the history records of a home-page check, and which answers are asked again ------------------------------------
+
+from ahn import signal_history  # noqa: E402
+
+NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def answer(status=None, label=None, headers=None):
+    return {"label": label, "status": status, "headers": headers or {}, "cookies": [], "body": b"<html>ok</html>",
+            "complete": True, "ms": 80, "bytes_read": 15}
+
+
+@pytest.mark.parametrize("outcome,status,label,expected", [
+    ("reachable", 200, None, ("responding", "http_200")),
+    ("other_status", 404, None, ("responding", "http_404")),
+    ("redirected_offsite", 302, None, ("responding", "http_302")),
+    ("refused", 403, None, ("refused", "http_403")),
+    ("rate_limited", 429, None, ("refused", "http_429")),
+    ("bot_challenge", 403, None, ("refused", "http_403")),
+    ("login_wall", 200, None, ("refused", "http_200")),
+    ("server_error", 503, None, ("refused", "http_503")),
+    ("server_error", 500, None, ("server_error", "http_500")),
+    ("unreachable", None, "dns_failed", ("no_response:dns", "dns_failed")),
+    ("unreachable", None, "connect_timeout", ("no_response:connect", "connect_timeout")),
+    ("unreachable", None, "read_timeout", ("no_response:timeout", "read_timeout")),
+    ("unreachable", None, "tls_error", ("tls_error", "tls_error")),
+    ("unreachable", None, "something_new", ("other", "something_new")),
+    ("unreachable", None, "not_public", None),
+    ("unreachable", None, "invalid_input", None),
+    ("unreachable", None, None, None),
+    ("not_measured", None, None, None),
+    (None, None, None, None),
+])
+def test_d68_home_outcome_maps_every_check_result_to_codes_and_records_nothing_unmeasured(outcome, status, label, expected):
+    assert signal_history.home_outcome(outcome, status, label) == expected
+
+
+def test_d68_every_refusal_outcome_is_counted_as_refused_never_as_a_failure():
+    assert set(site_probe.REFUSAL_OUTCOMES) <= signal_history.HOME_REFUSED
+    for outcome in signal_history.HOME_REFUSED:
+        assert signal_history.home_outcome(outcome, 403, None)[0] not in signal_history.FAILURE_OUTCOMES
+    assert set(site_probe.OUTCOMES) >= signal_history.HOME_ANSWERED | signal_history.HOME_REFUSED | {"server_error", "unreachable"}
+
+
+@pytest.mark.parametrize("ms,band", [(0, "lt1s"), (999, "lt1s"), (999.9, "lt1s"), (1000, "1to3s"), (2999, "1to3s"),
+                                     (3000, "3s_plus"), (120000, "3s_plus"), (-1, None), (None, None), (True, None),
+                                     ("80", None)])
+def test_d68_rt_band_boundaries_and_unusable_times(ms, band):
+    assert signal_history.rt_band(ms) == band
+
+
+@pytest.mark.parametrize("fetched,expected", [
+    (answer(status=500), True), (answer(status=502), True), (answer(status=504), True),
+    (answer(status=503), False),
+    (answer(label="connect_error"), True), (answer(label="connect_timeout"), True), (answer(label="dns_failed"), True),
+    (answer(label="read_timeout"), True), (answer(label="tls_error"), True),
+    (answer(label="not_public"), False), (answer(label="invalid_input"), False),
+    (answer(status=200), False), (answer(status=404), False), (answer(status=403), False), (answer(status=429), False),
+    (answer(status=403, headers={"cf-mitigated": "challenge"}), False),
+])
+def test_d68_transient_asks_again_only_after_a_5xx_other_than_503_or_no_connection(fetched, expected):
+    assert site_probe.transient(fetched, site_probe.classify("probe-example.org", fetched, NOW)) is expected
+
+
+def test_d68_listed_hosts_take_public_names_from_the_check_list_and_the_consumer_paths_only(monkeypatch):
+    from ahn import official_paths
+    monkeypatch.setattr(site_probe, "curated_hosts", lambda: ("listed-probe.com", "10.0.0.1", "intranet.local", "localhost"))
+    monkeypatch.setattr(official_paths, "CONSUMER_PATHS", {"consumer-host.com": {}, "192.168.0.1": {}, "box.internal": {}})
+    monkeypatch.setattr(signal_history, "board_hosts", lambda: frozenset({"github.com"}))
+    signal_history.listed_hosts.cache_clear()
+    try:
+        listed = signal_history.listed_hosts()
+    finally:
+        signal_history.listed_hosts.cache_clear()
+    assert listed == frozenset({"github.com", "listed-probe.com", "consumer-host.com"})

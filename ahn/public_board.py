@@ -10,7 +10,7 @@ What it lists:
 * Provider statements: curated hosts whose own status page currently makes the lookup answer wait, and only while
   that statement carries an update time no older than a week (``signal_history.board_provider``). The word "outage"
   appears only as the provider's own indicator, quoted.
-* AHN check (robots.txt reads): a separate switch, ``AHN_PUBLIC_BOARD_AHN_CHECK``, off by default. Off, AHN-check-only
+* AHN check (robots.txt reads and home-page checks, D68): a separate switch, ``AHN_PUBLIC_BOARD_AHN_CHECK``, off by default. Off, AHN-check-only
   hosts are not listed, no AHN-check field appears, and the 7-day numbers leave the AHN-check counts out.
 * Never: refused reads (401, 403, 429, 503), reports, lookup counts, or who looked a host up.
 """
@@ -37,8 +37,9 @@ LEGEND = {
                 "statement would make an AHN lookup answer wait and was updated by the provider within 7 days. A line with "
                 "source_kind history_atom and indicator null is an open incident announced in the page's public incident "
                 "history: the provider gives no severity level there, and none is made up.",
-    "ahn_check": "AHN's own robots.txt reads from one datacenter location, updated only when a read happens; not a "
-                 "report from agents and not a verdict on the site.",
+    "ahn_check": "AHN's own connection checks (robots.txt reads and one home-page request) from one datacenter location, "
+                 "updated only when a check happens: AHN could not connect from this point. Not a report from agents and "
+                 "not a verdict that the site is down. 'checked' names which of the two failed.",
     "not_listed": "Refused reads (401, 403, 429, 503), agent reports and lookup counts are never listed here.",
 }
 NOT_LISTED_NOTE = "A host missing from this list is not known to be working."
@@ -55,13 +56,15 @@ def policy_sentences(ahn_check: bool) -> dict[str, tuple[str, str]]:
     """The policy sentence this switch replaces, per language, and its replacement (checked by test_policy_coverage)."""
     if ahn_check:
         en = ("The operator sees them on a private dashboard. A public page (“Site problems right now”, /en/now, /ko/now "
-              "and /v1/now) also shows, for curated hosts only, the hosts whose robots.txt we repeatedly could not read "
-              "(a DNS, connection, TLS, timeout or server (5xx) error) from one datacenter location, labelled as AHN's own "
-              "check, with the time of the last read, next to the provider statements described under provider status, and "
+              "and /v1/now) also shows, for the hosts whose history we keep, the hosts we repeatedly could not connect to "
+              "when reading robots.txt or checking the home page (a DNS, connection, TLS, timeout or server (5xx) error) "
+              "from one datacenter location, labelled as AHN's own check (AHN could not connect from this point, not a "
+              "verdict that the site is down), with which of the two failed and the time of the last check, next to the provider statements described under provider status, and "
               "7-day totals that name no host. Refused reads are never shown there. Lookup answers do not show this history.")
-        ko = ("운영자는 비공개 화면에서 봅니다. 공개 페이지(“지금 문제가 있는 사이트”, /en/now, /ko/now, /v1/now)에는 큐레이션 "
-              "호스트에 한해, 데이터센터 한 곳에서 robots.txt 를 거듭 읽지 못한(DNS·연결·TLS·시간 초과·서버 오류(5xx)) 호스트를 "
-              "AHN 자체 점검으로 표시하고 마지막 읽기 시각과 함께, 업체 상태에서 설명한 업체 발표와 나란히, 호스트명 없는 7일 합계와 "
+        ko = ("운영자는 비공개 화면에서 봅니다. 공개 페이지(“지금 문제가 있는 사이트”, /en/now, /ko/now, /v1/now)에는 이력을 "
+              "두는 호스트에 한해, 데이터센터 한 곳에서 robots.txt 읽기나 홈 페이지 확인 때 거듭 접속하지 못한(DNS·연결·TLS·시간 "
+              "초과·서버 오류(5xx)) 호스트를 AHN 자체 점검(AHN 이 이 지점에서 접속하지 못함이며 사이트가 다운됐다는 판정이 아님)으로 "
+              "표시하고 둘 중 무엇이 실패했는지, 마지막 확인 시각과 함께, 업체 상태에서 설명한 업체 발표와 나란히, 호스트명 없는 7일 합계와 "
               "함께 보여 줍니다. 거절된 읽기는 그곳에 나오지 않습니다. 조회 응답에는 이 이력이 나오지 않습니다.")
     else:
         en = ("Only the operator sees them, on a private dashboard; they are not shown on public pages or in lookup answers. "
@@ -81,8 +84,9 @@ def policy_sentences(ahn_check: bool) -> dict[str, tuple[str, str]]:
 
 def llms_section(ahn_check: bool) -> str:
     what = ("curated hosts whose own status page reports a problem (quoted, updated by the provider within 7 days), and "
-            "hosts whose robots.txt AHN could not read (DNS, connection, TLS, timeout or 5xx) on repeated attempts from "
-            "one datacenter; AHN checks are not reports from agents and not a verdict on the site"
+            "hosts AHN could not connect to (robots.txt read or home-page check: DNS, connection, TLS, timeout or 5xx) on "
+            "repeated attempts from one datacenter; AHN could not connect from this point, which is not a report from "
+            "agents and not a verdict that the site is down"
             if ahn_check else
             "curated hosts whose own status page reports a problem, quoted with its source and update time, listed only "
             "while the provider updated it within 7 days (a line with `source_kind: history_atom` and `indicator: null` is an "
@@ -133,6 +137,8 @@ def snapshot(board: dict, *, ahn_check: bool, now: datetime) -> dict:
             check = entry["ahn_check"]
             line["ahn_check"] = {"result": check["kind"], "since": check["since"], "last_read_at": check["last_read_at"],
                                  "failed_reads": check["failed_reads"]}
+            if check.get("checked"):
+                line["ahn_check"]["checked"] = check["checked"]
         (maintenance if indicator == "maintenance" else problems).append(line)
     coverage = {"provider_feeds_read": board["coverage"]["registered_feeds_curated"],
                 "feed_scope": "looked_up_hosts_only", "curated_hosts": board["coverage"]["target_hosts"]}

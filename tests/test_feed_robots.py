@@ -413,7 +413,8 @@ VERB_SITES = {
     ('site_probe.py', '_fetch_home', 'request'): 1,
     ('site_probe.py', 'fingerprint', 'get'): 1,
     ('site_probe.py', 'for_lookup', 'get'): 1,
-    ('site_probe.py', 'measure', 'get'): 1,
+    ('site_probe.py', 'measure', 'get'): 3,  # dict lookups (D68 retry reads fetched['label'])
+    ('site_probe.py', 'transient', 'get'): 1,  # dict lookup
     ('site_probe.py', 'run_cron', 'get'): 1,
     ('site_probe.py', '_start', 'get'): 1,
     ('site_probe.py', 'view', 'get'): 1,
