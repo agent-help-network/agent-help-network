@@ -341,7 +341,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # (before D59: f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64), then again for D67, which adds only
     # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85).
     # and once more for D69, which adds only the optional `next_action.status_url` (before D69: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46"
+    # and for D72, which adds only the optional `official_status_page.requires_sign_in` (before D72: a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46).
+    assert hashlib.sha256(blob.encode()).hexdigest() == "41854599ac33270596c23134d3611baba7da548f152bdc3c43de6aefd723ae46"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

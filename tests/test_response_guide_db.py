@@ -138,3 +138,19 @@ def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_
     with TestClient(create_app(off)) as client:
         old = client.get("/v1/incidents/check", params={**params, "task_step": "status_check"}).json()
     assert old["summary_line"] == plain["summary_line"] and "status_url" not in old["next_action"]
+
+
+def test_d72_only_a_curated_sign_in_host_carries_requires_sign_in(monkeypatch):
+    settings = prepare(monkeypatch, guide=True)
+    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
+    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "other-example.org", ("Other Status", "https://status.other-example.org/"))
+    monkeypatch.setattr(service, "SIGN_IN_STATUS_PAGES", frozenset({"plain-example.org"}))
+    with TestClient(create_app(settings)) as client:
+        signed = client.get("/v1/incidents/check", params={"site_host": "plain-example.org", "task_step": "status_check"})
+        open_ = client.get("/v1/incidents/check", params={"site_host": "other-example.org", "task_step": "status_check"})
+    assert signed.status_code == open_.status_code == 200
+    CheckResponse(**signed.json())
+    assert signed.json()["official_status_page"]["requires_sign_in"] is True
+    assert signed.json()["summary_line"] == STATUS_ROWS["T3-S"]
+    assert "requires_sign_in" not in open_.json()["official_status_page"]
+    assert open_.json()["summary_line"] == STATUS_ROWS["T3"]

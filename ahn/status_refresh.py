@@ -779,6 +779,7 @@ ACTIVE_ITEM_TIME_FEEDS = frozenset(source.api_url for source in SOURCES.values()
 OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "netflix.com": ("Netflix Service Status", "https://help.netflix.com/en/is-netflix-down"),
     "webex.com": ("Webex Global Service Status", "https://status.webex.com/"),
+    "workday.com": ("Workday Community Status", "https://community.workday.com/trust/status"),
     "adobe.com": ("Adobe Status", "https://status.adobe.com/"),
     "cdn77.org": ("CDN77 Status", "https://client.cdn77.com/support/status"),
     "fastly.net": ("Fastly Status", "https://www.fastlystatus.com/"),
@@ -1154,6 +1155,10 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "yammer.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
     "zearn.org": ("Zearn Status", "https://status.zearn.org/"),
 }
+# D72: sites in OFFICIAL_STATUS_PAGES whose listed status page needs the user's own sign-in. The service says so beside the link
+# (official_status_page.requires_sign_in) so an agent hands the page to its user instead of searching for it. Members are curated
+# from publisher-owned documentation; every member must be a key of OFFICIAL_STATUS_PAGES.
+SIGN_IN_STATUS_PAGES: frozenset[str] = frozenset({"workday.com"})
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 # Robots.txt decision before every feed request (D50, ahn/feed_robots.py). The four places that read a feed (the
 # cron's refresh_batch, a lookup's background refresh_one, the first discovery of a status.<host> page and the two
