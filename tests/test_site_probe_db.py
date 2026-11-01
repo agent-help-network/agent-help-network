@@ -349,6 +349,7 @@ def test_a_first_lookup_with_a_pending_profile_shows_the_profiles_wait_on_the_pe
     result = service.check(db, HOST)
     profile_wait = result["access_profile"]["retry_after_seconds"]
     assert result["access_profile"]["freshness"] == "pending" and isinstance(profile_wait, int)
+    assert profile_wait != 60                                                            # else the test would pass by the default
     assert result["ahn_check"]["status"] == "pending" and result["ahn_check"]["retry_after_seconds"] == profile_wait
 
 
@@ -358,6 +359,9 @@ def test_the_pending_check_waits_60_seconds_when_the_profile_is_fresh_or_has_no_
     assert site_probe._profile_retry({"freshness": "pending"}) == 60
     assert site_probe._profile_retry(None) == 60
     assert site_probe._profile_retry({"freshness": "pending", "retry_after_seconds": 5}) == 5
+    assert site_probe._profile_retry({"retry_after_seconds": 5}) == 60                   # no freshness key: no KeyError
+    assert site_probe._profile_retry({"freshness": "pending", "retry_after_seconds": 0}) == 1
+    assert site_probe._profile_retry({"freshness": "pending", "retry_after_seconds": 10 ** 6}) == 3600
 
 
 def test_a_pending_check_next_to_a_fresh_profile_still_shows_60(db, monkeypatch):
@@ -563,6 +567,281 @@ def test_b3_whatever_the_measurement_the_recommendation_and_next_steps_do_not_ch
         on = service.check(db, HOST, **kw)
         assert on["ahn_check"]["status"] == "measured"
         assert strip(on) == expected
+
+
+# --- following the redirect to the host's own www name (D67) ----------------------------------------------------------------------
+
+WWW = "www." + HOST
+TO_WWW = {"location": "https://" + WWW + "/"}
+
+
+class Routes:
+    """site_probe.fetch_home per host: ``Routes({host: Home(...)})``; every host asked is recorded in order."""
+
+    def __init__(self, by_host):
+        self.by_host, self.calls = by_host, []
+
+    def __call__(self, host):
+        self.calls.append(host)
+        return self.by_host[host](host)
+
+
+def www_ready(db, monkeypatch, robots=ALLOW):
+    """The apex and its www name both have a fresh profile (so a fresh home_gate)."""
+    read_profile(db, monkeypatch)
+    read_profile(db, monkeypatch, host=WWW, robots=robots)
+
+
+def one_row(db):
+    row, = rows(db, "SELECT * FROM site_probe")
+    return row
+
+
+def idle(host=HOST):
+    """Wait until the lookup's check thread has finished (so nothing runs on into the next step or test)."""
+    deadline = time.monotonic() + 5
+    while host in site_probe._INFLIGHT and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert host not in site_probe._INFLIGHT
+
+
+def test_www_follow_a_fresh_allowing_verdict_makes_a_second_request_and_stores_the_second_answer(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(status=200)})
+    row = site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    stored = one_row(db)
+    assert stored["outcome"] == row["outcome"] == "reachable" and stored["http_status"] == 200
+    assert stored["read_host"] == WWW and stored["redirect"] == {"followed_www": True, "to_relation": "www_alias", "path_class": "other"}
+    shown = AhnCheck(**site_probe.view(stored, datetime.now(timezone.utc)))
+    assert shown.outcome == "reachable" and shown.redirect.followed_www is True
+
+
+def test_www_follow_is_also_made_by_a_paced_check(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "set_O", reader=routes, paced=True)
+    assert routes.calls == [HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_without_a_www_profile_keeps_the_redirect_queues_the_profile_and_follows_next_time(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST]
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == HOST and stored["redirect"]["followed_www"] is False
+    assert [(r["kind"], r["site_host"]) for r in rows(db, "SELECT kind,site_host FROM background_reads")] == [("access_profile", WWW)]
+    monkeypatch.setattr(background_reads, "read_profile_file", Profiles())
+    background_reads.process_due(db, limit=5)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM site_probe")
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_reserves_the_www_read_30_minutes_before_the_next_check_and_follows_again_a_day_later(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    stored = one_row(db)
+    job, = rows(db, "SELECT kind,site_host,not_before FROM background_reads")
+    assert (job["kind"], job["site_host"]) == ("access_profile", WWW)
+    assert job["not_before"] == stored["next_due_at"] - timedelta(minutes=site_probe.WWW_READ_LEAD_MINUTES)
+    # the queue holds it (it is not dropped as an old job) until it is due
+    assert background_reads.process_due(db)["claimed"] == 0 and len(rows(db, "SELECT * FROM background_reads")) == 1
+    read_at = stored["next_due_at"] - timedelta(minutes=30)                    # what the worker does at that time
+    access_profile.get_profile(db, WWW, now=read_at, reader=Profiles(), max_age_hours=background_reads.ACCESS_PROFILE_JOB_MAX_AGE_HOURS)
+    later = stored["next_due_at"] + timedelta(minutes=1)
+    read_profile(db, monkeypatch, now=later)                                   # the apex profile is read again by lookups
+    row = site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert row is not None and routes.calls == [HOST, WWW, HOST, WWW]
+    assert one_row(db)["outcome"] == "reachable" and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_a_failed_reserved_read_gives_the_redirect_for_6_hours_and_queues_the_read_again(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+
+    def broken(site_host, path, *, cap_bytes, **_):
+        return ("error", None, "connect_timeout")
+    monkeypatch.setattr(background_reads, "read_profile_file", broken)
+    with connect(db) as conn:
+        conn.execute("UPDATE background_reads SET not_before=now()")
+    assert background_reads.process_due(db)["done"] == 1                       # the read ran and failed: the old verdict stays
+    later = one_row(db)["next_due_at"] + timedelta(minutes=1)
+    read_profile(db, monkeypatch, now=later)
+    row = site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert row is not None and routes.calls == [HOST, WWW, HOST]               # measured as usual, one request
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == HOST and stored["redirect"]["followed_www"] is False
+    assert stored["next_due_at"] - stored["probed_at"] == timedelta(hours=site_probe.MIN_GAP_HOURS)
+    assert [r["site_host"] for r in rows(db, "SELECT site_host FROM background_reads WHERE kind='access_profile'")] == [WWW]
+    # the same pass again (a cron every 5 minutes) does not measure the host again: its next check is in the future
+    assert site_probe.measure(db, HOST, "set_O", reader=routes, paced=True, now=later + timedelta(minutes=5)) is None
+    assert routes.calls == [HOST, WWW, HOST]
+
+
+def test_www_follow_an_apex_whose_robots_txt_already_lives_on_www_reserves_nothing(db, monkeypatch):
+    def www_reads(site_host, path, *, cap_bytes, **_):
+        if site_host == HOST:
+            return ("error", None, "connect_timeout")
+        return ("ok", ALLOW, "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+    access_profile.get_profile(db, HOST, now=datetime.now(timezone.utc), reader=www_reads)
+    routes = Routes({WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [WWW] and one_row(db)["read_host"] == WWW
+    assert rows(db, "SELECT * FROM background_reads") == []
+
+
+def test_reservations_for_later_do_not_lengthen_the_wait_of_a_new_read(db, monkeypatch):
+    monkeypatch.setattr(background_reads, "worker_running", lambda: True)
+    later = datetime.now(timezone.utc) + timedelta(hours=20)
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", f"reserved{i}-example.org") for i in range(400)], not_before=later)
+        background_reads.enqueue(conn, [("access_profile", "new-example.org")])
+        wait = background_reads.estimate_wait(conn, "access_profile", "new-example.org")
+    import math
+    alone = int(min(background_reads.RETRY_AFTER_MAX, max(background_reads.RETRY_AFTER_MIN,
+                                                           math.ceil(background_reads.JOB_SECONDS / background_reads.WORKER_THREADS))))
+    assert wait == alone < background_reads.RETRY_AFTER_MAX
+
+
+def test_www_read_wanted_now_pulls_a_later_reservation_forward(db, monkeypatch):
+    soon_not = datetime.now(timezone.utc) + timedelta(hours=20)
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=soon_not)
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=soon_not + timedelta(hours=1))   # keeps the earlier
+        job, = conn.execute("SELECT not_before FROM background_reads").fetchall()
+        assert job["not_before"] == soon_not
+        background_reads.enqueue(conn, [("access_profile", WWW)])                                              # plain: unchanged
+        assert conn.execute("SELECT not_before FROM background_reads").fetchone()["not_before"] == soon_not
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=datetime.now(timezone.utc))
+        assert conn.execute("SELECT not_before FROM background_reads").fetchone()["not_before"] < soon_not
+
+
+def test_www_follow_a_host_without_a_www_verdict_is_due_again_in_6_hours(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    stored = one_row(db)
+    assert stored["next_due_at"] - stored["probed_at"] == timedelta(hours=site_probe.MIN_GAP_HOURS)
+    monkeypatch.setattr(background_reads, "read_profile_file", Profiles())
+    background_reads.process_due(db, limit=5)                                  # the queued www profile read
+    later = datetime.now(timezone.utc) + timedelta(hours=6, minutes=1)
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert routes.calls == [HOST, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_a_www_name_that_is_not_public_keeps_the_redirect_result(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(label="not_public")})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == HOST and stored["redirect"]["followed_www"] is False
+
+
+def test_www_follow_is_not_made_when_the_www_robots_txt_disallows_the_home_page(db, monkeypatch):
+    www_ready(db, monkeypatch, robots=DENY_HOME)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST]
+    assert one_row(db)["outcome"] == "redirected_same_host" and rows(db, "SELECT * FROM background_reads") == []
+
+
+def test_www_follow_is_not_made_when_the_www_verdict_is_over_24_hours_old(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    read_profile(db, monkeypatch, host=WWW, now=datetime.now(timezone.utc) - timedelta(hours=30))
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST] and [r["site_host"] for r in rows(db, "SELECT site_host FROM background_reads")] == [WWW]
+
+
+@pytest.mark.parametrize("location", [
+    "https://" + HOST + "/en/",                 # same_host
+    "/en/",                                     # same_host, relative
+    "https://shop." + HOST + "/",               # same_site
+    "https://other-example.net/",               # other_site
+    "https://www.other-example.net/",           # other_site
+    "https://" + WWW + ":8443/",                # not the https port
+    "http://" + WWW + "/",                      # not https
+    "https://user@" + WWW + "/",                # credentials
+    "https://login." + HOST + "/",              # not the www name
+])
+def test_www_follow_only_for_a_redirect_to_exactly_www_dot_the_host(db, monkeypatch, location):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=302, headers={"location": location}), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST]
+    assert one_row(db)["read_host"] == HOST and one_row(db)["redirect"]["followed_www"] is False
+
+
+def test_www_follow_a_www_name_does_not_follow_to_its_own_www(db, monkeypatch):
+    read_profile(db, monkeypatch, host=WWW)
+    routes = Routes({WWW: Home(status=301, headers={"location": "https://www." + WWW + "/"}), "www." + WWW: Home()})
+    site_probe.measure(db, WWW, "lookup", reader=routes, paced=False)
+    assert routes.calls == [WWW]
+
+
+def test_www_follow_a_challenge_from_the_www_name_is_recorded_with_its_vendor(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(status=403, headers={"cf-mitigated": "challenge"})})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    stored = one_row(db)
+    assert routes.calls == [HOST, WWW]
+    assert stored["outcome"] == "bot_challenge" and stored["http_status"] == 403 and stored["bot_vendor"] == "cloudflare"
+    assert stored["redirect"]["followed_www"] is True and stored["next_due_at"] > stored["probed_at"] + timedelta(hours=24)
+
+
+def test_www_follow_a_second_redirect_is_recorded_and_not_followed(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(status=302, headers={"location": "https://" + WWW + "/en/"})})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == WWW
+    assert stored["redirect"] == {"followed_www": True, "to_relation": "same_host", "path_class": "locale"}
+
+
+def test_www_follow_a_failing_www_name_is_what_the_check_reports(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(label="connect_timeout")})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert one_row(db)["outcome"] == "unreachable" and one_row(db)["read_host"] == WWW
+
+
+def test_www_follow_is_skipped_when_too_little_of_the_lookups_time_is_left(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    soon = site_probe._clock() + site_probe.SECOND_REQUEST_MIN_SECONDS / 2
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, deadline=soon)
+    assert routes.calls == [HOST] and one_row(db)["outcome"] == "redirected_same_host"
+    with connect(db) as conn:
+        conn.execute("DELETE FROM site_probe")
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, deadline=site_probe._clock() + 3.0)
+    assert routes.calls == [HOST, HOST, WWW]
+
+
+def test_www_follow_a_lookup_shows_the_www_answer_and_leaves_the_recommendation_alone(db, monkeypatch):
+    warm(db, monkeypatch)
+    monkeypatch.delenv("AHN_SITE_PROBE")
+    off = [(kw, strip(service.check(db, HOST, **kw))) for kw in ({}, {"error_class": "access_denied"})]
+    monkeypatch.setenv("AHN_SITE_PROBE", "1")
+    read_profile(db, monkeypatch, host=WWW)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(status=403, headers={"cf-mitigated": "challenge"})})
+    monkeypatch.setattr(site_probe, "fetch_home", routes)
+    for kw, expected in off:
+        with connect(db) as conn:
+            conn.execute("DELETE FROM site_probe")
+        on = service.check(db, HOST, **kw)
+        idle()
+        shown = on["ahn_check"]
+        assert shown["status"] == "measured" and shown["outcome"] == "bot_challenge" and shown["redirect"]["followed_www"] is True
+        assert strip(on) == expected
+    assert routes.calls == [HOST, WWW] * 2
 
 
 # --- today's list, the cron pass, the automatic stop ---------------------------------------------------------------------------

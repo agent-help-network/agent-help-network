@@ -8,12 +8,25 @@ redirect path.
 Manners (docs/decisions.md D67; the privacy policy repeats the numbers and tests/test_policy_coverage.py checks them):
 
 * the request carries our User-Agent, a Host header and an Accept header and nothing else: no cookies, no Referer, no
-  scripts; one request per check; no redirect is followed (an apex that sends "/" to its www address is recorded);
+  scripts; one request per check, except that a redirect from "/" to the host's own www name is followed once (two
+  requests at most, see below); every other redirect is recorded and not followed;
 * the robots.txt verdict for "/" was decided in memory when the profile was read (access_profile.home_gate) and is
   used only while that read is under 24 hours old; a refused, unreadable or disallowing robots.txt means no request;
 * one check per host per 6 hours at most, a refusal or challenge is not asked again for 72 hours (doubling to 7 days),
   a failing host is checked again after 6 to 24 hours; 60 checks an hour and 800 a day in all, 300 a day and 40 an
   hour started by lookups; all checks stop while the bandwidth guard is at its warning level or has no recent record;
+* the one redirect followed: the first answer is a redirect whose Location host is exactly ``www.<host>`` and the www
+  name's own robots.txt verdict for "/" (its home_gate, read the same way, under 24 hours old) allows the home page for
+  us. With no fresh verdict the www profile read is queued and this check keeps the redirect as its result; with a
+  disallowing verdict, or too little time left in a lookup's 3 seconds, the second request is not made; a paced check
+  (queue, cron) waits the same pause before it as before any other request. A check is never held back for the www
+  verdict. When a check follows, the www profile read is reserved in the queue to run 30 minutes before the check is
+  next due, so the verdict is fresh when it is needed; a check that could not follow for want of a fresh verdict keeps
+  the redirect as its result, queues the read now and is due again after MIN_GAP_HOURS (so a failing read retries every
+  few hours and nothing stays stuck for days). The hourly and daily limits count checks, and a check is up to two
+  requests, so the number of requests is at most twice those limits.
+  What is kept is the second answer's codes, and the redirect record says ``followed_www: true``. A second redirect is
+  not followed;
 * a check never solves, answers or repeats a human-verification step, never opens a sign-in page and never submits a form.
 
 Where it runs: the background queue (kind ``site_probe``, drained by the web worker and the 5-minute cron), the cron's
@@ -86,7 +99,9 @@ BODY_BUDGET_SECONDS = 5.0
 WALL_SECONDS = ap.WALL_SECONDS
 REQUEST_WORST_SECONDS = WALL_SECONDS
 PAUSE_SECONDS = 2.0
-PROBE_WORST_SECONDS = REQUEST_WORST_SECONDS + PAUSE_SECONDS  # one request per check
+PROBE_WORST_SECONDS = 2 * REQUEST_WORST_SECONDS + PAUSE_SECONDS  # two requests at most per check (the www redirect)
+WWW_READ_LEAD_MINUTES = 30        # a followed host's www profile read is reserved this long before its next check
+SECOND_REQUEST_MIN_SECONDS = 1.5   # a lookup's second request (the www redirect) starts only with at least this much of its wait left
 PENDING_RETRY_SECONDS = 60   # shown on a pending view: ask again after this long, once
 PROBE_JOB_SECONDS = 3        # the queue's wait estimate for one check
 CRON_SAFE_SECONDS = 280.0
@@ -189,7 +204,7 @@ def _fetch_home(site_host: str, wall: "ap.WallClock") -> dict:
     read_error, invalid_input), ``status``, ``headers`` (tracked names only, values cut to 200 characters), ``cookies``
     (names), ``body`` (at most 16 KB, 32 KB for a non-2xx or challenge-header response), ``complete`` (the whole body
     fitted), ``ms`` (until the response headers arrived) and ``bytes_read``. The request carries Host, User-Agent and
-    Accept and nothing else; no redirect is followed."""
+    Accept and nothing else; this function follows no redirect (measure() makes the one www request itself)."""
     site_host = site_host.strip().rstrip(".").lower()
     if not ap._HOST_RE.match(site_host):
         return _failed("invalid_input")
@@ -476,6 +491,15 @@ def caps_ok(conn, trigger: str, now: datetime) -> str | None:
     return None
 
 
+def _fresh_gate(profile: dict | None, now: datetime) -> dict | None:
+    """The profile row's home_gate when it was decided within FRESH_HOURS (and not in the future), else None."""
+    gate = profile["home_gate"] if profile else None
+    gated_at = _parse_time(gate["fetched_at"]) if isinstance(gate, dict) and "fetched_at" in gate else None
+    if gated_at is None or gated_at < now - timedelta(hours=FRESH_HOURS) or gated_at > now + timedelta(minutes=5):
+        return None
+    return gate
+
+
 def decide(conn, site_host: str, trigger: str, now: datetime) -> tuple[str, str | None, dict | None]:
     """(verdict, reason, context) for one host. verdict: 'go' (context has read_host and previous), 'record' (leave a
     not_measured row with this reason), 'defer' (no usable robots.txt verdict yet: the profile must be read first) or 'skip'."""
@@ -483,9 +507,8 @@ def decide(conn, site_host: str, trigger: str, now: datetime) -> tuple[str, str 
         return "skip", "disabled", None
     profile = conn.execute(
         "SELECT fetched_at,read_host,home_gate FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
-    gate = profile["home_gate"] if profile else None
-    gated_at = _parse_time(gate.get("fetched_at")) if isinstance(gate, dict) else None
-    if gated_at is None or gated_at < now - timedelta(hours=FRESH_HOURS) or gated_at > now + timedelta(minutes=5):
+    gate = _fresh_gate(profile, now)
+    if gate is None:
         return "defer", "robots_stale", None
     previous = conn.execute("SELECT * FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
     if not gate.get("allowed"):
@@ -594,11 +617,79 @@ def _defer(job: dict | None, seconds: float):
     raise Deferred(seconds)
 
 
+def _www_target(read_host: str, fetched: dict, classified: dict) -> str | None:
+    """``www.<read_host>`` when the first answer is a redirect whose Location host is exactly that name (https or a
+    scheme-relative Location, no other port, no credentials); otherwise None. The path of the Location is not used."""
+    redirect = classified["redirect"]
+    if classified["outcome"] != "redirected_same_host" or not redirect or redirect["to_relation"] != "www_alias":
+        return None
+    if read_host.startswith("www."):
+        return None
+    try:
+        parts = urlsplit((fetched["headers"]["location"] or "").strip())
+        host, port = (parts.hostname or "").lower(), parts.port
+    except (KeyError, ValueError):
+        return None
+    if host != f"www.{read_host}" or parts.scheme not in ("", "https") or port not in (None, 443) or parts.username or parts.password:
+        return None
+    return host
+
+
+def _www_gate(conn, www_host: str, now: datetime) -> dict | None:
+    """The www name's fresh home_gate, or None; when there is none its profile read is queued (nothing else refreshes it)."""
+    profile = conn.execute("SELECT fetched_at,read_host,home_gate FROM host_access_profile WHERE site_host=%s", (www_host,)).fetchone()
+    conn.commit()
+    gate = _fresh_gate(profile, now)
+    if gate is None:
+        from . import background_reads
+        try:
+            queued = background_reads.enqueue(conn, [("access_profile", www_host)], not_before=datetime.now(timezone.utc))  # now, ahead of any reservation
+            conn.commit()
+            if queued:
+                background_reads.wake()
+        except Exception:
+            conn.rollback()
+            LOG.warning("site_probe_www_enqueue_unavailable")
+    return gate
+
+
+def _reserve_www_read(conn, www_host: str, next_due: datetime, now: datetime) -> None:
+    """Queue the www name's profile read for 30 minutes before the check is due again, so that check finds a fresh verdict."""
+    from . import background_reads
+    try:
+        background_reads.enqueue(conn, [("access_profile", www_host)],
+                                 not_before=max(now, next_due - timedelta(minutes=WWW_READ_LEAD_MINUTES)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        LOG.warning("site_probe_www_reserve_unavailable")
+
+
+def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadline: float | None):
+    """(result, no_verdict): result is (fetched, classified) of the one request to the www name, or None when it is not
+    made; no_verdict is True when that is for want of a fresh home_gate (its profile read is queued)."""
+    gate = _www_gate(conn, www_host, now)
+    if gate is None:
+        return None, True
+    if not ("allowed" in gate and gate["allowed"]):
+        return None, False
+    if deadline is not None and deadline - _clock() < SECOND_REQUEST_MIN_SECONDS:
+        return None, False
+    if paced:
+        _pace()
+    fetched = reader(www_host)
+    if "label" in fetched and fetched["label"] == "not_public":
+        return None, False
+    return (fetched, classify(www_host, fetched, now)), False
+
+
 def measure(settings, site_host: str, trigger: str, *, now: datetime | None = None, reader=None, job: dict | None = None,
-            paced: bool = True) -> dict | None:
+            paced: bool = True, deadline: float | None = None) -> dict | None:
     """Decide, request and store one check of ``site_host``; returns the stored row, or None when nothing was checked
     (the reason is not stored: a limit or a backoff is not a fact about the host). A queued ``job`` is deferred
-    (background_reads.Deferred) while the host's profile read is still to come or another process is checking the host."""
+    (background_reads.Deferred) while the host's profile read is still to come or another process is checking the host.
+    ``deadline`` (a _clock() time) is set for a lookup's synchronous attempt: the second request (the www redirect) is not
+    made when less than SECOND_REQUEST_MIN_SECONDS of it is left."""
     from .db import connect
     now = now or datetime.now(timezone.utc)
     reader = reader or fetch_home
@@ -625,17 +716,32 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                 return row
             if paced:
                 _pace()
-            fetched = reader(context["read_host"])
+            read_host = context["read_host"]
+            reserve_www = False   # only a check that followed the redirect itself reserves the www read
+            fetched = reader(read_host)
             if fetched.get("label") == "not_public":
-                row = _row(context["read_host"], now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
+                row = _row(read_host, now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
                            next_due=now + timedelta(hours=MIN_GAP_HOURS))
             else:
-                classified = classify(context["read_host"], fetched, now)
+                classified = classify(read_host, fetched, now)
+                www = _www_target(read_host, fetched, classified)
+                followed, no_verdict = _follow_www(conn, www, now, reader, paced, deadline) if www else (None, False)
+                if followed is not None:
+                    first = classified["redirect"]
+                    fetched, classified = followed
+                    # followed_www says the answer is the www name's; the target kept is the last redirect seen (codes only)
+                    classified["redirect"] = {**(classified["redirect"] or first), "followed_www": True}
+                    read_host = www
+                    reserve_www = True
                 wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"])
-                row = _row(context["read_host"], now, trigger, outcome=classified["outcome"], next_due=now + wait,
+                if no_verdict:
+                    wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
+                row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)
             conn.commit()
+            if reserve_www:
+                _reserve_www_read(conn, row["read_host"], row["next_due_at"], now)
             return row
         finally:
             try:
@@ -685,9 +791,11 @@ def _start(settings, site_host: str, *, now: datetime | None = None, reader=None
         future: concurrent.futures.Future = concurrent.futures.Future()
         _INFLIGHT[site_host] = future
 
+    deadline = _clock() + SYNC_WAIT_SECONDS
+
     def work() -> None:
         try:
-            future.set_result(measure(settings, site_host, "lookup", now=now, reader=reader, paced=False))
+            future.set_result(measure(settings, site_host, "lookup", now=now, reader=reader, paced=False, deadline=deadline))
         except BaseException as exc:  # the lookup that started it has moved on; nothing may escape this thread
             LOG.warning("site_probe_sync_failed error=%s", type(exc).__name__)
             future.set_result(None)
@@ -802,10 +910,11 @@ def _queue(conn, site_host: str) -> None:
 def _profile_retry(access_profile: dict | None) -> int:
     """The wait a pending view shows: the answer's own pending access_profile wait when it has one (so the answer gives
     one number, not two), otherwise PENDING_RETRY_SECONDS."""
-    if isinstance(access_profile, dict) and access_profile["freshness"] == "pending" and "retry_after_seconds" in access_profile:
+    if isinstance(access_profile, dict) and "freshness" in access_profile and access_profile["freshness"] == "pending" \
+            and "retry_after_seconds" in access_profile:
         wait = access_profile["retry_after_seconds"]
         if isinstance(wait, int) and not isinstance(wait, bool):
-            return wait
+            return min(max(wait, 1), 3600)
     return PENDING_RETRY_SECONDS
 
 

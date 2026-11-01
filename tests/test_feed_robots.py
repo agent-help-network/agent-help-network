@@ -407,7 +407,7 @@ VERB_SITES = {
     ('site_probe.py', 'evaluate_breaker', 'get'): 4,
     ('site_probe.py', 'classify', 'get'): 2,
     ('site_probe.py', 'daily_cap', 'get'): 1,
-    ('site_probe.py', 'decide', 'get'): 5,
+    ('site_probe.py', 'decide', 'get'): 4,
     ('site_probe.py', 'enabled', 'get'): 1,
     ('site_probe.py', '_fetch_home', 'get'): 2,
     ('site_probe.py', '_fetch_home', 'request'): 1,

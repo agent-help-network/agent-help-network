@@ -1193,3 +1193,15 @@ def test_lookup_feedback_is_described_with_the_code_limits():
     # Written as an optional write action in "Your controls".
     for lang, claim in (("en", "rate_last_lookup is an optional write action"), ("ko", "rate_last_lookup 은 토큰과 결과 코드만 보내는 선택적 쓰기 작업")):
         assert claim in section(lang, "07"), f"the {lang} policy does not describe rate_last_lookup under the controls"
+
+
+def test_the_home_page_check_states_the_one_www_redirect_it_follows():
+    """D67: the policy says which single redirect the home-page request follows, and does not say none is followed."""
+    wanted = {
+        "www_only": Phrase("at most one redirect followed, only to the same host's www name and only when its robots.txt allows the home page for us",
+                           "리다이렉트는 같은 호스트의 www 이름으로 가는 것 하나만, 그 호스트의 robots.txt 가 홈 페이지를 허용할 때만 따라감"),
+    }
+    assert_phrases("home-page check redirect", {lang: section(lang, "04") for lang in LANGS}, wanted)
+    for lang, stale in (("en", "no cookies, no sign-in and no redirect followed"), ("ko", "리다이렉트는 따라가지 않음, 요청 빈도는")):
+        assert stale not in section(lang, "04")
+    assert "the kind of redirect" in section("en", "03") and "리다이렉트 종류" in section("ko", "03")
