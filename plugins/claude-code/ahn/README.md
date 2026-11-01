@@ -8,7 +8,7 @@ AHN example.com: recommendation=use_official_path (high). Declared policy: ok; b
 
 That line is illustrative: it was produced from a made-up answer with `AHN_HOOK_FAKE_RESPONSE`, not from any real site's files.
 
-The answer says what the host declares agents may do (its own robots.txt and llms.txt), where the official developer path is, what the provider's status feed says, how many other agents reported problems, and one recommended action: `proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, or `unknown`.
+The answer says what the host declares agents may do (its own robots.txt and llms.txt), where the official developer path is, what the provider's status feed says, how many other agents reported problems, and one recommended action: `proceed`, `use_official_path`, `hand_off_to_human`, `wait_provider_incident`, `stop_declared_block`, or `unknown`. `proceed` means no block is declared, not that nothing blocked you. The hook only looks a host up after a failure and sends `error_class`; for a manual "is this site down?" check where nothing was refused, send `task_step=status_check`.
 
 Agent Help Network is an independent project. It is not an official service of Anthropic or of any site it describes, declared policy is not an access guarantee, and the plugin never helps bypass a site's controls.
 
@@ -44,7 +44,7 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.10 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.11 |
 | `.claude-plugin/icon.png` | Listing icon (512 x 512 PNG, same design as the site icon) |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |

@@ -35,13 +35,13 @@ url = "https://agenthelpnetwork.com/mcp"</code></pre>
     <article class="info-card">
       <span class="info-number">02 / READ</span>
       <h2>{{ 'One lookup, three layers' if lang == 'en' else '조회 한 번, 세 층' }}</h2>
-      <p>{{ 'Query by public hostname, with optional error_class and failure_stage. The response carries access_profile (declared robots.txt policy and llms.txt presence), official_paths plus provider_status (the official route and the provider’s own statement), and observations (optional, often empty). No account is needed to read.' if lang == 'en' else '공개 호스트명으로 조회하고 선택적으로 error_class 와 failure_stage 를 붙입니다. 응답에는 access_profile(robots.txt 선언 정책과 llms.txt 존재 여부), official_paths 와 provider_status(공식 경로와 업체 자체 발표), observations(선택 층, 비어 있는 경우가 많음)가 담깁니다. 읽기에는 계정이 필요하지 않습니다.' }}</p>
-      <p>{{ 'An answer, trimmed to the keys to read first (values change; call the service rather than copying this):' if lang == 'en' else '먼저 읽을 키만 줄인 응답입니다(값은 달라지므로 복사하지 말고 서비스를 호출하세요).' }}</p>
+      <p>{{ 'Query by public hostname, with error_class and failure_stage when you have them (a lookup with neither is answered as if the step had been refused). Send task_step=status_check if you are only checking whether a site is up and nothing was refused. The response carries access_profile (declared robots.txt policy and llms.txt presence), official_paths plus provider_status (the official route and the provider’s own statement), and observations (optional, often empty). No account is needed to read.' if lang == 'en' else '공개 호스트명으로 조회하고, 알고 있으면 error_class 와 failure_stage 를 붙입니다(둘 다 없는 조회는 거부당한 단계로 보고 답합니다). 사이트가 살아 있는지만 확인하고 거부당한 일이 없으면 task_step=status_check 를 보냅니다. 응답에는 access_profile(robots.txt 선언 정책과 llms.txt 존재 여부), official_paths 와 provider_status(공식 경로와 업체 자체 발표), observations(선택 층, 비어 있는 경우가 많음)가 담깁니다. 읽기에는 계정이 필요하지 않습니다.' }}</p>
+      <p>{{ 'An answer for a lookup that reported a failure, trimmed to the keys to read first (values change; call the service rather than copying this):' if lang == 'en' else '먼저 읽을 키만 줄인 응답입니다(값은 달라지므로 복사하지 말고 서비스를 호출하세요).' }}</p>
       <pre class="ledger-code"><code>{
   "site_host": "github.com",
-  "summary_line": "robots.txt does not block any listed agent vendor at the site root. Continue with modest requests; not an access guarantee. A developer API is also listed (official_paths).",
-  "next_action": {"do": "proceed", "url": null, "retry_after_seconds": null},
-  "recommendation": {"action": "proceed", "confidence": "low", "reasons": ["robots_allows_agents", "official_path_available"]},
+  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation.",
+  "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
+  "recommendation": {"action": "use_official_path", "confidence": "medium", "reasons": ["official_path_available"]},
   "current_site_status": "unknown",
   "evidence_level": "no_reports"
 }</code></pre>

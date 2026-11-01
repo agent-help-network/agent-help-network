@@ -11,7 +11,7 @@ Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service;
 
 - **Automatically.** This plugin's hook runs after a `WebFetch` that returns 401, 402, 403, 407, 408, 429, 451 or 5xx, and after a failed browser or fetch MCP tool (Claude in Chrome, the desktop browser pane, Playwright, Puppeteer, fetch servers) whose input or error names an `http(s)://` URL. It adds one line starting `AHN <host>:` next to the tool result. It waits about 4 seconds and looks up the same host at most once per 10 minutes, so a missing line can mean already looked up, skipped (local, private or special-use name, or no URL in the failure), or service unreachable. Never claim a lookup happened when no `AHN` line or tool result shows it.
 - **Manually.** Call it when a step is blocked and no `AHN` line appeared, or when the user asks whether a site is down or blocks agents:
-  - MCP: the `check_incident` tool of the `agent-help-network` server bundled with this plugin (`mcp__plugin_ahn_agent-help-network__check_incident`), with `site_host` and optionally `error_class`, `failure_stage` and `agent_vendor`.
+  - MCP: the `check_incident` tool of the `agent-help-network` server bundled with this plugin (`mcp__plugin_ahn_agent-help-network__check_incident`), with `site_host`, plus `error_class` and `failure_stage` whenever you saw a failure, and optionally `agent_vendor`. A lookup with neither is answered as if the step had been refused. If you are only checking "is this site down?" or re-checking an earlier answer and nothing was refused, send `task_step=status_check`.
   - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>`.
 - Do not poll. One lookup per blocked step is enough.
 
@@ -34,8 +34,8 @@ Start with `summary_line` (one fixed English sentence) and `next_action`: `do` r
 
 | action | meaning | do this |
 | :- | :- | :- |
-| `proceed` | no failure was reported and robots.txt does not disallow the root for the tokens checked, or is absent | Continue modestly; not a guarantee. Honor any Crawl-delay. If an official path is listed, use it when pages fail. |
-| `use_official_path` | a failure was reported or robots.txt blocks agents, and an official API or portal is listed | Prefer the documented API over page automation. It may need the user's own key; ask the user rather than inventing access. |
+| `proceed` | robots.txt does not disallow the root for the tokens checked, or is absent: no block is declared, which does not mean nothing blocked you | Continue modestly. If a page refused you, that came from your tool, the site's edge or a login: tell your user; do not retry with another tool or user agent after a site or robots.txt refusal. Honor any Crawl-delay. |
+| `use_official_path` | an official API or portal is listed and a failure was reported (or none was sent and the lookup was not marked `status_check`), or robots.txt blocks agents | Prefer the documented API over page automation. It may need the user's own key; ask the user rather than inventing access. |
 | `hand_off_to_human` | the failure is a login wall or human verification | Stop and hand the step to the user through the normal handoff. Do not solve, bypass or route around CAPTCHAs or logins, and do not ask for passwords. |
 | `wait_provider_incident` | the provider's fresh status feed gives a reason to wait (an incident updated within 7 days, maintenance, or a `major`/`critical` page; see the [contract](https://github.com/agent-help-network/agent-help-network/blob/main/docs/api-contract.en.md#recommendation)) | Compare the affected services with the blocked step; wait or retry later instead of hammering the site. |
 | `stop_declared_block` | robots.txt disallows agent user agents at the root and no official path is listed | Stop automated retries against that host's pages. Tell the user what the host declares and let them decide. |

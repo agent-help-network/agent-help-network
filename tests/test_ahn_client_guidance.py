@@ -294,7 +294,7 @@ def test_summary_stays_within_700_with_long_values():
 
 
 def test_next_action_is_exported():
-    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.2"
+    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.3"
     assert _result.NextAction is NextAction
 
 

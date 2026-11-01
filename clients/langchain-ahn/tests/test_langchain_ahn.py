@@ -124,6 +124,15 @@ def test_tool_identity():
     assert tool.timeout == 2.0
 
 
+def test_status_check_is_sent_and_nothing_else_is_accepted(transport):
+    calls = transport()
+    AHNLookupTool().invoke({"hostname": "example.com", "task_step": "status_check"})
+    (request, _), = calls
+    assert "task_step=status_check" in request.full_url and "error_class" not in request.full_url
+    with pytest.raises(Exception):
+        AHNLookupTool().invoke({"hostname": "example.com", "task_step": "preflight"})
+
+
 def test_invoke_returns_summary_and_json(transport):
     calls = transport()
     out = AHNLookupTool().invoke({"hostname": "example.com", "error_class": "site_access",
@@ -284,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.0"
+    assert langchain_ahn.__version__ == "0.2.1"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 

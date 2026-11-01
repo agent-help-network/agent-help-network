@@ -271,7 +271,7 @@ def test_crawl_delay_when_the_head_alone_is_cut():
 
 
 def test_version_and_exports():
-    assert ahn.__version__ == "0.6.2" and "diagnose" in ahn.__all__
+    assert ahn.__version__ == "0.6.3" and "diagnose" in ahn.__all__
     assert _signals.AWS_WAF_HEADER == "x-amzn-waf-action" and set(_signals.AWS_WAF_CHALLENGE_VALUES) == {202, 405, 403, 451}
 
 

@@ -675,9 +675,28 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     return result
 
 HOME_EXAMPLE_HOST = "target.com"
+# Other curated hosts the card lists below the main answer, when their answer is cached too (a different branch each).
+HOME_OTHER_HOSTS = ("amazon.com", "example.com")
 
 
 def home_example(settings: Settings, site_host: str = HOME_EXAMPLE_HOST) -> dict | None:
+    """The home card plus, under ``others``, short lines for other cached hosts (left out when not cached)."""
+    card = _home_card(settings, site_host)
+    if card is None:
+        return None
+    others = []
+    for host in HOME_OTHER_HOSTS:
+        if host == site_host:
+            continue
+        other = _home_card(settings, host)
+        if other is not None:
+            others.append({"site_host": host, "do": other["do"], "summary_line": other["summary_line"]})
+    if others:
+        card["others"] = others
+    return card
+
+
+def _home_card(settings: Settings, site_host: str) -> dict | None:
     """The home page's "real answer" card: the answer a lookup of one curated host gives from what is already stored.
 
     Database SELECTs only. It queues no read, records no lookup, signal or adoption row and contacts no host, so a home
