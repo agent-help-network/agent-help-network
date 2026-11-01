@@ -115,3 +115,30 @@ def test_the_reserved_step_words_are_exact():
     assert triage.LOOKUP_ONLY_STEPS == {"status_check", "preflight"}
     for near in ("Status_check", "status-check", "statuscheck", "check", "health"):
         assert near not in triage.LOOKUP_ONLY_STEPS
+
+
+def test_an_unknown_switch_value_warns_once_with_the_code_only_and_keeps_d63(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="ahn.settings"):
+        assert parse_proceed_mode("dd65") == ("on", "d63")
+        for known in ("", "1", "d63", "0", "d65", "d66", " D65 "):
+            parse_proceed_mode(known)
+    assert [r.getMessage() for r in caplog.records] == ["proceed_mode_unknown_value"]  # one record, and not the value
+
+
+def test_the_mcp_text_leaves_out_the_proceed_note_when_the_sentence_already_says_it():
+    from ahn import mcp_adapter
+    from ahn.models import CheckResponse
+    from test_d63_decision_order import answer, envelope
+    result = answer(None, ALLOWS, ec=None)
+    for blocked_default, note in ((False, True), (True, False)):
+        out = guide(result, blocked_default=blocked_default)
+        response = CheckResponse.model_validate({**envelope(result), **out})
+        text = mcp_adapter.check_result(response).content[0].text
+        assert (mcp_adapter.PROCEED_NOTE in text) == note, blocked_default
+
+
+def test_the_status_check_line_is_in_both_instruction_files():
+    line = "send task_step=status_check"
+    for name in ("agent_instructions.txt", "llms.txt"):
+        assert line in (ROOT / "ahn" / name).read_text(encoding="utf-8"), name

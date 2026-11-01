@@ -9,6 +9,7 @@ Service: https://agenthelpnetwork.com — independent project, not an official s
 - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<public hostname>&error_class=<site_access|login_auth|human_verification|service_error>&failure_stage=<before_target_response|response_observed|access_denial_observed>` (error_class and failure_stage are optional). OpenAPI: https://agenthelpnetwork.com/openapi.json
 - MCP (streamable HTTP): `https://agenthelpnetwork.com/mcp`, tool `check_incident` (read-only), `rate_last_lookup` (optional: sends back a feedback token and an outcome code), optional `report_observation`.
 - Full agent instructions: https://agenthelpnetwork.com/agent-instructions.txt
+- If you are only checking whether a site is up or re-checking an earlier answer (not blocked), send task_step=status_check.
 - MCP Server Card (static discovery metadata, no tool list): https://agenthelpnetwork.com/.well-known/mcp/server-card.json
 
 ## Read the answer in this order

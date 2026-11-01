@@ -13,7 +13,7 @@ from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
 from .models import ObservationIn, OutcomeIn
-from .official_paths import official_paths
+from .official_paths import official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
 from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
@@ -464,7 +464,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     lookup_only = plain_view or task_step in LOOKUP_ONLY_STEPS
     blocked_default = (settings.proceed_without_failure and settings.proceed_mode == "d65"
                        and not (lookup_only and not failure_observed(error_class, failure_stage)))  # a failure signal beats the word
-    assume_failure = blocked_default and not failure_observed(error_class, failure_stage)
+    assume_failure = (blocked_default and not failure_observed(error_class, failure_stage)
+                      and not official_path_unusable(site_host))  # a path nobody can use is no reason to assume a block
     test_query = settings.test_mode and site_host.endswith(".test")
     public = settings.public_mode and not test_query
     where = ["i.site_host=%s", "o.withdrawn_at IS NULL"]
