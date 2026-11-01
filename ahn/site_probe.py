@@ -717,6 +717,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
             if paced:
                 _pace()
             read_host = context["read_host"]
+            reserve_www = False   # only a check that followed the redirect itself reserves the www read
             fetched = reader(read_host)
             if fetched.get("label") == "not_public":
                 row = _row(read_host, now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
@@ -731,6 +732,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                     # followed_www says the answer is the www name's; the target kept is the last redirect seen (codes only)
                     classified["redirect"] = {**(classified["redirect"] or first), "followed_www": True}
                     read_host = www
+                    reserve_www = True
                 wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"])
                 if no_verdict:
                     wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
@@ -738,7 +740,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)
             conn.commit()
-            if row["read_host"] != site_host and row["outcome"] != "not_measured":
+            if reserve_www:
                 _reserve_www_read(conn, row["read_host"], row["next_due_at"], now)
             return row
         finally:

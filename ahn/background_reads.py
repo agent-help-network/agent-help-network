@@ -198,7 +198,8 @@ def enqueue(conn, jobs, *, not_before: datetime | None = None) -> list[tuple[str
 
     A job already queued stays as it is. A new job is not added once the queue holds QUEUE_CAP rows.
     With ``not_before`` a new job is not due before that time; a job already queued keeps the earlier of its own
-    not_before and this one (a read wanted now is never held back by a reservation made for later).
+    not_before and this one, so a call that passes the time it wants the read (now, for a read wanted now) pulls a
+    later reservation forward. A call without ``not_before`` leaves a queued job exactly as it is.
     """
     queued = []
     for kind, site_host in jobs:
@@ -233,7 +234,8 @@ def estimate_wait(conn, kind: str, site_host: str, *, now: datetime | None = Non
                         FROM background_reads WHERE kind=%s AND site_host=%s)
             SELECT me.not_before,
                    (SELECT count(*) FROM background_reads o
-                    WHERE ({_PRIORITY.format(col="o.kind")}, o.requested_at) < (me.p, me.requested_at)) AS ahead
+                    WHERE ({_PRIORITY.format(col="o.kind")}, o.requested_at) < (me.p, me.requested_at)
+                      AND o.not_before <= greatest(me.not_before, now())) AS ahead
             FROM me""",
         (kind, site_host),
     ).fetchone()

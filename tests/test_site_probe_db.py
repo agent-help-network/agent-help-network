@@ -684,6 +684,31 @@ def test_www_follow_a_failed_reserved_read_gives_the_redirect_for_6_hours_and_qu
     assert routes.calls == [HOST, WWW, HOST]
 
 
+def test_www_follow_an_apex_whose_robots_txt_already_lives_on_www_reserves_nothing(db, monkeypatch):
+    def www_reads(site_host, path, *, cap_bytes, **_):
+        if site_host == HOST:
+            return ("error", None, "connect_timeout")
+        return ("ok", ALLOW, "http_200") if path == "/robots.txt" else ("absent", None, "http_404")
+    access_profile.get_profile(db, HOST, now=datetime.now(timezone.utc), reader=www_reads)
+    routes = Routes({WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [WWW] and one_row(db)["read_host"] == WWW
+    assert rows(db, "SELECT * FROM background_reads") == []
+
+
+def test_reservations_for_later_do_not_lengthen_the_wait_of_a_new_read(db, monkeypatch):
+    monkeypatch.setattr(background_reads, "worker_running", lambda: True)
+    later = datetime.now(timezone.utc) + timedelta(hours=20)
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", f"reserved{i}-example.org") for i in range(400)], not_before=later)
+        background_reads.enqueue(conn, [("access_profile", "new-example.org")])
+        wait = background_reads.estimate_wait(conn, "access_profile", "new-example.org")
+    import math
+    alone = int(min(background_reads.RETRY_AFTER_MAX, max(background_reads.RETRY_AFTER_MIN,
+                                                           math.ceil(background_reads.JOB_SECONDS / background_reads.WORKER_THREADS))))
+    assert wait == alone < background_reads.RETRY_AFTER_MAX
+
+
 def test_www_read_wanted_now_pulls_a_later_reservation_forward(db, monkeypatch):
     soon_not = datetime.now(timezone.utc) + timedelta(hours=20)
     with connect(db) as conn:
