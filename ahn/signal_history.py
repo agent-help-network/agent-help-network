@@ -521,6 +521,22 @@ def run(database_url: str) -> str:
 
 # --- Owner view ------------------------------------------------------------------------------------
 
+def _board_time(entry: dict) -> str:
+    """The time a board line sorts on: the provider's own update time; for a line with only an AHN check, the check's
+    last read (else its start). Empty when there is none."""
+    provider, check = entry.get("provider") or {}, entry.get("ahn_check") or {}
+    return provider.get("updated_at") or check.get("last_read_at") or check.get("since") or ""
+
+
+def board_order(entries: list[dict]) -> list[dict]:
+    """The one order for board lines, owner and public alike: most recently updated first, whatever the grade
+    (the grade is still reported, it just does not rank); lines with no time last; equal times by host name."""
+    by_host = sorted(entries, key=lambda entry: entry["site_host"])
+    # ISO timestamps from _iso share one format, so a string compare is a time compare. Python's sort keeps equal
+    # keys in input order even with reverse=True, so the host name still breaks ties.
+    return sorted(by_host, key=_board_time, reverse=True)
+
+
 def _iso(value):
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if isinstance(value, datetime) else value
 
@@ -759,8 +775,7 @@ def board_summary(conn, *, now: datetime | None = None, days: int = 7) -> dict:
                              "updated_at": _iso(row["updated_at"]), "basis": row["basis"]}
         if row.get("source_kind"):
             entry["provider"].update(source_kind=row["source_kind"], active_incidents=row["active_incidents"])
-    order = {"critical": 0, "major": 1, "minor": 2, "maintenance": 4}
-    listed = sorted(candidates.values(), key=lambda c: (order.get((c["provider"] or {}).get("indicator"), 3), c["site_host"]))
+    listed = board_order(list(candidates.values()))
 
     # Held windows, from the raw events (kept 14 days).
     holds = conn.execute(

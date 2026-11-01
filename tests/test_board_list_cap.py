@@ -1,4 +1,4 @@
-"""Public board list size and order (no database needed): up to 100 lines each, grade order, newest update first."""
+"""Public board list size and order (no database needed): up to 100 lines each, newest update first whatever the grade."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def test_the_board_lists_up_to_100_lines_and_flags_more():
     assert len(body["maintenance"]) == 100 and body["truncated"] is True
 
 
-def test_within_a_grade_the_newest_provider_update_comes_first_then_host_name():
+def test_newest_provider_update_comes_first_whatever_the_grade_then_host_name():
     entries = [_line("a.example", "minor", "2026-10-24T01:00:00Z"),
                _line("z.example", "minor", "2026-10-24T03:00:00Z"),
                _line("b.example", "minor", "2026-10-24T03:00:00Z"),
@@ -43,4 +43,25 @@ def test_within_a_grade_the_newest_provider_update_comes_first_then_host_name():
     entries[4]["provider"]["source_kind"] = "history_atom"
     body = public_board.snapshot(_board(entries), ahn_check=False, now=NOW)
     assert [line["site_host"] for line in body["problems"]] == [
-        "e.example", "c.example", "b.example", "z.example", "a.example", "d.example"]
+        "b.example", "z.example", "d.example", "a.example", "c.example", "e.example"]
+    assert body["problems"][-1]["provider"]["indicator"] == "critical"  # the grade is still reported
+
+
+def test_a_lower_grade_that_is_newer_ranks_above_a_higher_grade():
+    entries = [_line("eclipse.org", "major", "2026-10-20T01:00:00Z"), _line("gcore.com", "minor", "2026-10-24T03:00:00Z")]
+    assert [e["site_host"] for e in signal_history.board_order(entries)] == ["gcore.com", "eclipse.org"]
+
+
+def test_owner_and_public_boards_share_one_order_function():
+    check = lambda host, read, since: {"site_host": host, "provider": None,
+                                       "ahn_check": {"kind": "x", "last_read_at": read, "since": since}}
+    entries = [_line("gcore.com", "minor", "2026-10-24T03:00:00Z"), _line("eclipse.org", "major", "2026-10-20T01:00:00Z"),
+               _line("n.example", "major", "2026-10-24T02:00:00Z"),
+               check("o.example", "2026-10-24T02:30:00Z", "2026-10-01T00:00:00Z"),
+               check("p.example", None, "2026-10-24T02:45:00Z"),
+               {"site_host": "q.example", "provider": None, "ahn_check": None}]
+    entries.append(_line("m.example", "major", None))
+    entries[-1]["provider"].pop("updated_at")
+    expected = ["gcore.com", "p.example", "o.example", "n.example", "eclipse.org", "m.example", "q.example"]
+    assert [e["site_host"] for e in signal_history.board_order(entries)] == expected
+    assert [e["site_host"] for e in public_board._ordered(entries)] == expected
