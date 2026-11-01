@@ -362,10 +362,15 @@ def test_the_pending_check_waits_60_seconds_when_the_profile_is_fresh_or_has_no_
 
 def test_a_pending_check_next_to_a_fresh_profile_still_shows_60(db, monkeypatch):
     warm(db, monkeypatch)
-    monkeypatch.setattr(site_probe, "fetch_home", Home(delay=site_probe.SYNC_WAIT_SECONDS + 1.5))
+    monkeypatch.setattr(site_probe, "fetch_home", Home(delay=0.8))
+    monkeypatch.setattr(site_probe, "SYNC_WAIT_SECONDS", 0.2)
     result = service.check(db, HOST)
     assert result["access_profile"]["freshness"] == "fresh"
     assert result["ahn_check"]["status"] == "pending" and result["ahn_check"]["retry_after_seconds"] == 60
+    deadline = time.monotonic() + 5                                                      # let the slow check finish here, not in a later test
+    while not rows(db, "SELECT * FROM site_probe") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert rows(db, "SELECT * FROM site_probe")
 
 
 def test_a_thousand_lookups_of_one_host_queue_one_row(db, monkeypatch):
