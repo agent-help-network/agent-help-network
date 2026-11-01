@@ -332,6 +332,42 @@ def test_the_lookup_queues_the_check_with_no_delay(db, monkeypatch):
     assert job["not_before"] <= datetime.now(timezone.utc) and abs((job["not_before"] - job["requested_at"]).total_seconds()) < 1
 
 
+def test_an_example_host_shows_an_in_memory_not_measured_view_and_nothing_is_requested_or_stored(db, monkeypatch):
+    home = Home()
+    monkeypatch.setattr(site_probe, "fetch_home", home)
+    for _ in range(2):
+        shown = service.check(db, "example.com")["ahn_check"]
+        assert shown["status"] == "not_measured" and shown["not_measured_reason"] == "not_eligible"
+        assert CheckResponse(**service.check(db, "example.org")).ahn_check.not_measured_reason == "not_eligible"
+    assert home.calls == []
+    assert rows(db, "SELECT * FROM site_probe") == []
+    assert rows(db, "SELECT * FROM background_reads WHERE kind='site_probe'") == []
+
+
+def test_a_first_lookup_with_a_pending_profile_shows_the_profiles_wait_on_the_pending_check(db, monkeypatch):
+    monkeypatch.setattr(site_probe, "fetch_home", Home())
+    result = service.check(db, HOST)
+    profile_wait = result["access_profile"]["retry_after_seconds"]
+    assert result["access_profile"]["freshness"] == "pending" and isinstance(profile_wait, int)
+    assert result["ahn_check"]["status"] == "pending" and result["ahn_check"]["retry_after_seconds"] == profile_wait
+
+
+def test_the_pending_check_waits_60_seconds_when_the_profile_is_fresh_or_has_no_wait_of_its_own():
+    assert site_probe.pending_view()["retry_after_seconds"] == 60
+    assert site_probe._profile_retry({"freshness": "fresh", "retry_after_seconds": 5}) == 60
+    assert site_probe._profile_retry({"freshness": "pending"}) == 60
+    assert site_probe._profile_retry(None) == 60
+    assert site_probe._profile_retry({"freshness": "pending", "retry_after_seconds": 5}) == 5
+
+
+def test_a_pending_check_next_to_a_fresh_profile_still_shows_60(db, monkeypatch):
+    warm(db, monkeypatch)
+    monkeypatch.setattr(site_probe, "fetch_home", Home(delay=site_probe.SYNC_WAIT_SECONDS + 1.5))
+    result = service.check(db, HOST)
+    assert result["access_profile"]["freshness"] == "fresh"
+    assert result["ahn_check"]["status"] == "pending" and result["ahn_check"]["retry_after_seconds"] == 60
+
+
 def test_a_thousand_lookups_of_one_host_queue_one_row(db, monkeypatch):
     monkeypatch.setattr(site_probe, "fetch_home", Home())
     for _ in range(30):

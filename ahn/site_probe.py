@@ -753,9 +753,9 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
             if done is not None:
                 return _valid(view(done, datetime.now(timezone.utc)))
             if why == "joined":
-                return _valid(view(row, now) if row is not None else pending_view())
+                return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
         _queue(conn, site_host)
-        return _valid(view(row, now) if row is not None else pending_view())
+        return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
     except Exception:
         LOG.warning("site_probe_lookup_unavailable")
         try:
@@ -799,10 +799,28 @@ def _queue(conn, site_host: str) -> None:
 # The answer's view
 
 
-def pending_view() -> dict:
-    return {"status": "pending", "basis": "ahn_server", "vantage": _vantage_codes(), "ua_token": "AgentHelpNetwork",
-            "path_kind": "home", "fingerprint_version": FINGERPRINT_VERSION, "note": SHOW_VIEW_NOTE,
-            "retry_after_seconds": PENDING_RETRY_SECONDS}
+def _profile_retry(access_profile: dict | None) -> int:
+    """The wait a pending view shows: the answer's own pending access_profile wait when it has one (so the answer gives
+    one number, not two), otherwise PENDING_RETRY_SECONDS."""
+    if isinstance(access_profile, dict) and access_profile["freshness"] == "pending" and "retry_after_seconds" in access_profile:
+        wait = access_profile["retry_after_seconds"]
+        if isinstance(wait, int) and not isinstance(wait, bool):
+            return wait
+    return PENDING_RETRY_SECONDS
+
+
+def _fixed_view(status: str) -> dict:
+    return {"status": status, "basis": "ahn_server", "vantage": _vantage_codes(), "ua_token": "AgentHelpNetwork",
+            "path_kind": "home", "fingerprint_version": FINGERPRINT_VERSION, "note": SHOW_VIEW_NOTE}
+
+
+def pending_view(retry_after_seconds: int = PENDING_RETRY_SECONDS) -> dict:
+    return {**_fixed_view("pending"), "retry_after_seconds": retry_after_seconds}
+
+
+def not_measured_view(reason: str) -> dict:
+    """A not_measured view built in memory (nothing stored, nothing requested), e.g. for documentation example hosts."""
+    return {**_fixed_view("not_measured"), "not_measured_reason": reason}
 
 
 def view(row: dict, now: datetime) -> dict | None:
