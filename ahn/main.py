@@ -174,7 +174,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     if settings.public_bundle:  # the bundle is described only while it is served
         from .bundle import LLMS_SECTION
         assert "\n## Pages" in llms_body
-        llms_body = llms_body.replace("\n## Pages", "\n" + LLMS_SECTION + "## Pages", 1)
+        from .bundle_shards import LLMS_SHARDS, shards_enabled
+        section = LLMS_SECTION.rstrip("\n") + "\n" + LLMS_SHARDS if shards_enabled() else LLMS_SECTION
+        llms_body = llms_body.replace("\n## Pages", "\n" + section + "## Pages", 1)
         policy_updated = max(POLICY_UPDATED, settings.public_bundle_since or POLICY_UPDATED)
     # D53: the board is served only with the public lookup on, so a board line always matches a lookup that waits.
     public_board_on = settings.public_board and settings.public_mode

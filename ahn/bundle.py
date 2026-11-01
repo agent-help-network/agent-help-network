@@ -80,6 +80,9 @@ STALE_AFTER = timedelta(hours=48)     # an older stored file is not served (503 
 VALID_FOR = timedelta(days=8)         # valid_until: the seed list is re-read about weekly
 DAILY_BYTES = 25 * 1024 * 1024        # full downloads per UTC day, counted in the database (under 0.8 GB a month)
 CLIENT_DAILY_DOWNLOADS = 3            # full downloads per client per UTC day, counted in memory only
+# The thin shards, their manifest and the changes file (ahn/bundle_shards.py) have a day's budget of their own, counted
+# in memory: they are small and fetched by many clients, so they must not draw on the full file's DAILY_BYTES, nor it on theirs.
+SHARD_DAILY_BYTES = 50 * 1024 * 1024
 CACHE_SECONDS = 3600
 _LOCK_KEY = 81260531022
 
@@ -568,6 +571,10 @@ def add_routes(app, settings, *, clock=lambda: datetime.now(timezone.utc)) -> No
             return JSONResponse({"error": "bundle_daily_limit"}, status_code=429, headers=until_midnight(now))
         clients.count(client, day)
         return Response(content=body, media_type="application/gzip", headers=head)
+
+    from . import bundle_shards  # the shards are cut from the stored file above; AHN_BUNDLE_SHARDS=0 leaves their paths unregistered (404)
+    if bundle_shards.shards_enabled():
+        bundle_shards.add_routes(app, snapshot_error=current_or_error, unchanged=unchanged, until_midnight=until_midnight, clock=clock)
 
     @app.api_route(SHA256_PATH, methods=["GET", "HEAD"], include_in_schema=False)
     def bundle_sha256(request: Request):
