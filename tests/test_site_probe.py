@@ -298,7 +298,7 @@ def test_h2_the_robots_reader_has_the_same_wall_clock_limit(monkeypatch):
 
 def test_h2_the_wall_clock_limit_bounds_the_stated_worst_case():
     assert site_probe.REQUEST_WORST_SECONDS == site_probe.WALL_SECONDS == access_profile.WALL_SECONDS
-    assert site_probe.PROBE_WORST_SECONDS == site_probe.WALL_SECONDS + site_probe.PAUSE_SECONDS
+    assert site_probe.PROBE_WORST_SECONDS == 2 * site_probe.WALL_SECONDS + site_probe.PAUSE_SECONDS
 
 
 @pytest.mark.parametrize("status", [600, 999, 1000, 99, 0, -1])
