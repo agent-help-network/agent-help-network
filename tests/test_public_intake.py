@@ -919,6 +919,49 @@ def test_bandwidth_guard_every_15_minutes_notifies_and_suspends_once(public_clie
     assert state["checked_at"] == start + timedelta(minutes=90)
 
 
+def test_bandwidth_guard_new_month_without_points_reports_zero_then_fails_closed(public_client):
+    """Render stamps an hourly point at the end of its hour, so just after the month boundary the
+    new month has no point yet. That is zero usage for a short grace window, an error afterwards."""
+    settings, _ = public_client
+    resource = "srv-db0hnkfavr4c73fp6et0"
+    boundary = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    values = [{"timestamp": (boundary - timedelta(hours=1)).isoformat(), "value": 3}]  # previous month only
+    client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": resource}], "values": values, "unit": "GB"}])
+    ))
+    with connect(settings) as conn:
+        conn.execute("TRUNCATE bandwidth_guard_samples, bandwidth_guard_state")
+        conn.execute("INSERT INTO bandwidth_guard_state (name,period_start,checked_at,usage_gb,state) VALUES ('web',%s,%s,3,'normal')",
+                     (boundary - timedelta(days=31), boundary - timedelta(minutes=15)))
+    for minutes in (0, 15, 45, 119):
+        result = run_guard(TEST_URL, "fake-test-key", resource, now=boundary + timedelta(minutes=minutes), client=client)
+        assert result == {"state": "normal", "usage_gb": 0, "action": "none", "coverage_gap": False,
+                          "coverage_gap_new": False, "no_samples_yet": True}
+    with connect(settings) as conn:
+        state = conn.execute("SELECT period_start,checked_at,latest_sample_at,usage_gb,state,coverage_gap_since FROM bandwidth_guard_state WHERE name='web'").fetchone()
+    assert state["period_start"] == boundary and state["checked_at"] == boundary + timedelta(minutes=119)
+    assert state["latest_sample_at"] is None and state["usage_gb"] == 0 and state["coverage_gap_since"] is None
+    # The first point of the new month arrives: usage is real again.
+    values.append({"timestamp": (boundary + timedelta(hours=1)).isoformat(), "value": 0.5})
+    result = run_guard(TEST_URL, "fake-test-key", resource, now=boundary + timedelta(hours=2, minutes=15), client=client)
+    assert result["usage_gb"] == Decimal("0.5") and "no_samples_yet" not in result
+    # Past the grace window an empty month stays an error.
+    values.clear()
+    for hours in (3, 5):
+        with pytest.raises(ValueError, match="one matching bandwidth series with samples required"):
+            run_guard(TEST_URL, "fake-test-key", resource, now=boundary + timedelta(hours=hours), client=client)
+
+
+def test_bandwidth_guard_new_month_grace_does_not_excuse_a_wrong_series(public_client):
+    resource = "srv-db0hnkfavr4c73fp6et0"
+    boundary = datetime(2026, 11, 1, 0, 30, tzinfo=timezone.utc)
+    client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=[{"labels": [{"field": "service", "value": "srv-other"}], "values": [], "unit": "GB"}])
+    ))
+    with pytest.raises(ValueError, match="one matching bandwidth series"):
+        run_guard(TEST_URL, "fake-test-key", resource, now=boundary, client=client)
+
+
 def test_bandwidth_guard_api_error_redacts_key(public_client):
     key = "fake-sensitive-test-key"
     client = httpx.Client(base_url="https://api.render.com/v1", transport=httpx.MockTransport(

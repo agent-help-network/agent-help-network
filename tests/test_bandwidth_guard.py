@@ -89,6 +89,24 @@ def test_parse_bandwidth_keeps_only_the_configured_window_and_service():
         parse(series(1) + series(1))
 
 
+def test_parse_bandwidth_empty_window_needs_explicit_allowance():
+    old = series(1, stamp=NOW - timedelta(hours=5))  # only a point before the window
+    with pytest.raises(ValueError, match="one matching bandwidth series with samples required"):
+        parse(old)
+    assert parse_bandwidth(old, RESOURCE, NOW - timedelta(hours=1), NOW, allow_empty=True) == []
+
+
+def test_parse_bandwidth_allow_empty_still_requires_exactly_one_matching_series():
+    other = series(1, resource="srv-someoneelse")
+    two = series(1) + series(2, stamp=NOW - timedelta(minutes=30))
+    for data in (other, two):
+        with pytest.raises(ValueError, match="one matching bandwidth series"):
+            parse_bandwidth(data, RESOURCE, NOW - timedelta(hours=1), NOW, allow_empty=True)
+    bad_unit = series(1, unit="furlongs")
+    with pytest.raises(ValueError, match="unit invalid"):
+        parse_bandwidth(bad_unit, RESOURCE, NOW - timedelta(hours=1), NOW, allow_empty=True)
+
+
 def test_threshold_env_defaults_when_unset_or_blank(monkeypatch):
     monkeypatch.delenv("AHN_GUARD_WARNING_GB", raising=False)
     assert _threshold_env("AHN_GUARD_WARNING_GB", Decimal("4")) == Decimal("4")
@@ -112,6 +130,20 @@ def test_threshold_env_rejects_invalid_or_non_finite_values(monkeypatch, raw):
 def test_run_guard_rejects_non_finite_or_inverted_thresholds(warning, stop):
     with pytest.raises(ValueError, match="invalid bandwidth thresholds"):
         run_guard("postgresql://unused", "fake-test-key", RESOURCE, now=NOW, warning_gb=warning, stop_gb=stop)
+
+
+def test_main_marks_a_grace_period_run_without_failing(monkeypatch, capsys):
+    monkeypatch.setattr(bandwidth_guard.faulthandler, "dump_traceback_later", lambda *a, **k: None)
+    monkeypatch.setattr("ahn.platform_metrics.prune_analytics", lambda *a, **k: None)
+    monkeypatch.setattr("ahn.platform_metrics.collect_render_metrics", lambda *a, **k: {"cpu": "ok"})
+    monkeypatch.setattr(bandwidth_guard, "run_guard", lambda *a, **k: {
+        "state": "normal", "usage_gb": Decimal("0"), "action": "none", "coverage_gap": False,
+        "coverage_gap_new": False, "no_samples_yet": True})
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("RENDER_API_KEY", "fake-test-key")
+    monkeypatch.setenv("AHN_GUARD_WEB_SERVICE_ID", RESOURCE)
+    bandwidth_guard.main()  # no SystemExit
+    assert "usage_gb=0 action=none coverage_gap=False no_samples_yet" in capsys.readouterr().out
 
 
 def test_main_arms_a_watchdog_before_any_network_or_database_work(monkeypatch):
