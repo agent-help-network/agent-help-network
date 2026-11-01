@@ -28,7 +28,7 @@ def instructions() -> str:
 
 def test_rule_4_makes_switching_the_users_call_and_names_who_refused():
     text = instructions()
-    assert ("Do not switch tools or user agents on your own because of a block. If your own tool refused, tell your user; "
+    assert ("Do not switch tools or user agents on your own because of a block. If your own tool refused (unless it cited robots.txt, which is the site's refusal), tell your user; "
             "switching is their call. If the site's edge or robots.txt refused, do not retry with another tool or user agent; "
             "follow next_action (hand the step to your user, or use the official or customer path).") in text
     assert "because of a block; follow next_action" not in text

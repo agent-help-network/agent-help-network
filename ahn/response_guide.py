@@ -135,6 +135,23 @@ PROCEED_CONSUMER_ROWS: dict[str, str] = {
     "P2-V": "robots.txt blocks other agents, not your vendor's. Continue modestly; not an access guarantee." + PROCEED_CONSUMER_TAIL,
     "P3": "This site publishes no robots.txt: no declared restriction. Continue modestly; not an access guarantee." + PROCEED_CONSUMER_TAIL,
 }
+# D66 (AHN_PROCEED_WITHOUT_FAILURE=d65): every proceed row says that no block is declared and that a refusal the caller saw came from
+# its tool, the site's edge or a login, so it is told to its user. Replaces the P row's sentence; the verdict and row are unchanged.
+_REFUSED = "If a page refused you, that came from your tool, the site's edge or a login; tell your user."
+BLOCKED_PROCEED_ROWS: dict[str, str] = {
+    "P1": "robots.txt blocks no listed agent vendor at the root. If a page refused you, the refusal came from your tool, the site's edge or a login; tell your user. Else continue modestly.",
+    "P1-V": "robots.txt does not block your vendor's agent tokens at the root. " + _REFUSED + " Else continue.",
+    "P2": "robots.txt blocks some agent tokens, none a listed vendor's. If yours is in access_profile.robots.agents_blocked, stop. If a page refused you, tell your user; else continue.",
+    "P2-V": "robots.txt blocks other agents, not your vendor's. " + _REFUSED + " Else continue modestly.",
+    "P3": "This site publishes no robots.txt, so nothing declared blocks agents. " + _REFUSED + " Else continue.",
+}
+BLOCKED_PROCEED_CONSUMER_ROWS: dict[str, str] = {
+    "P1": "robots.txt blocks no listed agent vendor at the root. If a page refused you, tell your user; for a task in their own account, hand them next_action.customer_url.",
+    "P1-V": "robots.txt does not block your vendor's agents at the root. If a page refused you, tell your user; for their own account, hand them next_action.customer_url.",
+    "P2": "robots.txt blocks some agents, none a listed vendor's; stop if yours is in robots.agents_blocked. If refused, tell your user and hand them next_action.customer_url.",
+    "P2-V": "robots.txt blocks other agents, not your vendor's. If a page refused you, tell your user; for their own account, hand them next_action.customer_url.",
+    "P3": "This site publishes no robots.txt. If a page refused you, tell your user; for a task in their own account, hand them next_action.customer_url.",
+}
 # Rows where a curated consumer path is also next_action.url (the others keep the developer path). D65: a proceed row gives no url, so "continue" and "go here" do not compete; customer_url still names the page.
 CUSTOMER_FIRST_ROWS = frozenset({"O1", "O7", "O7-N", "O7-K"})
 # Rows whose retry_after_seconds is the pending profile's own value (a read is queued).
@@ -260,11 +277,12 @@ def links(versioned: bool = True) -> dict | None:
     return found or None
 
 
-def guide(result: dict, proceed_without_failure: bool = True) -> dict:
+def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
-    ``customer_url`` are those from before D63."""
+    ``customer_url`` are those from before D63. blocked_default (D66, d65 mode, not for a status_check or preflight lookup)
+    swaps the sentence of a proceed row for the BLOCKED_PROCEED rows."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -289,6 +307,8 @@ def guide(result: dict, proceed_without_failure: bool = True) -> dict:
                 sentence = CONSUMER_ROWS_BEFORE.get(row, CONSUMER_ROWS[row])
     if on and do == "proceed" and customer is None and "official_path_available" in (recommendation.get("reasons") or ()):
         sentence = PROCEED_OFFICIAL_ROWS[row]
+    if on and blocked_default and do == "proceed":
+        sentence = (BLOCKED_PROCEED_CONSUMER_ROWS if customer else BLOCKED_PROCEED_ROWS)[row]
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))

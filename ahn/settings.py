@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date
 from ipaddress import ip_address
@@ -18,6 +19,22 @@ def report_retention_days_from_env() -> int:
     if not 30 <= days <= 3650:
         raise RuntimeError("AHN_REPORT_RETENTION_DAYS must be 30-3650")
     return days
+
+
+LOG = logging.getLogger(__name__)
+
+
+def parse_proceed_mode(raw: str) -> tuple[str, str]:
+    """AHN_PROCEED_WITHOUT_FAILURE as (switch, mode): "0" is off (before D63); "d65" (or "d66") is the blocked-by-default mode; every
+    other value, empty and "1" included, is the D63 answers, as before."""
+    value = raw.strip().lower()
+    if value == "0":
+        return "off", "d63"
+    if value in ("d65", "d66"):
+        return "on", "d65"
+    if value not in ("", "1", "d63"):
+        LOG.warning("proceed_mode_unknown_value")  # the code only, never the value
+    return "on", "d63"
 
 
 @dataclass(frozen=True)
@@ -62,6 +79,9 @@ class Settings:
     lookup_feedback: bool = True
     # AHN_PROCEED_WITHOUT_FAILURE=0 restores the answers from before D63: the recommendation, the next_checks codes and texts, the summary line, next_action.url and customer_url. On by default.
     proceed_without_failure: bool = True
+    # AHN_PROCEED_WITHOUT_FAILURE=d65 (D66): a lookup that reports no failure is answered like one that reported site_access, unless
+    # its task_step is status_check or preflight. "1", empty and "d63" keep the D63 answers; only "d65" changes them.
+    proceed_mode: str = "d63"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -105,6 +125,7 @@ class Settings:
                 raise RuntimeError("AHN_PUBLIC_BOARD=1 needs AHN_PUBLIC_BOARD_SINCE=YYYY-MM-DD, "
                                    "the date the privacy policy shows as last updated") from None
         public_board_ahn_check = public_board and os.environ.get("AHN_PUBLIC_BOARD_AHN_CHECK", "").strip() == "1"
+        proceed = parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))  # once: an unknown value warns once
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
                    vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0",
@@ -112,4 +133,4 @@ class Settings:
                    public_board=public_board, public_board_since=public_board_since,
                    public_board_ahn_check=public_board_ahn_check,
                    lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0",
-                   proceed_without_failure=os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", "").strip() != "0")
+                   proceed_without_failure=proceed[0] != "off", proceed_mode=proceed[1])

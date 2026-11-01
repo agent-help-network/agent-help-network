@@ -2255,6 +2255,24 @@ def access_is_current(access: dict, today: date | None = None) -> bool:
     return 0 <= age <= ACCESS_MAX_AGE_DAYS
 
 
+# D66: hosts whose listed developer path cannot be used by an ordinary caller. Kept out of official_paths() on purpose, so no
+# response field carries it. Under AHN_PROCEED_WITHOUT_FAILURE=d65 a lookup that reports no failure is not assumed blocked for
+# these hosts (it would send the caller to an API it cannot use). A host that is not listed here is "unknown": no gate.
+# Evidence: Amazon's developer documentation for the Selling Partner API says individual accounts are not eligible; Reddit's help
+# page on its developer platform says access is for approved developers after an App Review.
+USABLE_NOW_BLOCKED = {
+    "amazon.com": {"access": "partner_only", "verified_at": "2026-10-31",
+                   "source_url": "https://developer-docs.amazon/sp-api/docs/registering-as-a-developer"},
+    "reddit.com": {"access": "approval_required", "verified_at": "2026-10-31",
+                   "source_url": "https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data"},
+}
+
+
+def official_path_unusable(site_host: str) -> bool:
+    labels = site_host.strip().rstrip(".").lower().split(".")
+    return any(".".join(labels[index:]) in USABLE_NOW_BLOCKED for index in range(len(labels) - 1))
+
+
 def official_paths(site_host: str, today: date | None = None) -> dict | None:
     """Exact apex match first, then the apex of any subdomain; returns a copy or None.
 

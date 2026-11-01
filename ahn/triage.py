@@ -410,6 +410,11 @@ def profile_pending(access_profile: dict | None) -> bool:
                 and access_profile.get("retry_after_seconds") is not None)
 
 
+# D66: a lookup that sends one of these task_step values says it was not refused (a regression check, a lookup at task start);
+# it keeps the D63 answer. They are lookup-only words, not observation steps.
+LOOKUP_ONLY_STEPS = frozenset({"status_check", "preflight"})
+
+
 def failure_observed(error_class: str | None, failure_stage: str | None) -> bool:
     """D63: the lookup reports a failure. Only error_class and failure_stage count (any value, ``unknown`` too): the
     optional signal codes are counted and never change the answer (D47)."""
@@ -438,7 +443,8 @@ def _wait(reason: str, provider_regional: bool) -> dict:
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                    official: dict | None, *, profile_not_read: bool = False, provider_regional: bool = False,
                    now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True,
-                   failure_stage: str | None = None, proceed_without_failure: bool = True) -> dict:
+                   failure_stage: str | None = None, proceed_without_failure: bool = True,
+                   assume_failure: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
@@ -446,11 +452,14 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     agent_vendor: an accepted agent_vendor value (accepted_vendor) or None; vendor_aware: AHN_VENDOR_AWARE_BLOCK (D48).
     The accepted vendor is echoed as recommendation.agent_vendor only while the vendor-aware rule is on.
     failure_stage, proceed_without_failure: D63. With the switch on, a lookup that reports no failure (neither error_class
-    nor failure_stage) and a robots.txt that is clear or absent gets proceed even where an official path is listed."""
+    nor failure_stage) and a robots.txt that is clear or absent gets proceed even where an official path is listed.
+    assume_failure: D66 (AHN_PROCEED_WITHOUT_FAILURE=d65): the lookup is judged as if it had reported site_access; the reply is
+    then the one such a lookup gets, and no new row exists."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                              provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
-                             failure_stage=failure_stage, proceed_without_failure=proceed_without_failure)
+                             failure_stage=failure_stage, proceed_without_failure=proceed_without_failure,
+                             assume_failure=assume_failure)
     if vendor is not None:
         result["agent_vendor"] = vendor
     return result
@@ -459,7 +468,7 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
 def _recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                     official: dict | None, *, profile_not_read: bool, provider_regional: bool, now: datetime | None,
                     agent_vendor: str | None, vendor_aware: bool, failure_stage: str | None = None,
-                    proceed_without_failure: bool = True) -> dict:
+                    proceed_without_failure: bool = True, assume_failure: bool = False) -> dict:
     wait_reason = provider_wait_reason(provider_status, now)
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
@@ -506,7 +515,7 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
             return {"action": "use_official_path", "confidence": "medium", "reasons": robots_codes + ["official_path_available"]}
         return {"action": "unknown", "confidence": "low", "reasons": robots_codes}
     clear = proceed_without_failure and _robots_clear(access_profile, verdict)
-    if clear and not failure_observed(error_class, failure_stage):
+    if clear and not (failure_observed(error_class, failure_stage) or assume_failure):
         # D63: nothing sent reports a failure and robots.txt is clear (or absent): continue, and name the official path.
         return {"action": "proceed", "confidence": "low",
                 "reasons": (robots_codes or ["robots_allows_agents"]) + (["official_path_available"] if official_listed else [])}
@@ -538,12 +547,13 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 official: dict | None = None, *, profile_not_read: bool = False,
                 host_facts: dict | None = None, provider_partial: bool = False,
                 now: datetime | None = None, agent_vendor: str | None = None,
-                vendor_aware: bool = True, proceed_without_failure: bool = True) -> list[dict[str, str]]:
+                vendor_aware: bool = True, proceed_without_failure: bool = True,
+                assume_failure: bool = False) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
     agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63."""
     codes: list[str] = []
     handoff = error_class in {"human_verification", "login_auth"}
-    failed = failure_observed(error_class, failure_stage) if proceed_without_failure else True
+    failed = (failure_observed(error_class, failure_stage) or assume_failure) if proceed_without_failure else True
     if failure_stage and failure_stage != "unknown":
         codes.append(failure_stage)
     elif failed and not handoff:

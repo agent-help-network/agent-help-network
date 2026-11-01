@@ -78,9 +78,10 @@ mcp = MCPServer(
         ADVISORY_LINE + " "
         "Call check_incident with the public hostname when an authorized web step is blocked or failing for no clear reason (a 403 or access denied, a 429, a 5xx or a timeout, a login wall, a \"verify you are human\" or CAPTCHA page) or a user asks \"is this site down?\" or whether it blocks agents. "
         "Do not call it when the page opened normally or when your own tool or platform already said why it refused (for example a robots.txt or platform policy refusal). "
-        "Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add the optional codes only when you observed them. "
+        "Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add the codes only when you observed them. "
+        "If you only check whether a site is up (not blocked), send task_step=status_check. "
         "Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply to it; leave agent_vendor out then. "
-        "Read summary_line first, then follow next_action: it may say to continue, wait for the provider, use a listed official path, hand the step to the user, stop retrying, or look up once more. recommendation.action stays the verdict. "
+        "Read summary_line first, then follow next_action: it may say to continue, wait for the provider, use a listed official path, hand the step to the user, stop retrying, or look up once more. "
         "The answer has three layers: access_profile (the host's own declared agent policy from robots.txt and llms.txt), official_paths and provider_status (official developer docs and status feeds), and observations (recent reports from other agents, often empty). "
         "Declared policy is not an access guarantee and no_reports does not establish that a site works. Do not poll without a task need. "
         "If a blocked lookup's answer carries a feedback_token and you then try again, you may report once with rate_last_lookup whether it worked. "
@@ -183,7 +184,7 @@ def check_result(response: CheckResponse):
             and response.next_action.customer_url != response.next_action.url):
         # D61: the site's own customer path, for a task in the user's own account (the URL above may be a developer API, or this same page).
         lead += "\nCustomer path: " + response.next_action.customer_url
-    if response.next_action is not None and response.next_action.do == "proceed":
+    if response.next_action is not None and response.next_action.do == "proceed" and "tell your user" not in lead:  # D66 sentences say it
         # Free text, outside the schema: proceed means no block is declared, never that nothing blocked the caller.
         lead += "\n" + PROCEED_NOTE
     return CallToolResult(
