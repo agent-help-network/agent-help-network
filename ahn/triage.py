@@ -43,7 +43,7 @@ CHECKS = {
     "profile_pending": "This host's robots.txt and llms.txt are being read now. Repeat the same lookup once after access_profile.retry_after_seconds seconds; the answer will usually carry the declared policy by then. Do not poll repeatedly.",
     "llms_txt_present": "This host publishes llms.txt. Read it first: it is the host's own guidance to language-model agents and may point to preferred machine-readable resources.",
     "content_use_ai_input_declared_no": "This host's robots.txt declares ai-input=no (or AIPREF ai-use=n) for user-directed agents like you (access_profile.content_use). It is a content-use preference, not an access rule; follow your operator's policy and tell the user if it matters.",
-    "official_path_available": "An official developer path is listed for this host (official_paths). Prefer the documented API or developer portal over page automation; it is the sanctioned route and usually the more reliable one.",
+    "official_path_available": "An official developer path is listed for this host (official_paths): a developer API for building on the site's data. A task in the user's own account needs the site's customer page (next_action.customer_url, when listed) instead.",
     "government_registry_listed": "This domain appears in a public government domain list (host_facts.government_registry gives the list, its version and the organisation it names). The list says who registered the domain; it does not vouch for every page or link on it.",
     "government_suffix_restricted": "Registration under this suffix is limited to government bodies by the registry's own rules (host_facts.suffix_rule). That says who may register a domain; it does not vouch for any page or link on it.",
     "government_list_version_missing": "This domain is not in the version of the government domain list shown in host_facts.government_registry. Lists follow the publisher's schedule, so a newly registered domain can be missing; this is a fact about the list version, not a finding about the site. Before entering credentials or payment details, compare the address with one the organisation publishes elsewhere.",
@@ -81,7 +81,7 @@ CHECKS_KO = {
     "profile_pending": "이 호스트의 robots.txt·llms.txt 를 지금 읽고 있습니다. access_profile.retry_after_seconds 초 뒤 같은 조회를 한 번 더 하면 대개 선언 정책이 들어 있습니다. 반복 폴링은 하지 마세요.",
     "llms_txt_present": "이 호스트는 llms.txt를 게시합니다. 먼저 읽으세요. 언어 모델 에이전트를 위한 호스트 자체 안내이며 선호하는 기계 판독 자원을 가리킬 수 있습니다.",
     "content_use_ai_input_declared_no": "이 호스트의 robots.txt 가 사용자 지시 에이전트에 ai-input=no(또는 AIPREF ai-use=n)를 선언했습니다(access_profile.content_use). 접근 규칙이 아니라 콘텐츠 이용 선호입니다. 운영사 정책을 따르고, 중요하면 사용자에게 알리세요.",
-    "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 페이지 자동화보다 문서화된 API나 개발자 포털을 우선하세요. 허용된 경로이며 대개 더 안정적입니다.",
+    "official_path_available": "이 호스트에는 공식 개발자 경로가 등록돼 있습니다(official_paths). 사이트 데이터 위에 무언가를 만들 때 쓰는 개발자 API입니다. 사용자 본인 계정의 작업에는 사이트의 고객 페이지(next_action.customer_url, 등록된 경우)가 필요합니다.",
     "government_registry_listed": "이 도메인은 공개 정부 도메인 목록에 있습니다(host_facts.government_registry 에 목록·판본·적힌 기관명이 있습니다). 목록은 도메인을 누가 등록했는지를 말할 뿐, 그 안의 모든 페이지·링크를 보증하지 않습니다.",
     "government_suffix_restricted": "이 접미사 아래 등록은 레지스트리 자체 규칙상 정부 기관으로 제한됩니다(host_facts.suffix_rule). 이는 누가 도메인을 등록할 수 있는지를 말할 뿐, 어떤 페이지·링크도 보증하지 않습니다.",
     "government_list_version_missing": "이 도메인은 host_facts.government_registry 에 표시된 판본의 정부 도메인 목록에 없습니다. 목록은 게시자의 일정을 따르므로 새로 등록된 도메인은 빠져 있을 수 있습니다. 이는 목록 판본에 관한 사실이지 사이트에 대한 판정이 아닙니다. 자격 증명이나 결제 정보를 넣기 전에 그 기관이 다른 곳에 공개한 주소와 비교하세요.",
@@ -98,6 +98,7 @@ PREVIOUS_CHECKS = {
 # D63: the same code, a different sentence. robots_allows_agents for a host that publishes no robots.txt (HTTP 404 or 410);
 # llms_txt_present for an llms.txt larger than this service reads; provider_unknown for an Atom incident history, whose
 # feed carries no page status, so indicator stays null by design.
+OFFICIAL_PATH_BEFORE = "An official developer path is listed for this host (official_paths). Prefer the documented API or developer portal over page automation; it is the sanctioned route and usually the more reliable one."
 ROBOTS_UNKNOWN_BEFORE = "No robots.txt policy could be read for this host (absent, redirected, or unreachable within limits). Treat the host's agent policy as unknown rather than permissive."
 ROBOTS_ABSENT_CHECK = "This host publishes no robots.txt (HTTP 404 or 410; access_profile.robots_status is absent), so it declares no restriction for any agent. This is not an access guarantee: CDN challenges, sign-ins and rate limits can still apply, and the site's terms and your platform's rules are separate."
 ROBOTS_ABSENT_CHECK_KO = "이 호스트는 robots.txt 를 게시하지 않습니다(HTTP 404·410, access_profile.robots_status 가 absent). 어떤 에이전트에도 제한을 선언하지 않은 것입니다. 접근 보장은 아니며 CDN 챌린지·로그인·속도 제한은 여전히 적용될 수 있고, 사이트 약관과 플랫폼 규칙은 별개입니다."
@@ -614,7 +615,7 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     if proceed_without_failure and access_profile and access_profile.get("robots_status") == "absent":
         texts = {**texts, "robots_allows_agents": ROBOTS_ABSENT_CHECK}
     if not proceed_without_failure:
-        texts = {**texts, "robots_unknown": ROBOTS_UNKNOWN_BEFORE}  # the switch off gives the sentences from before D63 too
+        texts = {**texts, "robots_unknown": ROBOTS_UNKNOWN_BEFORE, "official_path_available": OFFICIAL_PATH_BEFORE}  # the switch off gives the sentences from before D63 too
     else:
         if access_profile and access_profile.get("llms_detail") == "too_large":
             texts = {**texts, "llms_txt_present": LLMS_TOO_LARGE_CHECK}

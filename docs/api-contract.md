@@ -88,7 +88,7 @@
 
 `/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
-MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다.
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다. `next_action.do` 가 `proceed` 이면 첫 블록 끝에 자유 문장 한 줄이 더 붙는다. proceed 는 선언된 차단이 없다는 뜻이지 아무것도 막지 않았다는 뜻이 아니라는 문장이며, 스키마 밖이다.
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
@@ -147,7 +147,7 @@ MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들�
 
 ### 결과 회신 (`feedback_token`, `POST /v1/feedback`, MCP `rate_last_lookup`, D58)
 
-막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 이 조회(와 이를 부르는 MCP `check_incident`)에만 붙을 수 있으며 사건 상세(`GET /v1/incidents/{id}`)와 사이트 자체 페이지에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다).
+막힘 조회(`error_class` 를 보낸 조회)의 답은, 그 호스트의 조회를 서비스가 셀 때(문서용 예시가 아닌 공개 루트 호스트, 공개 모드에서는 조회 목록에 든 호스트, 조회 집계가 켜져 있음) 마지막 키로 `feedback_token` 객체를 담는다. 이 조회(와 이를 부르는 MCP `check_incident`)에만 붙을 수 있으며 사건 상세(`GET /v1/incidents/{id}`)와 사이트 자체 페이지에는 붙지 않는다(공개 토론 링크인 `links.feedback` 과는 다른 키다). 토큰은 `error_class` 를 보냈을 때만 발급된다. `failure_stage` 만 보냈거나 실패 신호가 없는 조회(D63 의 `proceed`)에는 붙지 않는다.
 
 ```json
 "feedback_token": {
@@ -416,7 +416,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `retry_after_seconds` 는 같은 조회를 **한 번** 다시 할 때다. 폴링 간격이 아니다. 다시 조회했는데 또 `retry_lookup_once` 가 오면 `no_clear_action` 으로 읽는다.
 - `stop_if_you_are` 는 `recommendation.reasons` 에 `robots_blocks_some_agents` 가 있을 때만 붙는다. 이 서비스의 토큰 표에서, 사이트 루트에서 명시적으로 막힌 벤더의 에이전트 토큰이다. 요청이 그중 하나로 자신을 밝히면 선언된 차단으로 보고 페이지 재시도를 멈춘다. 자기 에이전트에 맞는 답은 `agent_vendor` 를 보내 받는다.
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
-- `customer_url` 은 `use_official_path` 이거나 D63 뒤로는 `proceed` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업에서 개발자 API 가 닿지 못할 때 쓰는 길이다. `proceed` 와 페이지를 막지 않는 `use_official_path` 행(대기 프로필, 또는 robots 차단 없는 공식 경로)에서는 `next_action.url` 도 고객 페이지이고 요약 문장이 고객 페이지를 먼저 말하며, 개발자 API 는 "also listed" 꼬리로 둔다. robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행에서는 `url` 이 개발자 경로로 남고 요약이 `customer_url` 을 사용자에게 넘기라고 말한다(D61). 에이전트가 자동화할 페이지가 아니라 사용자에게 넘길 페이지다.
+- `customer_url` 은 `use_official_path` 이거나 D63 뒤로는 `proceed` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업에서 개발자 API 가 닿지 못할 때 쓰는 길이다. `proceed` 와 페이지를 막지 않는 `use_official_path` 행(대기 프로필, 또는 robots 차단 없는 공식 경로)에서는 `next_action.url` 도 고객 페이지이고 요약 문장이 고객 페이지를 먼저 말하며, 개발자 API 는 "also listed" 꼬리로 둔다. robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행에서는 `url` 이 개발자 경로로 남고 요약이 `customer_url` 을 사용자에게 넘기라고 말한다(D61). 에이전트가 자동화할 페이지가 아니라 사용자에게 넘길 페이지다. `customer_url` 이 없으면 그 호스트가 아직 큐레이션되지 않았을 수 있다. 없음은 "사이트에 고객 페이지가 없다"는 뜻과 구분되지 않는다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.

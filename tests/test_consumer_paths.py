@@ -363,10 +363,10 @@ def test_each_consumer_row_is_pinned_and_blocked_rows_hand_off():
     assert CONSUMER_ROWS == {
         "O1": "For a task in the user's own account, use the site's customer page (next_action.customer_url). robots.txt is pending: look up once more in {n} s." + first,
         "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + hand,
-        "O3": "robots.txt blocks some agent tokens (next_action.stop_if_you_are). Use the listed official path, not pages." + hand,
+        "O3": "robots.txt blocks the tokens in next_action.stop_if_you_are, for requests that send them. Use the official path." + hand,
         "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + hand,
         "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + hand,
-        "O6": "robots.txt disallows the root for agents it does not name; not permission. Use the listed official path." + hand,
+        "O6": "robots.txt disallows the root for tokens not in robots.agents_allowed; not permission. Use the official path." + hand,
         "O7": lead7 + first, "O7-N": lead7 + first, "O7-K": lead7 + first,
     }
     for row, sentence in CONSUMER_ROWS.items():
@@ -431,7 +431,7 @@ def test_mcp_first_block_adds_a_customer_path_line(monkeypatch):
     result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.com"}))
     # Changed on purpose by D63: this is a proceed answer whose `url` is the customer page, so one URL line, no repeat.
     assert payload["next_action"]["do"] == "proceed" and payload["next_action"]["url"] == HELP
-    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + HELP]
+    assert result.content[0].text.splitlines() == [payload["summary_line"], "URL: " + HELP, mcp_adapter.PROCEED_NOTE]
     assert json.loads(result.content[-1].text) == result.structured_content
     # Where robots.txt blocks pages, `url` stays the developer path and the customer page is the extra line.
     blocked = _payload(WITH_CONSUMER, robots("User-agent: *\nDisallow: /\n"))
