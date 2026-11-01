@@ -19,7 +19,11 @@ Manners (docs/decisions.md D67; the privacy policy repeats the numbers and tests
   name's own robots.txt verdict for "/" (its home_gate, read the same way, under 24 hours old) allows the home page for
   us. With no fresh verdict the www profile read is queued and this check keeps the redirect as its result; with a
   disallowing verdict, or too little time left in a lookup's 3 seconds, the second request is not made; a paced check
-  (queue, cron) waits the same pause before it as before any other request.
+  (queue, cron) waits the same pause before it as before any other request. A host whose last check followed the
+  redirect is checked only while the www name's verdict is fresh (otherwise its profile read is queued and the check
+  waits, like an apex with a stale verdict); a check that could not follow for want of a verdict is due again after
+  MIN_GAP_HOURS, not a day later. The hourly and daily limits count checks, and a check is up to two requests, so the
+  number of requests is at most twice those limits.
   What is kept is the second answer's codes, and the redirect record says ``followed_www: true``. A second redirect is
   not followed;
 * a check never solves, answers or repeats a human-verification step, never opens a sign-in page and never submits a form.
@@ -629,9 +633,8 @@ def _www_target(read_host: str, fetched: dict, classified: dict) -> str | None:
     return host
 
 
-def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadline: float | None):
-    """(fetched, classified) of the one request to the www name, or None when it is not made. Needs a fresh home_gate of the
-    www name's own profile that allows the home page; without one the profile read is queued for a later check."""
+def _www_gate(conn, www_host: str, now: datetime) -> dict | None:
+    """The www name's fresh home_gate, or None; when there is none its profile read is queued (nothing else refreshes it)."""
     profile = conn.execute("SELECT fetched_at,read_host,home_gate FROM host_access_profile WHERE site_host=%s", (www_host,)).fetchone()
     conn.commit()
     gate = _fresh_gate(profile, now)
@@ -645,17 +648,25 @@ def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadlin
         except Exception:
             conn.rollback()
             LOG.warning("site_probe_www_enqueue_unavailable")
-        return None
+    return gate
+
+
+def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadline: float | None):
+    """(result, no_verdict): result is (fetched, classified) of the one request to the www name, or None when it is not
+    made; no_verdict is True when that is for want of a fresh home_gate (its profile read is queued)."""
+    gate = _www_gate(conn, www_host, now)
+    if gate is None:
+        return None, True
     if not ("allowed" in gate and gate["allowed"]):
-        return None
+        return None, False
     if deadline is not None and deadline - _clock() < SECOND_REQUEST_MIN_SECONDS:
-        return None
+        return None, False
     if paced:
         _pace()
     fetched = reader(www_host)
     if "label" in fetched and fetched["label"] == "not_public":
-        return None
-    return fetched, classify(www_host, fetched, now)
+        return None, False
+    return (fetched, classify(www_host, fetched, now)), False
 
 
 def measure(settings, site_host: str, trigger: str, *, now: datetime | None = None, reader=None, job: dict | None = None,
@@ -692,6 +703,12 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
             if paced:
                 _pace()
             read_host = context["read_host"]
+            if previous and previous["read_host"] == f"www.{read_host}" and _www_gate(conn, previous["read_host"], now) is None:
+                # The last check followed the redirect to www: wait for the www verdict (queued) instead of storing a redirect.
+                if job is not None and "requested_at" in job and job["requested_at"] is not None \
+                        and job["requested_at"] < datetime.now(timezone.utc) - QUEUE_GIVE_UP:
+                    return None
+                return _defer(job, DEFER_SECONDS)
             fetched = reader(read_host)
             if fetched.get("label") == "not_public":
                 row = _row(read_host, now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
@@ -699,7 +716,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
             else:
                 classified = classify(read_host, fetched, now)
                 www = _www_target(read_host, fetched, classified)
-                followed = _follow_www(conn, www, now, reader, paced, deadline) if www else None
+                followed, no_verdict = _follow_www(conn, www, now, reader, paced, deadline) if www else (None, False)
                 if followed is not None:
                     first = classified["redirect"]
                     fetched, classified = followed
@@ -707,6 +724,8 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                     classified["redirect"] = {**(classified["redirect"] or first), "followed_www": True}
                     read_host = www
                 wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"])
+                if no_verdict:
+                    wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
                 row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)

@@ -640,6 +640,55 @@ def test_www_follow_without_a_www_profile_keeps_the_redirect_queues_the_profile_
     assert routes.calls == [HOST, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
 
 
+def test_www_follow_stays_followed_a_day_later_and_never_falls_back_to_the_redirect(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    later = datetime.now(timezone.utc) + timedelta(hours=25)
+    read_profile(db, monkeypatch, now=later)                                   # the apex profile is read again by lookups; www's is not
+    assert site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later) is None
+    assert routes.calls == [HOST, WWW]                                         # no request, no 301 stored over the good result
+    assert one_row(db)["outcome"] == "reachable" and one_row(db)["read_host"] == WWW
+    assert [r["site_host"] for r in rows(db, "SELECT site_host FROM background_reads WHERE kind='access_profile'")] == [WWW]
+    read_profile(db, monkeypatch, host=WWW, now=later)                         # what the queue does
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert routes.calls == [HOST, WWW, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_a_queued_check_waits_for_the_www_verdict_of_a_followed_host(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    later = datetime.now(timezone.utc) + timedelta(hours=25)
+    read_profile(db, monkeypatch, now=later)
+    with pytest.raises(background_reads.Deferred):
+        site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later, job={"requested_at": datetime.now(timezone.utc)})
+    assert routes.calls == [HOST, WWW]
+
+
+def test_www_follow_a_host_without_a_www_verdict_is_due_again_in_6_hours(db, monkeypatch):
+    read_profile(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    stored = one_row(db)
+    assert stored["next_due_at"] - stored["probed_at"] == timedelta(hours=site_probe.MIN_GAP_HOURS)
+    monkeypatch.setattr(background_reads, "read_profile_file", Profiles())
+    background_reads.process_due(db, limit=5)                                  # the queued www profile read
+    later = datetime.now(timezone.utc) + timedelta(hours=6, minutes=1)
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert routes.calls == [HOST, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+
+
+def test_www_follow_a_www_name_that_is_not_public_keeps_the_redirect_result(db, monkeypatch):
+    www_ready(db, monkeypatch)
+    routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home(label="not_public")})
+    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
+    assert routes.calls == [HOST, WWW]
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == HOST and stored["redirect"]["followed_www"] is False
+
+
 def test_www_follow_is_not_made_when_the_www_robots_txt_disallows_the_home_page(db, monkeypatch):
     www_ready(db, monkeypatch, robots=DENY_HOME)
     routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
