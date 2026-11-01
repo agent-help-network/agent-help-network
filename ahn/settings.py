@@ -82,6 +82,9 @@ class Settings:
     # AHN_PROCEED_WITHOUT_FAILURE=d65 (D66): a lookup that reports no failure is answered like one that reported site_access, unless
     # its task_step is status_check or preflight. "1", empty and "d63" keep the D63 answers; only "d65" changes them.
     proceed_mode: str = "d63"
+    # AHN_STATUS_CHECK_GUIDE=0 (D69) gives a task_step=status_check lookup the same summary_line as any other lookup and leaves
+    # next_action.status_url out. On by default.
+    status_check_guide: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -133,4 +136,5 @@ class Settings:
                    public_board=public_board, public_board_since=public_board_since,
                    public_board_ahn_check=public_board_ahn_check,
                    lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0",
-                   proceed_without_failure=proceed[0] != "off", proceed_mode=proceed[1])
+                   proceed_without_failure=proceed[0] != "off", proceed_mode=proceed[1],
+                   status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0")

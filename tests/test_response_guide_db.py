@@ -18,7 +18,7 @@ from ahn import access_profile, background_reads, service
 from ahn.db import connect, migrate
 from ahn.main import create_app
 from ahn.models import CheckResponse
-from ahn.response_guide import ROWS
+from ahn.response_guide import ROWS, STATUS_ROWS
 from ahn.service import PUBLIC_REPORTER_ID
 from ahn.settings import Settings
 
@@ -113,3 +113,28 @@ def test_the_openapi_schema_lists_the_new_keys_as_optional(monkeypatch):
     with TestClient(create_app(settings)) as client:
         schema = client.get("/openapi.json").json()["components"]["schemas"]["CheckResponse"]
     assert set(NEW_KEYS) <= set(schema["properties"]) and not set(NEW_KEYS) & set(schema.get("required", []))
+
+
+def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_a_failure_signal_or_the_switch_says_otherwise(monkeypatch):
+    settings = prepare(monkeypatch, guide=True)
+    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
+    params = {"site_host": "plain-example.org"}
+    with TestClient(create_app(settings)) as client:
+        plain = client.get("/v1/incidents/check", params=params).json()
+        checked = client.get("/v1/incidents/check", params={**params, "task_step": "status_check"})
+        failed = client.get("/v1/incidents/check", params={**params, "task_step": "status_check", "error_class": "site_access"})
+        other_step = client.get("/v1/incidents/check", params={**params, "task_step": "login"})
+    assert checked.status_code == 200
+    body = checked.json()
+    CheckResponse(**body)
+    assert body["summary_line"] == STATUS_ROWS["T3"] and body["next_action"]["status_url"] == "https://status.plain-example.org/"
+    assert body["next_action"]["do"] == plain["next_action"]["do"] and body["next_action"]["url"] == plain["next_action"]["url"]
+    assert body["recommendation"] == plain["recommendation"]
+    assert failed.status_code == other_step.status_code == 200
+    for other in (failed.json(), other_step.json()):
+        assert other["summary_line"] not in STATUS_ROWS.values() and "status_url" not in other["next_action"]
+    off = Settings(TEST_URL, "test-pepper-must-be-at-least-thirty-two-chars", public_mode=True, reporting_enabled=True,
+                   collect_lookup_metrics=True, response_guide=True, status_check_guide=False)
+    with TestClient(create_app(off)) as client:
+        old = client.get("/v1/incidents/check", params={**params, "task_step": "status_check"}).json()
+    assert old["summary_line"] == plain["summary_line"] and "status_url" not in old["next_action"]

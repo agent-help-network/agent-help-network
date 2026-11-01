@@ -92,6 +92,8 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
+`AHN_STATUS_CHECK_GUIDE=0`(D69)이면 `task_step=status_check` 조회도 다른 조회와 같은 `summary_line` 을 받고 `next_action.status_url` 이 빠진다. 기본은 켜짐.
+
 ## 공개 접수 계약
 
 - `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
@@ -429,6 +431,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `lookup_host` 는 `lookup_apex_host` 일 때만 붙는다. 사이트 전체에 해당하는 선언 정책을 읽을 사이트의 주 도메인이다.
 - `customer_url` 은 `use_official_path` 이거나 `proceed` 이면서 `official_paths.consumer` 가 큐레이션돼 있을 때 붙는다(D61). 사이트 자신의 고객 페이지(첫 `customer_help`, 없으면 첫 `entry_link`, 없으면 첫 `official_app`)로, 사용자 본인 계정의 작업에서 개발자 API 가 닿지 못할 때 쓰는 길이다. 페이지를 막지 않는 `use_official_path` 행(대기 프로필, 또는 robots 차단 없는 공식 경로)에서는 `next_action.url` 도 고객 페이지이고 요약 문장이 고객 페이지를 먼저 말하며, 개발자 API 는 "also listed" 꼬리로 둔다. robots.txt 나 거절된 읽기가 페이지를 막는 O2~O6 행에서는 `url` 이 개발자 경로로 남고 요약이 `customer_url` 을 사용자에게 넘기라고 말한다(D61). 에이전트가 자동화할 페이지가 아니라 사용자에게 넘길 페이지다. `customer_url` 이 없으면 그 호스트가 아직 큐레이션되지 않았을 수 있다. 없음은 "사이트에 고객 페이지가 없다"는 뜻과 구분되지 않는다.
 - `url` 은 위에서 설명한 큐레이션 공식 경로와 검증된 상태 출처에서만 가져오고, 200자 이하의 `https` URL 이어야 하며 아니면 `null` 이다.
+- `status_url`(D69)은 선택 필드이며 상태 페이지를 알 때만 붙는다. `provider_status.source_url`, 없으면 `official_status_page.source_url` 이고 200자 이하의 `https` URL 이다. `task_step=status_check` 이면서 실패 신호가 없는 조회의 `summary_line` 은 네 가지 상태 문장 중 하나다(T1: 업체 피드가 활성 문제 없음을 알림, T2: 피드는 있으나 현재 상태가 분명하지 않음, T3: 읽는 피드는 없고 공식 상태 페이지만 앎, T4: 아는 상태 페이지 없음). 단 `do` 가 `wait_for_provider`·`hand_off_to_human`·`stop_automation` 이면 그 문장이 그대로 남고, 상태 페이지를 모르는 하위 도메인 조회도 `lookup_apex_host` 문장을 유지한다(사이트 전체 조회가 업체 상태를 줄 수 있어서). `do`·`url`·`retry_after_seconds`·`recommendation` 은 다른 조회와 같고 `status_url` 만 더해진다. 상태 문장에는 호스트나 URL 이 들어가지 않는다.
 - 세 키를 만들지 못하면 생략하고 나머지 답은 그대로다. OpenAPI 스키마에는 `summary_line`·`next_action`·`links` 가 있든 없든 늘 선택 속성으로 보인다.
 - `do` 는 `recommendation.action` 보다 강하게도 약하게도 말하지 않는다. `unknown` 을 쪼갠 네 값은 모두 판정이 없다는 뜻이고, 지금 할 수 있는 일만 말한다.
 
