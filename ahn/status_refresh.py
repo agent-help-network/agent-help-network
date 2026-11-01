@@ -1827,8 +1827,8 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
 # --- Curated feeds, read on a schedule without a lookup (D44) ------------------------------------------------
 
 CURATED_EVIDENCE = "curated_mapping"  # status_sources.evidence of a row the cron registered from SOURCES
-FEED_BATCH_MAX = 90         # feeds read by one 5-minute cron run at most
-FEED_BATCH_SECONDS = 60.0   # no feed and no scope list is started after this long (the run's other steps share 300 s)
+FEED_BATCH_MAX = 180        # feeds read by one 5-minute cron run at most (180 x 0.5 s pacing = 90 s, inside FEED_BATCH_SECONDS)
+FEED_BATCH_SECONDS = 100.0  # no feed and no scope list is started after this long (the run's other steps share 300 s)
 CRON_IDLE = timedelta(hours=1)  # a quiet feed is read about hourly; an active one every FEED_RETRY_MINUTES
 
 
