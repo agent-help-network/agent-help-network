@@ -101,7 +101,7 @@ RANK_BATCH_6_INSTATUS_HOSTS = {"q10.com"}
 RANK_BATCH_6_BETTERSTACK_HOSTS = {"hf.co"}
 # Demand batch 2026-10-27: the page's public feed parsed with the existing parser on the first check.
 DEMAND_BATCH_2026_10_27_INSTATUS_HOSTS = {"deno.com"}
-STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com"}
+STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com", "cloudflare-dns.com", "incognia.com", "lastpass.com", "replit.com", "viator.com"}
 
 
 def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
