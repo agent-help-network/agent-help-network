@@ -79,8 +79,9 @@ def parse_bandwidth(data: object, resource_id: str, start: datetime, end: dateti
         if not isinstance(labels, list):
             raise ValueError("bandwidth labels invalid")
         label_map = {item.get("field"): item.get("value") for item in labels if isinstance(item, dict)}
-        if label_map.get("resource", label_map.get("service")) != resource_id:
-            if "values" in series and series["values"] == []:
+        label = label_map.get("resource", label_map.get("service"))
+        if label != resource_id:
+            if label is None and "values" in series and series["values"] == []:
                 pointless += 1
             continue
         matching += 1
