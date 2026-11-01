@@ -188,10 +188,17 @@ def worker_running() -> bool:
     return any(thread.is_alive() for thread in _workers)
 
 
-def enqueue(conn, jobs) -> list[tuple[str, str]]:
+# A queued profile read re-reads a profile older than this (the cache serves 24 hours): a read reserved for shortly before
+# a profile expires must not find it still "fresh" and do nothing.
+ACCESS_PROFILE_JOB_MAX_AGE_HOURS = 23
+
+
+def enqueue(conn, jobs, *, not_before: datetime | None = None) -> list[tuple[str, str]]:
     """Queue (kind, host) jobs without any I/O; returns the jobs that are now in the queue.
 
     A job already queued stays as it is. A new job is not added once the queue holds QUEUE_CAP rows.
+    With ``not_before`` a new job is not due before that time; a job already queued keeps the earlier of its own
+    not_before and this one (a read wanted now is never held back by a reservation made for later).
     """
     queued = []
     for kind, site_host in jobs:
@@ -199,13 +206,16 @@ def enqueue(conn, jobs) -> list[tuple[str, str]]:
             raise ValueError("unknown background read kind")
         exists = "SELECT 1 AS present FROM background_reads WHERE kind=%s AND site_host=%s"
         if conn.execute(exists, (kind, site_host)).fetchone():
+            if not_before is not None:
+                conn.execute("UPDATE background_reads SET not_before=least(not_before,%s) WHERE kind=%s AND site_host=%s",
+                             (not_before, kind, site_host))
             queued.append((kind, site_host))
             continue
         inserted = conn.execute(
-            """INSERT INTO background_reads (kind,site_host)
-               SELECT %s,%s WHERE (SELECT count(*) FROM background_reads) < %s
+            """INSERT INTO background_reads (kind,site_host,not_before)
+               SELECT %s,%s,coalesce(%s::timestamptz, now()) WHERE (SELECT count(*) FROM background_reads) < %s
                ON CONFLICT (kind,site_host) DO NOTHING RETURNING kind""",
-            (kind, site_host, QUEUE_CAP),
+            (kind, site_host, not_before, QUEUE_CAP),
         ).fetchone()
         if inserted or conn.execute(exists, (kind, site_host)).fetchone():
             queued.append((kind, site_host))
@@ -378,7 +388,7 @@ def _run(settings, job: dict) -> None:
     """One job; raises only when processing itself failed (the read outcome lives in the cache)."""
     kind, site_host = job["kind"], job["site_host"]
     if kind == "access_profile":
-        access_profile.get_profile(settings, site_host, reader=_paced_reader)
+        access_profile.get_profile(settings, site_host, reader=_paced_reader, max_age_hours=ACCESS_PROFILE_JOB_MAX_AGE_HOURS)
     elif kind == "status_feed":
         _pace()
         refresh_feed(settings, site_host)

@@ -19,11 +19,12 @@ Manners (docs/decisions.md D67; the privacy policy repeats the numbers and tests
   name's own robots.txt verdict for "/" (its home_gate, read the same way, under 24 hours old) allows the home page for
   us. With no fresh verdict the www profile read is queued and this check keeps the redirect as its result; with a
   disallowing verdict, or too little time left in a lookup's 3 seconds, the second request is not made; a paced check
-  (queue, cron) waits the same pause before it as before any other request. A host whose last check followed the
-  redirect is checked only while the www name's verdict is fresh (otherwise its profile read is queued and the check
-  waits, like an apex with a stale verdict); a check that could not follow for want of a verdict is due again after
-  MIN_GAP_HOURS, not a day later. The hourly and daily limits count checks, and a check is up to two requests, so the
-  number of requests is at most twice those limits.
+  (queue, cron) waits the same pause before it as before any other request. A check is never held back for the www
+  verdict. When a check follows, the www profile read is reserved in the queue to run 30 minutes before the check is
+  next due, so the verdict is fresh when it is needed; a check that could not follow for want of a fresh verdict keeps
+  the redirect as its result, queues the read now and is due again after MIN_GAP_HOURS (so a failing read retries every
+  few hours and nothing stays stuck for days). The hourly and daily limits count checks, and a check is up to two
+  requests, so the number of requests is at most twice those limits.
   What is kept is the second answer's codes, and the redirect record says ``followed_www: true``. A second redirect is
   not followed;
 * a check never solves, answers or repeats a human-verification step, never opens a sign-in page and never submits a form.
@@ -99,6 +100,7 @@ WALL_SECONDS = ap.WALL_SECONDS
 REQUEST_WORST_SECONDS = WALL_SECONDS
 PAUSE_SECONDS = 2.0
 PROBE_WORST_SECONDS = 2 * REQUEST_WORST_SECONDS + PAUSE_SECONDS  # two requests at most per check (the www redirect)
+WWW_READ_LEAD_MINUTES = 30        # a followed host's www profile read is reserved this long before its next check
 SECOND_REQUEST_MIN_SECONDS = 1.5   # a lookup's second request (the www redirect) starts only with at least this much of its wait left
 PENDING_RETRY_SECONDS = 60   # shown on a pending view: ask again after this long, once
 PROBE_JOB_SECONDS = 3        # the queue's wait estimate for one check
@@ -641,7 +643,7 @@ def _www_gate(conn, www_host: str, now: datetime) -> dict | None:
     if gate is None:
         from . import background_reads
         try:
-            queued = background_reads.enqueue(conn, [("access_profile", www_host)])
+            queued = background_reads.enqueue(conn, [("access_profile", www_host)], not_before=datetime.now(timezone.utc))  # now, ahead of any reservation
             conn.commit()
             if queued:
                 background_reads.wake()
@@ -649,6 +651,18 @@ def _www_gate(conn, www_host: str, now: datetime) -> dict | None:
             conn.rollback()
             LOG.warning("site_probe_www_enqueue_unavailable")
     return gate
+
+
+def _reserve_www_read(conn, www_host: str, next_due: datetime, now: datetime) -> None:
+    """Queue the www name's profile read for 30 minutes before the check is due again, so that check finds a fresh verdict."""
+    from . import background_reads
+    try:
+        background_reads.enqueue(conn, [("access_profile", www_host)],
+                                 not_before=max(now, next_due - timedelta(minutes=WWW_READ_LEAD_MINUTES)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        LOG.warning("site_probe_www_reserve_unavailable")
 
 
 def _follow_www(conn, www_host: str, now: datetime, reader, paced: bool, deadline: float | None):
@@ -703,12 +717,6 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
             if paced:
                 _pace()
             read_host = context["read_host"]
-            if previous and previous["read_host"] == f"www.{read_host}" and _www_gate(conn, previous["read_host"], now) is None:
-                # The last check followed the redirect to www: wait for the www verdict (queued) instead of storing a redirect.
-                if job is not None and "requested_at" in job and job["requested_at"] is not None \
-                        and job["requested_at"] < datetime.now(timezone.utc) - QUEUE_GIVE_UP:
-                    return None
-                return _defer(job, DEFER_SECONDS)
             fetched = reader(read_host)
             if fetched.get("label") == "not_public":
                 row = _row(read_host, now, trigger, outcome="not_measured", reason="not_eligible", previous=previous,
@@ -730,6 +738,8 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)
             conn.commit()
+            if row["read_host"] != site_host and row["outcome"] != "not_measured":
+                _reserve_www_read(conn, row["read_host"], row["next_due_at"], now)
             return row
         finally:
             try:

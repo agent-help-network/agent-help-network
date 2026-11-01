@@ -640,31 +640,61 @@ def test_www_follow_without_a_www_profile_keeps_the_redirect_queues_the_profile_
     assert routes.calls == [HOST, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
 
 
-def test_www_follow_stays_followed_a_day_later_and_never_falls_back_to_the_redirect(db, monkeypatch):
+def test_www_follow_reserves_the_www_read_30_minutes_before_the_next_check_and_follows_again_a_day_later(db, monkeypatch):
     www_ready(db, monkeypatch)
     routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
     site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
     assert routes.calls == [HOST, WWW]
-    later = datetime.now(timezone.utc) + timedelta(hours=25)
-    read_profile(db, monkeypatch, now=later)                                   # the apex profile is read again by lookups; www's is not
-    assert site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later) is None
-    assert routes.calls == [HOST, WWW]                                         # no request, no 301 stored over the good result
-    assert one_row(db)["outcome"] == "reachable" and one_row(db)["read_host"] == WWW
-    assert [r["site_host"] for r in rows(db, "SELECT site_host FROM background_reads WHERE kind='access_profile'")] == [WWW]
-    read_profile(db, monkeypatch, host=WWW, now=later)                         # what the queue does
-    site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
-    assert routes.calls == [HOST, WWW, HOST, WWW] and one_row(db)["redirect"]["followed_www"] is True
+    stored = one_row(db)
+    job, = rows(db, "SELECT kind,site_host,not_before FROM background_reads")
+    assert (job["kind"], job["site_host"]) == ("access_profile", WWW)
+    assert job["not_before"] == stored["next_due_at"] - timedelta(minutes=site_probe.WWW_READ_LEAD_MINUTES)
+    # the queue holds it (it is not dropped as an old job) until it is due
+    assert background_reads.process_due(db)["claimed"] == 0 and len(rows(db, "SELECT * FROM background_reads")) == 1
+    read_at = stored["next_due_at"] - timedelta(minutes=30)                    # what the worker does at that time
+    access_profile.get_profile(db, WWW, now=read_at, reader=Profiles(), max_age_hours=background_reads.ACCESS_PROFILE_JOB_MAX_AGE_HOURS)
+    later = stored["next_due_at"] + timedelta(minutes=1)
+    read_profile(db, monkeypatch, now=later)                                   # the apex profile is read again by lookups
+    row = site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert row is not None and routes.calls == [HOST, WWW, HOST, WWW]
+    assert one_row(db)["outcome"] == "reachable" and one_row(db)["redirect"]["followed_www"] is True
 
 
-def test_www_follow_a_queued_check_waits_for_the_www_verdict_of_a_followed_host(db, monkeypatch):
+def test_www_follow_a_failed_reserved_read_gives_the_redirect_for_6_hours_and_queues_the_read_again(db, monkeypatch):
     www_ready(db, monkeypatch)
     routes = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
     site_probe.measure(db, HOST, "lookup", reader=routes, paced=False)
-    later = datetime.now(timezone.utc) + timedelta(hours=25)
+
+    def broken(site_host, path, *, cap_bytes, **_):
+        return ("error", None, "connect_timeout")
+    monkeypatch.setattr(background_reads, "read_profile_file", broken)
+    with connect(db) as conn:
+        conn.execute("UPDATE background_reads SET not_before=now()")
+    assert background_reads.process_due(db)["done"] == 1                       # the read ran and failed: the old verdict stays
+    later = one_row(db)["next_due_at"] + timedelta(minutes=1)
     read_profile(db, monkeypatch, now=later)
-    with pytest.raises(background_reads.Deferred):
-        site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later, job={"requested_at": datetime.now(timezone.utc)})
-    assert routes.calls == [HOST, WWW]
+    row = site_probe.measure(db, HOST, "lookup", reader=routes, paced=False, now=later)
+    assert row is not None and routes.calls == [HOST, WWW, HOST]               # measured as usual, one request
+    stored = one_row(db)
+    assert stored["outcome"] == "redirected_same_host" and stored["read_host"] == HOST and stored["redirect"]["followed_www"] is False
+    assert stored["next_due_at"] - stored["probed_at"] == timedelta(hours=site_probe.MIN_GAP_HOURS)
+    assert [r["site_host"] for r in rows(db, "SELECT site_host FROM background_reads WHERE kind='access_profile'")] == [WWW]
+    # the same pass again (a cron every 5 minutes) does not measure the host again: its next check is in the future
+    assert site_probe.measure(db, HOST, "set_O", reader=routes, paced=True, now=later + timedelta(minutes=5)) is None
+    assert routes.calls == [HOST, WWW, HOST]
+
+
+def test_www_read_wanted_now_pulls_a_later_reservation_forward(db, monkeypatch):
+    soon_not = datetime.now(timezone.utc) + timedelta(hours=20)
+    with connect(db) as conn:
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=soon_not)
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=soon_not + timedelta(hours=1))   # keeps the earlier
+        job, = conn.execute("SELECT not_before FROM background_reads").fetchall()
+        assert job["not_before"] == soon_not
+        background_reads.enqueue(conn, [("access_profile", WWW)])                                              # plain: unchanged
+        assert conn.execute("SELECT not_before FROM background_reads").fetchone()["not_before"] == soon_not
+        background_reads.enqueue(conn, [("access_profile", WWW)], not_before=datetime.now(timezone.utc))
+        assert conn.execute("SELECT not_before FROM background_reads").fetchone()["not_before"] < soon_not
 
 
 def test_www_follow_a_host_without_a_www_verdict_is_due_again_in_6_hours(db, monkeypatch):
