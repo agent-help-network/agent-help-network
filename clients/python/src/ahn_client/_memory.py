@@ -48,6 +48,10 @@ def _valid_date(value) -> bool:
         return False
 
 
+def _valid_hour(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 23
+
+
 class FailureLog:
     """Rows of recent failures in one JSON file."""
 
@@ -63,7 +67,7 @@ class FailureLog:
         hosts = data.get("hosts") if isinstance(data, dict) else None
         if not isinstance(hosts, dict):
             return {}
-        return {name: [row for row in rows if isinstance(row, dict) and _valid_date(row.get("date"))]
+        return {name: [row for row in rows if isinstance(row, dict) and _valid_date(row.get("date")) and _valid_hour(row.get("hour"))]
                 for name, rows in hosts.items() if isinstance(rows, list)}
 
     def _save(self, hosts: Dict[str, List[dict]]) -> None:

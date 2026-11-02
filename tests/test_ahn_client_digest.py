@@ -337,14 +337,62 @@ def test_real_and_padding_shards_are_asked_for_in_the_same_way(monkeypatch, tmp_
     assert len(shard_requests(server)) == 16
 
 
-def test_a_damaged_padding_file_is_replaced_not_fatal(monkeypatch, tmp_path):
-    Server(monkeypatch)
-    (tmp_path / "padding.json").write_text('{"padding": [1, "zz", "00", "00", null]}')
-    result = digest(cache_dir=tmp_path)
-    assert result.shards_requested == 16 and [r["status"] for r in result.hosts] == ["in_bundle", "in_bundle"]
-    assert (tmp_path / "padding.json").read_text().startswith('{"schema"')
-    (tmp_path / "padding.json").write_text("[1,2")
+def test_an_unreadable_padding_file_means_nothing_is_requested_and_the_file_is_left_alone(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    for damaged in ('{"padding": [1, "zz", "00", null]}', "[1,2", '{"padding": "00"}', "", "ÿþ"):
+        (tmp_path / "padding.json").write_bytes(damaged.encode("latin-1"))
+        server.requests.clear()
+        result = digest(cache_dir=tmp_path)
+        assert "padding_unreadable" in result.notes and server.requests == [], damaged
+        assert result.shards_requested == 0 and [r["status"] for r in result.hosts] == ["unavailable", "unavailable"]
+        assert (tmp_path / "padding.json").read_bytes() == damaged.encode("latin-1")  # not redrawn over it
+    (tmp_path / "padding.json").unlink()  # deleting it starts a new set
     assert digest(cache_dir=tmp_path).shards_requested == 16
+
+
+def test_a_missing_padding_file_is_the_first_run_and_is_written_whole(monkeypatch, tmp_path):
+    Server(monkeypatch)
+    assert digest(cache_dir=tmp_path).shards_requested == 16
+    saved = json.loads((tmp_path / "padding.json").read_text())
+    assert saved["schema"] == "ahn-padding/1" and len(saved["padding"]) == 14
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".padding-")] == []  # no temp file left behind
+
+
+def test_padding_is_never_read_half_written_while_another_writer_works(monkeypatch, tmp_path):
+    import threading
+
+    Server(monkeypatch)
+    digest(cache_dir=tmp_path, pad_to=4)
+    stop, bad = threading.Event(), []
+
+    def writer():
+        size = 4
+        while not stop.is_set():
+            size = 4 + (size - 3) % 200
+            fetcher = _digest._Fetcher("https://agenthelpnetwork.com", tmp_path, 1.0)
+            others = [format(i, "02x") for i in range(256)]
+            fetcher.padding(set(), others, size, random.Random(size))
+
+    def reader():
+        for _ in range(300):
+            try:
+                json.loads((tmp_path / "padding.json").read_text())
+                result = digest(cache_dir=tmp_path, pad_to=4)
+                if "padding_unreadable" in result.notes:
+                    bad.append("unreadable")
+            except PermissionError:
+                pass  # this test's own bare read hit the instant of a replace on Windows; the client retries
+            except ValueError:
+                bad.append("truncated")
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        reader()
+    finally:
+        stop.set()
+        thread.join()
+    assert bad == []
 
 
 def test_a_tampered_cache_file_is_refused_like_a_download(monkeypatch, tmp_path):
@@ -514,3 +562,15 @@ def test_a_failure_file_with_a_bad_date_is_dropped_row_by_row_and_advice_does_no
     assert log.advice("example.com", now=now) == []
     assert log.record("example.com", "transient", "rate_limited", when=now) is True
     assert [row["date"] for row in log.recent("example.com", now=now)] == ["2026-10-30", "2026-10-31"]
+
+
+def test_a_failure_file_with_an_unhashable_or_out_of_range_hour_is_dropped_and_advice_does_not_crash(tmp_path):
+    path = tmp_path / "failures.json"
+    base = {"date": "2026-10-30", "branch": "transient", "hint": "site_errors", "error_class": None}
+    rows = [dict(base, hour=[1]), dict(base, hour={"a": 1}), dict(base, hour=24), dict(base, hour=-1), dict(base, hour=True), dict(base, hour="3"),
+            dict(base, hour=3), dict(base, hour=3), dict(base, hour=3)]
+    path.write_text(json.dumps({"schema": "ahn-failures/1", "hosts": {"example.com": rows}}))
+    log = ahn.FailureLog(path)
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    assert [row["hour"] for row in log.recent("example.com", now=now)] == [3, 3, 3]
+    assert log.advice("example.com", now=now) == ["move_visit_time"]

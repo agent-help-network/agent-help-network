@@ -16,6 +16,8 @@ import json
 import os
 import random
 import re
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -63,6 +65,10 @@ class Digest:
         return {"hosts": self.hosts, "signature": self.signature, "generated_at": self.generated_at, "valid_until": self.valid_until,
                 "stale": self.stale, "changes_covers_since": self.changes_covers_since,
                 "shards_requested": self.shards_requested, "notes": self.notes}
+
+
+class _PaddingUnreadable(Exception):
+    """The stored padding set exists but cannot be read."""
 
 
 class _NoFile(Exception):
@@ -123,22 +129,42 @@ class _Fetcher:
         path = os.path.join(self.cache_dir, "padding.json") if self.cache_dir else None
         if path:
             try:
-                with open(path, "r", encoding="ascii") as handle:
-                    loaded = json.load(handle).get("padding")
-                stored = [item for item in dict.fromkeys(loaded) if isinstance(item, str) and _SHARD_ID.fullmatch(item)]
-            except (OSError, ValueError, TypeError, AttributeError):
-                stored = []
+                for attempt in range(6):
+                    try:
+                        with open(path, "r", encoding="ascii") as handle:
+                            loaded = json.load(handle).get("padding")
+                        break
+                    except PermissionError:  # Windows: the file is being replaced at this moment
+                        if attempt == 5:
+                            raise
+                        time.sleep(0.02)
+                if not isinstance(loaded, list) or not all(isinstance(item, str) and _SHARD_ID.fullmatch(item) for item in loaded):
+                    raise ValueError("padding")
+                stored = list(dict.fromkeys(loaded))
+            except FileNotFoundError:
+                stored = []  # the first run: nothing was chosen yet
+            except (OSError, ValueError, TypeError, AttributeError, UnicodeError):
+                # The file is there but cannot be read. Drawing new padding would let the service tell yours from the
+                # padding by comparing this request with the last one, so nothing is asked for.
+                raise _PaddingUnreadable()
         chosen = [item for item in stored if item not in wanted][:count]
         if len(chosen) < count:
-            pool = [item for item in others if item not in chosen]
+            pool = [item for item in others if item not in chosen and item not in stored]
             chosen += picker.sample(pool, min(count - len(chosen), len(pool)))
             if path:
                 keep = stored + [item for item in chosen if item not in stored]
-                try:
-                    with open(path, "w", encoding="ascii") as out:
+                temp = None
+                try:  # written whole and renamed in, so a reader (or a second process) never sees half a file
+                    handle, temp = tempfile.mkstemp(dir=self.cache_dir, prefix=".padding-")
+                    with os.fdopen(handle, "w", encoding="ascii") as out:
                         json.dump({"schema": "ahn-padding/1", "padding": keep}, out)
+                    os.replace(temp, path)
                 except (OSError, UnicodeError):
-                    pass
+                    if temp:
+                        try:
+                            os.unlink(temp)
+                        except OSError:
+                            pass
         return chosen
 
     def get(self, path: str, name: str) -> bytes:
@@ -205,7 +231,8 @@ def local_digest(hosts: Iterable[str], *, pad_to: int = DEFAULT_PAD_TO, cache_di
     - ``pad_to``: how many shards are downloaded in all (1 to 256). The shards of your hosts are topped up with random
       ones, so the server cannot tell which hosts you hold. With ``cache_dir`` the padding set is kept there and reused
       (it changes only when more padding is needed), and every shard asked for, yours or padding, is requested the same
-      way (``If-None-Match`` when a copy is cached). Without ``cache_dir`` each call draws new padding, and over many
+      way (``If-None-Match`` when a copy is cached). If the stored padding file exists but cannot be read, nothing is
+      requested (note ``padding_unreadable``): delete ``padding.json`` to start a new set. Without ``cache_dir`` each call draws new padding, and over many
       calls the shards that always come back are yours: use ``cache_dir`` for regular use. With more distinct shards than ``pad_to`` all of yours are
       fetched and a note says so.
     - ``cache_dir``: keep downloads there and ask again with ``If-None-Match``; a cached file is checked against the
@@ -248,7 +275,11 @@ def local_digest(hosts: Iterable[str], *, pad_to: int = DEFAULT_PAD_TO, cache_di
     if len(wanted) > pad_to:
         result.notes.append("more_shards_than_pad_to")
     fetcher = _Fetcher(base_url, cache_dir, timeout)
-    plan = sorted(list(wanted) + fetcher.padding(set(wanted), others, fill, picker))
+    try:
+        plan = sorted(list(wanted) + fetcher.padding(set(wanted), others, fill, picker))
+    except _PaddingUnreadable:
+        result.notes.append("padding_unreadable")
+        return result
     result.shards_requested = len(plan)
 
     try:
