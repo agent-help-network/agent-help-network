@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.5
+
+- `ahn.local_digest` with `cache_dir`: when two processes make their first run at the same time, the padding file is now created only if it does not exist yet (written whole, then hard-linked into place), and the process that loses the race reads and uses the winner's set. Before, each could request its own padding and the last file written stayed, so one client could ask for two different padding sets.
+
 ## 0.6.4
 
 - `ahn.local_digest(hosts, *, pad_to=16, cache_dir=None, public_key=None, ...)` compares regular sites with the bundle's thin shards on your machine: shard ids are computed locally, random padding shards keep the number of requests fixed, shards are verified against the manifest's SHA-256 (and its Ed25519 signature when you give the key), `If-None-Match` caching, a seven-day changes marker, and `status == "not_in_bundle"` for hosts to check live. The service receives no hostname.

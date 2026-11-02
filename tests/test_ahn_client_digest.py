@@ -395,6 +395,47 @@ def test_padding_is_never_read_half_written_while_another_writer_works(monkeypat
     assert bad == []
 
 
+def _first_runs_at_once(monkeypatch, tmp_path, sizes):
+    """Start one padding call per entry of ``sizes`` in its own thread, all with an empty cache_dir, and hold every one of
+    them at the moment it is about to store its set, so each has drawn its own ids before any file exists."""
+    import threading
+
+    barrier = threading.Barrier(len(sizes), timeout=10)
+    real = _digest.tempfile.mkstemp
+
+    def held(*args, **kwargs):
+        barrier.wait()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_digest.tempfile, "mkstemp", held)
+    others = [format(i, "02x") for i in range(256)]
+    got = {}
+
+    def run(index, size):
+        fetcher = _digest._Fetcher("https://agenthelpnetwork.com", tmp_path, 1.0)
+        got[index] = fetcher.padding(set(), others, size, random.Random(1000 + index))
+
+    threads = [threading.Thread(target=run, args=(i, size)) for i, size in enumerate(sizes)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    return [got[i] for i in range(len(sizes))]
+
+
+def test_two_first_runs_at_once_use_the_same_padding_and_it_is_the_stored_one(monkeypatch, tmp_path):
+    first, second = _first_runs_at_once(monkeypatch, tmp_path, [14, 14])
+    stored = json.loads((tmp_path / "padding.json").read_text())["padding"]
+    assert first == second == stored and len(stored) == 14
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".padding-")] == []
+
+
+def test_a_first_run_that_loses_the_race_to_a_smaller_set_grows_the_winners_set(monkeypatch, tmp_path):
+    first, second = _first_runs_at_once(monkeypatch, tmp_path, [6, 10])
+    stored = json.loads((tmp_path / "padding.json").read_text())["padding"]
+    assert len(stored) == 10 and set(first) <= set(stored) and set(second) == set(stored)
+
+
 def test_a_tampered_cache_file_is_refused_like_a_download(monkeypatch, tmp_path):
     server = Server(monkeypatch)
     digest(cache_dir=tmp_path)
