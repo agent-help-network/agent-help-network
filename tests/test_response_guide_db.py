@@ -14,7 +14,7 @@ if not TEST_URL:
 
 from fastapi.testclient import TestClient  # noqa: E402  (after the skip: ahn.main builds an app from the environment)
 
-from ahn import access_profile, background_reads, service
+from ahn import access_profile, background_reads, service, status_refresh
 from ahn.db import connect, migrate
 from ahn.main import create_app
 from ahn.models import CheckResponse
@@ -117,7 +117,7 @@ def test_the_openapi_schema_lists_the_new_keys_as_optional(monkeypatch):
 
 def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_a_failure_signal_or_the_switch_says_otherwise(monkeypatch):
     settings = prepare(monkeypatch, guide=True)
-    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
+    monkeypatch.setitem(status_refresh.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
     params = {"site_host": "plain-example.org"}
     with TestClient(create_app(settings)) as client:
         plain = client.get("/v1/incidents/check", params=params).json()
@@ -142,9 +142,9 @@ def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_
 
 def test_d72_only_a_curated_sign_in_host_carries_requires_sign_in(monkeypatch):
     settings = prepare(monkeypatch, guide=True)
-    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
-    monkeypatch.setitem(service.OFFICIAL_STATUS_PAGES, "other-example.org", ("Other Status", "https://status.other-example.org/"))
-    monkeypatch.setattr(service, "SIGN_IN_STATUS_PAGES", frozenset({"plain-example.org"}))
+    monkeypatch.setitem(status_refresh.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
+    monkeypatch.setitem(status_refresh.OFFICIAL_STATUS_PAGES, "other-example.org", ("Other Status", "https://status.other-example.org/"))
+    monkeypatch.setattr(status_refresh, "SIGN_IN_STATUS_PAGES", frozenset({"plain-example.org"}))
     with TestClient(create_app(settings)) as client:
         signed = client.get("/v1/incidents/check", params={"site_host": "plain-example.org", "task_step": "status_check"})
         open_ = client.get("/v1/incidents/check", params={"site_host": "other-example.org", "task_step": "status_check"})

@@ -85,6 +85,9 @@ STATUS_ROWS: dict[str, str] = {
     "T4": "AHN knows no official status page for this site, so it cannot say whether it is up. Check the site itself, or tell your user its status is unverified.",
 }
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
+# A row decided by the site's own robots policy keeps its sentence under status_check: the T sentences say nothing about the block.
+STATUS_KEEP_REASONS = frozenset({"robots_blocks_agents", "robots_fetch_refused", "robots_wildcard_disallow", "robots_names_vendor_alias",
+                                 "robots_blocks_some_agents"})
 DO_VALUES = tuple(dict.fromkeys(do for do, _ in ROWS.values()))
 
 # D61: the same use_official_path rows when official_paths.consumer is curated for the host. The service does not know
@@ -357,11 +360,13 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 status_url = safe_url(candidate)
                 if status_url is None:
                     LOG.warning("response_guide_url_dropped")
+                    continue
                 break
         if status_url:
             action["status_url"] = status_url
         # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
-        if do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not (do == "lookup_apex_host" and status_url is None):
+        if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not set(recommendation.get("reasons") or ()) & STATUS_KEEP_REASONS
+                and not (do == "lookup_apex_host" and status_url is None)):
             sentence = STATUS_ROWS[status_row(provider_status, result.get("official_status_page"), status_url)]
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)

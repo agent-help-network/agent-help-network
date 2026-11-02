@@ -828,12 +828,11 @@ def test_t1_a_fresh_feed_with_no_issue_says_so_and_points_to_status_url():
     assert out["next_action"]["status_url"] == STATUS_URL
 
 
-@pytest.mark.parametrize("changes", [{"freshness": "stale"}, {"freshness": "pending"}, {"indicator": "minor"}, {"indicator": None}])
+@pytest.mark.parametrize("changes", [{"freshness": "stale"}, {"freshness": "pending"}, {"indicator": None}])
 def test_t2_a_feed_that_is_not_fresh_and_clear_says_it_is_unclear(changes):
     status = {**fresh_none(), **changes}
     result = status_answer(provider_status=status, official=OFFICIAL)
-    if guide(copy.deepcopy(result))["next_action"]["do"] in response_guide.STATUS_KEEP_DO | {"stop_automation"}:
-        pytest.skip("a wait row keeps its sentence")
+    assert guide(copy.deepcopy(result))["next_action"]["do"] not in response_guide.STATUS_KEEP_DO | {"stop_automation"}
     out = guide(result, status_check=True)
     assert out["summary_line"] == response_guide.STATUS_ROWS["T2"] and out["next_action"]["status_url"] == STATUS_URL
 
