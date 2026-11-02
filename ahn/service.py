@@ -16,7 +16,7 @@ from .models import ObservationIn, OutcomeIn
 from .official_paths import official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
+from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source
 from . import response_guide
 from .triage import LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
@@ -391,6 +391,23 @@ _FEED_SOURCE_SQL = """SELECT s.source_name,s.status_page_url,s.api_url,c.indicat
                    WHERE s.site_host=%s AND s.enabled=true"""
 
 
+# D70: enabled sources whose status page is served from the looked-up host. A bare host compare on the URL's host part.
+_STATUS_PAGE_PARENT_SQL = """SELECT s.site_host,s.api_url,s.status_page_url FROM status_sources s
+                             WHERE s.enabled=true
+                               AND split_part(lower(split_part(split_part(s.status_page_url,'://',2),'/',1)),':',1)=%s"""
+
+
+def _status_page_parent(conn, host: str) -> str | None:
+    """D70: the site whose stored feed reading belongs to the page served from ``host`` (a lookup of a status page's own
+    host). Used only when ``host`` has no source of its own. Several sites may map one feed (aliases): the smallest
+    site_host stands for them. Sites that map different feeds to one page host are ambiguous: none. Database read only."""
+    rows = [row for row in conn.execute(_STATUS_PAGE_PARENT_SQL, (host.lower(),)).fetchall()
+            if dedicated_status_host(row["status_page_url"]) == host.lower()]  # not a path under a general site
+    if not rows or len({row["api_url"] for row in rows}) != 1:
+        return None
+    return min(row["site_host"] for row in rows)
+
+
 class FeedView(NamedTuple):
     """What the provider layer of an answer reads from the stored rows (see feed_view)."""
     row: dict | None              # the stored source row, shown or not
@@ -405,6 +422,9 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
     """The provider layer of an answer, from database rows only: no request, no queue insert, no write. check() and the
     home page's real-answer card both read the feed through this one function, so they cannot disagree about it."""
     source = conn.execute(_FEED_SOURCE_SQL, (host,)).fetchone()
+    if not source:
+        parent = _status_page_parent(conn, host)  # D70: the host is the status page of a mapped site
+        source = conn.execute(_FEED_SOURCE_SQL, (parent,)).fetchone() if parent else None
     if not source:
         return FeedView(None, None, False, False, False, None)
     # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
@@ -626,7 +646,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 "outcome": row["outcome"], "error_class": row["error_class"],
                 "task_step": row["task_step"], "synthetic": test_query,
             })
-        official_page = ((OFFICIAL_STATUS_PAGES.get(host) or robots_blocked_page)
+        official_page = ((official_status_page_for(host) or robots_blocked_page)
                          if settings.public_mode and not test_query and provider_status is None else None)
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
@@ -741,7 +761,7 @@ def _home_card(settings: Settings, site_host: str) -> dict | None:
             return None
         feed = feed_view(conn, site_host, now)
     provider_status, provider_regional = feed.provider_status, feed.regional
-    official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
+    official_page = (official_status_page_for(site_host) or feed.blocked_page) if provider_status is None else None
     blocked_card = settings.proceed_without_failure and settings.proceed_mode == "d65"  # D66: the card shows what an agent gets
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
