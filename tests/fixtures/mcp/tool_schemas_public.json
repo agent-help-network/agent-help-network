@@ -2663,11 +2663,32 @@
        "type": "array"
       },
       "rules": {
-       "items": {
-        "$ref": "#/$defs/AgentRule"
-       },
-       "title": "Rules",
-       "type": "array"
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/AgentRule"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules"
+      },
+      "rules_omitted": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules Omitted"
       },
       "sitemap": {
        "default": false,
@@ -2721,7 +2742,6 @@
       }
      },
      "required": [
-      "rules",
       "wildcard_root_allowed"
      ],
      "title": "RobotsSummary",

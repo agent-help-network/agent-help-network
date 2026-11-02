@@ -323,7 +323,9 @@ class AgentRule(StrictModel):
 
 
 class RobotsSummary(StrictModel):
-    rules: list[AgentRule]
+    # D71: a task_step=status_check answer leaves `rules` out and gives `rules_omitted` (the count) instead.
+    rules: list[AgentRule] | None = Field(default=None, exclude_if=_omit_none)
+    rules_omitted: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     wildcard_root_allowed: bool
     sitemap: bool = False
     sitemaps: list[str] = Field(default_factory=list)
