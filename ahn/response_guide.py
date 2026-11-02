@@ -4,7 +4,7 @@ Everything here is computed from the finished answer (``recommendation``, ``acce
 ``provider_status``) and never changes it. The sentences are a fixed table of English templates: the only value filled
 in is a whole number of seconds, and no hostname, agent token, URL or text taken from a site or a provider ever reaches
 a sentence. ``next_action.do`` is a pure function of ``recommendation.action`` (the four values that split ``unknown``
-only say what can be done while no verdict exists). When the host has a curated consumer path (D61), a use_official_path
+only say what can be done while no verdict exists). ``url`` is the row's own, except on a status_check use_official_path row (D76). When the host has a curated consumer path (D61), a use_official_path
 row takes its CONSUMER_ROWS sentence and next_action gains ``customer_url``. Since D63 a proceed answer carries it too, and
 on proceed rows and on the O1/O7 rows (no robots block on pages) the consumer path comes first: it is the sentence's lead
 and ``url``, with a developer API as an "also listed" tail where the sentence has room. O2-O6 hand it to the user."""
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import urlparse
 
 from .background_reads import FEED_RETRY_MINUTES
 from .official_paths import customer_url
@@ -82,6 +83,8 @@ STATUS_ROWS: dict[str, str] = {
     "T2": "A provider status feed is listed (provider_status), but it does not give a clear current state here; check the status page at next_action.status_url.",
     "T3": "AHN reads no status feed for this site, so it cannot say whether it is up. Its official status page is next_action.status_url; check it there.",
     "T3-S": "The official status page for this site needs your user's sign-in, so AHN cannot read it. Hand next_action.status_url to your user to check.",
+    "T5": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the status page at next_action.status_url.",
+    "T5-N": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the provider's own status page, or tell your user its status is unverified.",
     "T4": "AHN knows no official status page for this site, so it cannot say whether it is up. Check the site itself, or tell your user its status is unverified.",
 }
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
@@ -290,8 +293,23 @@ def links(versioned: bool = True) -> dict | None:
     return found or None
 
 
+def feed_unreadable(provider_status: dict | None) -> bool:
+    """The status feed has no current reading: its last success is stale (older than FEED_STALE_HOURS, or never succeeded and
+    failed, or its source no longer verifies). One failed read after a recent success is not: D46 keeps that statement."""
+    return bool(provider_status and provider_status.get("freshness") == "stale")
+
+
+def same_site(status_url: str, site_host: str) -> bool:
+    """Whether the status page is served from the looked-up site's own registrable domain (www and other subdomains included)."""
+    page = (urlparse(status_url).hostname or "").lower()
+    site = site_host.lower()
+    return bool(page) and (apex_host(page) or page) == (apex_host(site) or site)
+
+
 def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None) -> str:
     """D69: the STATUS_ROWS id for a status_check lookup. A row that points at status_url needs one; without it T4."""
+    if provider_status and feed_unreadable(provider_status):
+        return "T5" if status_url else "T5-N"
     if status_url is None:
         return "T4"
     if provider_status:
@@ -301,14 +319,18 @@ def status_row(provider_status: dict | None, official_status_page: dict | None, 
     return "T3-S" if official_status_page.get("requires_sign_in") else "T3"
 
 
-def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False) -> dict:
+def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
+          status_guide: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
     ``customer_url`` are those from before D63. blocked_default (D66, d65 mode, not for a status_check or preflight lookup)
     swaps the sentence of a proceed row for the BLOCKED_PROCEED rows. status_check (D69, only when the caller sent task_step=status_check
-    and no failure signal) replaces the sentence by a STATUS_ROWS one unless the row waits, hands off or stops, and adds
-    next_action.status_url; ``do``, ``url`` and the other next_action keys are those of the row."""
+    and no failure signal) replaces the sentence by a STATUS_ROWS one unless the row waits, hands off, stops, waits for a re-lookup
+    (O1, U1, U2) or rests on a robots block. status_guide (the same switch, D69) adds next_action.status_url to any answer whose
+    status page is known, whatever the task_step. ``do`` and the other keys are those of the row. The one exception (D76): on a
+    status_check use_official_path row without a re-lookup, ``url`` is the status page, unless a robots block applies and the
+    status page is on the looked-up site's own domain."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -353,8 +375,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         action["lookup_host"] = apex_host(result["site_host"])
     if customer:
         action["customer_url"] = customer
-    if status_check:
-        status_url = None
+    status_url = None
+    if status_check or status_guide:
         for candidate in ((provider_status or {}).get("source_url"), (result.get("official_status_page") or {}).get("source_url")):
             if candidate:
                 status_url = safe_url(candidate)
@@ -364,10 +386,21 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 break
         if status_url:
             action["status_url"] = status_url
-        # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
-        if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not set(recommendation.get("reasons") or ()) & STATUS_KEEP_REASONS
+    if status_check:
+        reasons = set(recommendation.get("reasons") or ())
+        robots_kept = bool(reasons & STATUS_KEEP_REASONS)
+        status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        if (status_url and recommendation.get("action") == "use_official_path" and row not in RETRY_ROWS
+                and not (robots_kept and same_site(status_url, result["site_host"]))):
+            # D76: a use_official_path row with no re-lookup to wait for answers "is it up" with the status page: sentence and
+            # url say the same thing. ``do`` stays a function of recommendation.action. A robots block on the site's own pages
+            # does not answer the question, but a status page on the same site is not pointed at either (the row stays).
+            sentence = STATUS_ROWS[status_id]
+            action["url"] = status_url
+        elif (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
+                # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
                 and not (do == "lookup_apex_host" and status_url is None)):
-            sentence = STATUS_ROWS[status_row(provider_status, result.get("official_status_page"), status_url)]
+            sentence = STATUS_ROWS[status_id]
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:

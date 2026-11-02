@@ -446,7 +446,7 @@ def test_d73_cause_and_d69_status_summary_never_share_an_answer(db):
     seed(db, provider_event(host, now() - timedelta(hours=1), "major", "none"))
     failed = look(db, host, task_step="status_check", error_class="service_error")
     assert failed["cause"]["hint"] == "provider_incident"
-    assert failed["summary_line"] not in response_guide.STATUS_ROWS.values() and "status_url" not in failed["next_action"]
+    assert failed["summary_line"] not in response_guide.STATUS_ROWS.values()
     plain = look(db, host, task_step="status_check")
     assert "cause" not in plain
 
