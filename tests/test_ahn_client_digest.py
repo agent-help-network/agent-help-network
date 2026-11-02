@@ -436,7 +436,7 @@ def _stored(tmp_path):
 def test_two_first_runs_at_once_use_the_same_padding_and_it_is_the_stored_one(monkeypatch, tmp_path):
     first, second = _at_once(monkeypatch, tmp_path, [(set(), 14), (set(), 14)])
     assert first == second == _stored(tmp_path) and len(first) == 14
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json"]  # no temp file, no lock left behind
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json", "padding.lock"]  # no temp file left; the lock file stays
 
 
 def test_a_larger_run_after_a_smaller_one_keeps_the_smaller_set_and_grows_it(monkeypatch, tmp_path):
@@ -472,30 +472,75 @@ def test_two_runs_that_extend_the_same_stored_set_at_once_both_keep_every_id_the
     assert set(first) <= set(stored) and set(second) <= set(stored)  # the run that wrote last did not drop the other's ids
     third = _digest._Fetcher("https://x", tmp_path, 1.0).padding({"aa"}, [o for o in others if o != "aa"], 15, random.Random(7))
     assert len(set(first) & set(second) & set(third)) >= 2  # the next request still shares the stored ids with both
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json", "padding.lock"]
 
 
 def test_waiting_longer_than_the_limit_for_the_lock_asks_for_nothing(monkeypatch, tmp_path):
     server = Server(monkeypatch)
     monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 0.2)
-    (tmp_path / "padding.lock").write_bytes(b"")  # another process holds it, and it is fresh
-    result = digest(cache_dir=tmp_path)
+    holder = _digest._Fetcher("https://x", tmp_path, 1.0)
+    fd = holder._acquire(str(tmp_path / "padding.lock"))  # another process holds it
+    try:
+        result = digest(cache_dir=tmp_path)
+    finally:
+        holder._release(fd)
     assert "padding_unreadable" in result.notes and server.requests == []
-    assert (tmp_path / "padding.lock").exists() and not (tmp_path / "padding.json").exists()  # not ours to remove
+    assert not (tmp_path / "padding.json").exists()
+    assert digest(cache_dir=tmp_path).shards_requested == 16  # released: the next call works
 
 
-def test_a_stale_lock_and_stale_temp_files_are_cleaned_up(monkeypatch, tmp_path):
+def test_the_lock_is_free_the_moment_its_holder_lets_go_or_dies(monkeypatch, tmp_path):
     import time
 
-    Server(monkeypatch)
-    old = time.time() - 3600
-    for name in ("padding.lock", ".padding-old", ".padding-new"):
-        (tmp_path / name).write_bytes(b"")
-    for name in ("padding.lock", ".padding-old"):
-        os.utime(tmp_path / name, (old, old))
-    result = digest(cache_dir=tmp_path)
-    assert "padding_unreadable" not in result.notes and result.shards_requested == 16
-    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(("padding", ".padding"))) == [".padding-new", "padding.json"]
+    monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 0.2)
+    fetcher = _digest._Fetcher("https://x", tmp_path, 1.0)
+    path = str(tmp_path / "padding.lock")
+    fd = fetcher._acquire(path)
+    with pytest.raises(_digest._PaddingUnreadable):
+        fetcher._acquire(path)
+    os.close(fd)  # what the system does when the holding process dies: no unlock call, no file removal
+    monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 5.0)
+    started = time.monotonic()
+    fetcher._release(fetcher._acquire(path))
+    assert time.monotonic() - started < 1.0 and os.path.exists(path)  # never deleted
+
+
+def test_never_two_processes_inside_the_padding_section_even_with_an_old_lock_file_lying_around(monkeypatch, tmp_path):
+    import threading
+    import time
+
+    lock = tmp_path / "padding.lock"
+    lock.write_bytes(b"")
+    os.utime(lock, (time.time() - 3600, time.time() - 3600))  # an old file is not a held lock, and not a free-for-all
+    inside, peak, guard = [0], [0], threading.Lock()
+    real_clean, real_release = _digest._Fetcher._clean_temp, getattr(_digest._Fetcher, "_release", None)
+
+    def clean(self):
+        with guard:
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+        time.sleep(0.02)
+        return real_clean(self)
+
+    def release(fd):
+        with guard:
+            inside[0] -= 1
+        return real_release(fd)
+
+    monkeypatch.setattr(_digest._Fetcher, "_clean_temp", clean)
+    monkeypatch.setattr(_digest._Fetcher, "_release", staticmethod(release), raising=False)
+    others = [format(i, "02x") for i in range(256)]
+
+    def run(index):
+        _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 5 + index, random.Random(index))
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert peak[0] == 1 and inside[0] == 0
+    assert len(_stored(tmp_path)) == 12
 
 
 def test_a_padding_set_that_could_not_be_stored_is_not_used(monkeypatch, tmp_path):
@@ -507,7 +552,71 @@ def test_a_padding_set_that_could_not_be_stored_is_not_used(monkeypatch, tmp_pat
     monkeypatch.setattr(_digest.os, "replace", refuse)
     result = digest(cache_dir=tmp_path)
     assert "padding_unreadable" in result.notes and server.requests == []
-    assert sorted(p.name for p in tmp_path.iterdir()) == []  # neither a temp file nor the lock is left
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.lock"]  # no temp file left
+
+
+def _read_only_folder(monkeypatch):
+    real = os.open
+
+    def deny(path, flags, *args, **kwargs):
+        if flags & os.O_CREAT and os.path.basename(str(path)) == "padding.lock":
+            raise PermissionError(13, "denied", str(path))
+        return real(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(_digest.os, "open", deny)
+
+
+def test_a_folder_we_cannot_write_in_still_serves_a_stored_set_that_is_big_enough_at_once(monkeypatch, tmp_path):
+    import time
+
+    others = [format(i, "02x") for i in range(256)]
+    _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 15, random.Random(0))
+    (tmp_path / "padding.lock").unlink()
+    _read_only_folder(monkeypatch)
+    started = time.monotonic()
+    got = _digest._Fetcher("https://x", tmp_path, 1.0).padding({"aa"}, [o for o in others if o != "aa"], 15, random.Random(1))
+    assert time.monotonic() - started < 1.0 and len(got) == 15 and set(got) <= set(_stored(tmp_path))
+
+
+def test_a_folder_we_cannot_write_in_asks_for_nothing_when_the_set_would_have_to_grow_or_be_made(monkeypatch, tmp_path):
+    import time
+
+    server = Server(monkeypatch)
+    others = [format(i, "02x") for i in range(256)]
+    _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 5, random.Random(0))
+    (tmp_path / "padding.lock").unlink()
+    _read_only_folder(monkeypatch)
+    started = time.monotonic()
+    with pytest.raises(_digest._PaddingUnreadable):
+        _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 15, random.Random(1))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = digest(cache_dir=empty)
+    assert "padding_unreadable" in result.notes and server.requests == []
+    assert time.monotonic() - started < 1.0
+
+
+def test_two_real_processes_starting_together_use_the_same_padding(tmp_path):
+    import subprocess
+    import time
+
+    script = """
+import sys, os, time, json, random
+sys.path.insert(0, sys.argv[1])
+from ahn_client import _digest
+while not os.path.exists(sys.argv[3]): time.sleep(0.001)
+others = [format(i, '02x') for i in range(256)]
+print(json.dumps(_digest._Fetcher('https://x', sys.argv[2], 5.0).padding(set(), others, 14, random.Random())))
+"""
+    go = tmp_path / "go"
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    src = str(ROOT / "clients" / "python" / "src")
+    procs = [subprocess.Popen([sys.executable, "-c", script, src, str(cache), str(go)], stdout=subprocess.PIPE, text=True) for _ in range(2)]
+    time.sleep(1.0)  # both interpreters are up and waiting
+    go.write_bytes(b"")
+    outputs = [json.loads(proc.communicate(timeout=60)[0]) for proc in procs]
+    assert outputs[0] == outputs[1] == _stored(cache) and len(outputs[0]) == 14
 
 
 def test_a_tampered_cache_file_is_refused_like_a_download(monkeypatch, tmp_path):

@@ -9,6 +9,7 @@ file: no hostname, and the same number of shards whichever hosts you ask about.
 
 from __future__ import annotations
 
+import errno
 import gzip
 import hashlib
 import io
@@ -17,6 +18,7 @@ import os
 import random
 import re
 import tempfile
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -65,6 +67,10 @@ class Digest:
         return {"hosts": self.hosts, "signature": self.signature, "generated_at": self.generated_at, "valid_until": self.valid_until,
                 "stale": self.stale, "changes_covers_since": self.changes_covers_since,
                 "shards_requested": self.shards_requested, "notes": self.notes}
+
+
+class _NotWritable(Exception):
+    """The cache folder does not let this process create files in it."""
 
 
 class _PaddingUnreadable(Exception):
@@ -121,39 +127,61 @@ class _Fetcher:
         except (OSError, UnicodeError):
             pass
 
-    # The padding file is read, extended and written inside one lock (``padding.lock``, created with O_EXCL), so two
-    # processes can never each extend the same stored set in different ways and leave only one of the two behind.
-    # Nothing slow (no network call) happens while the lock is held.
-    LOCK_WAIT = 10.0   # seconds to wait for another process before giving up (nothing is requested then)
-    LOCK_STALE = 60.0  # a lock file older than this was left by a process that died; it is removed
+    # The padding file is read, extended and written inside one lock, so two processes can never each extend the same
+    # stored set in different ways and leave only one of the two behind. The lock is an operating-system lock on
+    # ``padding.lock`` (released by the system when its holder dies, so there is no stale-lock guessing, and the file
+    # itself is never deleted). Nothing slow (no network call) happens while it is held.
+    LOCK_WAIT = 10.0  # seconds to wait for another process before giving up (nothing is requested then)
 
-    def _lock(self, path: str) -> None:
+    def _acquire(self, path: str) -> int:
+        """The descriptor of ``padding.lock`` with the lock held. Raises _NotWritable when the folder does not let us
+        open it (permission, read-only), _PaddingUnreadable when another holder does not let go in time."""
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT)
+        except OSError as error:
+            if isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+                raise _NotWritable()
+            raise _PaddingUnreadable()
         deadline = time.monotonic() + self.LOCK_WAIT
         while True:
             try:
-                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-                return
-            except (FileExistsError, PermissionError):  # Windows: PermissionError while the holder deletes it
-                try:
-                    if time.time() - os.stat(path).st_mtime > self.LOCK_STALE:
-                        os.unlink(path)
-                        continue
-                except OSError:
-                    pass  # it vanished or is being removed right now: try again after the check below
+                os.lseek(fd, 0, 0)
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except OSError:
                 if time.monotonic() >= deadline:
+                    os.close(fd)
                     raise _PaddingUnreadable()
                 time.sleep(0.01)
-            except OSError:
-                raise _PaddingUnreadable()  # the folder cannot be written: the set could not be kept, so nothing is asked
+
+    @staticmethod
+    def _release(fd: int) -> None:
+        try:
+            os.lseek(fd, 0, 0)
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
 
     def _clean_temp(self) -> None:
+        """Called with the lock held: a writer only makes its temp file under the lock, so any ``.padding-*`` left is
+        from a process that died."""
         try:
             for name in os.listdir(self.cache_dir):
                 if name.startswith(".padding-"):
-                    full = os.path.join(self.cache_dir, name)
                     try:
-                        if time.time() - os.stat(full).st_mtime > self.LOCK_STALE:
-                            os.unlink(full)
+                        os.unlink(os.path.join(self.cache_dir, name))
                     except OSError:
                         pass
         except OSError:
@@ -200,8 +228,15 @@ class _Fetcher:
             pool = [item for item in others if item not in wanted]
             return picker.sample(pool, min(count, len(pool)))
         path = os.path.join(self.cache_dir, "padding.json")
-        lock = os.path.join(self.cache_dir, "padding.lock")
-        self._lock(lock)
+        try:
+            fd = self._acquire(os.path.join(self.cache_dir, "padding.lock"))
+        except _NotWritable:
+            # We cannot write in this folder, so nobody else is extending the set either. A stored set that is big
+            # enough is used as it is; one that would have to grow (or be created) cannot be kept, so nothing is asked.
+            chosen = [item for item in self._read_padding(path) if item not in wanted][:count]
+            if len(chosen) < count:
+                raise _PaddingUnreadable()
+            return chosen
         try:
             self._clean_temp()
             stored = self._read_padding(path)
@@ -212,10 +247,7 @@ class _Fetcher:
                 self._write_padding(path, stored + [item for item in chosen if item not in stored])
             return chosen
         finally:
-            try:
-                os.unlink(lock)
-            except OSError:
-                pass
+            self._release(fd)
 
     def get(self, path: str, name: str) -> bytes:
         """The decoded body of ``path``; a 304 answers from the cache. Raises _NoFile."""
