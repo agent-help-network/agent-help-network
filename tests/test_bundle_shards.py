@@ -325,11 +325,25 @@ def test_changes_expire_exactly_seven_days_after_the_bundle_that_showed_them():
 
     def listed(moment):
         later = shard_set(rows_at(moment, **{"github.com": {"robots": BLOCKED}}), moment)
+        changes.observe(later)  # as the route does before it builds the file
         return [c["host"] for c in changes.document(later)["changes"]]
 
     assert listed(T0 + DAY + timedelta(days=7)) == ["github.com"]  # the seventh day is still in
     assert listed(T0 + DAY + timedelta(days=7, seconds=1)) == []
     assert listed(T0 + DAY + timedelta(days=7)) == []  # and an expired entry does not come back
+
+
+def test_a_late_file_for_an_older_bundle_never_drops_what_a_newer_bundle_recorded():
+    changes = bundle_shards._Changes()
+    first = shard_set(rows_at(T0), T0)
+    changes.observe(first)
+    second = shard_set(rows_at(T0 + DAY, **{"github.com": {"robots": BLOCKED}}), T0 + DAY)
+    changes.observe(second)
+    assert [c["host"] for c in changes.document(second)["changes"]] == ["github.com"]
+
+    # A request that still held the first bundle builds its file after the second bundle was observed.
+    assert changes.document(first)["changes"] == []
+    assert [c["host"] for c in changes.document(second)["changes"]] == ["github.com"]
 
 
 def test_covers_since_never_claims_more_than_seven_days_or_more_than_was_seen():
