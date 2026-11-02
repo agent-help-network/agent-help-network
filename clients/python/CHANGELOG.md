@@ -2,7 +2,7 @@
 
 ## 0.6.5
 
-- `ahn.local_digest` with `cache_dir`: when two processes make their first run at the same time, the padding file is now created only if it does not exist yet (written whole, then hard-linked into place), and the process that loses the race reads and uses the winner's set. Before, each could request its own padding and the last file written stayed, so one client could ask for two different padding sets.
+- `ahn.local_digest` with `cache_dir`: the padding file is now read, extended and written inside one lock (`padding.lock`, created exclusively; a lock older than 60 seconds is treated as left by a dead process and removed). Before, two processes starting at the same time, or both growing the same stored set, could each request their own padding and only the last file written stayed, so one client could ask for two different padding sets. If the lock is not free within 10 seconds, or the set cannot be stored, nothing is requested and the note is `padding_unreadable`. Old `.padding-*` temp files are cleaned up.
 
 ## 0.6.4
 

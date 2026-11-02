@@ -395,45 +395,119 @@ def test_padding_is_never_read_half_written_while_another_writer_works(monkeypat
     assert bad == []
 
 
-def _first_runs_at_once(monkeypatch, tmp_path, sizes):
-    """Start one padding call per entry of ``sizes`` in its own thread, all with an empty cache_dir, and hold every one of
-    them at the moment it is about to store its set, so each has drawn its own ids before any file exists."""
+def _at_once(monkeypatch, tmp_path, jobs):
+    """Run one padding call per ``(wanted, count)`` job in its own thread and hold them at the moment a process would
+    store its set (the temp file is created there). Code that reads, decides and writes without a lock lets every thread
+    draw its own ids before any file changes; code that holds a lock cannot, so the hold gives up after a moment and the
+    threads simply go one after the other."""
     import threading
 
-    barrier = threading.Barrier(len(sizes), timeout=10)
+    barrier = threading.Barrier(len(jobs))
     real = _digest.tempfile.mkstemp
 
     def held(*args, **kwargs):
-        barrier.wait()
+        try:
+            barrier.wait(timeout=0.4)
+        except threading.BrokenBarrierError:
+            pass
         return real(*args, **kwargs)
 
     monkeypatch.setattr(_digest.tempfile, "mkstemp", held)
     others = [format(i, "02x") for i in range(256)]
     got = {}
 
-    def run(index, size):
+    def run(index, wanted, count):
         fetcher = _digest._Fetcher("https://agenthelpnetwork.com", tmp_path, 1.0)
-        got[index] = fetcher.padding(set(), others, size, random.Random(1000 + index))
+        pool = [o for o in others if o not in wanted]
+        got[index] = fetcher.padding(set(wanted), pool, count, random.Random(1000 + index))
 
-    threads = [threading.Thread(target=run, args=(i, size)) for i, size in enumerate(sizes)]
+    threads = [threading.Thread(target=run, args=(i, wanted, count)) for i, (wanted, count) in enumerate(jobs)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(30)
-    return [got[i] for i in range(len(sizes))]
+    return [got[i] for i in range(len(jobs))]
+
+
+def _stored(tmp_path):
+    return json.loads((tmp_path / "padding.json").read_text())["padding"]
 
 
 def test_two_first_runs_at_once_use_the_same_padding_and_it_is_the_stored_one(monkeypatch, tmp_path):
-    first, second = _first_runs_at_once(monkeypatch, tmp_path, [14, 14])
-    stored = json.loads((tmp_path / "padding.json").read_text())["padding"]
-    assert first == second == stored and len(stored) == 14
-    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".padding-")] == []
+    first, second = _at_once(monkeypatch, tmp_path, [(set(), 14), (set(), 14)])
+    assert first == second == _stored(tmp_path) and len(first) == 14
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json"]  # no temp file, no lock left behind
 
 
-def test_a_first_run_that_loses_the_race_to_a_smaller_set_grows_the_winners_set(monkeypatch, tmp_path):
-    first, second = _first_runs_at_once(monkeypatch, tmp_path, [6, 10])
-    stored = json.loads((tmp_path / "padding.json").read_text())["padding"]
-    assert len(stored) == 10 and set(first) <= set(stored) and set(second) == set(stored)
+def test_a_larger_run_after_a_smaller_one_keeps_the_smaller_set_and_grows_it(monkeypatch, tmp_path):
+    import threading
+
+    others = [format(i, "02x") for i in range(256)]
+    small_done, got = threading.Event(), {}
+
+    def small():
+        got["small"] = _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 6, random.Random(1))
+        small_done.set()
+
+    def large():
+        assert small_done.wait(10)  # the order is forced: the small set is stored before the large run starts
+        got["large"] = _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 10, random.Random(2))
+
+    threads = [threading.Thread(target=large), threading.Thread(target=small)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert len(got["small"]) == 6 and got["large"][:6] == got["small"] and len(got["large"]) == 10
+    assert _stored(tmp_path) == got["large"]
+
+
+def test_two_runs_that_extend_the_same_stored_set_at_once_both_keep_every_id_they_used(monkeypatch, tmp_path):
+    others = [format(i, "02x") for i in range(256)]
+    _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 2, random.Random(0))
+    old = _stored(tmp_path)
+    first, second = _at_once(monkeypatch, tmp_path, [({"aa"}, 15), ({"aa"}, 15)])
+    stored = _stored(tmp_path)
+    assert set(old) <= set(first) and set(old) <= set(second)
+    assert set(first) <= set(stored) and set(second) <= set(stored)  # the run that wrote last did not drop the other's ids
+    third = _digest._Fetcher("https://x", tmp_path, 1.0).padding({"aa"}, [o for o in others if o != "aa"], 15, random.Random(7))
+    assert len(set(first) & set(second) & set(third)) >= 2  # the next request still shares the stored ids with both
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["padding.json"]
+
+
+def test_waiting_longer_than_the_limit_for_the_lock_asks_for_nothing(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 0.2)
+    (tmp_path / "padding.lock").write_bytes(b"")  # another process holds it, and it is fresh
+    result = digest(cache_dir=tmp_path)
+    assert "padding_unreadable" in result.notes and server.requests == []
+    assert (tmp_path / "padding.lock").exists() and not (tmp_path / "padding.json").exists()  # not ours to remove
+
+
+def test_a_stale_lock_and_stale_temp_files_are_cleaned_up(monkeypatch, tmp_path):
+    import time
+
+    Server(monkeypatch)
+    old = time.time() - 3600
+    for name in ("padding.lock", ".padding-old", ".padding-new"):
+        (tmp_path / name).write_bytes(b"")
+    for name in ("padding.lock", ".padding-old"):
+        os.utime(tmp_path / name, (old, old))
+    result = digest(cache_dir=tmp_path)
+    assert "padding_unreadable" not in result.notes and result.shards_requested == 16
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(("padding", ".padding"))) == [".padding-new", "padding.json"]
+
+
+def test_a_padding_set_that_could_not_be_stored_is_not_used(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("no")
+
+    monkeypatch.setattr(_digest.os, "replace", refuse)
+    result = digest(cache_dir=tmp_path)
+    assert "padding_unreadable" in result.notes and server.requests == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == []  # neither a temp file nor the lock is left
 
 
 def test_a_tampered_cache_file_is_refused_like_a_download(monkeypatch, tmp_path):
