@@ -1221,9 +1221,10 @@ def test_extras_are_declared_and_the_base_install_has_no_dependencies():
 
 
 def test_package_version_and_exports():
-    assert ahn.__version__ == "0.6.3"
-    assert set(ahn.__all__) == {"check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__"}
-    assert (ROOT / "clients" / "python" / "src" / "ahn_client" / "__init__.py").read_text(encoding="utf-8").count('__version__ = "0.6.3"') == 1
+    assert ahn.__version__ == "0.6.4"
+    assert set(ahn.__all__) == {"check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__",
+                              "local_digest", "digest_markdown", "shard_id", "Digest", "FailureLog", "ADVICE"}
+    assert (ROOT / "clients" / "python" / "src" / "ahn_client" / "__init__.py").read_text(encoding="utf-8").count('__version__ = "0.6.4"') == 1
 
 
 def test_examples_parse_and_name_the_browser_use_adapter():
