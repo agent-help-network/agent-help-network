@@ -764,6 +764,10 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                 row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,
                            previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
             _store(conn, site_host, row, now)
+            # D75: a changed outcome or bot-defense provider since the check this one replaces, as codes; a first check, a
+            # failure and a skipped check write nothing. Own savepoint; never raises.
+            from .host_access_changes import record_home_check as record_home_change
+            record_home_change(conn, site_host, previous, row, now)
             if trigger.startswith("set_"):
                 # The list-driven check also feeds the "Site problems right now" history (D68): codes and a time range
                 # only, for listed hosts only, in the same transaction. It never raises.

@@ -357,6 +357,10 @@ TABLES = {
     # day-specific keyed IP digests. Deleted by prune_analytics after a fixed period; stated in sections 02 and 06.
     "lookup_signals_hourly": Pruned(Phrase("Hourly per-host counts of lookup codes: {days} days", "호스트별 시간 단위 조회 코드 집계: {days}일"),
                                     Phrase("for {days} days, together with a keyed digest", "{days}일 집계하며")),
+    # Access-policy changes (migration 035, ahn/host_access_changes.py, D75): short codes per hostname, kept 90 days.
+    "host_access_changes": Pruned(Phrase(
+        "Changes in a public host's declared access policy (the time, the field that changed, and its old and new short code; never a file, a path or a header value): {days} days",
+        "공개 호스트의 선언된 접근 정책 변화(시각, 바뀐 항목, 이전·이후 짧은 코드. 파일·경로·헤더 값은 저장하지 않음): {days}일")),
     # Lookup feedback (migration 031, ahn/feedback.py, D58): outcome counts per hostname and hour of the lookup.
     "lookup_feedback_hourly": Pruned(Phrase("Hourly per-host counts of feedback outcomes, with the recommendation given and the kind of client: {days} days",
                                             "호스트별 시간 단위 결과 회신 집계(그때 준 권고와 클라이언트 종류 포함): {days}일")),
