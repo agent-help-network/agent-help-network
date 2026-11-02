@@ -562,8 +562,10 @@ def _open_without_sharing(path):
 @pytest.fixture(autouse=True)
 def _fresh_in_process_locks(monkeypatch):
     """A test that fails while holding a lock must not leave it held for the tests after it."""
-    monkeypatch.setattr(_digest, "_DIR_LOCKS", {}, raising=False)
-    monkeypatch.setattr(_digest, "_FD_LOCKS", {}, raising=False)
+    monkeypatch.setattr(_digest, "_DIR_LOCKS", {})
+    monkeypatch.setattr(_digest, "_FD_LOCKS", {})
+    yield
+    assert _digest._FD_LOCKS == {}  # every lock taken in the test was given back
 
 
 @_windows_only
@@ -594,6 +596,32 @@ def test_a_lock_file_that_stays_unopenable_lets_a_big_enough_stored_set_be_used_
             _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 20, random.Random(2))
     finally:
         close()
+
+
+@_windows_only
+def test_a_read_only_lock_file_is_a_refusal_not_a_wait(monkeypatch, tmp_path):
+    import stat
+    import time
+
+    others = [format(i, "02x") for i in range(256)]
+    _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 15, random.Random(0))
+    lock = tmp_path / "padding.lock"
+    os.chmod(lock, stat.S_IREAD)
+    try:
+        started = time.monotonic()
+        got = _digest._Fetcher("https://x", tmp_path, 1.0).padding({"aa"}, [o for o in others if o != "aa"], 15, random.Random(1))
+        assert len(got) == 15 and set(got) <= set(_stored(tmp_path)) and time.monotonic() - started < 1.0
+    finally:
+        os.chmod(lock, stat.S_IWRITE | stat.S_IREAD)
+
+
+def test_releasing_a_descriptor_that_is_not_in_the_table_still_unlocks_and_closes_it(tmp_path):
+    fetcher = _digest._Fetcher("https://x", tmp_path, 1.0)
+    fd = fetcher._acquire(str(tmp_path / "padding.lock"))
+    _digest._FD_LOCKS.pop(fd).release()
+    fetcher._release(fd)  # no KeyError
+    with pytest.raises(OSError):
+        os.fstat(fd)
 
 
 def test_each_cache_folder_has_its_own_in_process_lock(tmp_path):

@@ -86,6 +86,11 @@ def _thread_lock_for(directory: str) -> "threading.Lock":
 
 def _forget_locks_in_child() -> None:
     global _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS
+    for fd in list(_FD_LOCKS):  # descriptors inherited from a parent that was holding the lock
+        try:
+            os.close(fd)
+        except OSError:
+            pass
     _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS = threading.Lock(), {}, {}
 
 
@@ -198,6 +203,12 @@ class _Fetcher:
                 return os.open(path, os.O_RDWR | os.O_CREAT)
             except OSError as error:
                 if os.name == "nt" and isinstance(error, PermissionError) and os.path.exists(path):
+                    try:
+                        os.close(os.open(path, os.O_RDONLY))
+                    except OSError:
+                        pass  # it cannot even be read: someone holds it without sharing, so this is a wait
+                    else:
+                        raise _NotWritable()  # it can be read: a real refusal (read-only attribute, ACL), not a wait
                     # On Windows another process holding the file open without sharing (a virus scanner, an indexer)
                     # also shows up as PermissionError, so for a lock file that exists wait for it like for another
                     # holder; after the limit treat the folder as one we cannot use for locking.
@@ -211,7 +222,7 @@ class _Fetcher:
 
     @staticmethod
     def _release(fd: int) -> None:
-        thread_lock = _FD_LOCKS.pop(fd)  # before the close: the number may be reused at once
+        thread_lock = _FD_LOCKS.pop(fd, None)  # before the close: the number may be reused at once
         try:
             try:
                 os.lseek(fd, 0, 0)
@@ -226,7 +237,8 @@ class _Fetcher:
             finally:
                 os.close(fd)
         finally:
-            thread_lock.release()
+            if thread_lock is not None:
+                thread_lock.release()
 
     def _clean_temp(self) -> None:
         """Called with the lock held: a writer only makes its temp file under the lock, so any ``.padding-*`` left is
