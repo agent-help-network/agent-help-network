@@ -339,13 +339,13 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # Hash of the same blob taken from the tree before D63 (the three earlier changes merged, #117 at 33fd2b5), then
     # updated once for D59 (#114), which adds only access_profile.site_declared and its SiteDeclared definitions
     # (before D59: f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64), then again for D67, which adds only
-    # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85).
-    # and once more for D69, which adds only the optional `next_action.status_url` (before D69: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2),
-    # and for D73, which adds only the optional `cause` object to the answer schema and the optional `failed_at` input of check_incident
-    # (before D73: a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46).
-    # and for D75, which adds only three `cause.hint` values and the `host_access_changes` basis value
-    # (before D75: c5fe873a02563ef55f1a9bb091c368b405164d2f01d7be06275575e51d3be2dd).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "fe63f721a2afb461023c0de7ca71a469cab664fef5709fdba65e6d3e3eb8623c"
+    # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85),
+    # then for D71, which makes `robots.rules` omissible and adds `robots.rules_omitted` (before D71: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2),
+    # and once more for D69, which adds only the optional `next_action.status_url` (before D73: 03cafca05bc73828ad869139405cc287a8189c7996dcb7c4fcf6d482eb144802),
+    # and for D73, which adds only the optional `cause` object to the answer schema and the optional `failed_at` input of check_incident (before D72: c557282a87fd86f77307ad13b58e8f916a98c680b230185eb8978a0b2beb3b49),
+    # and for D72, which adds only the optional `official_status_page.requires_sign_in`.
+    # and for D75 (before D75: ea8bcbb1fc82d2d06f5f116fbce2084a39c97f9daa2c60a318a467d47810be5d), which adds only three `cause.hint` values and the `host_access_changes` basis value.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "9e94722ff9c445cdbd22996199384863506c9a6bf13ed43e6bc39eb868952241"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

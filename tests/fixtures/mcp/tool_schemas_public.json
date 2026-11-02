@@ -2478,6 +2478,19 @@
     "OfficialStatusPage": {
      "additionalProperties": true,
      "properties": {
+      "requires_sign_in": {
+       "anyOf": [
+        {
+         "const": true,
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Requires Sign In"
+      },
       "source_name": {
        "title": "Source Name",
        "type": "string"
@@ -2798,11 +2811,32 @@
        "type": "array"
       },
       "rules": {
-       "items": {
-        "$ref": "#/$defs/AgentRule"
-       },
-       "title": "Rules",
-       "type": "array"
+       "anyOf": [
+        {
+         "items": {
+          "$ref": "#/$defs/AgentRule"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules"
+      },
+      "rules_omitted": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Rules Omitted"
       },
       "sitemap": {
        "default": false,
@@ -2856,7 +2890,6 @@
       }
      },
      "required": [
-      "rules",
       "wildcard_root_allowed"
      ],
      "title": "RobotsSummary",

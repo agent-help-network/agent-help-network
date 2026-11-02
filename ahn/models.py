@@ -303,6 +303,8 @@ class ProviderStatus(StrictModel):
 class OfficialStatusPage(StrictModel):
     source_name: str
     source_url: str
+    # D72: true only when the listed page needs the user's sign-in; left out (never null) otherwise.
+    requires_sign_in: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class LookupActivity(StrictModel):
@@ -323,7 +325,9 @@ class AgentRule(StrictModel):
 
 
 class RobotsSummary(StrictModel):
-    rules: list[AgentRule]
+    # D71: a task_step=status_check answer leaves `rules` out and gives `rules_omitted` (the count) instead.
+    rules: list[AgentRule] | None = Field(default=None, exclude_if=_omit_none)
+    rules_omitted: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     wildcard_root_allowed: bool
     sitemap: bool = False
     sitemaps: list[str] = Field(default_factory=list)

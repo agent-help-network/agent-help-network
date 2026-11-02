@@ -441,6 +441,16 @@ def test_only_a_failure_lookup_gets_a_cause(db):
         assert client.get("/en/search", params={"site_host": host}).status_code == 200
 
 
+def test_d73_cause_and_d69_status_summary_never_share_an_answer(db):
+    host = "bothfeatures.org"
+    seed(db, provider_event(host, now() - timedelta(hours=1), "major", "none"))
+    failed = look(db, host, task_step="status_check", error_class="service_error")
+    assert failed["cause"]["hint"] == "provider_incident"
+    assert failed["summary_line"] not in response_guide.STATUS_ROWS.values() and "status_url" not in failed["next_action"]
+    plain = look(db, host, task_step="status_check")
+    assert "cause" not in plain
+
+
 def test_the_switch_off_gives_the_answer_before_the_cause_and_on_changes_nothing_else(db):
     on, off = db, settings_with(hint=False)
     t0 = now() - timedelta(hours=3)
