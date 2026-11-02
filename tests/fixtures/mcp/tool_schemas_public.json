@@ -2474,6 +2474,19 @@
     "OfficialStatusPage": {
      "additionalProperties": true,
      "properties": {
+      "requires_sign_in": {
+       "anyOf": [
+        {
+         "const": true,
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Requires Sign In"
+      },
       "source_name": {
        "title": "Source Name",
        "type": "string"

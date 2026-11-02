@@ -303,6 +303,8 @@ class ProviderStatus(StrictModel):
 class OfficialStatusPage(StrictModel):
     source_name: str
     source_url: str
+    # D72: true only when the listed page needs the user's sign-in; left out (never null) otherwise.
+    requires_sign_in: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class LookupActivity(StrictModel):

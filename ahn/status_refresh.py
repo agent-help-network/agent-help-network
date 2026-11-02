@@ -779,6 +779,7 @@ ACTIVE_ITEM_TIME_FEEDS = frozenset(source.api_url for source in SOURCES.values()
 OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "netflix.com": ("Netflix Service Status", "https://help.netflix.com/en/is-netflix-down"),
     "webex.com": ("Webex Global Service Status", "https://status.webex.com/"),
+    "workday.com": ("Workday Community Status", "https://community.workday.com/trust/status"),
     "adobe.com": ("Adobe Status", "https://status.adobe.com/"),
     "cdn77.org": ("CDN77 Status", "https://client.cdn77.com/support/status"),
     "fastly.net": ("Fastly Status", "https://www.fastlystatus.com/"),
@@ -1154,6 +1155,10 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "yammer.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
     "zearn.org": ("Zearn Status", "https://status.zearn.org/"),
 }
+# D72: sites in OFFICIAL_STATUS_PAGES whose listed status page needs the user's own sign-in. The service says so beside the link
+# (official_status_page.requires_sign_in) so an agent hands the page to its user instead of searching for it. Members are curated
+# from publisher-owned documentation; every member must be a key of OFFICIAL_STATUS_PAGES.
+SIGN_IN_STATUS_PAGES: frozenset[str] = frozenset({"workday.com"})
 
 
 def dedicated_status_host(url: str) -> str | None:
@@ -1181,6 +1186,11 @@ def _page_host_map(pages: dict[str, tuple[str, str]]) -> dict[str, tuple[str, st
 
 
 _STATUS_PAGE_HOSTS = _page_host_map(OFFICIAL_STATUS_PAGES)
+
+
+def status_page_requires_sign_in(page: tuple[str, str] | None) -> bool:
+    """D72: true when the (name, url) is the curated status page of a SIGN_IN_STATUS_PAGES site (also when reached through the page's own host, D70)."""
+    return page is not None and any(site in OFFICIAL_STATUS_PAGES and OFFICIAL_STATUS_PAGES[site] == page for site in SIGN_IN_STATUS_PAGES)
 
 
 def official_status_page_for(host: str) -> tuple[str, str] | None:
