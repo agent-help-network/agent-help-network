@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.5
+
+- `ahn.local_digest` with `cache_dir`: the padding file is now read, extended and written inside one operating-system lock on `padding.lock` (the system releases it if the holder dies; the lock file is never deleted). Before, two processes starting at the same time, or both growing the same stored set, could each request their own padding and only the last file written stayed, so one client could ask for two different padding sets. If the lock is not free within 10 seconds, or the set cannot be stored, nothing is requested and the note is `padding_unreadable`. In a folder you cannot write to, a stored set that is big enough is used as it is; if it would have to grow or be created, nothing is requested. Leftover `.padding-*` temp files are cleaned up. The guarantee holds only when every process that uses the same `cache_dir` runs 0.6.5 or newer; an older client does not take the lock.
+
 ## 0.6.4
 
 - `ahn.local_digest(hosts, *, pad_to=16, cache_dir=None, public_key=None, ...)` compares regular sites with the bundle's thin shards on your machine: shard ids are computed locally, random padding shards keep the number of requests fixed, shards are verified against the manifest's SHA-256 (and its Ed25519 signature when you give the key), `If-None-Match` caching, a seven-day changes marker, and `status == "not_in_bundle"` for hosts to check live. The service receives no hostname.

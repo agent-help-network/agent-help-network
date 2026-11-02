@@ -9,6 +9,7 @@ file: no hostname, and the same number of shards whichever hosts you ask about.
 
 from __future__ import annotations
 
+import errno
 import gzip
 import hashlib
 import io
@@ -16,7 +17,9 @@ import json
 import os
 import random
 import re
+import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -65,6 +68,33 @@ class Digest:
         return {"hosts": self.hosts, "signature": self.signature, "generated_at": self.generated_at, "valid_until": self.valid_until,
                 "stale": self.stale, "changes_covers_since": self.changes_covers_since,
                 "shards_requested": self.shards_requested, "notes": self.notes}
+
+
+# In front of the system lock on padding.lock, one per cache folder, taken first and released last. The folders are keyed
+# by their real path; the table is guarded by a short global lock and is made new in a forked child (a lock copied in
+# the held state would never be released there).
+_REGISTRY_LOCK = threading.Lock()
+_DIR_LOCKS: Dict[str, "threading.Lock"] = {}
+_FD_LOCKS: Dict[int, "threading.Lock"] = {}
+
+
+def _thread_lock_for(directory: str) -> "threading.Lock":
+    key = os.path.realpath(directory)
+    with _REGISTRY_LOCK:
+        return _DIR_LOCKS.setdefault(key, threading.Lock())
+
+
+def _forget_locks_in_child() -> None:
+    global _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS
+    _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS = threading.Lock(), {}, {}
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_locks_in_child)
+
+
+class _NotWritable(Exception):
+    """The cache folder does not let this process create files in it."""
 
 
 class _PaddingUnreadable(Exception):
@@ -121,51 +151,157 @@ class _Fetcher:
         except (OSError, UnicodeError):
             pass
 
+    # The padding file is read, extended and written inside one lock, so two processes can never each extend the same
+    # stored set in different ways and leave only one of the two behind. The lock is an operating-system lock on
+    # ``padding.lock`` (released by the system when its holder dies, so there is no stale-lock guessing, and the file
+    # itself is never deleted). Nothing slow (no network call) happens while it is held.
+    LOCK_WAIT = 10.0  # seconds to wait for another process before giving up (nothing is requested then)
+
+    def _acquire(self, path: str) -> int:
+        """The descriptor of ``padding.lock`` with the lock held (the in-process lock first, then the system lock).
+        Raises _NotWritable when the folder does not let us open it (permission, read-only), _PaddingUnreadable when
+        another holder does not let go in time."""
+        deadline = time.monotonic() + self.LOCK_WAIT
+        # Some network file systems do not make flock() exclude threads of one process, so threads queue here first.
+        thread_lock = _thread_lock_for(os.path.dirname(path))
+        if not thread_lock.acquire(timeout=self.LOCK_WAIT):
+            raise _PaddingUnreadable()
+        try:
+            fd = self._open_lock(path, deadline)
+            try:
+                while True:
+                    try:
+                        os.lseek(fd, 0, 0)
+                        if sys.platform == "win32":
+                            import msvcrt
+                            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        else:
+                            import fcntl
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        _FD_LOCKS[fd] = thread_lock
+                        return fd
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise _PaddingUnreadable()
+                        time.sleep(0.01)
+            except BaseException:
+                os.close(fd)
+                raise
+        except BaseException:
+            thread_lock.release()
+            raise
+
+    @staticmethod
+    def _open_lock(path: str, deadline: float) -> int:
+        while True:
+            try:
+                return os.open(path, os.O_RDWR | os.O_CREAT)
+            except OSError as error:
+                if os.name == "nt" and isinstance(error, PermissionError) and os.path.exists(path):
+                    # On Windows another process holding the file open without sharing (a virus scanner, an indexer)
+                    # also shows up as PermissionError, so for a lock file that exists wait for it like for another
+                    # holder; after the limit treat the folder as one we cannot use for locking.
+                    if time.monotonic() >= deadline:
+                        raise _NotWritable()
+                    time.sleep(0.01)
+                    continue
+                if isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+                    raise _NotWritable()
+                raise _PaddingUnreadable()
+
+    @staticmethod
+    def _release(fd: int) -> None:
+        thread_lock = _FD_LOCKS.pop(fd)  # before the close: the number may be reused at once
+        try:
+            try:
+                os.lseek(fd, 0, 0)
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
+        finally:
+            thread_lock.release()
+
+    def _clean_temp(self) -> None:
+        """Called with the lock held: a writer only makes its temp file under the lock, so any ``.padding-*`` left is
+        from a process that died."""
+        try:
+            for name in os.listdir(self.cache_dir):
+                if name.startswith(".padding-"):
+                    try:
+                        os.unlink(os.path.join(self.cache_dir, name))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+    @staticmethod
+    def _read_padding(path: str) -> List[str]:
+        """The stored padding ids ([] before the first run). Raises _PaddingUnreadable."""
+        try:
+            with open(path, "r", encoding="ascii") as handle:
+                loaded = json.load(handle).get("padding")
+            if not isinstance(loaded, list) or not all(isinstance(item, str) and _SHARD_ID.fullmatch(item) for item in loaded):
+                raise ValueError("padding")
+            return list(dict.fromkeys(loaded))
+        except FileNotFoundError:
+            return []  # the first run: nothing was chosen yet
+        except (OSError, ValueError, TypeError, AttributeError, UnicodeError):
+            # The file is there but cannot be read. Drawing new padding would let the service tell yours from the
+            # padding by comparing this request with the last one, so nothing is asked for.
+            raise _PaddingUnreadable()
+
+    def _write_padding(self, path: str, keep: List[str]) -> None:
+        temp = None
+        try:  # written whole and renamed in, so a reader never sees half a file
+            handle, temp = tempfile.mkstemp(dir=self.cache_dir, prefix=".padding-")
+            with os.fdopen(handle, "w", encoding="ascii") as out:
+                json.dump({"schema": "ahn-padding/1", "padding": keep}, out)
+            os.replace(temp, path)
+            temp = None
+        except (OSError, UnicodeError):
+            raise _PaddingUnreadable()  # the set was not stored, so it must not be used
+        finally:
+            if temp:
+                try:
+                    os.unlink(temp)
+                except OSError:
+                    pass
+
     def padding(self, wanted: set, others: List[str], count: int, picker) -> List[str]:
         """``count`` padding shard ids outside ``wanted``. With a cache directory the padding set is stored there and
-        reused, so repeated calls ask for the same shards; it grows (with new random ids) only when more are needed.
-        Without one every call draws a new set."""
-        stored: List[str] = []
-        path = os.path.join(self.cache_dir, "padding.json") if self.cache_dir else None
-        if path:
-            try:
-                for attempt in range(6):
-                    try:
-                        with open(path, "r", encoding="ascii") as handle:
-                            loaded = json.load(handle).get("padding")
-                        break
-                    except PermissionError:  # Windows: the file is being replaced at this moment
-                        if attempt == 5:
-                            raise
-                        time.sleep(0.02)
-                if not isinstance(loaded, list) or not all(isinstance(item, str) and _SHARD_ID.fullmatch(item) for item in loaded):
-                    raise ValueError("padding")
-                stored = list(dict.fromkeys(loaded))
-            except FileNotFoundError:
-                stored = []  # the first run: nothing was chosen yet
-            except (OSError, ValueError, TypeError, AttributeError, UnicodeError):
-                # The file is there but cannot be read. Drawing new padding would let the service tell yours from the
-                # padding by comparing this request with the last one, so nothing is asked for.
+        reused, so repeated calls ask for the same shards; it grows (with new random ids) only when more are needed,
+        and every set a process uses is in the file. Without one every call draws a new set."""
+        if not self.cache_dir:
+            pool = [item for item in others if item not in wanted]
+            return picker.sample(pool, min(count, len(pool)))
+        path = os.path.join(self.cache_dir, "padding.json")
+        try:
+            fd = self._acquire(os.path.join(self.cache_dir, "padding.lock"))
+        except _NotWritable:
+            # We cannot write in this folder, so nobody else is extending the set either. A stored set that is big
+            # enough is used as it is; one that would have to grow (or be created) cannot be kept, so nothing is asked.
+            chosen = [item for item in self._read_padding(path) if item not in wanted][:count]
+            if len(chosen) < count:
                 raise _PaddingUnreadable()
-        chosen = [item for item in stored if item not in wanted][:count]
-        if len(chosen) < count:
-            pool = [item for item in others if item not in chosen and item not in stored]
-            chosen += picker.sample(pool, min(count - len(chosen), len(pool)))
-            if path:
-                keep = stored + [item for item in chosen if item not in stored]
-                temp = None
-                try:  # written whole and renamed in, so a reader (or a second process) never sees half a file
-                    handle, temp = tempfile.mkstemp(dir=self.cache_dir, prefix=".padding-")
-                    with os.fdopen(handle, "w", encoding="ascii") as out:
-                        json.dump({"schema": "ahn-padding/1", "padding": keep}, out)
-                    os.replace(temp, path)
-                except (OSError, UnicodeError):
-                    if temp:
-                        try:
-                            os.unlink(temp)
-                        except OSError:
-                            pass
-        return chosen
+            return chosen
+        try:
+            self._clean_temp()
+            stored = self._read_padding(path)
+            chosen = [item for item in stored if item not in wanted][:count]
+            if len(chosen) < count:
+                pool = [item for item in others if item not in chosen and item not in stored]
+                chosen += picker.sample(pool, min(count - len(chosen), len(pool)))
+                self._write_padding(path, stored + [item for item in chosen if item not in stored])
+            return chosen
+        finally:
+            self._release(fd)
 
     def get(self, path: str, name: str) -> bytes:
         """The decoded body of ``path``; a 304 answers from the cache. Raises _NoFile."""
