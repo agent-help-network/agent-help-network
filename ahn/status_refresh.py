@@ -1154,6 +1154,40 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
     "yammer.com": ("Microsoft 365 Service Health", "https://status.cloud.microsoft/"),
     "zearn.org": ("Zearn Status", "https://status.zearn.org/"),
 }
+
+
+def dedicated_status_host(url: str) -> str | None:
+    """D70: the lowercase host of a status page URL when that host serves only status: the page sits at the root, or the
+    host name says status or health (status.example.com, example-status.com, health.example.com). A page under a path of a
+    general site (www.example.com/support/status) gives None, so a lookup of that site never takes the page's status."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return None
+    if parsed.path in ("", "/") or "status" in host or host.startswith("health."):
+        return host
+    return None
+
+
+def _page_host_map(pages: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str]]:
+    """D70: page hostname -> (name, url), so a lookup of a status page's own host shows the link mapped for the site it
+    belongs to. A hostname that maps to different (name, url) entries is ambiguous and left out."""
+    found: dict[str, set[tuple[str, str]]] = {}
+    for entry in pages.values():
+        host = dedicated_status_host(entry[1])
+        if host:
+            found.setdefault(host, set()).add(entry)
+    return {host: next(iter(entries)) for host, entries in found.items() if len(entries) == 1}
+
+
+_STATUS_PAGE_HOSTS = _page_host_map(OFFICIAL_STATUS_PAGES)
+
+
+def official_status_page_for(host: str) -> tuple[str, str] | None:
+    """The mapped link-only status page for a site, or (D70) for the host that page is served from."""
+    return OFFICIAL_STATUS_PAGES[host] if host in OFFICIAL_STATUS_PAGES else _STATUS_PAGE_HOSTS[host] if host in _STATUS_PAGE_HOSTS else None
+
+
 GMAIL_PRODUCT_ID = "prPt2Yra2CbGsbEm9cpC"
 # Robots.txt decision before every feed request (D50, ahn/feed_robots.py). The four places that read a feed (the
 # cron's refresh_batch, a lookup's background refresh_one, the first discovery of a status.<host> page and the two
