@@ -70,7 +70,27 @@ class Digest:
                 "shards_requested": self.shards_requested, "notes": self.notes}
 
 
-_THREAD_LOCK = threading.Lock()  # in front of the system lock on padding.lock; taken first, released last
+# In front of the system lock on padding.lock, one per cache folder, taken first and released last. The folders are keyed
+# by their real path; the table is guarded by a short global lock and is made new in a forked child (a lock copied in
+# the held state would never be released there).
+_REGISTRY_LOCK = threading.Lock()
+_DIR_LOCKS: Dict[str, "threading.Lock"] = {}
+_FD_LOCKS: Dict[int, "threading.Lock"] = {}
+
+
+def _thread_lock_for(directory: str) -> "threading.Lock":
+    key = os.path.realpath(directory)
+    with _REGISTRY_LOCK:
+        return _DIR_LOCKS.setdefault(key, threading.Lock())
+
+
+def _forget_locks_in_child() -> None:
+    global _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS
+    _REGISTRY_LOCK, _DIR_LOCKS, _FD_LOCKS = threading.Lock(), {}, {}
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_locks_in_child)
 
 
 class _NotWritable(Exception):
@@ -143,7 +163,8 @@ class _Fetcher:
         another holder does not let go in time."""
         deadline = time.monotonic() + self.LOCK_WAIT
         # Some network file systems do not make flock() exclude threads of one process, so threads queue here first.
-        if not _THREAD_LOCK.acquire(timeout=self.LOCK_WAIT):
+        thread_lock = _thread_lock_for(os.path.dirname(path))
+        if not thread_lock.acquire(timeout=self.LOCK_WAIT):
             raise _PaddingUnreadable()
         try:
             fd = self._open_lock(path, deadline)
@@ -157,6 +178,7 @@ class _Fetcher:
                         else:
                             import fcntl
                             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        _FD_LOCKS[fd] = thread_lock
                         return fd
                     except OSError:
                         if time.monotonic() >= deadline:
@@ -166,7 +188,7 @@ class _Fetcher:
                 os.close(fd)
                 raise
         except BaseException:
-            _THREAD_LOCK.release()
+            thread_lock.release()
             raise
 
     @staticmethod
@@ -175,11 +197,12 @@ class _Fetcher:
             try:
                 return os.open(path, os.O_RDWR | os.O_CREAT)
             except OSError as error:
-                if getattr(error, "winerror", None) == 32:
-                    # ERROR_SHARING_VIOLATION: a virus scanner or indexer has the file open for a moment. Not a
-                    # refusal, so wait for it like for another holder.
+                if os.name == "nt" and isinstance(error, PermissionError) and os.path.exists(path):
+                    # On Windows another process holding the file open without sharing (a virus scanner, an indexer)
+                    # also shows up as PermissionError, so for a lock file that exists wait for it like for another
+                    # holder; after the limit treat the folder as one we cannot use for locking.
                     if time.monotonic() >= deadline:
-                        raise _PaddingUnreadable()
+                        raise _NotWritable()
                     time.sleep(0.01)
                     continue
                 if isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
@@ -188,6 +211,7 @@ class _Fetcher:
 
     @staticmethod
     def _release(fd: int) -> None:
+        thread_lock = _FD_LOCKS.pop(fd)  # before the close: the number may be reused at once
         try:
             try:
                 os.lseek(fd, 0, 0)
@@ -202,7 +226,7 @@ class _Fetcher:
             finally:
                 os.close(fd)
         finally:
-            _THREAD_LOCK.release()
+            thread_lock.release()
 
     def _clean_temp(self) -> None:
         """Called with the lock held: a writer only makes its temp file under the lock, so any ``.padding-*`` left is

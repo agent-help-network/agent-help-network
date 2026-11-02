@@ -499,7 +499,7 @@ def test_the_lock_is_free_the_moment_its_holder_lets_go_or_dies(monkeypatch, tmp
     with pytest.raises(_digest._PaddingUnreadable):
         fetcher._acquire(path)
     os.close(fd)  # what the system does when the holding process dies: no unlock call, no file removal
-    _digest._THREAD_LOCK.release()  # (the in-process lock dies with the process too)
+    _digest._FD_LOCKS.pop(fd).release()  # (the in-process lock dies with the process too)
     monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 5.0)
     started = time.monotonic()
     fetcher._release(fetcher._acquire(path))
@@ -544,44 +544,92 @@ def test_never_two_processes_inside_the_padding_section_even_with_an_old_lock_fi
     assert len(_stored(tmp_path)) == 12
 
 
-def test_a_sharing_violation_on_the_lock_file_is_waited_out_not_taken_for_a_refusal(monkeypatch, tmp_path):
-    real = os.open
-    calls = []
+_windows_only = pytest.mark.skipif(os.name != "nt", reason="a real sharing violation exists only on Windows")
 
-    def flaky(path, flags, *args, **kwargs):
-        if os.path.basename(str(path)) == "padding.lock" and len(calls) < 3:
-            calls.append(1)
-            error = PermissionError(13, "in use", str(path))
-            error.winerror = 32  # ERROR_SHARING_VIOLATION
-            raise error
-        return real(path, flags, *args, **kwargs)
 
-    monkeypatch.setattr(_digest.os, "open", flaky)
-    got = _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), [format(i, "02x") for i in range(256)], 5, random.Random(1))
-    assert len(calls) == 3 and got == _stored(tmp_path)  # retried, then used and stored normally
+def _open_without_sharing(path):
+    """Hold ``path`` open the way a virus scanner can: nobody else may open it (share mode 0)."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+    return lambda: kernel.CloseHandle(handle)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_in_process_locks(monkeypatch):
+    """A test that fails while holding a lock must not leave it held for the tests after it."""
+    monkeypatch.setattr(_digest, "_DIR_LOCKS", {}, raising=False)
+    monkeypatch.setattr(_digest, "_FD_LOCKS", {}, raising=False)
+
+
+@_windows_only
+def test_a_real_sharing_violation_on_the_lock_file_is_waited_out(monkeypatch, tmp_path):
+    import threading
+
+    others = [format(i, "02x") for i in range(256)]
+    (tmp_path / "padding.lock").write_bytes(b"")
+    close = _open_without_sharing(tmp_path / "padding.lock")
+    threading.Timer(0.3, close).start()
+    got = _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 5, random.Random(1))
+    assert got == _stored(tmp_path) and len(got) == 5  # waited, then took the lock and stored the set
+
+
+@_windows_only
+def test_a_lock_file_that_stays_unopenable_lets_a_big_enough_stored_set_be_used_and_nothing_else(monkeypatch, tmp_path):
+    import time
+
+    others = [format(i, "02x") for i in range(256)]
+    _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 15, random.Random(0))
+    monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 0.3)
+    close = _open_without_sharing(tmp_path / "padding.lock")
+    try:
+        started = time.monotonic()
+        got = _digest._Fetcher("https://x", tmp_path, 1.0).padding({"aa"}, [o for o in others if o != "aa"], 15, random.Random(1))
+        assert len(got) == 15 and set(got) <= set(_stored(tmp_path)) and time.monotonic() - started >= 0.3
+        with pytest.raises(_digest._PaddingUnreadable):  # it would have to grow: nothing is asked
+            _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), others, 20, random.Random(2))
+    finally:
+        close()
+
+
+def test_each_cache_folder_has_its_own_in_process_lock(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    fetcher = _digest._Fetcher("https://x", tmp_path, 1.0)
+    fd_a = fetcher._acquire(str(tmp_path / "a" / "padding.lock"))
+    fd_b = fetcher._acquire(str(tmp_path / "b" / "padding.lock"))  # does not wait for the other folder
+    assert _digest._thread_lock_for(tmp_path / "a") is _digest._thread_lock_for(str(tmp_path / "a" / ".." / "a"))
+    assert _digest._thread_lock_for(tmp_path / "a") is not _digest._thread_lock_for(tmp_path / "b")
+    fetcher._release(fd_a)
+    fetcher._release(fd_b)
 
 
 def test_an_exception_while_waiting_for_the_lock_closes_the_descriptor_and_frees_the_thread_lock(monkeypatch, tmp_path):
+    patches = monkeypatch.context().__enter__()
     fetcher = _digest._Fetcher("https://x", tmp_path, 1.0)
     held = fetcher._acquire(str(tmp_path / "padding.lock"))
     opened = []
     real_open, real_close = os.open, os.close
-    monkeypatch.setattr(_digest.os, "open", lambda *a, **k: opened.append(real_open(*a, **k)) or opened[-1])
+    patches.setattr(_digest.os, "open", lambda *a, **k: opened.append(real_open(*a, **k)) or opened[-1])
     closed = []
-    monkeypatch.setattr(_digest.os, "close", lambda fd: closed.append(fd) or real_close(fd))
-    _digest._THREAD_LOCK.release()  # let a second "process" past the thread lock, to wait on the system lock
+    patches.setattr(_digest.os, "close", lambda fd: closed.append(fd) or real_close(fd))
+    thread_lock = _digest._FD_LOCKS[held]
+    thread_lock.release()  # let a second "process" past the thread lock, to wait on the system lock
 
     def interrupt(seconds):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(_digest.time, "sleep", interrupt)
+    patches.setattr(_digest.time, "sleep", interrupt)
     with pytest.raises(KeyboardInterrupt):
         fetcher._acquire(str(tmp_path / "padding.lock"))
     assert opened and opened[-1] in closed  # the descriptor was not leaked
-    assert _digest._THREAD_LOCK.acquire(blocking=False)  # and the in-process lock was given back
-    _digest._THREAD_LOCK.release()
-    _digest._THREAD_LOCK.acquire()  # restore the state the holder expects
-    monkeypatch.undo()
+    assert thread_lock.acquire(blocking=False)  # and the in-process lock was given back
+    # (it is held again here by this test, in the place of the holder, which now lets go)
+    patches.undo()
     fetcher._release(held)
 
 
