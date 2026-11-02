@@ -4,7 +4,7 @@ Everything here is computed from the finished answer (``recommendation``, ``acce
 ``provider_status``) and never changes it. The sentences are a fixed table of English templates: the only value filled
 in is a whole number of seconds, and no hostname, agent token, URL or text taken from a site or a provider ever reaches
 a sentence. ``next_action.do`` is a pure function of ``recommendation.action`` (the four values that split ``unknown``
-only say what can be done while no verdict exists). When the host has a curated consumer path (D61), a use_official_path
+only say what can be done while no verdict exists). ``url`` is the row's own, except on a status_check use_official_path row (D76). When the host has a curated consumer path (D61), a use_official_path
 row takes its CONSUMER_ROWS sentence and next_action gains ``customer_url``. Since D63 a proceed answer carries it too, and
 on proceed rows and on the O1/O7 rows (no robots block on pages) the consumer path comes first: it is the sentence's lead
 and ``url``, with a developer API as an "also listed" tail where the sentence has room. O2-O6 hand it to the user."""
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import urlparse
 
 from .background_reads import FEED_RETRY_MINUTES
 from .official_paths import customer_url
@@ -293,9 +294,16 @@ def links(versioned: bool = True) -> dict | None:
 
 
 def feed_unreadable(provider_status: dict | None) -> bool:
-    """The status feed could not be read: its latest read failed (error_detail) or its last success is stale. Its indicator is
-    then not a current statement, so a reader must not take it as "no issue"."""
-    return bool(provider_status and (provider_status.get("freshness") == "stale" or provider_status.get("error_detail")))
+    """The status feed has no current reading: its last success is stale (older than FEED_STALE_HOURS, or never succeeded and
+    failed, or its source no longer verifies). One failed read after a recent success is not: D46 keeps that statement."""
+    return bool(provider_status and provider_status.get("freshness") == "stale")
+
+
+def same_site(status_url: str, site_host: str) -> bool:
+    """Whether the status page is served from the looked-up site's own registrable domain (www and other subdomains included)."""
+    page = (urlparse(status_url).hostname or "").lower()
+    site = site_host.lower()
+    return bool(page) and (apex_host(page) or page) == (apex_host(site) or site)
 
 
 def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None) -> str:
@@ -318,9 +326,11 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
     ``customer_url`` are those from before D63. blocked_default (D66, d65 mode, not for a status_check or preflight lookup)
     swaps the sentence of a proceed row for the BLOCKED_PROCEED rows. status_check (D69, only when the caller sent task_step=status_check
-    and no failure signal) replaces the sentence by a STATUS_ROWS one unless the row waits, hands off or stops, and adds
-    next_action.status_url; status_guide (the same switch, D69) adds next_action.status_url to any answer whose status page is known,
-    whatever the task_step; ``do``, ``url`` and the other next_action keys are those of the row."""
+    and no failure signal) replaces the sentence by a STATUS_ROWS one unless the row waits, hands off, stops, waits for a re-lookup
+    (O1, U1, U2) or rests on a robots block. status_guide (the same switch, D69) adds next_action.status_url to any answer whose
+    status page is known, whatever the task_step. ``do`` and the other keys are those of the row. The one exception (D76): on a
+    status_check use_official_path row without a re-lookup, ``url`` is the status page, unless a robots block applies and the
+    status page is on the looked-up site's own domain."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -378,17 +388,19 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             action["status_url"] = status_url
     if status_check:
         reasons = set(recommendation.get("reasons") or ())
-        # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
-        if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not (do == "lookup_apex_host" and status_url is None)
-                and (not reasons & STATUS_KEEP_REASONS or status_url)):
-            status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        robots_kept = bool(reasons & STATUS_KEEP_REASONS)
+        status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        if (status_url and recommendation.get("action") == "use_official_path" and row not in RETRY_ROWS
+                and not (robots_kept and same_site(status_url, result["site_host"]))):
+            # D76: a use_official_path row with no re-lookup to wait for answers "is it up" with the status page: sentence and
+            # url say the same thing. ``do`` stays a function of recommendation.action. A robots block on the site's own pages
+            # does not answer the question, but a status page on the same site is not pointed at either (the row stays).
             sentence = STATUS_ROWS[status_id]
-            if status_url and status_id != "T4":
-                # The sentence sends the reader to the status page: do and url say the same. A robots block on the site's
-                # pages does not answer "is it down", so it no longer decides the first sentence (access_profile keeps it).
-                if reasons & STATUS_KEEP_REASONS or do == "use_official_path":
-                    action["do"] = "hand_off_to_human" if status_id == "T3-S" else "use_official_path"
-                    action["url"] = status_url
+            action["url"] = status_url
+        elif (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
+                # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
+                and not (do == "lookup_apex_host" and status_url is None)):
+            sentence = STATUS_ROWS[status_id]
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:

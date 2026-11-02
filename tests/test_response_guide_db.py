@@ -115,11 +115,21 @@ def test_the_openapi_schema_lists_the_new_keys_as_optional(monkeypatch):
     assert set(NEW_KEYS) <= set(schema["properties"]) and not set(NEW_KEYS) & set(schema.get("required", []))
 
 
+def settle(monkeypatch, settings, client, *hosts):
+    """Read the (open) robots.txt of each host first, so a status_check lookup is not the first lookup of a pending profile (D76 keeps that row)."""
+    monkeypatch.setattr(background_reads, "read_profile_file",
+                        lambda host, path, *, cap_bytes, **_: ("ok", b"User-agent: *\nAllow: /\n", "http_200") if path == "/robots.txt" else ("absent", None, "http_404"))
+    for host in hosts:
+        client.get("/v1/incidents/check", params={"site_host": host})
+    background_reads.process_due(settings, limit=50)
+
+
 def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_a_failure_signal_or_the_switch_says_otherwise(monkeypatch):
     settings = prepare(monkeypatch, guide=True)
     monkeypatch.setitem(status_refresh.OFFICIAL_STATUS_PAGES, "plain-example.org", ("Example Status", "https://status.plain-example.org/"))
     params = {"site_host": "plain-example.org"}
     with TestClient(create_app(settings)) as client:
+        settle(monkeypatch, settings, client, "plain-example.org")
         plain = client.get("/v1/incidents/check", params=params).json()
         checked = client.get("/v1/incidents/check", params={**params, "task_step": "status_check"})
         failed = client.get("/v1/incidents/check", params={**params, "task_step": "status_check", "error_class": "site_access"})
@@ -147,6 +157,7 @@ def test_d72_only_a_curated_sign_in_host_carries_requires_sign_in(monkeypatch):
     monkeypatch.setitem(status_refresh.OFFICIAL_STATUS_PAGES, "other-example.org", ("Other Status", "https://status.other-example.org/"))
     monkeypatch.setattr(status_refresh, "SIGN_IN_STATUS_PAGES", frozenset({"plain-example.org"}))
     with TestClient(create_app(settings)) as client:
+        settle(monkeypatch, settings, client, "plain-example.org", "other-example.org")
         signed = client.get("/v1/incidents/check", params={"site_host": "plain-example.org", "task_step": "status_check"})
         open_ = client.get("/v1/incidents/check", params={"site_host": "other-example.org", "task_step": "status_check"})
     assert signed.status_code == open_.status_code == 200
@@ -164,6 +175,7 @@ def test_d76_a_feed_that_cannot_be_read_is_not_shown_as_no_issue(monkeypatch):
     monkeypatch.setattr(feed_robots, "shown", lambda *_a, **_k: True)
     now = datetime.now(timezone.utc)
     cases = {"stale-example.org": ("now() - interval '5 hours'", None), "failed-example.org": ("now() - interval '30 minutes'", "http_404"),
+             "stale404-example.org": ("now() - interval '5 hours'", "http_404"),
              "good-example.org": ("now() - interval '30 minutes'", None)}
     with connect(settings) as conn:
         for host, (fetched, detail) in cases.items():
@@ -172,12 +184,17 @@ def test_d76_a_feed_that_cannot_be_read_is_not_shown_as_no_issue(monkeypatch):
             conn.execute(f"INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail) VALUES (%s,'none',{fetched},"
                          + ("now(),%s)" if detail else "NULL,NULL)"), (host, detail) if detail else (host,))
         views = {host: service.feed_view(conn, host, now) for host in cases}
-    for host in ("stale-example.org", "failed-example.org"):
-        shown = views[host].provider_status
-        assert shown["indicator"] == "unknown" and shown["fetched_at"] is not None
+    shown = views["stale-example.org"].provider_status
+    assert shown["indicator"] == "unknown" and shown["fetched_at"] is not None
+    # one failed read after a recent success keeps the statement (D46)
+    kept = views["failed-example.org"].provider_status
+    assert kept["indicator"] == "none" and kept["freshness"] == "fresh" and kept["error_detail"] == "http_404"
     assert views["good-example.org"].provider_status["indicator"] == "none"
     with TestClient(create_app(settings)) as client:
-        body = client.get("/v1/incidents/check", params={"site_host": "failed-example.org", "task_step": "status_check"}).json()
+        settle(monkeypatch, settings, client, "stale404-example.org", "failed-example.org")
+        body = client.get("/v1/incidents/check", params={"site_host": "stale404-example.org", "task_step": "status_check"}).json()
+        kept = client.get("/v1/incidents/check", params={"site_host": "failed-example.org", "task_step": "status_check"}).json()
     CheckResponse(**body)
     assert body["provider_status"]["indicator"] == "unknown" and body["summary_line"] == STATUS_ROWS["T5"]
-    assert body["next_action"]["status_url"] == "https://status.failed-example.org/"
+    assert body["next_action"]["status_url"] == "https://status.stale404-example.org/"
+    assert kept["provider_status"]["indicator"] == "none" and kept["summary_line"] == STATUS_ROWS["T1"]

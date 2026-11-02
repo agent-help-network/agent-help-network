@@ -961,12 +961,20 @@ def unreadable(**changes) -> dict:
     return {**fresh_none(), "freshness": "stale", "error_detail": "http_404", **changes}
 
 
-@pytest.mark.parametrize("changes", [{}, {"error_detail": None}, {"freshness": "fresh"}, {"indicator": "unknown"}])
-def test_d76_an_unreadable_feed_says_it_could_not_be_read(changes):
+@pytest.mark.parametrize("changes", [{}, {"error_detail": None}, {"indicator": "unknown"}])
+def test_d76_a_stale_feed_says_it_could_not_be_read(changes):
     result = status_answer(provider_status=unreadable(**changes), official=OFFICIAL)
     out = guide(result, status_check=True, status_guide=True)
     assert out["summary_line"] == response_guide.STATUS_ROWS["T5"] and out["next_action"]["status_url"] == STATUS_URL
     assert "could not read" in out["summary_line"].split(".")[0]
+
+
+def test_d76_one_failed_read_after_a_recent_success_keeps_the_statement():
+    # D46: freshness stays "fresh" with an error_detail; that is not an unreadable feed
+    status = unreadable(freshness="fresh")
+    assert not response_guide.feed_unreadable(status)
+    out = guide(status_answer(provider_status=status, official=OFFICIAL), status_check=True, status_guide=True)
+    assert out["summary_line"] == response_guide.STATUS_ROWS["T1"]
 
 
 def test_d76_an_unreadable_feed_without_a_known_page_does_not_claim_there_is_no_page():
@@ -975,26 +983,61 @@ def test_d76_an_unreadable_feed_without_a_known_page_does_not_claim_there_is_no_
     assert out["summary_line"] == response_guide.STATUS_ROWS["T5-N"] and "status_url" not in out["next_action"]
 
 
-def test_d76_a_readable_feed_keeps_t1_and_feed_unreadable_is_exact():
-    assert guide(status_answer(provider_status=fresh_none(), official=OFFICIAL), status_check=True)["summary_line"] == response_guide.STATUS_ROWS["T1"]
+def test_d76_feed_unreadable_is_exact():
     assert not response_guide.feed_unreadable(fresh_none()) and not response_guide.feed_unreadable(None)
-    assert response_guide.feed_unreadable(unreadable(error_detail=None)) and response_guide.feed_unreadable(unreadable(freshness="fresh"))
+    assert response_guide.feed_unreadable(unreadable()) and response_guide.feed_unreadable(unreadable(error_detail=None))
 
 
 ROBOTS_BLOCKED = robots("User-agent: *\nDisallow: /\n")
+SAME_SITE_PAGE = "https://status.example.com/"
+OTHER_PAGE = "https://status.vendor-status.net/"
 
 
-def test_d76_a_robots_block_does_not_decide_a_status_check_when_a_status_page_is_known():
-    result = status_answer(official_page=page(), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
-    assert guide(copy.deepcopy(result))["summary_line"] not in response_guide.STATUS_ROWS.values()
+def test_d76_a_use_official_path_status_check_points_url_at_the_status_page_but_do_follows_the_recommendation():
+    result = status_answer(official_page=page(OTHER_PAGE), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
+    plain = guide(copy.deepcopy(result))
+    assert plain["summary_line"] not in response_guide.STATUS_ROWS.values() and plain["next_action"]["url"] == OFFICIAL["api_docs"]
     out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
     assert out["summary_line"] == response_guide.STATUS_ROWS["T3"]
-    assert out["next_action"]["do"] == "use_official_path" and out["next_action"]["url"] == PAGE_URL == out["next_action"]["status_url"]
-    signin = status_answer(official_page=signin_page(), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
-    assert guide(signin, status_check=True, status_guide=True)["next_action"]["do"] == "hand_off_to_human"
-    # without a known status page the robots sentence stays
-    bare = status_answer(official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
-    assert guide(copy.deepcopy(bare), status_check=True, status_guide=True) == guide(copy.deepcopy(bare))
+    assert out["next_action"]["do"] == plain["next_action"]["do"] == "use_official_path"
+    assert out["next_action"]["url"] == OTHER_PAGE == out["next_action"]["status_url"]
+    signin = guide(status_answer(official_page=signin_page(OTHER_PAGE), official=OFFICIAL, access_profile=ROBOTS_BLOCKED), status_check=True, status_guide=True)
+    assert signin["summary_line"] == response_guide.STATUS_ROWS["T3-S"] and signin["next_action"]["do"] == "use_official_path"
+
+
+def test_d76_a_status_page_on_the_sites_own_domain_is_not_pointed_at_when_robots_blocks():
+    for url in (SAME_SITE_PAGE, "https://www.example.com/status", "https://example.com/status"):
+        result = status_answer(official_page=page(url), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
+        plain = guide(copy.deepcopy(result))
+        out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
+        assert out["summary_line"] == plain["summary_line"], url
+        assert out["next_action"]["do"] == plain["next_action"]["do"] and out["next_action"]["url"] == plain["next_action"]["url"]
+        assert out["next_action"]["status_url"] == url
+    # no robots block: the same-domain page is fine to point at
+    open_ = status_answer(official_page=page(SAME_SITE_PAGE), official=OFFICIAL, error_class="site_access")
+    assert guide(open_, status_check=True, status_guide=True)["next_action"]["url"] == SAME_SITE_PAGE
+
+
+@pytest.mark.parametrize("profile", [ROBOTS_BLOCKED, robots(block("Claude-User"))])
+@pytest.mark.parametrize("make_page", [page, signin_page])
+def test_d76_unknown_robots_rows_keep_sentence_do_and_url_and_gain_status_url(profile, make_page):
+    result = status_answer(official_page=make_page(), access_profile=profile)  # no official path: an unknown row
+    plain = guide(copy.deepcopy(result))
+    assert result["recommendation"]["action"] == "unknown"
+    out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
+    assert out["summary_line"] == plain["summary_line"]
+    assert {k: v for k, v in out["next_action"].items() if k != "status_url"} == plain["next_action"]
+    assert out["next_action"]["status_url"] == PAGE_URL
+
+
+@pytest.mark.parametrize("make_page", [page, signin_page])
+def test_d76_a_pending_profile_row_keeps_its_re_lookup_sentence_do_and_url(make_page):
+    result = status_answer(official_page=make_page(), official=OFFICIAL, access_profile=pending())
+    plain = guide(copy.deepcopy(result))
+    assert plain["next_action"]["retry_after_seconds"]
+    out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
+    assert out["summary_line"] == plain["summary_line"] and "once more" in out["summary_line"]
+    assert {k: v for k, v in out["next_action"].items() if k != "status_url"} == plain["next_action"] and out["next_action"]["status_url"] == PAGE_URL
 
 
 def test_d76_the_recommendation_is_not_touched_by_any_of_it():
