@@ -42,10 +42,12 @@ def parse_unmapped(raw: str | None) -> bool | None:
 
 
 def mapped_hosts() -> list[str]:
-    """Hosts that already have a status feed or an official status-page link."""
-    from .status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+    """Hosts that already have a status feed or an official status-page link, plus the hosts those pages are served
+    from (D70). Hosts whose status feed was only auto-discovered (status_sources rows) are not counted: the curated
+    mapping is the definition used for bundles (ahn/bundle.py), and an auto-discovered host is still a curation lead."""
+    from .status_refresh import _STATUS_PAGE_HOSTS, OFFICIAL_STATUS_PAGES, SOURCES
 
-    return sorted(set(SOURCES) | set(OFFICIAL_STATUS_PAGES))
+    return sorted(set(SOURCES) | set(OFFICIAL_STATUS_PAGES) | set(_STATUS_PAGE_HOSTS))
 
 
 def recent_hosts(settings: Settings, days: int, limit: int = OWNER_HOSTS_MAX_ROWS, *, unmapped: bool = False) -> list[str]:
@@ -62,23 +64,24 @@ def recent_hosts(settings: Settings, days: int, limit: int = OWNER_HOSTS_MAX_ROW
 
 def blocked_hosts(settings: Settings, days: int, limit: int = OWNER_HOSTS_MAX_ROWS, *,
                   unmapped: bool = False) -> list[tuple[str, int, int]]:
-    """(host, sources, lookups) for hosts with blocked lookups in the window, most first, at most `limit`.
+    """(host, hours, lookups) for hosts with blocked lookups in the window, most first, at most `limit`.
 
-    A blocked lookup is one that sent an error class, as for the daily check list (ahn/site_probe.py). `sources`
-    counts a source once per host and hour, so one client repeating a lookup weighs less than several clients;
-    it sorts first, then lookups, then the name. Overflow rows are left out: their codes are folded and do not
-    say whether the lookups were blocked ones.
+    A blocked lookup is one that sent an error class, as for the daily check list (ahn/site_probe.py). `hours` is the
+    number of distinct hours with at least one blocked lookup and `lookups` the blocked lookups in them. Hosts sort by
+    hours, then lookups, then the name, so a host blocked across many hours ranks above one burst. The stored per-hour
+    source count is not used: it counts a source only on its first lookup of the hour, whatever that lookup was.
+    Overflow rows are left out: their codes are folded and do not say whether the lookups were blocked ones.
     """
     from .lookup_signals import EXAMPLE_HOSTS, OVERFLOW, OVERFLOW_HOST, UNSPECIFIED
 
     skip = sorted(set(mapped_hosts() if unmapped else ()) | EXAMPLE_HOSTS | {OVERFLOW_HOST})
     with connect(settings) as conn:
         rows = conn.execute(
-            """SELECT site_host, sum(sources)::bigint AS sources, sum(lookups)::bigint AS lookups
+            """SELECT site_host, count(DISTINCT hour)::bigint AS hours, sum(lookups)::bigint AS lookups
                FROM lookup_signals_hourly
                WHERE hour >= date_trunc('hour', now()) - make_interval(days => %s)
                  AND error_class <> ALL(%s::text[]) AND NOT (site_host = ANY(%s::text[]))
-               GROUP BY site_host ORDER BY sources DESC, lookups DESC, site_host LIMIT %s""",
+               GROUP BY site_host ORDER BY hours DESC, lookups DESC, site_host LIMIT %s""",
             (days, [UNSPECIFIED, OVERFLOW], skip, limit),
         ).fetchall()
-    return [(row["site_host"], row["sources"], row["lookups"]) for row in rows]
+    return [(row["site_host"], row["hours"], row["lookups"]) for row in rows]

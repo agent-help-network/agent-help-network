@@ -1237,12 +1237,13 @@ def seed_signal_rows(settings, rows):
                 (age, host, error_class, f"k{number}", lookups, sources))
 
 
-def test_owner_hosts_blocked_order_counts_blocked_lookups_by_source(public_client):
+def test_owner_hosts_blocked_order_counts_blocked_hours_then_lookups(public_client):
     settings, _ = public_client
     seed_signal_rows(settings, [
-        ("many-sources.example", "1 hour", "site_access", 5, 6),
-        ("many-sources.example", "2 hours", "human_verification", 2, 2),   # summed with the row above: 7 sources, 8 lookups
-        ("one-loud-client.example", "1 hour", "site_access", 1, 40),       # many lookups from one source rank below
+        ("many-hours.example", "1 hour", "site_access", 5, 6),
+        ("many-hours.example", "1 hour", "login_auth", 1, 1),              # same hour: still one hour, lookups summed
+        ("many-hours.example", "2 hours", "human_verification", 2, 2),     # 2 blocked hours, 9 lookups
+        ("one-loud-hour.example", "1 hour", "site_access", 1, 40),         # many lookups in one hour rank below
         ("tie-b.example", "3 hours", "login_auth", 2, 3),
         ("tie-a.example", "3 hours", "service_error", 2, 3),               # same counts: by name
         ("plain-only.example", "1 hour", "unspecified", 50, 50),           # no error class: not a blocked lookup
@@ -1258,9 +1259,9 @@ def test_owner_hosts_blocked_order_counts_blocked_lookups_by_source(public_clien
         assert response.headers["content-type"] == "text/plain; charset=utf-8"
         assert response.headers["cache-control"] == "private, no-store"
         assert response.text.splitlines() == [
-            "many-sources.example\t7\t8", "tie-a.example\t2\t3", "tie-b.example\t2\t3", "one-loud-client.example\t1\t40"]
-        assert client.get("/owner/hosts?order=blocked&days=1", headers=headers).text.split("\n")[0] == "many-sources.example\t7\t8"
-        assert "old.example\t9\t9" in client.get("/owner/hosts?order=blocked&days=10", headers=headers).text.splitlines()
+            "many-hours.example\t2\t9", "one-loud-hour.example\t1\t40", "tie-a.example\t1\t3", "tie-b.example\t1\t3"]
+        assert client.get("/owner/hosts?order=blocked&days=1", headers=headers).text.split("\n")[0] == "many-hours.example\t2\t9"
+        assert "old.example\t1\t9" in client.get("/owner/hosts?order=blocked&days=10", headers=headers).text.splitlines()
         # The default order is unchanged: the lookup register, one host per line.
         assert client.get("/owner/hosts?order=recent", headers=headers).text == client.get("/owner/hosts", headers=headers).text
 
@@ -1273,14 +1274,61 @@ def test_owner_hosts_unmapped_leaves_out_hosts_with_a_status_mapping(public_clie
     settings, _ = public_client
     seed_signal_rows(settings, [(feed, "1 hour", "site_access", 9, 9), (link, "1 hour", "site_access", 8, 8),
                                 ("unmapped.example", "1 hour", "site_access", 1, 1)])
+    with connect(settings) as conn:
+        conn.execute("DELETE FROM queried_hosts")  # the shared fixture does not empty it
     seed_queried_hosts(settings, [(feed, "1 minute"), (link, "2 minutes"), ("unmapped.example", "3 minutes")])
     with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
         headers = {"CF-Connecting-IP": "198.51.100.7"}
         assert client.get("/owner/hosts?order=blocked", headers=headers).text.splitlines() == [
-            f"{feed}\t9\t9", f"{link}\t8\t8", "unmapped.example\t1\t1"]
+            f"{feed}\t1\t9", f"{link}\t1\t8", "unmapped.example\t1\t1"]
         assert client.get("/owner/hosts?order=blocked&unmapped=1", headers=headers).text == "unmapped.example\t1\t1\n"
         assert client.get("/owner/hosts?unmapped=1", headers=headers).text == "unmapped.example\n"
         assert client.get("/owner/hosts", headers=headers).text.split() == [feed, link, "unmapped.example"]
+
+
+def test_owner_hosts_unmapped_leaves_out_a_status_page_own_host(public_client):
+    from ahn.status_refresh import _STATUS_PAGE_HOSTS, OFFICIAL_STATUS_PAGES, SOURCES
+
+    page_host = sorted(h for h in _STATUS_PAGE_HOSTS if h not in SOURCES and h not in OFFICIAL_STATUS_PAGES)[0]  # D70
+    settings, _ = public_client
+    seed_signal_rows(settings, [(page_host, "1 hour", "site_access", 3, 3), ("unmapped.example", "1 hour", "site_access", 1, 1)])
+    with connect(settings) as conn:
+        conn.execute("DELETE FROM queried_hosts")
+    seed_queried_hosts(settings, [(page_host, "1 minute"), ("unmapped.example", "2 minutes")])
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        headers = {"CF-Connecting-IP": "198.51.100.7"}
+        assert client.get("/owner/hosts?order=blocked", headers=headers).text.splitlines() == [
+            f"{page_host}\t1\t3", "unmapped.example\t1\t1"]
+        assert client.get("/owner/hosts?order=blocked&unmapped=1", headers=headers).text == "unmapped.example\t1\t1\n"
+        assert client.get("/owner/hosts?unmapped=1", headers=headers).text == "unmapped.example\n"
+
+
+def test_owner_hosts_blocked_order_from_real_lookup_records(public_client):
+    """Rows written by lookup_signals.record, not seeded: the source count it keeps is set only on a source's first
+    lookup of the hour, whatever that lookup was, so the blocked order must not rest on it."""
+    from ahn import lookup_signals
+    from ahn.lookup_signals import LookupSignal
+
+    settings, _ = public_client
+    seed_signal_rows(settings, [])
+    now = datetime.now(timezone.utc)
+
+    def lookup(host, hours_ago, error_class, ip):
+        with connect(settings) as conn:
+            lookup_signals.record(conn, "p" * 32, host, error_class, None,
+                                  LookupSignal(client_kind="rest_other", source_address=ip), "use_official_path",
+                                  now - timedelta(hours=hours_ago))
+
+    lookup("repeat.example", 2, "site_access", "203.0.113.5")        # one client, blocked in two separate hours
+    lookup("repeat.example", 1, "site_access", "203.0.113.5")
+    for ip in ("203.0.113.6", "203.0.113.7", "203.0.113.8"):         # three clients, one hour
+        lookup("burst.example", 1, "site_access", ip)
+    lookup("a-late-block.example", 1, None, "203.0.113.9")           # first lookup not blocked, second one blocked
+    lookup("a-late-block.example", 1, "site_access", "203.0.113.9")
+    lookup("b-plain.example", 1, "site_access", "203.0.113.10")
+    with owner_hosts_client(settings, owner_allowed_ips=("198.51.100.7",)) as client:
+        lines = client.get("/owner/hosts?order=blocked", headers={"CF-Connecting-IP": "198.51.100.7"}).text.splitlines()
+    assert lines == ["repeat.example\t2\t2", "burst.example\t1\t3", "a-late-block.example\t1\t1", "b-plain.example\t1\t1"]
 
 
 def test_owner_hosts_rejects_bad_order_and_unmapped_after_the_gate(public_client):

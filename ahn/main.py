@@ -493,9 +493,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if unmapped is None:
             return JSONResponse({"error": "invalid_unmapped", "allowed": ["1"]}, status_code=422, headers=OWNER_HEADERS)
         try:
-            if order == "blocked":  # host, sources, lookups; tab-separated
-                lines = ["\t".join((host, str(sources), str(lookups)))
-                         for host, sources, lookups in blocked_hosts(settings, days, unmapped=unmapped)]
+            if order == "blocked":  # host, hours, lookups; tab-separated
+                lines = ["\t".join((host, str(hours), str(lookups)))
+                         for host, hours, lookups in blocked_hosts(settings, days, unmapped=unmapped)]
             else:
                 lines = recent_hosts(settings, days, unmapped=unmapped)
         except Exception:
