@@ -296,13 +296,13 @@ def test_a_changed_section_is_listed_and_a_reread_alone_is_not():
     changes = bundle_shards._Changes()
     base = shard_set(rows_at(T0), T0)
     changes.observe(base)
-    assert changes.document(base, T0)["changes"] == []
+    assert changes.document(base)["changes"] == []
     second = shard_set(rows_at(T0 + DAY), T0 + DAY)
     changes.observe(second)
-    assert changes.document(second, T0 + DAY)["changes"] == []  # only the read day moved
+    assert changes.document(second)["changes"] == []  # only the read day moved
     third = shard_set(rows_at(T0 + 2 * DAY, **{"github.com": {"robots": BLOCKED}}), T0 + 2 * DAY)
     changes.observe(third)
-    document = changes.document(third, T0 + 2 * DAY)
+    document = changes.document(third)
     assert [(c["host"], c["section"], c["changed_on"]) for c in document["changes"]] == [("github.com", "access", "2026-11-03")]
     assert document["changes"][0]["record"]["agents_blocked"] == ["ClaudeBot"]
     assert document["covers_since"] == export.iso(T0) and document["window_days"] == 7
@@ -313,16 +313,20 @@ def test_a_host_that_leaves_the_bundle_is_listed_as_removed():
     changes.observe(shard_set(rows_at(T0), T0))
     second = shard_set(rows_at(T0 + DAY, skip=("wikipedia.org",)), T0 + DAY)
     changes.observe(second)
-    removed = [c for c in changes.document(second, T0 + DAY)["changes"] if c["host"] == "wikipedia.org" and c["section"] == "access"]
+    removed = [c for c in changes.document(second)["changes"] if c["host"] == "wikipedia.org" and c["section"] == "access"]
     assert removed == [{"host": "wikipedia.org", "section": "access", "changed_on": "2026-11-02", "removed": True}]
 
 
 def test_changes_expire_exactly_seven_days_after_the_bundle_that_showed_them():
     changes = bundle_shards._Changes()
     changes.observe(shard_set(rows_at(T0), T0))
-    second = shard_set(rows_at(T0 + DAY, **{"github.com": {"robots": BLOCKED}}), T0 + DAY)
-    changes.observe(second)
-    listed = lambda moment: [c["host"] for c in changes.document(second, moment)["changes"]]  # noqa: E731
+    changing = shard_set(rows_at(T0 + DAY, **{"github.com": {"robots": BLOCKED}}), T0 + DAY)
+    changes.observe(changing)
+
+    def listed(moment):
+        later = shard_set(rows_at(moment, **{"github.com": {"robots": BLOCKED}}), moment)
+        return [c["host"] for c in changes.document(later)["changes"]]
+
     assert listed(T0 + DAY + timedelta(days=7)) == ["github.com"]  # the seventh day is still in
     assert listed(T0 + DAY + timedelta(days=7, seconds=1)) == []
     assert listed(T0 + DAY + timedelta(days=7)) == []  # and an expired entry does not come back
@@ -332,8 +336,38 @@ def test_covers_since_never_claims_more_than_seven_days_or_more_than_was_seen():
     changes = bundle_shards._Changes()
     base = shard_set(rows_at(T0), T0)
     changes.observe(base)
-    assert changes.document(base, T0 + timedelta(hours=1))["covers_since"] == export.iso(T0)
-    assert changes.document(base, T0 + timedelta(days=30))["covers_since"] == export.iso(T0 + timedelta(days=23))
+    assert changes.document(base)["covers_since"] == export.iso(T0)
+    old = shard_set(rows_at(T0 + timedelta(days=30)), T0 + timedelta(days=30))
+    assert changes.document(old)["covers_since"] == export.iso(T0 + timedelta(days=23))
+
+
+def test_the_same_stored_bundle_gives_the_same_changes_and_manifest_bytes_whatever_the_clock(served, monkeypatch):
+    client, built, _state = served
+    first = {p: client.get(p) for p in (bundle_shards.CHANGES_PATH, bundle_shards.MANIFEST_PATH)}
+    # the stored bundle stays valid, but the clock runs on past the seven-day window
+
+    shards = bundle_shards.ShardSet(built.sha256, built.generated_at, built.body)
+    changes = bundle_shards._Changes()
+    changes.observe(shards)
+    one = bundle_shards.encode(changes.document(shards))
+    assert one[2] == first[bundle_shards.CHANGES_PATH].headers["etag"].strip('"')
+    for later in (timedelta(days=3), timedelta(days=8), timedelta(days=60)):
+        assert bundle_shards.encode(changes.document(shards)) == one  # no clock argument exists to move it
+        manifest = bundle_shards.manifest_document(shards, one, (None, None))
+        assert bundle_shards.encode(manifest)[2] == first[bundle_shards.MANIFEST_PATH].headers["etag"].strip('"'), later
+
+
+def test_the_manifest_and_changes_are_built_once_and_the_key_is_read_once_per_bundle(served, monkeypatch):
+    client, _built, _state = served
+    loads, builds = [], []
+    monkeypatch.setattr(bundle, "signing_from_env", lambda: loads.append(1) or (None, None))
+    real = bundle_shards.manifest_document
+    monkeypatch.setattr(bundle_shards, "manifest_document", lambda *a, **k: builds.append(1) or real(*a, **k))
+    etag = client.get(bundle_shards.MANIFEST_PATH).headers["etag"]
+    for _ in range(3):
+        assert client.get(bundle_shards.MANIFEST_PATH, headers={"If-None-Match": etag}).status_code == 304
+        assert client.get(bundle_shards.MANIFEST_PATH).headers["etag"] == etag
+    assert len(loads) == 1 and len(builds) == 1
 
 
 def test_the_same_bundle_seen_twice_is_not_a_change():

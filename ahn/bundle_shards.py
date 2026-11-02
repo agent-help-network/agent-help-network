@@ -202,14 +202,17 @@ class _Changes:
                     self.entries[(host, section)] = (shards.generated_at, None)
             self.prints, self.bundle_sha256 = prints, shards.bundle_sha256
 
-    def document(self, shards: ShardSet, now: datetime) -> dict:
+    def document(self, shards: ShardSet) -> dict:
+        """The file is a function of the stored bundle only: the window and the expiry are measured from the bundle's
+        own ``generated_at``, never from the clock, so the same bundle always gives the same bytes (and the same ETag)."""
+        anchor = shards.generated_at
         with self.lock:
-            self.entries = {key: value for key, value in self.entries.items() if now - value[0] <= CHANGE_WINDOW}
+            self.entries = {key: value for key, value in self.entries.items() if anchor - value[0] <= CHANGE_WINDOW}
             rows = []
             for (host, section), (changed_at, thin) in sorted(self.entries.items()):
                 row = {"host": host, "section": section, "changed_on": changed_at.date().isoformat()}
                 rows.append({**row, "removed": True} if thin is None else {**row, "record": thin})
-            since = max(self.since or shards.generated_at, now - CHANGE_WINDOW)
+            since = max(self.since or anchor, anchor - CHANGE_WINDOW)
         return {"schema": CHANGES_SCHEMA, "generated_at": shards.built, "window_days": CHANGE_WINDOW.days,
                 "covers_since": export.iso(since), "changes": rows}
 
@@ -255,7 +258,7 @@ def _signer():
         return None, None
 
 
-def manifest_document(shards: ShardSet, changes_file: tuple[bytes, bytes, str]) -> dict:
+def manifest_document(shards: ShardSet, changes_file: tuple[bytes, bytes, str], signer: tuple | None = None) -> dict:
     raw, gz, digest = changes_file
     document = {
         "schema": MANIFEST_SCHEMA, "generated_at": shards.built, "valid_until": shards.valid_until,
@@ -265,13 +268,15 @@ def manifest_document(shards: ShardSet, changes_file: tuple[bytes, bytes, str]) 
         "changes": {"path": CHANGES_PATH, "sha256": digest, "bytes": len(raw), "gzip_bytes": len(gz),
                     "window_days": CHANGE_WINDOW.days},
     }
-    key, kid = _signer()
+    key, kid = signer if signer is not None else _signer()
     return export.sign(document, key, kid or export.key_id(shards.generated_at)) if key is not None else document
 
 
 def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None:
     """Register the shard paths. ``snapshot_error(now)`` returns ``((sha, generated_at, body), None)`` or ``(None, response)``."""
     cache, changes, budget = _Cache(), _Changes(), ShardBudget()
+    memo: dict = {}  # per stored bundle: the changes file and the signed manifest, built once
+    signer: list = []  # the signing key is read on the first manifest, not on every request
 
     def headers(digest: str, generated_at: datetime) -> dict:
         return {"ETag": f'"{digest}"', "Cache-Control": f"public, max-age={bundle.CACHE_SECONDS}",
@@ -285,7 +290,7 @@ def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None
             return error
         shards = cache.get(*current)
         changes.observe(shards)
-        file = make(shards, now)
+        file = make(shards)
         if file is None:
             return JSONResponse({"error": "not_found"}, status_code=404)
         _raw, gz, digest = file
@@ -298,12 +303,29 @@ def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None
             return JSONResponse({"error": "bundle_shard_daily_limit"}, status_code=429, headers=until_midnight(now))
         return Response(content=gz, media_type="application/json", headers=head)
 
-    def changes_file(shards: ShardSet, now: datetime):
-        return encode(changes.document(shards, now))
+    def built(shards: ShardSet) -> dict:
+        if memo.get("sha256") != shards.bundle_sha256:
+            memo.clear()
+            memo["sha256"] = shards.bundle_sha256
+        return memo
+
+    def changes_file(shards: ShardSet):
+        held = built(shards)
+        if "changes" not in held:
+            held["changes"] = encode(changes.document(shards))
+        return held["changes"]
+
+    def manifest_file(shards: ShardSet):
+        held = built(shards)
+        if "manifest" not in held:
+            if not signer:
+                signer.append(_signer())
+            held["manifest"] = encode(manifest_document(shards, changes_file(shards), signer[0]))
+        return held["manifest"]
 
     @app.api_route(MANIFEST_PATH, methods=["GET", "HEAD"], include_in_schema=False)
     def shard_manifest(request: Request):
-        return serve(request, clock(), lambda shards, now: encode(manifest_document(shards, changes_file(shards, now))))
+        return serve(request, clock(), manifest_file)
 
     @app.api_route(CHANGES_PATH, methods=["GET", "HEAD"], include_in_schema=False)
     def shard_changes(request: Request):
@@ -313,4 +335,4 @@ def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None
     def shard_file(shard: str, request: Request):
         if not _SHARD_ID.fullmatch(shard):
             return JSONResponse({"error": "not_found"}, status_code=404)
-        return serve(request, clock(), lambda shards, now: shards.files[shard])
+        return serve(request, clock(), lambda shards: shards.files[shard])
