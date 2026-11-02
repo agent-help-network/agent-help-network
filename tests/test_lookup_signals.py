@@ -150,7 +150,7 @@ def test_mcp_tool_accepts_the_new_codes_and_hides_the_context():
     assert done.returncode == 0, done.stderr
     tools = json.loads(done.stdout.strip().splitlines()[-1])
     props, annotations = tools["check_incident"]
-    assert props == ["agent_vendor", "challenge", "error_class", "failure_stage", "http_status", "retry_after", "site_host", "task_step", "via"]
+    assert props == ["agent_vendor", "challenge", "error_class", "failed_at", "failure_stage", "http_status", "retry_after", "site_host", "task_step", "via"]
     assert annotations["read_only_hint"] is True
     # A report only adds a record, so it is not marked destructive.
     assert tools["report_observation"][1]["destructive_hint"] is False and tools["report_observation"][1]["read_only_hint"] is False

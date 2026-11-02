@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, site_probe, status_scope
+from . import adoption, background_reads, cause as cause_hint, feedback, feed_robots, gov_registry, lookup_signals, site_probe, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -16,7 +16,7 @@ from .models import ObservationIn, OutcomeIn
 from .official_paths import official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, OFFICIAL_STATUS_PAGES, SOURCES, register_source
+from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_requires_sign_in
 from . import response_guide
 from .triage import LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
@@ -391,6 +391,23 @@ _FEED_SOURCE_SQL = """SELECT s.source_name,s.status_page_url,s.api_url,c.indicat
                    WHERE s.site_host=%s AND s.enabled=true"""
 
 
+# D70: enabled sources whose status page is served from the looked-up host. A bare host compare on the URL's host part.
+_STATUS_PAGE_PARENT_SQL = """SELECT s.site_host,s.api_url,s.status_page_url FROM status_sources s
+                             WHERE s.enabled=true
+                               AND split_part(lower(split_part(split_part(s.status_page_url,'://',2),'/',1)),':',1)=%s"""
+
+
+def _status_page_parent(conn, host: str) -> str | None:
+    """D70: the site whose stored feed reading belongs to the page served from ``host`` (a lookup of a status page's own
+    host). Used only when ``host`` has no source of its own. Several sites may map one feed (aliases): the smallest
+    site_host stands for them. Sites that map different feeds to one page host are ambiguous: none. Database read only."""
+    rows = [row for row in conn.execute(_STATUS_PAGE_PARENT_SQL, (host.lower(),)).fetchall()
+            if dedicated_status_host(row["status_page_url"]) == host.lower()]  # not a path under a general site
+    if not rows or len({row["api_url"] for row in rows}) != 1:
+        return None
+    return min(row["site_host"] for row in rows)
+
+
 class FeedView(NamedTuple):
     """What the provider layer of an answer reads from the stored rows (see feed_view)."""
     row: dict | None              # the stored source row, shown or not
@@ -401,10 +418,23 @@ class FeedView(NamedTuple):
     blocked_page: tuple | None    # (name, url) of a page whose feed its own robots.txt does not allow: a link, never a reading
 
 
+def official_page_view(official_page: tuple[str, str] | None, host: str) -> dict | None:
+    """The official_status_page object. requires_sign_in (D72) is set only for a curated listing of that host, never for a robots-blocked feed page."""
+    if not official_page:
+        return None
+    view = {"source_name": official_page[0], "source_url": official_page[1]}
+    if status_page_requires_sign_in(official_page):
+        view["requires_sign_in"] = True
+    return view
+
+
 def feed_view(conn, host: str, now: datetime) -> FeedView:
     """The provider layer of an answer, from database rows only: no request, no queue insert, no write. check() and the
     home page's real-answer card both read the feed through this one function, so they cannot disagree about it."""
     source = conn.execute(_FEED_SOURCE_SQL, (host,)).fetchone()
+    if not source:
+        parent = _status_page_parent(conn, host)  # D70: the host is the status page of a mapped site
+        source = conn.execute(_FEED_SOURCE_SQL, (parent,)).fetchone() if parent else None
     if not source:
         return FeedView(None, None, False, False, False, None)
     # D50: a feed is shown only while its host's robots.txt allows it (database read, no request). With no
@@ -440,7 +470,8 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False):
+          agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
+          failed_at: str | None = None):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -459,6 +490,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
     is answered like a status_check lookup.
+
+    ``failed_at`` (D73) is the caller's ISO 8601 time of the failure. It is read once, to choose the optional ``cause``;
+    it is not stored, counted or echoed, and it never touches the recommendation. The caller's own codes never reach
+    ``cause`` (D47).
     """
     # D66: with d65 a lookup is judged as blocked unless it says it was not refused (task_step status_check or preflight).
     lookup_only = plain_view or task_step in LOOKUP_ONLY_STEPS
@@ -626,7 +661,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 "outcome": row["outcome"], "error_class": row["error_class"],
                 "task_step": row["task_step"], "synthetic": test_query,
             })
-        official_page = ((OFFICIAL_STATUS_PAGES.get(host) or robots_blocked_page)
+        official_page = ((official_status_page_for(host) or robots_blocked_page)
                          if settings.public_mode and not test_query and provider_status is None else None)
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
@@ -637,7 +672,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "provider_status": provider_status,
             "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
             "provider_discovery_attempted_at": provider_discovery_attempted_at,
-            "official_status_page": {"source_name": official_page[0], "source_url": official_page[1]} if official_page else None,
+            "official_status_page": official_page_view(official_page, host),
             "lookup_activity": lookup_activity,
             "access_profile": access_profile,
             "official_paths": official,
@@ -656,11 +691,29 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
+        if settings.cause_hint and failure_observed(error_class, failure_stage) and not plain_view:
+            # D73: after the recommendation is final, from stored host-level measurements only; it changes none of the answer.
+            # Any failure leaves `cause` out. A failed_at that cannot be used (bad format, in the future) gives no cause.
+            try:
+                when = cause_hint.parse_failed_at(failed_at, now)
+                if when is not None:
+                    with conn.transaction():
+                        # a locked table must not stall the lookup: give up on the cause instead
+                        conn.execute("SET LOCAL lock_timeout = '200ms'")
+                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage,
+                                                   agent_vendor=agent_vendor)
+                        conn.execute("SET LOCAL lock_timeout = DEFAULT")
+                    if found is not None:
+                        result["cause"] = found
+            except Exception:
+                LOG.warning("cause_hint_unavailable")
         if settings.response_guide:
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
             try:
-                result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default))
+                status_check = (settings.status_check_guide and task_step == "status_check"
+                                and not failure_observed(error_class, failure_stage))  # D69
+                result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:
@@ -683,7 +736,22 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # held for the rest of the request.
             adoption.write(conn, count_row)
             conn.commit()
+    if settings.status_check_compact and task_step == "status_check" and not failure_observed(error_class, failure_stage):
+        result = _compact_status_check(result)
     return result
+
+
+def _compact_status_check(result: dict) -> dict:
+    """D71: the final answer of a status_check lookup without a failure signal leaves access_profile.robots.rules out and
+    gives robots.rules_omitted (their count). Works on copies, so a cached or shared profile is never changed; runs after the
+    recommendation, next_checks and guide, which saw the full profile."""
+    profile = result.get("access_profile")
+    robots = profile.get("robots") if isinstance(profile, dict) else None
+    if not isinstance(robots, dict) or not robots.get("rules"):
+        return result
+    slim = {key: value for key, value in robots.items() if key != "rules"}
+    slim["rules_omitted"] = len(robots["rules"])
+    return {**result, "access_profile": {**profile, "robots": slim}}
 
 HOME_EXAMPLE_HOST = "target.com"
 # Other curated hosts the card lists below the main answer, when their answer is cached too (a different branch each).
@@ -726,7 +794,7 @@ def _home_card(settings: Settings, site_host: str) -> dict | None:
             return None
         feed = feed_view(conn, site_host, now)
     provider_status, provider_regional = feed.provider_status, feed.regional
-    official_page = (OFFICIAL_STATUS_PAGES.get(site_host) or feed.blocked_page) if provider_status is None else None
+    official_page = (official_status_page_for(site_host) or feed.blocked_page) if provider_status is None else None
     blocked_card = settings.proceed_without_failure and settings.proceed_mode == "d65"  # D66: the card shows what an agent gets
     verdict = recommendation(None, provider_status, access_profile, official, profile_not_read=False,
                              provider_regional=provider_regional, now=now, agent_vendor=None,
@@ -735,8 +803,7 @@ def _home_card(settings: Settings, site_host: str) -> dict | None:
                              assume_failure=blocked_card)
     answer = response_guide.guide({"site_host": site_host, "recommendation": verdict, "access_profile": access_profile,
                                    "provider_status": provider_status, "official_paths": official,
-                                   "official_status_page": ({"source_name": official_page[0], "source_url": official_page[1]}
-                                                            if official_page else None)},
+                                   "official_status_page": official_page_view(official_page, site_host)},
                                   settings.proceed_without_failure, blocked_card)
     action = answer["next_action"]
     status = provider_status["indicator"] if provider_status and provider_status.get("indicator") else None
