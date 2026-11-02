@@ -143,7 +143,7 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 
 **서비스가 이 코드로 하는 일(D47, 그림자 모드).** 조회는 공개 호스트명·UTC 시간별로 `error_class`, `failure_stage`, 이 코드들(`http_status` 는 구간으로 접어 모든 `5xx` 를 `5xx` 로), 보낸 클라이언트 프로그램의 종류(`plugin`, `ahn_client`, `mcp`, `web`, `rest_other` — User-Agent 와 MCP 연결에서 정하므로 참고용), 그 조회에 준 `recommendation.action` 과 함께 센다. 집계는 35일 보관한다. 주소를 보관하지 않고 서로 다른 클라이언트를 세기 위해, 호스트명과 UTC 날짜에만 해당하는 비밀키 IP 변환값을 클라이언트의 마지막 조회 시각(약 1시간 동안, 61분이 지난 뒤 처음 도는 정리 때까지만 분 단위로 두고 이후 시 단위로 낮춘다. 정리는 15분마다 돈다), 막힘 대분류(`outage`·`block`·`rate`·`login`), 그때 준 권고와 함께 2일 보관한다. 같은 호스트를 앞선 조회의 10분 이상 60분 이하(양 끝 포함) 뒤에 다시 조회하고 두 조회가 모두 막힌 조회였다면 그 권고 뒤의 재조회로 센다. 변환값이나 정확한 수는 응답에 나가지 않는다. 운영자 자신의 네트워크에서 온 조회, `X-AHN-Test: 1` 로 표시된 조회, 문서용 예시 호스트, 공개 루트 호스트가 아닌 호스트는 세지 않는다. 공개 모드에서는 일별 조회 수와 같은 조건으로 조회 목록에 든 호스트만 센다. 표 크기에는 상한이 있다: 호스트·시간당 코드 조합 32개, 시간당 전체 200개이며 나머지는 `overflow` 행으로 접는다. 상한은 동시에 쓸 때 근사치다. MCP 호출은 어댑터가 호출자의 주소와 시험 표시를 인증된 내부 연결로 넘겨 이 집계에만 쓴다.
 
-**어떤 응답도 달라지지 않는다.** 이 코드가 있든 없든 `recommendation`, `next_checks`, `evidence_level`, `observations` 와 다른 모든 필드는 같다. 이 코드는 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않는다(D11). 아직 응답 어디에도 나오지 않는다. 나중에 더하면 선택 층으로, 대략적인 구간만, 서로 다른 클라이언트 세 곳 이상일 때만 나온다.
+**어떤 응답도 달라지지 않는다.** 이 코드가 있든 없든 `recommendation`, `next_checks`, `evidence_level`, `observations` 와 다른 모든 필드는 같다. 이 코드는 제보가 아니며 `observations` 나 `evidence_level` 에 합치지 않는다(D11). 이 코드의 시간별 집계를 읽는 응답 필드는 선택 필드 `cause`(D73) 하나뿐이고, 서로 다른 클라이언트 세 곳 이상일 때만 읽는다. 호출자 자신의 코드는 자기 답을 바꾸지 않는다. 나중에 더하는 필드도 선택 층으로, 대략적인 구간만, 같은 세 곳 규칙으로 나온다.
 
 MCP `check_incident` 는 호출자에게 읽기 전용이다. 제보를 만들지 않고 대상 사이트나 호출자의 데이터를 바꾸지 않는다. 조회는 익명으로 집계되고(호스트 등록·일별 호스트 조회 수, 조회 자체의 짧은 트랜잭션. 그림자 모드로 선택 조회 신호 코드의 시간별 호스트 집계도 있다. [조회 신호 코드](#조회-신호-코드) 참고), 서비스가 캐시를 채우려고 호스트의 공개 `robots.txt`·`llms.txt`·상태 피드를 읽을 수 있으며 이 읽기는 조회가 기다리는 동안이 아니라 뒤에서 한다. 주석은 `readOnlyHint=true`, `idempotentHint=true`, `openWorldHint=true`(공개 웹을 설명함)다. 앱이 승인 마찰 없이 적시에 호출하는지는 실제 파일럿에서 검증한다. 성공한 MCP 도구 실행만 중앙 API가 별도 일별 범주로 집계한다. `/mcp` HTTP 접속·REST GET 수와 구분하며, 오류 실행·독립 에이전트 수·작업 결과는 알 수 없다.
 
@@ -441,10 +441,11 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 - `branch`: `policy_closed`(호스트가 자동 읽기를 거절), `transient`(일시 문제), `undetermined`.
 - `hint`: `home_now_gated`·`persistent_refusal`(policy_closed), `provider_incident`·`site_errors`·`recovered`·`rate_limited`·`others_failing_same_hour`(transient), `your_side_likely`·`no_measurement`·`home_gate_unconfirmed`(undetermined).
-- `confidence`(`high`·`medium`·`low`), `basis`(쓴 저장 출처: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`, `caller_codes`), 선택 `window`(`from`, 진행 중이면 `to` 없음, UTC), 선택 `recheck_after`(저장된 다음 측정 시각이 있을 때만), `line`: 시각만 채운 120자 이하 출력 가능 ASCII 영어 고정 문장. 사이트 글이나 호스트 이름은 들어가지 않는다.
+- `confidence`(`high`·`medium`·`low`), `basis`(쓴 저장 출처: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`), 선택 `window`(`from`, 진행 중이면 `to` 없음, UTC), 선택 `recheck_after`(저장된 다음 측정 시각이 있을 때만), `line`: 시각만 채운 120자 이하 출력 가능 ASCII 영어 고정 문장. 사이트 글이나 호스트 이름은 들어가지 않는다.
 - AHN 이 잰 거절(봇 확인, 403, 로그인 벽, 홈 페이지 속도 제한)은 일시 문제의 증거로 읽지 않는다(D68). 거절 한 번은 `undetermined`(`home_gate_unconfirmed`)이고, `policy_closed` 는 다음 측정이 일치하거나 연속 거절이 둘 이상일 때만 나온다.
 - `failed_at`(선택, ISO 8601, UTC 오프셋 유무 무관)은 실패 시각이다. 없으면 지금으로 본다. 받기만 하고 저장하거나 세지 않는다. 원측정은 14일 보관하므로 그보다 오래된 값은 업체 상태 이력만으로 답한다. 쓸 수 없는 값(형식 오류, 5분 넘는 미래)은 다른 시각의 원인을 말하지 않도록 `cause` 를 주지 않는다.
-- 확정된 원인(`policy_closed`·`transient`)이 있고 길이가 맞으면 `summary_line` 이 `cause.line` 으로 시작한다. 한도를 넘으면 붙이지 않는다.
+- `cause` 는 `summary_line` 과 `next_action` 을 바꾸지 않는다(D51). 켜도 꺼도 같다.
+- 호출자 자신의 코드(`http_status`, `retry_after`, `challenge`, `via`)는 `cause` 에 쓰지 않는다(D47). 다른 조회의 시간별 집계(`rate_limited`, `others_failing_same_hour`, `persistent_refusal`)는 서로 다른 클라이언트 세 곳 이상일 때만 쓴다.
 - 아직 없음: 접근 프로필 변경 이력이 필요한 hint(robots.txt 가 이제 막음, 약관 신호 변경, 새 봇 방어).
 
 `AHN_CAUSE_HINT=0`(D73)이면 `cause` 가 빠지고 답이 이전과 같아진다. 기본은 켜짐.

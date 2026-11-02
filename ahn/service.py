@@ -441,7 +441,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
-          failed_at: str | None = None, observed: dict | None = None):
+          failed_at: str | None = None):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -461,9 +461,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
     is answered like a status_check lookup.
 
-    ``failed_at`` (D73) is the caller's ISO 8601 time of the failure, ``observed`` the lenient signal codes it sent
-    (``http_status``, ``retry_after``). Both are read once, to choose the optional ``cause``; neither is stored, counted
-    or echoed, and neither touches the recommendation.
+    ``failed_at`` (D73) is the caller's ISO 8601 time of the failure. It is read once, to choose the optional ``cause``;
+    it is not stored, counted or echoed, and it never touches the recommendation. The caller's own codes never reach
+    ``cause`` (D47).
     """
     # D66: with d65 a lookup is judged as blocked unless it says it was not refused (task_step status_check or preflight).
     lookup_only = plain_view or task_step in LOOKUP_ONLY_STEPS
@@ -668,8 +668,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 when = cause_hint.parse_failed_at(failed_at, now)
                 if when is not None:
                     with conn.transaction():
-                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage,
-                                                   observed=observed)
+                        # a locked table must not stall the lookup: give up on the cause instead
+                        conn.execute("SET LOCAL lock_timeout = '200ms'")
+                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage)
+                        conn.execute("SET LOCAL lock_timeout = DEFAULT")
                     if found is not None:
                         result["cause"] = found
             except Exception:

@@ -545,7 +545,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                        failure_stage.value if failure_stage else None,
                        lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via),
                        agent_vendor=accepted_vendor(agent_vendor), issue_feedback=True,  # the one counted lookup route (D58)
-                       failed_at=failed_at, observed=lookup_signals.lenient_codes(http_status, challenge, retry_after, via))
+                       failed_at=failed_at)
         if is_mcp_metric_request(mcp_call, settings.key_pepper):
             try:
                 with connect(settings) as conn:

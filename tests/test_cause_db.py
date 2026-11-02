@@ -161,28 +161,12 @@ def test_failed_at_parsing_is_strict_and_never_guesses():
     assert parse("2026-10-18T11:59:59Z", at).old                                               # one second past 14 days
 
 
-def test_a_settled_cause_leads_the_summary_line_only_when_the_whole_line_fits():
+def test_a_cause_never_changes_the_summary_line_or_the_next_action():
     base = {"site_host": "x.example.org", "recommendation": {"action": "use_official_path", "reasons": ["official_path_available"]},
             "access_profile": None, "provider_status": None, "official_paths": {"api_docs": "https://developer.example.org/docs"}}
-    plain = response_guide.guide(dict(base))["summary_line"]
-    line = cause.line_for("rate_limited")
-    assert len(plain) + 1 + len(line) <= response_guide.LINE_MAX
-    settled = {"branch": "transient", "line": line}
-    assert response_guide.guide({**base, "cause": settled})["summary_line"] == f"{line} {plain}"
-    # undetermined never leads
-    assert response_guide.guide({**base, "cause": {"branch": "undetermined", "line": cause.line_for("no_measurement")}})["summary_line"] == plain
-    # a sentence that would push the line past LINE_MAX is left alone
-    long_base = {**base, "recommendation": {"action": "wait_provider_incident", "reasons": ["provider_scope"]},
-                 "provider_status": {"indicator": "major", "source_url": "https://status.example.org"}}
-    long_plain = response_guide.guide(dict(long_base))["summary_line"]
-    assert len(long_plain) + 1 + len(line) > response_guide.LINE_MAX
-    assert response_guide.guide({**long_base, "cause": settled})["summary_line"] == long_plain
-    # every sentence of the table: the result never exceeds LINE_MAX and is either the sentence or the cause line followed by it
-    for sentence in [text for _, text in response_guide.ROWS.values()]:
-        for text in (cause.line_for("provider_incident", datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), datetime(2027, 1, 2, 1, 1, tzinfo=timezone.utc)),
-                     cause.line_for("persistent_refusal")):
-            lead = f"{text} {sentence}"
-            assert len(lead) <= response_guide.LINE_MAX or len(sentence) <= response_guide.LINE_MAX
+    plain = response_guide.guide(dict(base))
+    for branch in ("transient", "policy_closed", "undetermined"):
+        assert response_guide.guide({**base, "cause": {"branch": branch, "line": cause.line_for("rate_limited")}}) == plain
 
 
 # --- provider_incident and recovered -------------------------------------------------------------------------------------
@@ -311,26 +295,30 @@ def test_a_refusal_is_never_evidence_of_a_temporary_problem(db):
 
 
 def test_persistent_refusal_needs_three_days_each_with_several_clients(db):
-    today = now()
+    base = now() - timedelta(hours=1)  # an hour that is already past whatever the time of day
     host = "persistent.org"
-    days = [today - timedelta(days=n) for n in (0, 1, 2)]
-    seed(db, *[hourly(host, d.replace(hour=10), sources=2, error_class="site_access") for d in days])
+    days = [base - timedelta(days=n) for n in (0, 1, 2)]
+    seed(db, *[hourly(host, d, sources=3, error_class="site_access") for d in days])
     hit = look(db, host, error_class="site_access")["cause"]
     assert (hit["branch"], hit["hint"], hit["confidence"], hit["basis"]) == ("policy_closed", "persistent_refusal", "medium", ["lookup_signals_hourly"])
     # one client looping over many hours is not several clients
     one = "persistent-one.org"
-    seed(db, *[hourly(one, d.replace(hour=h), sources=1, error_class="site_access") for d in days for h in (8, 9, 10)])
+    seed(db, *[hourly(one, d - timedelta(hours=h), sources=1, error_class="site_access") for d in days for h in (0, 1, 2)])
     assert look(db, one, error_class="site_access")["cause"]["hint"] != "persistent_refusal"
+    # two clients a day are not several
+    pair = "persistent-pair.org"
+    seed(db, *[hourly(pair, d, sources=2, error_class="site_access") for d in days])
+    assert look(db, pair, error_class="site_access")["cause"]["hint"] != "persistent_refusal"
     # only two days
     two = "persistent-two.org"
-    seed(db, *[hourly(two, d.replace(hour=10), sources=3, error_class="site_access") for d in days[:2]])
+    seed(db, *[hourly(two, d, sources=3, error_class="site_access") for d in days[:2]])
     assert look(db, two, error_class="site_access")["cause"]["hint"] != "persistent_refusal"
     # a 403 class counts without an error class; a 5xx class does not, even with error_class site_access
     status = "persistent-403.org"
-    seed(db, *[hourly(status, d.replace(hour=10), sources=2, http="403") for d in days])
+    seed(db, *[hourly(status, d, sources=3, http="403") for d in days])
     assert look(db, status, error_class="site_access")["cause"]["hint"] == "persistent_refusal"
     outage = "persistent-5xx.org"
-    seed(db, *[hourly(outage, d.replace(hour=10), sources=2, error_class="site_access", http="5xx") for d in days])
+    seed(db, *[hourly(outage, d, sources=3, error_class="site_access", http="5xx") for d in days])
     assert look(db, outage, error_class="site_access")["cause"]["hint"] != "persistent_refusal"
     # the caller's own failure must be an access one
     assert look(db, host, error_class="service_error").get("cause", {}).get("hint") != "persistent_refusal"
@@ -338,18 +326,25 @@ def test_persistent_refusal_needs_three_days_each_with_several_clients(db):
 
 # --- rate_limited, others_failing_same_hour ------------------------------------------------------------------------------
 
-def test_rate_limited_comes_from_the_callers_own_codes(db):
+def test_rate_limited_needs_several_other_clients_and_never_reads_the_callers_own_codes(db):
     host = "rate.org"
-    seed(db, provider_event(host, now() - timedelta(hours=1), "major", "none"))  # the caller's own 429 is the more direct evidence
-    for params in ({"http_status": "429"}, {"retry_after": "lt_60"}, {"retry_after": "60_3600"}, {"retry_after": "gt_3600"}):
+    # the caller's own 429 or Retry-After is never evidence (D47): the answer is the same with or without them
+    for params in ({"http_status": "429"}, {"retry_after": "lt_60"}, {"retry_after": "gt_3600"}):
         body = look(db, host, error_class="site_access", **params)
-        assert (body["cause"]["hint"], body["cause"]["confidence"], body["cause"]["basis"]) == ("rate_limited", "medium", ["caller_codes"])
-        assert "window" not in body["cause"]
-    for params in ({"retry_after": "none"}, {"http_status": "503"}, {"http_status": "404"}, {"retry_after": "5"}, {}):
-        assert look(db, host, error_class="site_access", **params)["cause"]["hint"] != "rate_limited"
-    seed(db, hourly(host, now(), sources=2, http="429"))
-    sure = look(db, host, error_class="site_access", http_status="429")["cause"]
-    assert (sure["hint"], sure["confidence"], sure["basis"]) == ("rate_limited", "high", ["caller_codes", "lookup_signals_hourly"])
+        assert body.get("cause") == look(db, host, error_class="site_access").get("cause"), params
+        assert body.get("cause", {}).get("hint") != "rate_limited"
+    few = "rate-few.org"
+    seed(db, hourly(few, now(), sources=2, http="429"))
+    assert look(db, few, error_class="site_access").get("cause", {}).get("hint") != "rate_limited"
+    many = "rate-many.org"
+    seed(db, hourly(many, now(), sources=3, http="429"))
+    sure = look(db, many, error_class="site_access")["cause"]
+    assert (sure["branch"], sure["hint"], sure["confidence"], sure["basis"]) == ("transient", "rate_limited", "medium", ["lookup_signals_hourly"])
+    assert "window" not in sure
+    # another hour does not count
+    late = "rate-late.org"
+    seed(db, hourly(late, now() - timedelta(hours=2), sources=5, http="429"))
+    assert look(db, late, error_class="site_access").get("cause", {}).get("hint") != "rate_limited"
 
 
 def test_others_failing_in_the_same_hour_counts_distinct_sources_in_that_hour_only(db):
@@ -451,7 +446,7 @@ def test_the_switch_off_gives_the_answer_before_the_cause_and_on_changes_nothing
     t0 = now() - timedelta(hours=3)
     seed(db, provider_event("same-provider.org", t0, "major", "none"), episode("same-errors.org", t0),
          probe("same-gate.org", outcome="refused", refusals=2), probe("same-side.org"),
-         hourly("same-others.org", now(), sources=4, error_class="service_error"))
+         hourly("same-others.org", now(), sources=4, error_class="service_error"), hourly("same-rate.org", now(), sources=3, http="429"))
     cases = [("same-provider.org", {"error_class": "service_error"}), ("same-errors.org", {"error_class": "service_error"}),
              ("same-gate.org", {"error_class": "site_access"}), ("same-side.org", {"failure_stage": "before_target_response"}),
              ("same-others.org", {"error_class": "service_error"}), ("same-rate.org", {"error_class": "site_access", "http_status": "429"}),
@@ -462,40 +457,13 @@ def test_the_switch_off_gives_the_answer_before_the_cause_and_on_changes_nothing
         assert "cause" not in without
         if "cause" in with_cause:
             seen_hints.add(with_cause["cause"]["hint"])
-        # the verdict, the step to take and everything but the cause and a summary line that leads with it are the same
-        for key in ("recommendation", "next_action", "next_checks", "access_profile", "official_paths", "provider_status", "links"):
-            assert with_cause.get(key) == without.get(key), (host, key)
-        assert with_cause["next_action"]["do"] == without["next_action"]["do"]
-        assert {k: v for k, v in strip(with_cause).items() if k not in ("cause", "summary_line")} == \
-               {k: v for k, v in strip(without).items() if k != "summary_line"}
-        assert with_cause["summary_line"] == without["summary_line"] or with_cause["summary_line"].endswith(without["summary_line"])
-        assert len(with_cause["summary_line"]) <= 200
+        # everything but the cause is the same, the summary line included (D51)
+        assert {k: v for k, v in strip(with_cause).items() if k != "cause"} == strip(without), host
     assert seen_hints >= {"provider_incident", "site_errors", "home_now_gated", "your_side_likely", "others_failing_same_hour", "rate_limited",
                           "no_measurement"}
     # with the guide off the switch changes nothing visible either
     assert "cause" not in look(settings_with(hint=False, guide=False), "same-provider.org", error_class="service_error")
     assert look(settings_with(hint=True, guide=False), "same-provider.org", error_class="service_error")["cause"]["hint"] == "provider_incident"
-
-
-def test_the_summary_line_leads_with_a_settled_cause_when_it_fits_and_is_otherwise_untouched(db):
-    off = settings_with(hint=False)
-    seed(db, provider_event("lead-provider.org", now() - timedelta(hours=1), "major", "none"))
-    long_case = look(db, "lead-provider.org", error_class="service_error")
-    assert long_case["cause"]["branch"] == "transient"
-    plain = look(off, "lead-provider.org", error_class="service_error")["summary_line"]
-    if len(plain) + 1 + len(long_case["cause"]["line"]) <= 200:
-        assert long_case["summary_line"] == f"{long_case['cause']['line']} {plain}"
-    else:
-        assert long_case["summary_line"] == plain
-    # a settled cause with a short sentence (an official path is listed, no robots block): the line leads
-    short = look(db, "lead-rate.org", error_class="site_access", http_status="429")
-    short_plain = look(off, "lead-rate.org", error_class="site_access", http_status="429")["summary_line"]
-    assert short["cause"]["hint"] == "rate_limited"
-    assert short["summary_line"] in (short_plain, f"{short['cause']['line']} {short_plain}")
-    # undetermined never leads
-    nothing = look(db, "lead-none.org", error_class="site_access")
-    assert nothing["cause"]["branch"] == "undetermined"
-    assert nothing["summary_line"] == look(off, "lead-none.org", error_class="site_access")["summary_line"]
 
 
 # --- nothing from a site or a host in the output -----------------------------------------------------------------------------

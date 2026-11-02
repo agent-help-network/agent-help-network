@@ -1019,12 +1019,11 @@
          "outage_episodes",
          "site_probe",
          "site_probe_daily",
-         "lookup_signals_hourly",
-         "caller_codes"
+         "lookup_signals_hourly"
         ],
         "type": "string"
        },
-       "maxItems": 6,
+       "maxItems": 5,
        "title": "Basis",
        "type": "array"
       },

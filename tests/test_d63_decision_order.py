@@ -343,7 +343,7 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and once more for D69, which adds only the optional `next_action.status_url` (before D69: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2),
     # and for D73, which adds only the optional `cause` object to the answer schema and the optional `failed_at` input of check_incident
     # (before D73: a58c2c80041d1acdb6c610b22f09c09543924b850121feda1dd041095fbf5d46).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "6e0a9a6ef8ef0456105c4d30ac4bc2c00d6c6534ba74d32bd6b7b2a7883ba578"
+    assert hashlib.sha256(blob.encode()).hexdigest() == "c5fe873a02563ef55f1a9bb091c368b405164d2f01d7be06275575e51d3be2dd"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

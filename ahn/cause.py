@@ -5,8 +5,9 @@ computed after the recommendation is final, from tables AHN already keeps for pu
 answer: ``recommendation`` and ``next_action.do`` are what they would be without it (AHN_CAUSE_HINT=0 leaves ``cause`` out).
 
 Inputs (read only, one savepoint, no network): ``provider_status_events``, ``outage_episodes`` (signal A), ``site_probe``,
-``site_probe_daily`` and ``lookup_signals_hourly``, plus the optional codes the caller sent (``failed_at``, ``http_status``,
-``retry_after``). Nothing is stored. ``line`` is a fixed English template filled with times only: no text from a site and
+``site_probe_daily`` and ``lookup_signals_hourly``, plus the optional ``failed_at``. Nothing is stored. The caller's own
+codes (``http_status``, ``retry_after``, ``challenge``, ``via``) are never read here (D47): counts of other lookups are
+used only when at least OTHERS_MIN_SOURCES separate clients contributed to them. ``line`` is a fixed English template filled with times only: no text from a site and
 no hostname ever reaches it.
 
 Rules that hold for every hint:
@@ -39,9 +40,8 @@ MEASURE_WINDOW = timedelta(hours=12)   # how close a home-page check must be to 
 PROBE_FRESH = timedelta(days=8)        # a refusal is re-measured after 7 days (site_probe.REFUSED_EXCLUDE_DAYS)
 OTHERS_MIN_SOURCES = 3                 # other clients seen with service errors in the failure hour: "several"
 OTHERS_MEDIUM_SOURCES = 10
-RATE_CONFIRM_SOURCES = 2               # clients seen with a 429 in the failure hour that make a rate limit more certain
 PERSISTENT_DAYS = 3                    # separate UTC days of refused lookups
-PERSISTENT_MIN_SOURCES = 2             # distinct clients in one hour of such a day (one client looping cannot make a day)
+PERSISTENT_MIN_SOURCES = OTHERS_MIN_SOURCES   # distinct clients in one hour of such a day (one client looping cannot make a day)
 
 GATE_OUTCOMES = frozenset({"bot_challenge", "refused", "login_wall"})   # rate_limited is neither gate nor outage
 NORMAL_OUTCOMES = frozenset({"reachable", "redirected_same_host"})
@@ -55,7 +55,7 @@ HINTS = {
     "undetermined": ("your_side_likely", "no_measurement", "home_gate_unconfirmed"),
 }
 CONFIDENCES = ("high", "medium", "low")
-BASIS = ("provider_status_events", "outage_episodes", "site_probe", "site_probe_daily", "lookup_signals_hourly", "caller_codes")
+BASIS = ("provider_status_events", "outage_episodes", "site_probe", "site_probe_daily", "lookup_signals_hourly")
 
 # Fixed sentences. "{win}" is a time window or empty. Every line is printable ASCII and at most LINE_MAX characters.
 LINES: dict[str, str] = {
@@ -64,7 +64,7 @@ LINES: dict[str, str] = {
     "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
     "site_errors": "Temporary: AHN could not reach the site {win}. Retry later.",
     "recovered_site": "Temporary: AHN could not reach the site {win}; it answers again. Retry.",
-    "rate_limited": "Temporary: rate limited. Wait for Retry-After if given, then retry.",
+    "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
     "home_now_gated": "Likely a policy block: the site refused AHN's last two home-page checks.",
     "persistent_refusal": "Likely a policy block: clients were refused on 3 or more separate days.",
@@ -148,18 +148,16 @@ def _floor_hour(value: datetime) -> datetime:
     return value.replace(minute=0, second=0, microsecond=0)
 
 
-def _rate_limited(conn, host: str, when: When, observed: dict) -> dict | None:
-    """The caller itself saw a 429 or a Retry-After. More certain when other clients saw a 429 in the same hour."""
-    if not (observed.get("http_status") == 429 or observed.get("retry_after") in ("lt_60", "60_3600", "gt_3600")):
+def _rate_limited(conn, host: str, when: When) -> dict | None:
+    """Several distinct clients were rate limited (429) on this host in the failure hour."""
+    if when.old:
         return None
-    confidence, basis = "medium", ["caller_codes"]
-    if not when.old:
-        row = conn.execute(
-            "SELECT COALESCE(sum(sources),0) AS n FROM lookup_signals_hourly WHERE site_host=%s AND hour=%s AND http_status_class='429'",
-            (host, _floor_hour(when.at))).fetchone()
-        if row["n"] >= RATE_CONFIRM_SOURCES:
-            confidence, basis = "high", ["caller_codes", "lookup_signals_hourly"]
-    return _cause("transient", "rate_limited", confidence, basis, "rate_limited")
+    row = conn.execute(
+        "SELECT COALESCE(sum(sources),0) AS n FROM lookup_signals_hourly WHERE site_host=%s AND hour=%s AND http_status_class='429'",
+        (host, _floor_hour(when.at))).fetchone()
+    if row["n"] < OTHERS_MIN_SOURCES:
+        return None
+    return _cause("transient", "rate_limited", "medium", ["lookup_signals_hourly"], "rate_limited")
 
 
 def _provider(conn, host: str, when: When, now: datetime, refusal_like: bool) -> dict | None:
@@ -260,16 +258,18 @@ def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
     return True, all(row["outcome"] in NORMAL_OUTCOMES for row in rows)
 
 
-def compute(conn, host: str, now: datetime, when: When, *, error_class: str | None = None, failure_stage: str | None = None,
-            observed: dict | None = None) -> dict | None:
+def compute(conn, host: str, now: datetime, when: When, *, error_class: str | None = None,
+            failure_stage: str | None = None) -> dict | None:
     """The ``cause`` object for a failed step at ``when``, or None when nothing can be said. Reads only; the caller
     runs it in a savepoint and leaves ``cause`` out on any error.
 
-    Order: what the caller saw itself (a 429), then the provider's status page, then AHN's own reads of the host, then the
+    Order: several clients rate limited in the failure hour, then the provider's status page, then AHN's own reads of the host, then the
     two policy signals, then other clients' lookups, and last the cases that stay undetermined."""
-    observed = observed or {}
     refusal_like = error_class in REFUSAL_CLASSES or failure_stage == "access_denial_observed"
-    found = _rate_limited(conn, host, when, observed)
+    probe = _probe(conn, host)
+    # other clients' 429s say nothing temporary about a host whose home page AHN saw refuse (D68)
+    refused = probe is not None and probe["outcome"] in GATE_OUTCOMES and probe["probed_at"] >= now - PROBE_FRESH
+    found = None if refused else _rate_limited(conn, host, when)
     if found:
         return found
     found = _provider(conn, host, when, now, refusal_like)
@@ -281,7 +281,6 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
         found = _site_errors(conn, host, when, now)
         if found:
             return found
-    probe = _probe(conn, host)
     gate = _gated(probe, now, error_class)
     if gate and gate["branch"] == "policy_closed":
         return gate
