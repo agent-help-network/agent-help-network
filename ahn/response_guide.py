@@ -82,7 +82,7 @@ STATUS_ROWS: dict[str, str] = {
     "T1": "The provider's status feed reports no active issue (provider_status). That covers the provider's own services, not your account; its page is next_action.status_url.",
     "T2": "A provider status feed is listed (provider_status), but it does not give a clear current state here; check the status page at next_action.status_url.",
     "T3": "AHN reads no status feed for this site, so it cannot say whether it is up. Its official status page is next_action.status_url; check it there.",
-    "T3-S": "This site's official status page needs your user's sign-in, so AHN cannot read it. To check if the site is up, hand next_action.status_url to your user; next_action.do is about something else.",
+    "T3-S": "This site's status page needs your user's sign-in, so AHN cannot read it. To check if it is up, hand next_action.status_url to your user; next_action.do and url are for any other step on this site.",
     "T5": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the status page at next_action.status_url.",
     "T5-N": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the provider's own status page, or tell your user its status is unverified.",
     "T4": "AHN knows no official status page for this site, so it cannot say whether it is up. Check the site itself, or tell your user its status is unverified.",
@@ -391,7 +391,9 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         robots_kept = bool(reasons & STATUS_KEEP_REASONS)
         status_id = status_row(provider_status, result.get("official_status_page"), status_url)
         if (status_url and recommendation.get("action") == "use_official_path" and row not in RETRY_ROWS
-                and not (robots_kept and same_site(status_url, result["site_host"]))):
+                and not (robots_kept and same_site(status_url, result["site_host"]))
+                # D77: a sign-in page is never the url, so under a robots block nothing justifies replacing the robots sentence.
+                and not (robots_kept and status_id == "T3-S")):
             # D76: a use_official_path row with no re-lookup to wait for answers "is it up" with the status page: sentence and
             # url say the same thing. ``do`` stays a function of recommendation.action. A robots block on the site's own pages
             # does not answer the question, but a status page on the same site is not pointed at either (the row stays).
@@ -400,6 +402,7 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 action["url"] = status_url
         elif (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
                 # D77: P2 (a block naming other agents, no agent_vendor sent) ends in a conditional stop that no T sentence carries.
+                # With D63 off the row text is ROWS_BEFORE["P2"], which has no such condition; P2 still keeps its own sentence then.
                 and row != "P2"
                 # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
                 and not (do == "lookup_apex_host" and status_url is None)):

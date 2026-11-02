@@ -1002,7 +1002,7 @@ def test_d76_a_use_official_path_status_check_points_url_at_the_status_page_but_
     assert out["next_action"]["do"] == plain["next_action"]["do"] == "use_official_path"
     assert out["next_action"]["url"] == OTHER_PAGE == out["next_action"]["status_url"]
     signin = guide(status_answer(official_page=signin_page(OTHER_PAGE), official=OFFICIAL, access_profile=ROBOTS_BLOCKED), status_check=True, status_guide=True)
-    assert signin["summary_line"] == response_guide.STATUS_ROWS["T3-S"] and signin["next_action"]["do"] == "use_official_path"
+    assert signin["summary_line"] != response_guide.STATUS_ROWS["T3-S"] and signin["next_action"]["do"] == "use_official_path"  # D77: robots sentence stays
 
 
 def test_d76_a_status_page_on_the_sites_own_domain_is_not_pointed_at_when_robots_blocks():
@@ -1102,7 +1102,7 @@ def test_d77_a_status_page_that_cannot_be_used_is_never_described_as_known(provi
 
 
 def test_d77_a_sign_in_status_page_is_status_url_only_and_url_stays_the_row_url():
-    for kwargs in ({"error_class": "site_access"}, {"access_profile": ROBOTS_BLOCKED}):
+    for kwargs in ({"error_class": "site_access"},):
         result = status_answer(official_page=signin_page(OTHER_PAGE), official=OFFICIAL, **kwargs)
         plain = guide(copy.deepcopy(result))
         out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
@@ -1110,9 +1110,19 @@ def test_d77_a_sign_in_status_page_is_status_url_only_and_url_stays_the_row_url(
         assert out["next_action"]["do"] == plain["next_action"]["do"] == "use_official_path"
         assert out["next_action"]["url"] == plain["next_action"]["url"] == OFFICIAL["api_docs"]
         assert out["next_action"]["status_url"] == OTHER_PAGE
-    # the sentence names status_url for the question "is it up" and says do is about something else
+    # the sentence names status_url for the question "is it up" and says do and url are for other steps
     line = response_guide.STATUS_ROWS["T3-S"]
     assert "next_action.status_url" in line and "next_action.do" in line and "sign-in" in line
     # a readable page is still the url (D76)
     readable = guide(status_answer(official_page=page(OTHER_PAGE), official=OFFICIAL, error_class="site_access"), status_check=True, status_guide=True)
     assert readable["next_action"]["url"] == OTHER_PAGE
+
+
+def test_d77_a_robots_block_keeps_the_robots_sentence_for_a_sign_in_status_page_on_another_domain():
+    result = status_answer(official_page=signin_page(OTHER_PAGE), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
+    plain = guide(copy.deepcopy(result))
+    out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
+    assert out["summary_line"] == plain["summary_line"] != response_guide.STATUS_ROWS["T3-S"]
+    assert out["next_action"]["do"] == "use_official_path" and out["next_action"]["url"] == plain["next_action"]["url"] == OFFICIAL["api_docs"]
+    assert out["next_action"]["status_url"] == OTHER_PAGE
+    assert "do and url are for any other step" in response_guide.STATUS_ROWS["T3-S"]
