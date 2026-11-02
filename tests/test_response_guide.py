@@ -828,12 +828,11 @@ def test_t1_a_fresh_feed_with_no_issue_says_so_and_points_to_status_url():
     assert out["next_action"]["status_url"] == STATUS_URL
 
 
-@pytest.mark.parametrize("changes", [{"freshness": "stale"}, {"freshness": "pending"}, {"indicator": "minor"}, {"indicator": None}])
+@pytest.mark.parametrize("changes", [{"freshness": "stale"}, {"freshness": "pending"}, {"indicator": None}])
 def test_t2_a_feed_that_is_not_fresh_and_clear_says_it_is_unclear(changes):
     status = {**fresh_none(), **changes}
     result = status_answer(provider_status=status, official=OFFICIAL)
-    if guide(copy.deepcopy(result))["next_action"]["do"] in response_guide.STATUS_KEEP_DO | {"stop_automation"}:
-        pytest.skip("a wait row keeps its sentence")
+    assert guide(copy.deepcopy(result))["next_action"]["do"] not in response_guide.STATUS_KEEP_DO | {"stop_automation"}
     out = guide(result, status_check=True)
     assert out["summary_line"] == response_guide.STATUS_ROWS["T2"] and out["next_action"]["status_url"] == STATUS_URL
 
@@ -928,3 +927,42 @@ def test_the_status_check_switch_is_read_from_the_environment(monkeypatch):
     for value, expected in (("0", False), (" 0 ", False), ("1", True), ("", True), ("off", True)):
         monkeypatch.setenv("AHN_STATUS_CHECK_GUIDE", value)
         assert Settings.from_env().status_check_guide is expected
+
+
+def test_a_robots_block_row_keeps_its_sentence_under_status_check_and_gains_status_url():
+    # D69: a row decided by the site's robots policy says so under status_check too; only status_url is added.
+    keep = response_guide.STATUS_KEEP_REASONS
+    seen = set()
+    for case in sample():
+        result = answer(**case)
+        hit = keep & set(result["recommendation"]["reasons"])
+        if not hit:
+            continue
+        for extra in ({}, {"official_status_page": page()}, {"provider_status": fresh_none()}):
+            variant = {**copy.deepcopy(result), **extra}
+            plain = guide(copy.deepcopy(variant))
+            out = guide(variant, status_check=True)
+            assert out["summary_line"] == plain["summary_line"], (hit, extra)
+            assert {k: v for k, v in out["next_action"].items() if k != "status_url"} == plain["next_action"], (hit, extra)
+            seen |= hit
+    assert seen == keep, keep - seen
+
+
+@pytest.mark.parametrize("profile, vendor, reason", [
+    (robots(block(*sorted(ALL_TOKENS))), None, "robots_blocks_agents"),
+    (robots(block(*GOVERNING_TOKENS["anthropic"])), None, "robots_blocks_some_agents"),
+    (robots("User-agent: *\nDisallow: /\n"),
+     None, "robots_wildcard_disallow"),
+])
+def test_blocked_rows_keep_their_sentence_under_status_check(profile, vendor, reason):
+    result = answer(access_profile=profile, official=OFFICIAL, official_page=page(), vendor=vendor)
+    assert reason in result["recommendation"]["reasons"]
+    plain = guide(copy.deepcopy(result))
+    out = guide(result, status_check=True)
+    assert out["summary_line"] == plain["summary_line"] and out["next_action"] == {**plain["next_action"], "status_url": PAGE_URL}
+
+
+def test_an_unsafe_first_status_url_is_skipped_and_the_next_candidate_is_used():
+    result = status_answer(provider_status=fresh_none("http://status.example.com/"), official_page=page(), official=OFFICIAL)
+    out = guide(result, status_check=True)
+    assert out["next_action"]["status_url"] == PAGE_URL
