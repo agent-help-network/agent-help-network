@@ -339,8 +339,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # Hash of the same blob taken from the tree before D63 (the three earlier changes merged, #117 at 33fd2b5), then
     # updated once for D59 (#114), which adds only access_profile.site_declared and its SiteDeclared definitions
     # (before D59: f408da6b3453e40717b48bd6a21eddd37943e1a468e4e56b97e3ca40379ddc64), then again for D67, which adds only
-    # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85).
-    assert hashlib.sha256(blob.encode()).hexdigest() == "375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2"
+    # the optional `ahn_check` object to the answer schema (before D67: df2f5be084b60d6472c26e6ad369948ca8e4c241fd1cb1277ae35429ea996b85), then again for D71, which makes `robots.rules` omissible and adds `robots.rules_omitted` (before D71: 375c86b66d5264d13400701d539437a2f78cffacba1c6cf5128366175df5c4f2).
+    assert hashlib.sha256(blob.encode()).hexdigest() == "ccad45ef55cee90f21f37e32f6ca99c1393d8441c606345ed84df4d0201cc1ba"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

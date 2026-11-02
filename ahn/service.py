@@ -703,7 +703,22 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # held for the rest of the request.
             adoption.write(conn, count_row)
             conn.commit()
+    if settings.status_check_compact and task_step == "status_check" and not failure_observed(error_class, failure_stage):
+        result = _compact_status_check(result)
     return result
+
+
+def _compact_status_check(result: dict) -> dict:
+    """D71: the final answer of a status_check lookup without a failure signal leaves access_profile.robots.rules out and
+    gives robots.rules_omitted (their count). Works on copies, so a cached or shared profile is never changed; runs after the
+    recommendation, next_checks and guide, which saw the full profile."""
+    profile = result.get("access_profile")
+    robots = profile.get("robots") if isinstance(profile, dict) else None
+    if not isinstance(robots, dict) or not robots.get("rules"):
+        return result
+    slim = {key: value for key, value in robots.items() if key != "rules"}
+    slim["rules_omitted"] = len(robots["rules"])
+    return {**result, "access_profile": {**profile, "robots": slim}}
 
 HOME_EXAMPLE_HOST = "target.com"
 # Other curated hosts the card lists below the main answer, when their answer is cached too (a different branch each).
