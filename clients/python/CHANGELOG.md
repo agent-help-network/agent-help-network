@@ -3,6 +3,7 @@
 ## 0.6.4
 
 - `ahn.local_digest(hosts, *, pad_to=16, cache_dir=None, public_key=None, ...)` compares regular sites with the bundle's thin shards on your machine: shard ids are computed locally, random padding shards keep the number of requests fixed, shards are verified against the manifest's SHA-256 (and its Ed25519 signature when you give the key), `If-None-Match` caching, a seven-day changes marker, and `status == "not_in_bundle"` for hosts to check live. The service receives no hostname.
+- With `cache_dir` the padding shard set is stored (`padding.json`) and reused, and every shard asked for is requested the same way; with `public_key=` an unsigned manifest is refused (`signature_missing`); a malformed changes value or failure-file date no longer raises.
 - `ahn.digest_markdown(digest)` renders a card with no text copied from sites.
 - `ahn.FailureLog` and `ahn.ADVICE`: an optional local file of the last 14 days of a site's failures and the advice codes a pattern calls for. Nothing is sent.
 
