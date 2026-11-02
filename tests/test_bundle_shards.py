@@ -341,33 +341,86 @@ def test_covers_since_never_claims_more_than_seven_days_or_more_than_was_seen():
     assert changes.document(old)["covers_since"] == export.iso(T0 + timedelta(days=23))
 
 
-def test_the_same_stored_bundle_gives_the_same_changes_and_manifest_bytes_whatever_the_clock(served, monkeypatch):
-    client, built, _state = served
-    first = {p: client.get(p) for p in (bundle_shards.CHANGES_PATH, bundle_shards.MANIFEST_PATH)}
-    # the stored bundle stays valid, but the clock runs on past the seven-day window
+def serving_with_clock(monkeypatch):
+    """An app whose clock the test moves; the stored bundle stays the same. Returns (client, box, built, state)."""
+    seeds = load_seed_hosts()
+    built = bundle.build([profile_row(host) for host in seeds], seeds, now=NOW)
+    state = {"current": (built.sha256, built.generated_at, built.body)}
+    box = {"now": CLOCK}
+    original = bundle.add_routes
+    monkeypatch.setattr(bundle, "add_routes", lambda app, settings, **kw: original(app, settings, clock=lambda: box["now"]))
+    monkeypatch.setattr(bundle, "STALE_AFTER", timedelta(days=3650))
+    monkeypatch.setattr(bundle._Snapshot, "current", lambda self, settings, now: state["current"])
+    monkeypatch.setattr(bundle._DbBudget, "take", staticmethod(lambda settings, size, day: True))
+    monkeypatch.delenv(bundle_shards.SWITCH_ENV, raising=False)
+    client = TestClient(create_app(bundle_settings()), headers={"CF-Connecting-IP": "203.0.113.7"})
+    return client, box, built, state
 
-    shards = bundle_shards.ShardSet(built.sha256, built.generated_at, built.body)
-    changes = bundle_shards._Changes()
-    changes.observe(shards)
-    one = bundle_shards.encode(changes.document(shards))
-    assert one[2] == first[bundle_shards.CHANGES_PATH].headers["etag"].strip('"')
+
+def test_the_same_stored_bundle_gives_the_same_changes_and_manifest_bytes_and_etags_whatever_the_clock(monkeypatch):
+    client, box, _built, _state = serving_with_clock(monkeypatch)
+    paths = (bundle_shards.CHANGES_PATH, bundle_shards.MANIFEST_PATH)
+    first = {path: client.get(path) for path in paths}
+    assert all(response.status_code == 200 for response in first.values())
     for later in (timedelta(days=3), timedelta(days=8), timedelta(days=60)):
-        assert bundle_shards.encode(changes.document(shards)) == one  # no clock argument exists to move it
-        manifest = bundle_shards.manifest_document(shards, one, (None, None))
-        assert bundle_shards.encode(manifest)[2] == first[bundle_shards.MANIFEST_PATH].headers["etag"].strip('"'), later
+        box["now"] = CLOCK + later
+        for path in paths:
+            again = client.get(path)
+            assert again.status_code == 200, (path, later)
+            assert again.headers["etag"] == first[path].headers["etag"] and again.content == first[path].content, (path, later)
+    document = first[bundle_shards.CHANGES_PATH].json()
+    assert document["covers_since"] == export.iso(_built.generated_at)  # a function of the bundle, not of the clock
 
 
-def test_the_manifest_and_changes_are_built_once_and_the_key_is_read_once_per_bundle(served, monkeypatch):
+def test_the_manifest_is_built_once_per_stored_bundle_and_a_304_builds_nothing(served, monkeypatch):
     client, _built, _state = served
-    loads, builds = [], []
-    monkeypatch.setattr(bundle, "signing_from_env", lambda: loads.append(1) or (None, None))
+    builds = []
     real = bundle_shards.manifest_document
     monkeypatch.setattr(bundle_shards, "manifest_document", lambda *a, **k: builds.append(1) or real(*a, **k))
     etag = client.get(bundle_shards.MANIFEST_PATH).headers["etag"]
     for _ in range(3):
         assert client.get(bundle_shards.MANIFEST_PATH, headers={"If-None-Match": etag}).status_code == 304
         assert client.get(bundle_shards.MANIFEST_PATH).headers["etag"] == etag
-    assert len(loads) == 1 and len(builds) == 1
+    assert len(builds) == 1
+
+
+def test_a_new_stored_bundle_gives_a_new_manifest_etag_and_reads_the_signing_key_again(served, monkeypatch):
+    client, built, state = served
+    loads = []
+    monkeypatch.setattr(bundle, "signing_from_env", lambda: loads.append(1) or (None, None))
+    one = client.get(bundle_shards.MANIFEST_PATH)
+    assert client.get(bundle_shards.MANIFEST_PATH).headers["etag"] == one.headers["etag"] and len(loads) == 1
+    seeds = load_seed_hosts()
+    newer = bundle.build([profile_row(host) for host in seeds], seeds, now=NOW + timedelta(hours=2))
+    state["current"] = (newer.sha256, newer.generated_at, newer.body)
+    two = client.get(bundle_shards.MANIFEST_PATH)
+    assert two.headers["etag"] != one.headers["etag"] and two.json()["bundle_sha256"] == newer.sha256
+    assert len(loads) == 2  # once per stored bundle
+
+
+def test_a_bundle_that_changes_while_a_manifest_is_built_never_leaves_the_old_manifest_under_the_new_sha(served, monkeypatch):
+    client, built, state = served
+    seeds = load_seed_hosts()
+    newer = bundle.build([profile_row(host) for host in seeds], seeds, now=NOW + timedelta(hours=2))
+    real = bundle_shards.manifest_document
+    seen = {}
+
+    def racing(shards, changes_file, signer=None):
+        if shards.bundle_sha256 == built.sha256 and "nested" not in seen:
+            seen["nested"] = True
+            state["current"] = (newer.sha256, newer.generated_at, newer.body)  # the bundle changes mid-build ...
+            seen["new"] = client.get(bundle_shards.MANIFEST_PATH)  # ... and another request is served meanwhile
+        return real(shards, changes_file, signer)
+
+    monkeypatch.setattr(bundle_shards, "manifest_document", racing)
+    old = client.get(bundle_shards.MANIFEST_PATH)  # started on the old bundle
+    assert old.json()["bundle_sha256"] == built.sha256  # its own bundle's manifest, as it asked
+    assert seen["new"].json()["bundle_sha256"] == newer.sha256
+    after = client.get(bundle_shards.MANIFEST_PATH)
+    assert after.json()["bundle_sha256"] == newer.sha256 and after.headers["etag"] == seen["new"].headers["etag"]
+    assert after.headers["etag"] != old.headers["etag"]
+    again = client.get(bundle_shards.MANIFEST_PATH)
+    assert again.content == after.content
 
 
 def test_the_same_bundle_seen_twice_is_not_a_change():
