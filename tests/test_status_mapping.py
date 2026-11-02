@@ -95,13 +95,17 @@ REVERIFIED_BETTERSTACK_HOSTS = {
     "raspberrypi.org", "signupgenius.com", "sportskeeda.com", "studocu.com", "time.com", "trezor.io", "userway.org",
     "wordfence.com",
     "verisoul.ai",  # weekly re-verification, 2026-10-27: upgraded from link after the feed parsed
+    "myanimelist.net", "tally.so",  # weekly re-verification, 2026-11-02: upgraded from link after the feed parsed
 }
 # Tranco ranks 9,001-10,000 (2026-10-20): the page's public feed parsed with the existing parser on the first check.
 RANK_BATCH_6_INSTATUS_HOSTS = {"q10.com"}
 RANK_BATCH_6_BETTERSTACK_HOSTS = {"hf.co"}
 # Demand batch 2026-10-27: the page's public feed parsed with the existing parser on the first check.
 DEMAND_BATCH_2026_10_27_INSTATUS_HOSTS = {"deno.com"}
-STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com", "cloudflare-dns.com", "incognia.com", "lastpass.com", "replit.com", "viator.com"}
+STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com", "cloudflare-dns.com", "incognia.com", "lastpass.com", "replit.com", "viator.com",
+                               # weekly re-verification, 2026-11-02: upgraded from link after the feed parsed
+                               "coinmarketcap.com", "foursquare.com", "home-assistant.io", "illuminateed.com", "infura.io", "ionos.de",
+                               "judge.me", "ninjarmm.com", "northwestern.edu", "semanticscholar.org", "smartthings.com", "zearn.org"}
 
 
 def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
