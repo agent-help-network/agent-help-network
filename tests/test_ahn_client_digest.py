@@ -499,6 +499,7 @@ def test_the_lock_is_free_the_moment_its_holder_lets_go_or_dies(monkeypatch, tmp
     with pytest.raises(_digest._PaddingUnreadable):
         fetcher._acquire(path)
     os.close(fd)  # what the system does when the holding process dies: no unlock call, no file removal
+    _digest._THREAD_LOCK.release()  # (the in-process lock dies with the process too)
     monkeypatch.setattr(_digest._Fetcher, "LOCK_WAIT", 5.0)
     started = time.monotonic()
     fetcher._release(fetcher._acquire(path))
@@ -541,6 +542,47 @@ def test_never_two_processes_inside_the_padding_section_even_with_an_old_lock_fi
         thread.join(30)
     assert peak[0] == 1 and inside[0] == 0
     assert len(_stored(tmp_path)) == 12
+
+
+def test_a_sharing_violation_on_the_lock_file_is_waited_out_not_taken_for_a_refusal(monkeypatch, tmp_path):
+    real = os.open
+    calls = []
+
+    def flaky(path, flags, *args, **kwargs):
+        if os.path.basename(str(path)) == "padding.lock" and len(calls) < 3:
+            calls.append(1)
+            error = PermissionError(13, "in use", str(path))
+            error.winerror = 32  # ERROR_SHARING_VIOLATION
+            raise error
+        return real(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(_digest.os, "open", flaky)
+    got = _digest._Fetcher("https://x", tmp_path, 1.0).padding(set(), [format(i, "02x") for i in range(256)], 5, random.Random(1))
+    assert len(calls) == 3 and got == _stored(tmp_path)  # retried, then used and stored normally
+
+
+def test_an_exception_while_waiting_for_the_lock_closes_the_descriptor_and_frees_the_thread_lock(monkeypatch, tmp_path):
+    fetcher = _digest._Fetcher("https://x", tmp_path, 1.0)
+    held = fetcher._acquire(str(tmp_path / "padding.lock"))
+    opened = []
+    real_open, real_close = os.open, os.close
+    monkeypatch.setattr(_digest.os, "open", lambda *a, **k: opened.append(real_open(*a, **k)) or opened[-1])
+    closed = []
+    monkeypatch.setattr(_digest.os, "close", lambda fd: closed.append(fd) or real_close(fd))
+    _digest._THREAD_LOCK.release()  # let a second "process" past the thread lock, to wait on the system lock
+
+    def interrupt(seconds):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(_digest.time, "sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        fetcher._acquire(str(tmp_path / "padding.lock"))
+    assert opened and opened[-1] in closed  # the descriptor was not leaked
+    assert _digest._THREAD_LOCK.acquire(blocking=False)  # and the in-process lock was given back
+    _digest._THREAD_LOCK.release()
+    _digest._THREAD_LOCK.acquire()  # restore the state the holder expects
+    monkeypatch.undo()
+    fetcher._release(held)
 
 
 def test_a_padding_set_that_could_not_be_stored_is_not_used(monkeypatch, tmp_path):

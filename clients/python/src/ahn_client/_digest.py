@@ -17,8 +17,9 @@ import json
 import os
 import random
 import re
-import tempfile
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -67,6 +68,9 @@ class Digest:
         return {"hosts": self.hosts, "signature": self.signature, "generated_at": self.generated_at, "valid_until": self.valid_until,
                 "stale": self.stale, "changes_covers_since": self.changes_covers_since,
                 "shards_requested": self.shards_requested, "notes": self.notes}
+
+
+_THREAD_LOCK = threading.Lock()  # in front of the system lock on padding.lock; taken first, released last
 
 
 class _NotWritable(Exception):
@@ -134,45 +138,71 @@ class _Fetcher:
     LOCK_WAIT = 10.0  # seconds to wait for another process before giving up (nothing is requested then)
 
     def _acquire(self, path: str) -> int:
-        """The descriptor of ``padding.lock`` with the lock held. Raises _NotWritable when the folder does not let us
-        open it (permission, read-only), _PaddingUnreadable when another holder does not let go in time."""
-        try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT)
-        except OSError as error:
-            if isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
-                raise _NotWritable()
-            raise _PaddingUnreadable()
+        """The descriptor of ``padding.lock`` with the lock held (the in-process lock first, then the system lock).
+        Raises _NotWritable when the folder does not let us open it (permission, read-only), _PaddingUnreadable when
+        another holder does not let go in time."""
         deadline = time.monotonic() + self.LOCK_WAIT
+        # Some network file systems do not make flock() exclude threads of one process, so threads queue here first.
+        if not _THREAD_LOCK.acquire(timeout=self.LOCK_WAIT):
+            raise _PaddingUnreadable()
+        try:
+            fd = self._open_lock(path, deadline)
+            try:
+                while True:
+                    try:
+                        os.lseek(fd, 0, 0)
+                        if sys.platform == "win32":
+                            import msvcrt
+                            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        else:
+                            import fcntl
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        return fd
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise _PaddingUnreadable()
+                        time.sleep(0.01)
+            except BaseException:
+                os.close(fd)
+                raise
+        except BaseException:
+            _THREAD_LOCK.release()
+            raise
+
+    @staticmethod
+    def _open_lock(path: str, deadline: float) -> int:
         while True:
             try:
-                os.lseek(fd, 0, 0)
-                if sys.platform == "win32":
-                    import msvcrt
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
-            except OSError:
-                if time.monotonic() >= deadline:
-                    os.close(fd)
-                    raise _PaddingUnreadable()
-                time.sleep(0.01)
+                return os.open(path, os.O_RDWR | os.O_CREAT)
+            except OSError as error:
+                if getattr(error, "winerror", None) == 32:
+                    # ERROR_SHARING_VIOLATION: a virus scanner or indexer has the file open for a moment. Not a
+                    # refusal, so wait for it like for another holder.
+                    if time.monotonic() >= deadline:
+                        raise _PaddingUnreadable()
+                    time.sleep(0.01)
+                    continue
+                if isinstance(error, PermissionError) or error.errno in (errno.EACCES, errno.EPERM, errno.EROFS):
+                    raise _NotWritable()
+                raise _PaddingUnreadable()
 
     @staticmethod
     def _release(fd: int) -> None:
         try:
-            os.lseek(fd, 0, 0)
-            if sys.platform == "win32":
-                import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
+            try:
+                os.lseek(fd, 0, 0)
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
         finally:
-            os.close(fd)
+            _THREAD_LOCK.release()
 
     def _clean_temp(self) -> None:
         """Called with the lock held: a writer only makes its temp file under the lock, so any ``.padding-*`` left is
