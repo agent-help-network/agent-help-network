@@ -207,7 +207,7 @@ class _Changes:
         own ``generated_at``, never from the clock, so the same bundle always gives the same bytes (and the same ETag)."""
         anchor = shards.generated_at
         with self.lock:
-            self.entries = {key: value for key, value in self.entries.items() if anchor - value[0] <= CHANGE_WINDOW}
+            self.entries = {key: value for key, value in self.entries.items() if value[0] <= anchor and anchor - value[0] <= CHANGE_WINDOW}
             rows = []
             for (host, section), (changed_at, thin) in sorted(self.entries.items()):
                 row = {"host": host, "section": section, "changed_on": changed_at.date().isoformat()}
@@ -215,6 +215,32 @@ class _Changes:
             since = max(self.since or anchor, anchor - CHANGE_WINDOW)
         return {"schema": CHANGES_SCHEMA, "generated_at": shards.built, "window_days": CHANGE_WINDOW.days,
                 "covers_since": export.iso(since), "changes": rows}
+
+
+class _Built:
+    """The changes file and the signed manifest of one stored bundle, built once.
+
+    The held state is an immutable pair ``(bundle sha256, {kind: file})`` that is replaced whole under a lock, never
+    edited in place. A file is built outside the lock from the shard set the request itself holds, and is stored only
+    under that shard set's own sha256, so a bundle that changes while a file is being built can neither receive nor
+    keep a file made from another bundle.
+    """
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state: tuple[str | None, dict] = (None, {})
+
+    def get(self, shards: ShardSet, kind: str, build):
+        sha = shards.bundle_sha256
+        with self.lock:
+            held_sha, files = self.state
+            if held_sha == sha and kind in files:
+                return files[kind]
+        file = build()
+        with self.lock:
+            held_sha, files = self.state
+            self.state = (sha, {**files, kind: file} if held_sha == sha else {kind: file})
+        return file
 
 
 class _Cache:
@@ -275,8 +301,7 @@ def manifest_document(shards: ShardSet, changes_file: tuple[bytes, bytes, str], 
 def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None:
     """Register the shard paths. ``snapshot_error(now)`` returns ``((sha, generated_at, body), None)`` or ``(None, response)``."""
     cache, changes, budget = _Cache(), _Changes(), ShardBudget()
-    memo: dict = {}  # per stored bundle: the changes file and the signed manifest, built once
-    signer: list = []  # the signing key is read on the first manifest, not on every request
+    built = _Built()  # per stored bundle: the changes file and the signed manifest, each built once
 
     def headers(digest: str, generated_at: datetime) -> dict:
         return {"ETag": f'"{digest}"', "Cache-Control": f"public, max-age={bundle.CACHE_SECONDS}",
@@ -303,25 +328,12 @@ def add_routes(app, *, snapshot_error, unchanged, until_midnight, clock) -> None
             return JSONResponse({"error": "bundle_shard_daily_limit"}, status_code=429, headers=until_midnight(now))
         return Response(content=gz, media_type="application/json", headers=head)
 
-    def built(shards: ShardSet) -> dict:
-        if memo.get("sha256") != shards.bundle_sha256:
-            memo.clear()
-            memo["sha256"] = shards.bundle_sha256
-        return memo
-
     def changes_file(shards: ShardSet):
-        held = built(shards)
-        if "changes" not in held:
-            held["changes"] = encode(changes.document(shards))
-        return held["changes"]
+        return built.get(shards, "changes", lambda: encode(changes.document(shards)))
 
     def manifest_file(shards: ShardSet):
-        held = built(shards)
-        if "manifest" not in held:
-            if not signer:
-                signer.append(_signer())
-            held["manifest"] = encode(manifest_document(shards, changes_file(shards), signer[0]))
-        return held["manifest"]
+        # The signing key and its id are read once per stored bundle (a key mounted late or rotated is picked up by the next one).
+        return built.get(shards, "manifest", lambda: encode(manifest_document(shards, changes_file(shards), _signer())))
 
     @app.api_route(MANIFEST_PATH, methods=["GET", "HEAD"], include_in_schema=False)
     def shard_manifest(request: Request):
