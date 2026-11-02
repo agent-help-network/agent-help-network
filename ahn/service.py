@@ -463,6 +463,10 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
         "error_detail": source["last_error_detail"] if failed_later else None,
     }
     provider_status.update(_atom_scope(source) if from_atom else _provider_scope(source))
+    if provider_status["indicator"] == "none" and response_guide.feed_unreadable(provider_status):
+        # A feed that is stale or whose latest read failed does not say "no issue" any more: show unknown. fetched_at (the last
+        # success) stays. Only "none" is replaced; an active indicator keeps D46's wait advice.
+        provider_status["indicator"] = "unknown"
     partial = status_scope.scope_partial(
         source["indicator"], source["active_incidents"], source["max_incident_impact"], source["affected_regional"])
     return FeedView(source, provider_status, partial, source["affected_regional"] is True, False, None)
@@ -713,7 +717,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             try:
                 status_check = (settings.status_check_guide and task_step == "status_check"
                                 and not failure_observed(error_class, failure_stage))  # D69
-                result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check))
+                result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
+                                                   settings.status_check_guide))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:

@@ -82,6 +82,8 @@ STATUS_ROWS: dict[str, str] = {
     "T2": "A provider status feed is listed (provider_status), but it does not give a clear current state here; check the status page at next_action.status_url.",
     "T3": "AHN reads no status feed for this site, so it cannot say whether it is up. Its official status page is next_action.status_url; check it there.",
     "T3-S": "The official status page for this site needs your user's sign-in, so AHN cannot read it. Hand next_action.status_url to your user to check.",
+    "T5": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the status page at next_action.status_url.",
+    "T5-N": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the provider's own status page, or tell your user its status is unverified.",
     "T4": "AHN knows no official status page for this site, so it cannot say whether it is up. Check the site itself, or tell your user its status is unverified.",
 }
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
@@ -290,8 +292,16 @@ def links(versioned: bool = True) -> dict | None:
     return found or None
 
 
+def feed_unreadable(provider_status: dict | None) -> bool:
+    """The status feed could not be read: its latest read failed (error_detail) or its last success is stale. Its indicator is
+    then not a current statement, so a reader must not take it as "no issue"."""
+    return bool(provider_status and (provider_status.get("freshness") == "stale" or provider_status.get("error_detail")))
+
+
 def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None) -> str:
     """D69: the STATUS_ROWS id for a status_check lookup. A row that points at status_url needs one; without it T4."""
+    if provider_status and feed_unreadable(provider_status):
+        return "T5" if status_url else "T5-N"
     if status_url is None:
         return "T4"
     if provider_status:
@@ -301,14 +311,16 @@ def status_row(provider_status: dict | None, official_status_page: dict | None, 
     return "T3-S" if official_status_page.get("requires_sign_in") else "T3"
 
 
-def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False) -> dict:
+def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
+          status_guide: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
     ``customer_url`` are those from before D63. blocked_default (D66, d65 mode, not for a status_check or preflight lookup)
     swaps the sentence of a proceed row for the BLOCKED_PROCEED rows. status_check (D69, only when the caller sent task_step=status_check
     and no failure signal) replaces the sentence by a STATUS_ROWS one unless the row waits, hands off or stops, and adds
-    next_action.status_url; ``do``, ``url`` and the other next_action keys are those of the row."""
+    next_action.status_url; status_guide (the same switch, D69) adds next_action.status_url to any answer whose status page is known,
+    whatever the task_step; ``do``, ``url`` and the other next_action keys are those of the row."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -353,8 +365,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         action["lookup_host"] = apex_host(result["site_host"])
     if customer:
         action["customer_url"] = customer
-    if status_check:
-        status_url = None
+    status_url = None
+    if status_check or status_guide:
         for candidate in ((provider_status or {}).get("source_url"), (result.get("official_status_page") or {}).get("source_url")):
             if candidate:
                 status_url = safe_url(candidate)
@@ -364,10 +376,19 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 break
         if status_url:
             action["status_url"] = status_url
+    if status_check:
+        reasons = set(recommendation.get("reasons") or ())
         # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
-        if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not set(recommendation.get("reasons") or ()) & STATUS_KEEP_REASONS
-                and not (do == "lookup_apex_host" and status_url is None)):
-            sentence = STATUS_ROWS[status_row(provider_status, result.get("official_status_page"), status_url)]
+        if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and not (do == "lookup_apex_host" and status_url is None)
+                and (not reasons & STATUS_KEEP_REASONS or status_url)):
+            status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+            sentence = STATUS_ROWS[status_id]
+            if status_url and status_id != "T4":
+                # The sentence sends the reader to the status page: do and url say the same. A robots block on the site's
+                # pages does not answer "is it down", so it no longer decides the first sentence (access_profile keeps it).
+                if reasons & STATUS_KEEP_REASONS or do == "use_official_path":
+                    action["do"] = "hand_off_to_human" if status_id == "T3-S" else "use_official_path"
+                    action["url"] = status_url
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:

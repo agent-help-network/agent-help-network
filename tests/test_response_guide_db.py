@@ -131,8 +131,9 @@ def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_
     assert body["next_action"]["do"] == plain["next_action"]["do"] and body["next_action"]["url"] == plain["next_action"]["url"]
     assert body["recommendation"] == plain["recommendation"]
     assert failed.status_code == other_step.status_code == 200
-    for other in (failed.json(), other_step.json()):
-        assert other["summary_line"] not in STATUS_ROWS.values() and "status_url" not in other["next_action"]
+    for other in (failed.json(), other_step.json(), plain):
+        # the sentence is the status one only for a status_check lookup without a failure signal; the status page is known to all
+        assert other["summary_line"] not in STATUS_ROWS.values() and other["next_action"]["status_url"] == "https://status.plain-example.org/"
     off = Settings(TEST_URL, "test-pepper-must-be-at-least-thirty-two-chars", public_mode=True, reporting_enabled=True,
                    collect_lookup_metrics=True, response_guide=True, status_check_guide=False)
     with TestClient(create_app(off)) as client:
@@ -154,3 +155,29 @@ def test_d72_only_a_curated_sign_in_host_carries_requires_sign_in(monkeypatch):
     assert signed.json()["summary_line"] == STATUS_ROWS["T3-S"]
     assert "requires_sign_in" not in open_.json()["official_status_page"]
     assert open_.json()["summary_line"] == STATUS_ROWS["T3"]
+
+
+def test_d76_a_feed_that_cannot_be_read_is_not_shown_as_no_issue(monkeypatch):
+    from datetime import timedelta
+    from ahn import feed_robots
+    settings = prepare(monkeypatch, guide=True)
+    monkeypatch.setattr(feed_robots, "shown", lambda *_a, **_k: True)
+    now = datetime.now(timezone.utc)
+    cases = {"stale-example.org": ("now() - interval '5 hours'", None), "failed-example.org": ("now() - interval '30 minutes'", "http_404"),
+             "good-example.org": ("now() - interval '30 minutes'", None)}
+    with connect(settings) as conn:
+        for host, (fetched, detail) in cases.items():
+            conn.execute("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,evidence) VALUES (%s,'Example Status',%s,%s,'curated_mapping')",
+                         (host, f"https://status.{host}/", f"https://status.{host}/api/v2/status.json"))
+            conn.execute(f"INSERT INTO status_cache (site_host,indicator,fetched_at,last_error_at,last_error_detail) VALUES (%s,'none',{fetched},"
+                         + ("now(),%s)" if detail else "NULL,NULL)"), (host, detail) if detail else (host,))
+        views = {host: service.feed_view(conn, host, now) for host in cases}
+    for host in ("stale-example.org", "failed-example.org"):
+        shown = views[host].provider_status
+        assert shown["indicator"] == "unknown" and shown["fetched_at"] is not None
+    assert views["good-example.org"].provider_status["indicator"] == "none"
+    with TestClient(create_app(settings)) as client:
+        body = client.get("/v1/incidents/check", params={"site_host": "failed-example.org", "task_step": "status_check"}).json()
+    CheckResponse(**body)
+    assert body["provider_status"]["indicator"] == "unknown" and body["summary_line"] == STATUS_ROWS["T5"]
+    assert body["next_action"]["status_url"] == "https://status.failed-example.org/"

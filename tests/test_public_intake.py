@@ -622,11 +622,11 @@ def test_provider_fetch_failure_is_not_reported_as_fresh(public_client, monkeypa
     with httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(502))) as remote:
         monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
         before = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
-        assert before["freshness"] == "stale" and before["indicator"] == "none"  # stale-while-revalidate: the cached value
+        assert before["freshness"] == "stale" and before["indicator"] == "unknown"  # D76: the cached "none" is no longer a current statement
         assert queued(settings) == [("status_feed", "github.com")]
         run_queue(settings)
         status = client.get("/v1/incidents/check", params={"site_host": "github.com"}).json()["provider_status"]
-        assert status["indicator"] == "none"
+        assert status["indicator"] == "unknown"
         assert status["freshness"] == "stale"
         assert status["fetched_at"] is not None
         assert status["error_detail"] == "http_502"
