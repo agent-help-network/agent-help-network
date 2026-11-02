@@ -85,6 +85,9 @@ class Settings:
     # AHN_STATUS_CHECK_GUIDE=0 (D69) gives a task_step=status_check lookup the same summary_line as any other lookup and leaves
     # next_action.status_url out. On by default.
     status_check_guide: bool = True
+    # AHN_CAUSE_HINT=0 (D73) leaves the optional `cause` object out of a failure lookup's answer and starts its summary_line as
+    # it did before. `recommendation` and `next_action.do` are the same either way. On by default.
+    cause_hint: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -137,4 +140,5 @@ class Settings:
                    public_board_ahn_check=public_board_ahn_check,
                    lookup_feedback=os.environ.get("AHN_LOOKUP_FEEDBACK", "").strip() != "0",
                    proceed_without_failure=proceed[0] != "off", proceed_mode=proceed[1],
-                   status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0")
+                   status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0",
+                   cause_hint=os.environ.get("AHN_CAUSE_HINT", "").strip() != "0")

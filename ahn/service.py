@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from . import adoption, background_reads, feedback, feed_robots, gov_registry, lookup_signals, site_probe, status_scope
+from . import adoption, background_reads, cause as cause_hint, feedback, feed_robots, gov_registry, lookup_signals, site_probe, status_scope
 from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
@@ -440,7 +440,8 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
-          agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False):
+          agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
+          failed_at: str | None = None):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -459,6 +460,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
     is answered like a status_check lookup.
+
+    ``failed_at`` (D73) is the caller's ISO 8601 time of the failure. It is read once, to choose the optional ``cause``;
+    it is not stored, counted or echoed, and it never touches the recommendation. The caller's own codes never reach
+    ``cause`` (D47).
     """
     # D66: with d65 a lookup is judged as blocked unless it says it was not refused (task_step status_check or preflight).
     lookup_only = plain_view or task_step in LOOKUP_ONLY_STEPS
@@ -656,6 +661,21 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
+        if settings.cause_hint and failure_observed(error_class, failure_stage) and not plain_view:
+            # D73: after the recommendation is final, from stored host-level measurements only; it changes none of the answer.
+            # Any failure leaves `cause` out. A failed_at that cannot be used (bad format, in the future) gives no cause.
+            try:
+                when = cause_hint.parse_failed_at(failed_at, now)
+                if when is not None:
+                    with conn.transaction():
+                        # a locked table must not stall the lookup: give up on the cause instead
+                        conn.execute("SET LOCAL lock_timeout = '200ms'")
+                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage)
+                        conn.execute("SET LOCAL lock_timeout = DEFAULT")
+                    if found is not None:
+                        result["cause"] = found
+            except Exception:
+                LOG.warning("cause_hint_unavailable")
         if settings.response_guide:
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.

@@ -98,6 +98,7 @@ def _enum_schema(enum) -> dict:
 
 
 HTTP_STATUS_SCHEMA = {"type": "integer", "description": "HTTP status the site returned: 401, 402, 403, 407, 408, 429, 451 or 500-599. Leave out if unknown."}
+FAILED_AT_SCHEMA = {"type": "string", "maxLength": 40, "description": "When the step failed, as an ISO 8601 time such as 2026-11-01T07:10:00Z (UTC if no offset). Leave it out for a failure that just happened. Only used to choose the cause shown in the answer; not stored."}
 
 
 def outer_request_headers(ctx: Context | None) -> dict:
@@ -137,6 +138,7 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
                          retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,
                          via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
                          agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor))] = None,
+                         failed_at: Annotated[Any, WithJsonSchema(FAILED_AT_SCHEMA)] = None,
                          ctx: Context | None = None) -> Annotated[CallToolResult, CheckResponse]:
     try:
         valid_host(site_host)
@@ -162,6 +164,9 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     vendor = accepted_vendor(agent_vendor)
     if vendor is not None:
         params["agent_vendor"] = vendor
+    # D73: passed on as sent (text); the API decides whether it can be used. Not text means not sent.
+    if isinstance(failed_at, str) and failed_at.strip():
+        params["failed_at"] = failed_at.strip()[:64]
     response = CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
     return check_result(response)
 

@@ -161,6 +161,8 @@ LOOKUP_FIELDS = {
     "via": Phrase("via", "via"),
     # D48: chooses the recommendation only; neither counted nor stored (the policy sentence says so).
     "agent_vendor": Phrase("agent_vendor", "agent_vendor"),
+    # D73: chooses which stored measurements the answer's cause is read from; neither counted nor stored (the policy sentence says so).
+    "failed_at": Phrase("failed_at", "failed_at"),
     "window_hours": Exempt("REST only: a whole number 1-168 that narrows the observation window, not data about anyone"),
 }
 
@@ -234,6 +236,7 @@ CHECK_RESPONSE_FIELDS = {
     "observations": Phrase("published observations without any reporter identity", "제보자 신원이 없는 공개 관찰"),
     "lookup_activity": Phrase("coarse lookup-activity band", "대략적인 조회 활동 구간"),
     "host_facts": Phrase("registry facts about the domain", "도메인에 관한 레지스트리 사실"),
+    "cause": Phrase("cause hint", "원인 힌트"),
     "ahn_check": Phrase("what our own server received when it requested the host's home page",
                         "우리 서버가 그 호스트의 홈 페이지(/)를 쿠키와 로그인 없이 요청해 받은 것"),
     "site_host": Exempt("echo of the hostname the caller sent"),

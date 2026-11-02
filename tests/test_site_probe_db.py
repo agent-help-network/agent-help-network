@@ -550,7 +550,7 @@ def test_the_switch_off_leaves_the_answer_as_it_was(db, monkeypatch):
 
 
 def strip(result):
-    return {key: value for key, value in result.items() if key not in ("generated_at", "ahn_check", "lookup_activity", "feedback_token")}
+    return {key: value for key, value in result.items() if key not in ("generated_at", "ahn_check", "lookup_activity", "feedback_token", "cause")}
 
 
 @pytest.mark.parametrize("home", [Home(), Home(status=403, headers={"cf-mitigated": "challenge"}), Home(status=429), Home(status=999),
