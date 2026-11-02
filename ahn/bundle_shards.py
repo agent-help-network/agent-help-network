@@ -200,6 +200,10 @@ class _Changes:
                         self.entries[(host, section)] = (shards.generated_at, shards.hosts[host][section])
                 for host, section in self.prints.keys() - prints.keys():
                     self.entries[(host, section)] = (shards.generated_at, None)
+            # Expiry is measured from the newest bundle seen, here only: a late request for an older bundle must
+            # never drop entries that a newer bundle recorded.
+            self.entries = {key: value for key, value in self.entries.items()
+                            if shards.generated_at - value[0] <= CHANGE_WINDOW}
             self.prints, self.bundle_sha256 = prints, shards.bundle_sha256
 
     def document(self, shards: ShardSet) -> dict:
@@ -207,9 +211,9 @@ class _Changes:
         own ``generated_at``, never from the clock, so the same bundle always gives the same bytes (and the same ETag)."""
         anchor = shards.generated_at
         with self.lock:
-            self.entries = {key: value for key, value in self.entries.items() if value[0] <= anchor and anchor - value[0] <= CHANGE_WINDOW}
+            kept = {key: value for key, value in self.entries.items() if value[0] <= anchor and anchor - value[0] <= CHANGE_WINDOW}
             rows = []
-            for (host, section), (changed_at, thin) in sorted(self.entries.items()):
+            for (host, section), (changed_at, thin) in sorted(kept.items()):
                 row = {"host": host, "section": section, "changed_on": changed_at.date().isoformat()}
                 rows.append({**row, "removed": True} if thin is None else {**row, "record": thin})
             since = max(self.since or anchor, anchor - CHANGE_WINDOW)

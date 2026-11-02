@@ -323,7 +323,9 @@ class AgentRule(StrictModel):
 
 
 class RobotsSummary(StrictModel):
-    rules: list[AgentRule]
+    # D71: a task_step=status_check answer leaves `rules` out and gives `rules_omitted` (the count) instead.
+    rules: list[AgentRule] | None = Field(default=None, exclude_if=_omit_none)
+    rules_omitted: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     wildcard_root_allowed: bool
     sitemap: bool = False
     sitemaps: list[str] = Field(default_factory=list)
@@ -622,6 +624,8 @@ class NextAction(StrictModel):
     # D61: with do=use_official_path or, since D63, proceed, the site's own customer page for a task in the user's own
     # account, which a developer API may not reach. Present only when official_paths.consumer is curated.
     customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
+    # D69: the provider's or the official status page, for a task_step=status_check lookup. Present only when one is known.
+    status_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
 
 
 class Links(StrictModel):
