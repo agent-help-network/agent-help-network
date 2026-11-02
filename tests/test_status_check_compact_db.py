@@ -114,3 +114,21 @@ def test_the_switch_reads_the_environment(monkeypatch):
     assert Settings.from_env().status_check_compact is True
     monkeypatch.setenv("AHN_STATUS_CHECK_COMPACT", "0")
     assert Settings.from_env().status_check_compact is False
+
+
+def test_d69_summary_and_robots_block_evidence_survive_the_d71_compaction(monkeypatch):
+    """The compaction runs last on a copy: the status_check summary, next_action (status_url) and the robots-block row decided
+    from the full profile stay, and the block keeps its evidence (agents_blocked, stop_if_you_are) without robots.rules."""
+    settings = warm(monkeypatch, prepare(monkeypatch, guide=True))
+    off = replace(settings, status_check_compact=False)
+    with TestClient(create_app(settings)) as client:
+        compact = lookup(client, task_step="status_check")
+    with TestClient(create_app(off)) as client:
+        full = lookup(client, task_step="status_check")
+    assert "rules" not in robots_of(compact) and robots_of(compact)["rules_omitted"] > 0
+    for key in ("summary_line", "next_action", "recommendation"):
+        assert compact[key] == full[key], key
+    assert compact["next_action"].get("stop_if_you_are") or compact["next_action"].get("status_url")
+    assert sorted(robots_of(compact)["agents_blocked"]) == ["ChatGPT-User", "Claude-User"]
+    if compact["next_action"].get("stop_if_you_are"):
+        assert set(compact["next_action"]["stop_if_you_are"]) <= set(robots_of(compact)["agents_blocked"])

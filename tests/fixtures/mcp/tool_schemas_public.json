@@ -1978,6 +1978,19 @@
        "default": null,
        "title": "Retry After Seconds"
       },
+      "status_url": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Status Url"
+      },
       "stop_if_you_are": {
        "anyOf": [
         {
