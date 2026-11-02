@@ -392,19 +392,28 @@ _FEED_SOURCE_SQL = """SELECT s.source_name,s.status_page_url,s.api_url,c.indicat
 
 
 # D70: enabled sources whose status page is served from the looked-up host. A bare host compare on the URL's host part.
-_STATUS_PAGE_PARENT_SQL = """SELECT s.site_host,s.api_url,s.status_page_url FROM status_sources s
+# The LIKE prefilter keeps the exact compare from being evaluated on every row of the table (D77); the exact compare below decides.
+_STATUS_PAGE_PARENT_SQL = """SELECT s.site_host,s.api_url,s.status_page_url,c.fetched_at FROM status_sources s
+                             LEFT JOIN status_cache c ON c.site_host=s.site_host
                              WHERE s.enabled=true
+                               AND lower(s.status_page_url) LIKE %s ESCAPE '\\'
                                AND split_part(lower(split_part(split_part(s.status_page_url,'://',2),'/',1)),':',1)=%s"""
 
 
 def _status_page_parent(conn, host: str) -> str | None:
     """D70: the site whose stored feed reading belongs to the page served from ``host`` (a lookup of a status page's own
-    host). Used only when ``host`` has no source of its own. Several sites may map one feed (aliases): the smallest
-    site_host stands for them. Sites that map different feeds to one page host are ambiguous: none. Database read only."""
-    rows = [row for row in conn.execute(_STATUS_PAGE_PARENT_SQL, (host.lower(),)).fetchall()
-            if dedicated_status_host(row["status_page_url"]) == host.lower()]  # not a path under a general site
+    host). Used only when ``host`` has no source of its own. Several sites may map one feed (aliases): the one whose stored
+    reading is the most recent stands for them (D77), the smallest site_host among equals. Sites that map different feeds to
+    one page host are ambiguous: none. Database read only."""
+    lowered = host.lower()
+    like = "%://" + lowered.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = [row for row in conn.execute(_STATUS_PAGE_PARENT_SQL, (like, lowered)).fetchall()
+            if dedicated_status_host(row["status_page_url"]) == lowered]  # not a path under a general site
     if not rows or len({row["api_url"] for row in rows}) != 1:
         return None
+    newest = max((row["fetched_at"] for row in rows if row["fetched_at"] is not None), default=None)
+    if newest is not None:
+        rows = [row for row in rows if row["fetched_at"] == newest]
     return min(row["site_host"] for row in rows)
 
 

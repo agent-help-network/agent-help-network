@@ -386,6 +386,29 @@ def test_the_same_stored_bundle_gives_the_same_changes_and_manifest_bytes_and_et
     assert document["covers_since"] == export.iso(_built.generated_at)  # a function of the bundle, not of the clock
 
 
+def test_changes_with_entries_are_the_same_bytes_and_etag_whatever_the_clock_and_the_row_order(monkeypatch):
+    client, box, built, state = serving_with_clock(monkeypatch)
+    path = bundle_shards.CHANGES_PATH
+    assert client.get(path).json()["changes"] == []  # the first bundle seen is only the baseline
+    seeds = load_seed_hosts()
+    rows = [profile_row(host, robots=BLOCKED) if host == "github.com" else profile_row(host) for host in seeds]
+    newer = bundle.build(list(reversed(rows)), seeds, now=NOW + timedelta(hours=2))
+    state["current"] = (newer.sha256, newer.generated_at, newer.body)
+    first = client.get(path)
+    changed = first.json()["changes"]
+    assert [(c["host"], c["section"]) for c in changed] == [("github.com", "access")] and changed[0]["record"]["agents_blocked"] == ["ClaudeBot"]
+    for later in (timedelta(minutes=5), timedelta(days=3), timedelta(days=6), timedelta(days=60)):
+        box["now"] = CLOCK + later
+        again = client.get(path)
+        assert again.status_code == 200 and again.headers["etag"] == first.headers["etag"] and again.content == first.content, later
+    # the same stored bundle built from rows in another order gives the same entries
+    other = shard_set(rows, NOW + timedelta(hours=2))
+    tracker = bundle_shards._Changes()
+    tracker.observe(shard_set([profile_row(host) for host in seeds], NOW))
+    tracker.observe(other)
+    assert tracker.document(other)["changes"] == changed
+
+
 def test_the_manifest_is_built_once_per_stored_bundle_and_a_304_builds_nothing(served, monkeypatch):
     client, _built, _state = served
     builds = []

@@ -88,7 +88,54 @@ def test_alias_parents_with_one_feed_show_it(monkeypatch):
     feed(settings, "acme-two.com", indicator="minor")
     assert look(settings, STATUS_HOST)["provider_status"]["indicator"] == "minor"
     with connect(settings) as conn:
-        assert service._status_page_parent(conn, STATUS_HOST) == "acme-one.com"  # the smallest site_host stands for them
+        conn.execute("UPDATE status_cache SET fetched_at=%s", (datetime(2026, 11, 1, 6, 0, tzinfo=timezone.utc),))
+        assert service._status_page_parent(conn, STATUS_HOST) == "acme-one.com"  # equal readings: the smallest site_host stands for them
+
+
+def test_d77_alias_parents_are_represented_by_the_most_recent_reading_not_the_smallest_name(monkeypatch):
+    settings = prepare(monkeypatch)
+    feed(settings, "acme-one.com", indicator="none")
+    feed(settings, "acme-two.com", indicator="major")
+    feed(settings, "acme-three.com", indicator="none")
+    older, newer = datetime(2026, 11, 1, 6, 0, tzinfo=timezone.utc), datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
+    with connect(settings) as conn:
+        for host, moment in (("acme-one.com", older), ("acme-two.com", newer), ("acme-three.com", older)):
+            conn.execute("UPDATE status_cache SET fetched_at=%s WHERE site_host=%s", (moment, host))
+        assert service._status_page_parent(conn, STATUS_HOST) == "acme-two.com"
+        # a source with no cache row yet never outranks one that has been read
+        conn.execute("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,evidence) VALUES "
+                     "('acme-aaa.com','Acme Status',%s,%s,'curated_mapping')", (PAGE, API))
+        assert service._status_page_parent(conn, STATUS_HOST) == "acme-two.com"
+    assert look(settings, STATUS_HOST)["provider_status"]["indicator"] == "major"
+
+
+class _CountingConn:
+    """Wraps a connection and records how many rows the status-page parent query returned."""
+    def __init__(self, conn):
+        self.conn, self.returned = conn, []
+
+    def execute(self, sql, params=None):
+        cursor = self.conn.execute(sql, params)
+        if "status_page_url" in sql and "LIKE" in sql:
+            rows = cursor.fetchall()
+            self.returned.append(len(rows))
+            return type("Rows", (), {"fetchall": staticmethod(lambda: rows)})()
+        return cursor
+
+
+def test_d77_the_parent_query_is_narrowed_to_the_looked_up_host_and_wildcards_in_a_host_match_nothing_else(monkeypatch):
+    settings = prepare(monkeypatch)
+    feed(settings, "acme-one.com")
+    for n in range(6):
+        feed(settings, f"other{n}.com", page=f"https://status.other{n}.com/", api=f"https://status.other{n}.com/api/v2/status.json")
+    feed(settings, "decoy.com", page="https://statusXacme.example.com/", api="https://statusXacme.example.com/api/v2/status.json")
+    with connect(settings) as conn:
+        counting = _CountingConn(conn)
+        assert service._status_page_parent(counting, STATUS_HOST) == "acme-one.com"
+        assert counting.returned == [1]  # the table has 8 enabled sources; only the host's own rows come back
+        assert service._status_page_parent(counting, "status_acme.example.com") is None  # "_" is not a wildcard
+        assert service._status_page_parent(counting, "%") is None
+        assert counting.returned == [1, 0, 0]
 
 
 def test_a_disabled_source_is_not_a_parent(monkeypatch):
