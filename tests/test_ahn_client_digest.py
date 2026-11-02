@@ -259,7 +259,18 @@ def test_require_signature_refuses_an_unsigned_manifest(monkeypatch):
     Server(monkeypatch)
     result = digest(public_key=public, require_signature=True)
     assert result.signature == "absent" and {record["status"] for record in result.hosts} == {"unverified"}
-    assert "signature_not_verified" in result.notes
+    assert "signature_missing" in result.notes
+
+
+def test_a_given_key_refuses_an_unsigned_manifest_and_no_key_checks_hashes_only(monkeypatch):
+    _private, public = key_pair()
+    Server(monkeypatch)
+    refused = digest(public_key=public)
+    assert refused.signature == "absent" and "signature_missing" in refused.notes
+    assert {record["status"] for record in refused.hosts} == {"unverified"} and refused.generated_at is None
+    assert digest(public_key="not a key").hosts[0]["status"] == "unverified"  # a malformed key does not switch the check off
+    default = digest()
+    assert default.signature == "absent" and [r["status"] for r in default.hosts] == ["in_bundle", "in_bundle"]
 
 
 # --- cache -----------------------------------------------------------------------------------------------------
@@ -274,6 +285,66 @@ def test_a_cache_dir_turns_the_second_run_into_304s(monkeypatch, tmp_path):
     assert len(server.requests) == count and all("If-none-match" in headers for _, headers in server.requests)
     assert [r["status"] for r in second.hosts] == [r["status"] for r in first.hosts] == ["in_bundle", "in_bundle"]
     assert second.hosts[0]["access"] == first.hosts[0]["access"]
+
+
+def shard_requests(server):
+    return [(url, headers) for url, headers in server.requests if "/shards/" in url and not url.endswith("manifest.json")]
+
+
+def test_the_padding_set_is_kept_in_the_cache_dir_and_is_the_same_on_every_call(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    digest(cache_dir=tmp_path, rng=random.Random(1))
+    first = sorted(url for url, _ in shard_requests(server))
+    server.requests.clear()
+    digest(cache_dir=tmp_path, rng=random.Random(999))  # another random source: the stored padding is what counts
+    assert sorted(url for url, _ in shard_requests(server)) == first and len(first) == 16
+    server.requests.clear()
+    digest(cache_dir=tmp_path, rng=random.Random(5), now=CLOCK + timedelta(days=3))
+    assert sorted(url for url, _ in shard_requests(server)) == first
+
+
+def test_padding_grows_only_when_more_room_is_needed_and_keeps_the_old_ids(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    digest(cache_dir=tmp_path, pad_to=8, rng=random.Random(1))
+    small = {url for url, _ in shard_requests(server)}
+    server.requests.clear()
+    digest(cache_dir=tmp_path, pad_to=12, rng=random.Random(2))
+    grown = {url for url, _ in shard_requests(server)}
+    assert len(small) == 8 and len(grown) == 12 and small < grown
+    server.requests.clear()
+    digest(hosts=["github.com"], cache_dir=tmp_path, pad_to=12, rng=random.Random(3))  # fewer hosts: same total, no new draw
+    assert len({url for url, _ in shard_requests(server)}) == 12
+
+
+def test_a_stored_padding_shard_that_becomes_a_real_one_is_not_asked_twice(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    digest(hosts=["github.com"], cache_dir=tmp_path, rng=random.Random(1))
+    stored = json.loads((tmp_path / "padding.json").read_text())["padding"]
+    host = next(h for h in ("wikipedia.org", "nytimes.com", "python.org") if ahn.shard_id(h) in stored)
+    server.requests.clear()
+    digest(hosts=["github.com", host], cache_dir=tmp_path, rng=random.Random(2))
+    urls = [url for url, _ in shard_requests(server)]
+    assert len(urls) == len(set(urls)) == 16
+
+
+def test_real_and_padding_shards_are_asked_for_in_the_same_way(monkeypatch, tmp_path):
+    server = Server(monkeypatch)
+    digest(cache_dir=tmp_path)
+    server.requests.clear()
+    digest(cache_dir=tmp_path)
+    shapes = {tuple(sorted(headers)) for _, headers in shard_requests(server)}
+    assert len(shapes) == 1 and "If-none-match" in next(iter(shapes))
+    assert len(shard_requests(server)) == 16
+
+
+def test_a_damaged_padding_file_is_replaced_not_fatal(monkeypatch, tmp_path):
+    Server(monkeypatch)
+    (tmp_path / "padding.json").write_text('{"padding": [1, "zz", "00", "00", null]}')
+    result = digest(cache_dir=tmp_path)
+    assert result.shards_requested == 16 and [r["status"] for r in result.hosts] == ["in_bundle", "in_bundle"]
+    assert (tmp_path / "padding.json").read_text().startswith('{"schema"')
+    (tmp_path / "padding.json").write_text("[1,2")
+    assert digest(cache_dir=tmp_path).shards_requested == 16
 
 
 def test_a_tampered_cache_file_is_refused_like_a_download(monkeypatch, tmp_path):
@@ -303,6 +374,19 @@ def test_a_regular_host_changed_in_the_last_seven_days_is_marked(monkeypatch):
     assert result.hosts[0]["recent_changes"] == [{"section": "access", "changed_on": "2026-10-19", "removed": False}]
     assert result.hosts[1]["recent_changes"] == [] and result.changes_covers_since == "2026-10-18T06:00:00Z"
     assert "access (2026-10-19)" in ahn.digest_markdown(result) and "Changes are known since 2026-10-18" in ahn.digest_markdown(result)
+
+
+def test_a_changes_value_that_is_not_a_list_is_unusable_not_an_exception(monkeypatch):
+    for bad in ({"a": 1}, "text", 5):
+        document = {"schema": bundle_shards.CHANGES_SCHEMA, "changes": bad, "covers_since": "2026-10-18T06:00:00Z"}
+        raw = bundle_shards.encode(document)[0]
+        server = Server(monkeypatch)
+        server.files[bundle_shards.CHANGES_PATH] = raw
+        manifest = json.loads(server.files[bundle_shards.MANIFEST_PATH])
+        manifest["changes"]["sha256"] = hashlib.sha256(raw).hexdigest()
+        server.files[bundle_shards.MANIFEST_PATH] = bundle_shards.encode(manifest)[0]
+        result = digest()
+        assert "changes_unavailable" in result.notes and result.hosts[0]["status"] == "in_bundle"
 
 
 def test_a_changes_file_that_does_not_match_the_manifest_is_not_used(monkeypatch):
@@ -417,3 +501,16 @@ def test_the_failure_log_never_uses_the_network(monkeypatch, tmp_path):
     log = ahn.FailureLog(tmp_path / "f.json")
     log.record("a.example.com", "transient", "rate_limited")
     log.advice("a.example.com")
+
+
+def test_a_failure_file_with_a_bad_date_is_dropped_row_by_row_and_advice_does_not_crash(tmp_path):
+    path = tmp_path / "failures.json"
+    good = {"date": "2026-10-30", "hour": 3, "branch": "policy_closed", "hint": None, "error_class": None}
+    rows = [good, dict(good, date="not-a-date"), dict(good, date=20261030), dict(good, date="20261030"), dict(good, date=None), {"hour": 1}]
+    path.write_text(json.dumps({"schema": "ahn-failures/1", "hosts": {"example.com": rows}}))
+    log = ahn.FailureLog(path)
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    assert log.recent("example.com", now=now) == [good]
+    assert log.advice("example.com", now=now) == []
+    assert log.record("example.com", "transient", "rate_limited", when=now) is True
+    assert [row["date"] for row in log.recent("example.com", now=now)] == ["2026-10-30", "2026-10-31"]

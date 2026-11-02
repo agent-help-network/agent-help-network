@@ -40,6 +40,14 @@ ADVICE: Dict[str, str] = {
 }
 
 
+def _valid_date(value) -> bool:
+    try:
+        date.fromisoformat(value)
+        return len(value) == 10
+    except (TypeError, ValueError):
+        return False
+
+
 class FailureLog:
     """Rows of recent failures in one JSON file."""
 
@@ -55,7 +63,8 @@ class FailureLog:
         hosts = data.get("hosts") if isinstance(data, dict) else None
         if not isinstance(hosts, dict):
             return {}
-        return {name: [row for row in rows if isinstance(row, dict)] for name, rows in hosts.items() if isinstance(rows, list)}
+        return {name: [row for row in rows if isinstance(row, dict) and _valid_date(row.get("date"))]
+                for name, rows in hosts.items() if isinstance(rows, list)}
 
     def _save(self, hosts: Dict[str, List[dict]]) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))

@@ -33,6 +33,7 @@ SHARD_COUNT = 256
 DEFAULT_PAD_TO = 16
 CHANGE_DAYS = 7
 MAX_FILE_BYTES = 4_194_304
+_SHARD_ID = re.compile(r"[0-9a-f]{2}")
 SHARD_SCHEMA, MANIFEST_SCHEMA, CHANGES_SCHEMA = "ahn-shard/1", "ahn-shards/1", "ahn-changes/1"
 # Shard section -> field of a host record ("status" would clash with the record's own status).
 SECTIONS = {"access": "access", "official": "official", "status": "provider_status"}
@@ -114,6 +115,32 @@ class _Fetcher:
         except (OSError, UnicodeError):
             pass
 
+    def padding(self, wanted: set, others: List[str], count: int, picker) -> List[str]:
+        """``count`` padding shard ids outside ``wanted``. With a cache directory the padding set is stored there and
+        reused, so repeated calls ask for the same shards; it grows (with new random ids) only when more are needed.
+        Without one every call draws a new set."""
+        stored: List[str] = []
+        path = os.path.join(self.cache_dir, "padding.json") if self.cache_dir else None
+        if path:
+            try:
+                with open(path, "r", encoding="ascii") as handle:
+                    loaded = json.load(handle).get("padding")
+                stored = [item for item in dict.fromkeys(loaded) if isinstance(item, str) and _SHARD_ID.fullmatch(item)]
+            except (OSError, ValueError, TypeError, AttributeError):
+                stored = []
+        chosen = [item for item in stored if item not in wanted][:count]
+        if len(chosen) < count:
+            pool = [item for item in others if item not in chosen]
+            chosen += picker.sample(pool, min(count - len(chosen), len(pool)))
+            if path:
+                keep = stored + [item for item in chosen if item not in stored]
+                try:
+                    with open(path, "w", encoding="ascii") as out:
+                        json.dump({"schema": "ahn-padding/1", "padding": keep}, out)
+                except (OSError, UnicodeError):
+                    pass
+        return chosen
+
     def get(self, path: str, name: str) -> bytes:
         """The decoded body of ``path``; a 304 answers from the cache. Raises _NoFile."""
         cached, etag = self._cached(name)
@@ -176,12 +203,16 @@ def local_digest(hosts: Iterable[str], *, pad_to: int = DEFAULT_PAD_TO, cache_di
     """Answer for each of ``hosts`` from the thin bundle shards; never raises for a network or content problem.
 
     - ``pad_to``: how many shards are downloaded in all (1 to 256). The shards of your hosts are topped up with random
-      ones, so the server cannot tell which hosts you hold; with more distinct shards than ``pad_to`` all of yours are
+      ones, so the server cannot tell which hosts you hold. With ``cache_dir`` the padding set is kept there and reused
+      (it changes only when more padding is needed), and every shard asked for, yours or padding, is requested the same
+      way (``If-None-Match`` when a copy is cached). Without ``cache_dir`` each call draws new padding, and over many
+      calls the shards that always come back are yours: use ``cache_dir`` for regular use. With more distinct shards than ``pad_to`` all of yours are
       fetched and a note says so.
     - ``cache_dir``: keep downloads there and ask again with ``If-None-Match``; a cached file is checked against the
       manifest like a new one.
     - ``public_key``: the operator's Ed25519 key (raw 32 bytes or base64url) to verify the manifest's signature. A
-      manifest without a signature is hash-checked only (``signature == "absent"``). ``require_signature=True`` refuses
+      manifest without a signature is hash-checked only (``signature == "absent"``) when no key is given; when a key is
+      given, an unsigned manifest is refused (note ``signature_missing``, hosts ``unverified``). ``require_signature=True`` refuses
       every shard unless the signature is verified.
     - ``changes``: also read the seven-day changes file and mark your hosts that changed in that window.
 
@@ -216,11 +247,10 @@ def local_digest(hosts: Iterable[str], *, pad_to: int = DEFAULT_PAD_TO, cache_di
     fill = max(0, pad_to - len(wanted))
     if len(wanted) > pad_to:
         result.notes.append("more_shards_than_pad_to")
-    plan = list(wanted) + picker.sample(others, min(fill, len(others)))
-    picker.shuffle(plan)
+    fetcher = _Fetcher(base_url, cache_dir, timeout)
+    plan = sorted(list(wanted) + fetcher.padding(set(wanted), others, fill, picker))
     result.shards_requested = len(plan)
 
-    fetcher = _Fetcher(base_url, cache_dir, timeout)
     try:
         manifest_body = fetcher.get("/v1/bundle/shards/manifest.json", "manifest")
         manifest = _json(manifest_body, MANIFEST_SCHEMA)
@@ -236,6 +266,13 @@ def local_digest(hosts: Iterable[str], *, pad_to: int = DEFAULT_PAD_TO, cache_di
         result.signature = "unchecked"
     else:
         result.signature = "verified" if verify_envelope(manifest, key) else "invalid"
+    if key is not None and manifest.get("signature") is None:
+        # A key was given, so an unsigned manifest is refused too (otherwise stripping the signature defeats the check).
+        result.notes.append("signature_missing")
+        for record in records:
+            if record.get("status") == "unavailable":
+                record["status"] = "unverified"
+        return result
     if result.signature == "invalid" or (require_signature and result.signature != "verified"):
         result.notes.append("signature_" + ("invalid" if result.signature == "invalid" else "not_verified"))
         for record in records:
@@ -283,7 +320,10 @@ def _mark_changes(fetcher: _Fetcher, described: dict, records: List[dict], resul
         if hashlib.sha256(body).hexdigest() != described.get("sha256"):
             raise _NoFile("checksum")
         document = _json(body, CHANGES_SCHEMA)
-        rows = [row for row in document.get("changes") or [] if isinstance(row, dict)]
+        listed = document.get("changes")
+        if listed is not None and not isinstance(listed, list):
+            raise _NoFile("unreadable")
+        rows = [row for row in listed or [] if isinstance(row, dict)]
     except _NoFile:
         result.notes.append("changes_unavailable")
         return
