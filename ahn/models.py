@@ -681,10 +681,11 @@ class Cause(StrictModel):
     recommendation is final and changes none of it. ``line`` is a fixed English sentence with times and no site text."""
     branch: Literal["policy_closed", "transient", "undetermined"]
     hint: Literal["home_now_gated", "persistent_refusal", "provider_incident", "site_errors", "recovered", "rate_limited",
-                  "others_failing_same_hour", "your_side_likely", "no_measurement", "home_gate_unconfirmed"]
+                  "others_failing_same_hour", "your_side_likely", "no_measurement", "home_gate_unconfirmed",
+                  "robots_now_disallows", "terms_signal_changed", "new_bot_defense"]
     confidence: Literal["high", "medium", "low"]
     basis: list[Literal["provider_status_events", "outage_episodes", "site_probe", "site_probe_daily",
-                        "lookup_signals_hourly"]] = Field(max_length=5)
+                        "lookup_signals_hourly", "host_access_changes"]] = Field(max_length=6)
     window: CauseWindow | None = Field(default=None, exclude_if=_omit_none)
     line: str = Field(min_length=1, max_length=120, pattern=r"^[ -~]+$")
     recheck_after: datetime | None = Field(default=None, exclude_if=_omit_none)

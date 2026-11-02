@@ -670,7 +670,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                     with conn.transaction():
                         # a locked table must not stall the lookup: give up on the cause instead
                         conn.execute("SET LOCAL lock_timeout = '200ms'")
-                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage)
+                        found = cause_hint.compute(conn, host, now, when, error_class=error_class, failure_stage=failure_stage,
+                                                   agent_vendor=agent_vendor)
                         conn.execute("SET LOCAL lock_timeout = DEFAULT")
                     if found is not None:
                         result["cause"] = found

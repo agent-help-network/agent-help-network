@@ -1144,6 +1144,7 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
         if row and not _read_due(row, now, max_age):
             return _as_profile(site_host, row, now, max_age)
         profile = build_profile(site_host, reader=reader)
+        previous = None
         with connect(settings) as conn:
             if profile["robots_status"] == "error":
                 # Transport failure: keep the previous declared policy, record the attempt and why it failed.
@@ -1157,6 +1158,8 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
             else:
                 # ok/absent/redirected/too_large/not_public/refused are answers in their own right.
                 # Provenance travels with the definitive answer it describes; a later transport failure keeps both.
+                from . import host_access_changes
+                previous = host_access_changes.snapshot(conn, site_host)  # D75: the codes of the reading this one replaces
                 row = conn.execute(
                     f"""INSERT INTO host_access_profile (site_host,fetched_at,robots_status,robots,llms_txt_status,last_error_at,robots_detail,llms_detail,read_host,
                                                          origin_operator,vantage,reader_version,robots_sha256,llms_sha256,content_use,
@@ -1177,13 +1180,16 @@ def get_profile(settings, site_host: str, *, now=None, max_age_hours: int = 24, 
                 ).fetchone()
             from .signal_history import record_read
             record_read(conn, site_host, profile, now, trigger)
+            if previous is not None:
+                host_access_changes.record_profile(conn, site_host, previous, profile, now)  # D75: changed fields only
             from . import site_probe
             site_probe.record_robots_read(conn, site_host, profile["robots_status"], now)
         declared = profile.get("_site_declared")
         if declared is not None and profile["robots_status"] != "error":
             # D59: the standard files are read after the profile row is written, so a lookup waiting for the robots
             # answer does not wait for them too. Still inside the host lock, once per profile read.
-            row = _store_site_declared(settings, site_host, declared, reader, now) or row
+            row = _store_site_declared(settings, site_host, declared, reader, now,
+                                       previous=previous["declared"] if previous is not None else None) or row
         return _as_profile(site_host, row, now, max_age)
 
 
@@ -1196,19 +1202,24 @@ def _pending_site_declared(profile: dict, now: datetime):
     return Jsonb(pending_marker(now.isoformat()))
 
 
-def _store_site_declared(settings, site_host: str, declared: dict, reader, now: datetime):
+def _store_site_declared(settings, site_host: str, declared: dict, reader, now: datetime, previous: dict | None = None):
     """Read the standard files the host's robots.txt allows and store the parsed result with this read; never raises.
 
     Written only while the row still describes this read (fetched_at = now), so a slower reader never puts its
-    result next to a newer robots.txt read. Returns the updated row, or None."""
+    result next to a newer robots.txt read. ``previous`` is the standard-file codes of the reading this one replaces (D75):
+    fields that differ are written to host_access_changes. Returns the updated row, or None."""
     from . import site_declared
     try:
         stored = site_declared.read_all(declared["read_host"], declared["gates"], reader, hop=declared["hop"],
                                         header_seen=declared["headers"], read_at=now.isoformat())
         with connect(settings) as conn:
-            return conn.execute(
+            updated = conn.execute(
                 f"UPDATE host_access_profile SET site_declared=%s WHERE site_host=%s AND fetched_at=%s RETURNING {_ROW_COLUMNS}",
                 (Jsonb(stored), site_host, now)).fetchone()
+            if updated is not None and previous is not None:
+                from . import host_access_changes
+                host_access_changes.record_declared(conn, site_host, previous, stored, now)
+            return updated
     except Exception as exc:  # the profile is already stored; this layer must never fail the read
         LOG.warning("site_declared_store_failed host=%s error=%s", site_host, type(exc).__name__)
     try:  # replace the pending marker, so the answer says store_failed instead of a pending that would not end

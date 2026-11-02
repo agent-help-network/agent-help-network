@@ -5,9 +5,10 @@ computed after the recommendation is final, from tables AHN already keeps for pu
 answer: ``recommendation`` and ``next_action.do`` are what they would be without it (AHN_CAUSE_HINT=0 leaves ``cause`` out).
 
 Inputs (read only, one savepoint, no network): ``provider_status_events``, ``outage_episodes`` (signal A), ``site_probe``,
-``site_probe_daily`` and ``lookup_signals_hourly``, plus the optional ``failed_at``. Nothing is stored. The caller's own
-codes (``http_status``, ``retry_after``, ``challenge``, ``via``) are never read here (D47): counts of other lookups are
-used only when at least OTHERS_MIN_SOURCES separate clients contributed to them. ``line`` is a fixed English template filled with times only: no text from a site and
+``site_probe_daily``, ``lookup_signals_hourly`` and ``host_access_changes`` (D75), plus the optional ``failed_at`` and the
+accepted ``agent_vendor``. Nothing is stored. The caller's own codes (``http_status``, ``retry_after``, ``challenge``,
+``via``) are never read here (D47): counts of other lookups are used only when at least OTHERS_MIN_SOURCES separate
+clients contributed to them. ``line`` is a fixed English template filled with times only: no text from a site and
 no hostname ever reaches it.
 
 Rules that hold for every hint:
@@ -15,8 +16,13 @@ Rules that hold for every hint:
 * A refusal AHN measured (bot challenge, 403, login wall, rate limit on the home page) is never evidence of a temporary
   problem (D68). It is counted on the policy side, separately, and only as ``consecutive_refusals`` >= 2.
 * One refusal is never a policy change: it gives ``undetermined``; the second measurement in a row gives ``policy_closed``.
-* Hints that need a history of access-profile changes (robots.txt now disallows, terms signal changed, new bot defense)
-  are not here: that history is not stored yet.
+* Hints from the history of access-profile changes (D75) look at changes that were recorded from CHANGE_WINDOW before the
+  failure time to CHANGE_LEAD after it, and only while the changed field still has that value now. ``robots_now_disallows``
+  (high) is the caller's vendor tokens, or AHN's own token when no vendor is known, going from allow to block, once.
+  ``new_bot_defense`` (medium) names a home-page block that two refusals already confirm, when its bot-defense provider
+  was not in the daily counts of the 14 days before. ``terms_signal_changed`` (medium, undetermined) is information only:
+  llms.txt removed, or a data-mining reservation added; it takes the place of "nothing measured" and never of another
+  hint, and its line says it is not an access block. A service error from the caller never gets one of these three.
 
 Time handling: ``failed_at`` is an ISO 8601 time. Without it the failure is taken to be now. It is not stored or counted.
 Raw measurements are kept 14 days, provider status changes 90 days, so a time older than 14 days is answered from the
@@ -26,11 +32,19 @@ provider's status history alone. A value that cannot be used (bad format, more t
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from .signal_history import PROVIDER_PROBLEMS, STALE_AFTER
+
+LOG = logging.getLogger(__name__)
+
+# Hints from host_access_changes (D75).
+CHANGE_WINDOW = timedelta(days=14)     # a recorded change this long before the failure time still counts
+CHANGE_LEAD = timedelta(hours=24)      # a change recorded up to this long after it counts too: a re-read finds a change late
+BOT_DEFENSE_LOOKBACK = timedelta(days=14)   # a provider seen in the home-page counts of these days before is not "new"
 
 LINE_MAX = 120                         # a cause line, so an agent can put it into a briefing as it is
 RAW_DAYS = 14                          # tables with raw measurements are pruned after this long
@@ -50,12 +64,14 @@ REFUSAL_CLASSES = ("login_auth", "human_verification")
 
 BRANCHES = ("policy_closed", "transient", "undetermined")
 HINTS = {
-    "policy_closed": ("home_now_gated", "persistent_refusal"),
+    "policy_closed": ("home_now_gated", "persistent_refusal", "robots_now_disallows", "new_bot_defense"),
     "transient": ("provider_incident", "site_errors", "recovered", "rate_limited", "others_failing_same_hour"),
-    "undetermined": ("your_side_likely", "no_measurement", "home_gate_unconfirmed"),
+    "undetermined": ("your_side_likely", "no_measurement", "home_gate_unconfirmed", "terms_signal_changed"),
 }
 CONFIDENCES = ("high", "medium", "low")
-BASIS = ("provider_status_events", "outage_episodes", "site_probe", "site_probe_daily", "lookup_signals_hourly")
+BASIS = ("provider_status_events", "outage_episodes", "site_probe", "site_probe_daily", "lookup_signals_hourly",
+         "host_access_changes")
+INFO_ONLY_HINTS = frozenset({"terms_signal_changed"})   # information about terms, not a cause of the failure
 
 # Fixed sentences. "{win}" is a time window or empty. Every line is printable ASCII and at most LINE_MAX characters.
 LINES: dict[str, str] = {
@@ -68,6 +84,9 @@ LINES: dict[str, str] = {
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
     "home_now_gated": "Likely a policy block: the site refused AHN's last two home-page checks.",
     "persistent_refusal": "Likely a policy block: clients were refused on 3 or more separate days.",
+    "robots_now_disallows": "Likely a policy block: the site's robots.txt now disallows this kind of agent {win}.",
+    "terms_signal_changed": "Terms signal changed {win}: llms.txt removed or data-mining reserved. Not an access block.",
+    "new_bot_defense": "Likely a policy block: the home page now shows a bot-defense page from a new provider {win}.",
     "your_side_likely": "Not determined: AHN's check was normal then; the cause may be on your side. AHN reads no page content.",
     "no_measurement": "Not determined: AHN has no measurement of this site around that time.",
     "home_gate_unconfirmed": "Not determined: the site refused AHN's last home-page check once; one more would confirm a block.",
@@ -246,6 +265,70 @@ def _others(conn, host: str, when: When, error_class: str | None, failure_stage:
                   ["lookup_signals_hourly"], "others_failing_same_hour")
 
 
+def _history(conn, host: str, when: When, now: datetime):
+    """(changes recorded around the failure time, the latest recorded code of each field), or None when there is no change
+    in that window or the table cannot be read (a missing table leaves out only these hints, not the rest of the cause)."""
+    try:
+        with conn.transaction():
+            window = conn.execute(
+                "SELECT field,from_code,to_code,at FROM host_access_changes WHERE site_host=%s AND at >= %s AND at <= %s ORDER BY at, id",
+                (host, when.at - CHANGE_WINDOW, min(when.at + CHANGE_LEAD, now))).fetchall()
+            if not window:
+                return None
+            latest = conn.execute(
+                "SELECT DISTINCT ON (field) field,to_code FROM host_access_changes WHERE site_host=%s AND at <= %s ORDER BY field, at DESC, id DESC",
+                (host, now)).fetchall()
+    except Exception:
+        LOG.warning("cause_history_unavailable")
+        return None
+    return window, {row["field"]: row["to_code"] for row in latest}
+
+
+def _robots_now_disallows(history, agent_vendor: str | None) -> dict | None:
+    """The caller's vendor tokens (D48) went from allow to block in a re-read, and are still blocked. Without a known
+    vendor, AHN's own token stands in; a caller that names its vendor is never told about a token that does not govern it."""
+    from .access_profile import GOVERNING_TOKENS
+    from .host_access_changes import OUR_TOKEN, VERDICT_PREFIX
+
+    window, latest = history
+    tokens = GOVERNING_TOKENS.get(agent_vendor, ()) or (OUR_TOKEN,)
+    fields = {VERDICT_PREFIX + token for token in tokens}
+    hits = [row["at"] for row in window
+            if row["field"] in fields and (row["from_code"], row["to_code"]) == ("allow", "block") and latest.get(row["field"]) == "block"]
+    if not hits:
+        return None
+    return _cause("policy_closed", "robots_now_disallows", "high", ["host_access_changes"], "robots_now_disallows", start=min(hits))
+
+
+def _terms_signal_changed(history) -> dict | None:
+    """llms.txt removed, or a data-mining reservation added (root or any rule), and still so. Information, not a block."""
+    window, latest = history
+    hits = [row["at"] for row in window
+            if (row["field"] == "llms_presence" and (row["from_code"], row["to_code"]) == ("present", "absent")
+                and latest.get("llms_presence") == "absent")
+            or (row["field"] in ("tdm_root", "site_declared_reservation") and row["to_code"] == "reserved"
+                and latest.get(row["field"]) == "reserved")]
+    if not hits:
+        return None
+    return _cause("undetermined", "terms_signal_changed", "medium", ["host_access_changes"], "terms_signal_changed", start=min(hits))
+
+
+def _new_bot_defense(conn, host: str, history) -> dict | None:
+    """A home-page bot-defense provider that appeared and stays, and that the daily counts did not show in the 14 days before."""
+    window, latest = history
+    for row in window:
+        if row["field"] != "bot_vendor" or row["to_code"] == "none" or latest.get("bot_vendor") != row["to_code"]:
+            continue
+        day = row["at"].astimezone(timezone.utc).date()
+        seen = conn.execute(
+            "SELECT 1 FROM site_probe_daily WHERE site_host=%s AND bot_vendor=%s AND day >= %s AND day < %s LIMIT 1",
+            (host, row["to_code"], day - BOT_DEFENSE_LOOKBACK, day)).fetchone()
+        if not seen:
+            return _cause("policy_closed", "new_bot_defense", "medium", ["host_access_changes", "site_probe_daily"],
+                          "new_bot_defense", start=row["at"])
+    return None
+
+
 def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
     """(any home-page check around the failure time, and all of them normal). AHN reads no page content."""
     if probe is not None and probe["outcome"] != "not_measured" and abs(probe["probed_at"] - when.at) <= MEASURE_WINDOW:
@@ -259,12 +342,14 @@ def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
 
 
 def compute(conn, host: str, now: datetime, when: When, *, error_class: str | None = None,
-            failure_stage: str | None = None) -> dict | None:
+            failure_stage: str | None = None, agent_vendor: str | None = None) -> dict | None:
     """The ``cause`` object for a failed step at ``when``, or None when nothing can be said. Reads only; the caller
     runs it in a savepoint and leaves ``cause`` out on any error.
 
-    Order: several clients rate limited in the failure hour, then the provider's status page, then AHN's own reads of the host, then the
-    two policy signals, then other clients' lookups, and last the cases that stay undetermined."""
+    Order: several clients rate limited in the failure hour, then the provider's status page, then AHN's own reads of the
+    host, then the policy signals (robots.txt now disallows; two refusals of the home page, named as a new bot defense when
+    the provider is new; refusals over several days), then other clients' lookups, and last the cases that stay
+    undetermined, where the terms signal (information only) takes the place of "nothing measured"."""
     refusal_like = error_class in REFUSAL_CLASSES or failure_stage == "access_denial_observed"
     probe = _probe(conn, host)
     # other clients' 429s say nothing temporary about a host whose home page AHN saw refuse (D68)
@@ -281,9 +366,15 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
         found = _site_errors(conn, host, when, now)
         if found:
             return found
+    history = _history(conn, host, when, now) if error_class != "service_error" else None
+    if history:
+        found = _robots_now_disallows(history, agent_vendor)
+        if found:
+            return found
     gate = _gated(probe, now, error_class)
     if gate and gate["branch"] == "policy_closed":
-        return gate
+        # a new bot-defense provider names the block more exactly, but only once two refusals confirm it (D68)
+        return (_new_bot_defense(conn, host, history) if history else None) or gate
     for check in (lambda: _persistent(conn, host, when, error_class, failure_stage),
                   lambda: _others(conn, host, when, error_class, failure_stage)):
         found = check()
@@ -293,8 +384,11 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
         return gate
     recheck = probe["next_due_at"] if probe is not None and probe["next_due_at"] > now else None
     measured, normal = _measurement(conn, host, probe, when)
+    # the terms signal is information, never a block: it only fills the place of "nothing measured" or of nothing at all
+    terms = _terms_signal_changed(history) if history else None
     if not measured:
-        return _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement", recheck=recheck)
+        return terms or _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement",
+                               recheck=recheck)
     if normal and (failure_stage == "before_target_response" or refusal_like):
         return _cause("undetermined", "your_side_likely", "low", ["site_probe"], "your_side_likely", recheck=recheck)
-    return None
+    return terms
