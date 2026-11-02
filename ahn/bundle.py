@@ -5,7 +5,9 @@ sorted by kind and hostname,
 
 - ``access_profile``: the latest definitive robots.txt/llms.txt read of each host on the curated part of
   the public seed list (``ahn/seed_hosts.txt`` above the comment that opens its Tranco block), as the
-  operator CLI exports it except that its time is cut to the UTC day;
+  operator CLI exports it except that its time is cut to the UTC day. An optional ``host_change`` list (D75) adds the
+  changes of that host's declared access policy over the last 30 days (field, old and new short code, UTC day), when there
+  were any;
 - ``official_path``: the curated official developer paths (``ahn/official_paths.py``), with an ``access``
   bundle only while it is current under the same 90-day rule as the API;
 - ``status_source``: the curated status-page mappings (``SOURCES`` and ``OFFICIAL_STATUS_PAGES`` in
@@ -36,6 +38,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 import threading
 from dataclasses import dataclass, field
@@ -49,6 +52,8 @@ from . import export
 from .official_paths import OFFICIAL_ACCESS, OFFICIAL_PATHS, access_is_current
 from .provenance import operator_id
 from .status_refresh import OFFICIAL_STATUS_PAGES, SOURCES
+
+LOG = logging.getLogger(__name__)
 
 SWITCH_ENV = "AHN_PUBLIC_BUNDLE"
 PATH = "/v1/bundle/latest.jsonl.gz"
@@ -106,8 +111,9 @@ PAYLOAD_KEYS = {
                               "license_url", "notice", "attribution", "third_party_quotes", "status_source_note",
                               "schema_url", "contribute_url", "includes", "excludes"}),
     # content_use: robots.txt Content-Signal/Content-Usage preferences, parsed from the same file (migration 021).
+    # host_change (D75, optional, left out when empty): the last 30 days of changes in the host's declared access policy.
     "access_profile": frozenset({"site_host", "read_host", "robots_status", "robots", "robots_detail", "llms_txt_status",
-                                 "llms_detail", "llms_txt_url", "llms_sha256", "content_use"}),
+                                 "llms_detail", "llms_txt_url", "llms_sha256", "content_use", "host_change"}),
     "official_path": frozenset({"site_host", "name", "api_docs", "developer_portal", "note", "access"}),
     "status_source": frozenset({"site_host", "source_name", "status_page_url", "api_url", "feed_kind"}),
 }
@@ -127,6 +133,10 @@ ACCESS_KEYS = frozenset({"auth", "free_tier", "key_signup_url", "official_mcp", 
                          "sandbox_url", "feeds", "llms_full_url", "docs_repo", "data_export_url", "terms", "verified_at"})
 ACCESS_SUB_KEYS = {"auth": frozenset({"method", "source_url"}), "official_mcp": frozenset({"endpoint", "doc_url"}),
                    "terms": frozenset({"url", "quote"}), "free_tier": frozenset({"quote", "source_url"})}
+# One host_change entry: the field (host_access_changes.valid_field), the old and new short code and the UTC day. Never a
+# time of day, the source of the change, a file text, a path or a header value.
+HOST_CHANGE_KEYS = frozenset({"field", "from", "to", "day"})
+MAX_HOST_CHANGES = 40       # per host; the newest are kept
 VANTAGE_KEYS = frozenset({"kind", "region", "asn", "declared"})
 SIGNATURE_KEYS = frozenset({"alg", "key_id", "sig"})
 # Names that must not appear at any depth, whatever the allowlists above say: the request-derived and
@@ -190,6 +200,21 @@ def _check_access(access) -> None:
             _check_items(f"access {name}", access[name], allowed)
 
 
+def _check_host_change(value) -> None:
+    if value is None:
+        return
+    from . import host_access_changes
+
+    if not isinstance(value, list) or not value or len(value) > MAX_HOST_CHANGES:
+        raise BundleError(f"host_change is not a list of 1 to {MAX_HOST_CHANGES} entries")
+    for entry in value:
+        _check_keys("host_change entry", entry, HOST_CHANGE_KEYS)
+        if (set(entry) != HOST_CHANGE_KEYS or not host_access_changes.valid_field(str(entry["field"]))
+                or not all(isinstance(entry[key], str) and 1 <= len(entry[key]) <= 24 for key in ("from", "to"))
+                or not isinstance(entry["day"], str) or len(entry["day"]) != 10):
+            raise BundleError("host_change entry is not a field, two short codes and a UTC day")
+
+
 def check_record(record: dict, *, seed_hosts: frozenset[str], operator: str) -> None:
     """Raise BundleError unless ``record`` holds only allowed fields and an allowed host for its kind."""
     _check_keys("envelope", record, ENVELOPE_KEYS)
@@ -207,6 +232,7 @@ def check_record(record: dict, *, seed_hosts: frozenset[str], operator: str) -> 
         for rule in (payload.get("robots") or {}).get("rules") or []:
             _check_keys("robots rule", rule, RULE_KEYS)
         _check_content_use(payload.get("content_use"))
+        _check_host_change(payload.get("host_change"))
     if kind == "official_path":
         _check_access(payload.get("access"))
     _forbidden(record)
@@ -229,6 +255,14 @@ def utc_day(value: datetime) -> datetime:
 def access_profile_record(row: dict) -> dict:
     """The CLI export record of one read, with the read time cut to the UTC day (observed_at, received_at, record_id)."""
     return export.access_profile_envelope({**row, "fetched_at": utc_day(row["fetched_at"])})
+
+
+def host_change_entries(rows) -> list[dict]:
+    """The ``host_change`` list of one host from its change rows (field, from_code, to_code, at): the newest
+    MAX_HOST_CHANGES, oldest first, each cut to the UTC day."""
+    entries = [{"field": row["field"], "from": row["from_code"], "to": row["to_code"], "day": utc_day(row["at"]).date().isoformat()}
+               for row in sorted(rows, key=lambda row: row["at"])[-MAX_HOST_CHANGES:]]
+    return sorted(entries, key=lambda entry: (entry["day"], entry["field"]))
 
 
 def official_path_record(site_host: str, generated_at: datetime) -> dict:
@@ -305,11 +339,14 @@ def filename(generated_at: datetime) -> str:
 
 
 def build(profile_rows, seed_hosts, *, now: datetime | None = None, signing_key=None, kid: str | None = None,
-          creator: str | None = None) -> Bundle:
+          creator: str | None = None, changes: dict | None = None) -> Bundle:
     """The whole file from access-profile rows (as export reads them) and the curated tables in the code.
 
     Rows of hosts not on ``seed_hosts`` are dropped here; ``check_record`` then refuses any record that
     still breaks a rule, so a mistake upstream fails the build instead of reaching the file.
+
+    ``changes`` maps a host to its host_access_changes rows of the last BUNDLE_DAYS (D75); they go into that host's
+    access_profile record only, as the optional ``host_change`` list. A host with no such record carries none.
     """
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     creator = creator or creator_from_env()
@@ -318,7 +355,10 @@ def build(profile_rows, seed_hosts, *, now: datetime | None = None, signing_key=
     records = {kind: [] for kind in KINDS}
     for row in profile_rows:
         if row["site_host"] in seeds:
-            records["access_profile"].append(access_profile_record(row))
+            record = access_profile_record(row)
+            if (changes or {}).get(row["site_host"]):
+                record["payload"]["host_change"] = host_change_entries(changes[row["site_host"]])
+            records["access_profile"].append(record)
     records["official_path"] = [official_path_record(host, generated_at) for host in OFFICIAL_PATHS]
     records["status_source"] = [status_source_record(host, generated_at) for host in SOURCES.keys() | OFFICIAL_STATUS_PAGES.keys()]
     for kind in KINDS:
@@ -390,8 +430,31 @@ def bundle_seed_hosts(path=None) -> list[str]:
     return [host for host in load_seed_hosts(path) if host in curated]
 
 
+def host_changes(conn, hosts, now: datetime) -> dict[str, list]:
+    """host_access_changes rows of the last BUNDLE_DAYS for the given (curated) hosts, by host. Only those hosts are read:
+    a host that was merely looked up never reaches the file. A table that cannot be read gives no changes, not a failed build."""
+    from . import host_access_changes
+
+    try:
+        with conn.transaction():
+            rows = conn.execute(
+                """SELECT site_host,field,from_code,to_code,at FROM host_access_changes
+                   WHERE site_host = ANY(%s) AND at >= %s AND at <= %s ORDER BY site_host, at, id""",
+                (sorted(hosts), now - timedelta(days=host_access_changes.BUNDLE_DAYS), now)).fetchall()
+    except Exception as exc:
+        LOG.warning("bundle_host_changes_unavailable error=%s", type(exc).__name__)
+        return {}
+    found: dict[str, list] = {}
+    for row in rows:
+        found.setdefault(row["site_host"], []).append(row)
+    return found
+
+
 def build_from_db(conn, *, now: datetime | None = None, signing_key=None, kid: str | None = None) -> Bundle:
-    return build(export._rows(conn, "access_profile", None), bundle_seed_hosts(), now=now, signing_key=signing_key, kid=kid)
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    seeds = bundle_seed_hosts()
+    return build(export._rows(conn, "access_profile", None), seeds, now=now, signing_key=signing_key, kid=kid,
+                 changes=host_changes(conn, seeds, now))
 
 
 def lock(conn) -> bool:
@@ -440,8 +503,8 @@ def refresh_if_due(database_url: str, *, now: datetime | None = None, force: boo
 LLMS_SECTION = (
     "## Offline bundle\n\n"
     "- `https://agenthelpnetwork.com/v1/bundle/latest.jsonl.gz` (SHA-256 at the same path + `.sha256`): a daily gzip "
-    "JSON Lines file, CC BY 4.0, with the robots.txt/llms.txt reads of curated seed-list hosts, the curated official "
-    "paths and the curated status-page mappings, so no hostname has to leave your agent. No reports, looked-up hosts, "
+    "JSON Lines file, CC BY 4.0, with the robots.txt/llms.txt reads of curated seed-list hosts (and the last 30 days of "
+    "changes in their declared access policy), the curated official paths and the curated status-page mappings, so no hostname has to leave your agent. No reports, looked-up hosts, "
     "counts, feed values or ranking-list hosts. Fresh until the head record's `valid_until`. Pull at most daily, with "
     "`If-None-Match`; each client may download it 3 times a day. Format: " + SCHEMA_URL + "\n\n"
 )

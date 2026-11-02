@@ -440,13 +440,13 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 실패를 알리는 조회(`error_class` 또는 `failure_stage`)는 선택 필드 `cause` 를 받을 수 있다. AHN 이 저장해 둔 호스트 단위 측정만으로 단계가 왜 실패했는지 말해 주는 정보다. 권고가 확정된 뒤에 붙으므로 `recommendation` 과 `next_action.do` 는 켜도 꺼도 같다. 말할 것이 없거나 실패 신호가 없는 조회에서는 필드를 `null` 이 아니라 아예 뺀다.
 
 - `branch`: `policy_closed`(호스트가 자동 읽기를 거절), `transient`(일시 문제), `undetermined`.
-- `hint`: `home_now_gated`·`persistent_refusal`(policy_closed), `provider_incident`·`site_errors`·`recovered`·`rate_limited`·`others_failing_same_hour`(transient), `your_side_likely`·`no_measurement`·`home_gate_unconfirmed`(undetermined).
-- `confidence`(`high`·`medium`·`low`), `basis`(쓴 저장 출처: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`), 선택 `window`(`from`, 진행 중이면 `to` 없음, UTC), 선택 `recheck_after`(저장된 다음 측정 시각이 있을 때만), `line`: 시각만 채운 120자 이하 출력 가능 ASCII 영어 고정 문장. 사이트 글이나 호스트 이름은 들어가지 않는다.
+- `hint`: `home_now_gated`·`persistent_refusal`·`robots_now_disallows`·`new_bot_defense`(policy_closed), `provider_incident`·`site_errors`·`recovered`·`rate_limited`·`others_failing_same_hour`(transient), `your_side_likely`·`no_measurement`·`home_gate_unconfirmed`·`terms_signal_changed`(undetermined).
+- `confidence`(`high`·`medium`·`low`), `basis`(쓴 저장 출처: `provider_status_events`, `outage_episodes`, `site_probe`, `site_probe_daily`, `lookup_signals_hourly`, `host_access_changes`), 선택 `window`(`from`, 진행 중이면 `to` 없음, UTC), 선택 `recheck_after`(저장된 다음 측정 시각이 있을 때만), `line`: 시각만 채운 120자 이하 출력 가능 ASCII 영어 고정 문장. 사이트 글이나 호스트 이름은 들어가지 않는다.
 - AHN 이 잰 거절(봇 확인, 403, 로그인 벽, 홈 페이지 속도 제한)은 일시 문제의 증거로 읽지 않는다(D68). 거절 한 번은 `undetermined`(`home_gate_unconfirmed`)이고, `policy_closed` 는 다음 측정이 일치하거나 연속 거절이 둘 이상일 때만 나온다.
 - `failed_at`(선택, ISO 8601, UTC 오프셋 유무 무관)은 실패 시각이다. 없으면 지금으로 본다. 받기만 하고 저장하거나 세지 않는다. 원측정은 14일 보관하므로 그보다 오래된 값은 업체 상태 이력만으로 답한다. 쓸 수 없는 값(형식 오류, 5분 넘는 미래)은 다른 시각의 원인을 말하지 않도록 `cause` 를 주지 않는다.
 - `cause` 는 `summary_line` 과 `next_action` 을 바꾸지 않는다(D51). 켜도 꺼도 같다.
 - 호출자 자신의 코드(`http_status`, `retry_after`, `challenge`, `via`)는 `cause` 에 쓰지 않는다(D47). 다른 조회의 시간별 집계(`rate_limited`, `others_failing_same_hour`, `persistent_refusal`)는 서로 다른 클라이언트 세 곳 이상일 때만 쓴다.
-- 아직 없음: 접근 프로필 변경 이력이 필요한 hint(robots.txt 가 이제 막음, 약관 신호 변경, 새 봇 방어).
+- 호스트의 선언된 접근 정책 변경 이력에서 나오는 hint(D75). AHN 이 호스트의 `robots.txt`·`llms.txt`·표준 파일을 다시 읽거나 홈 페이지를 확인했을 때, 직전에 저장한 값과 다른 항목은 짧은 코드(호스트, 시각, 항목, 이전·이후 코드) 한 행으로 90일 보관한다. 호스트를 처음 읽을 때는 아무것도 쓰지 않고, 파일 글·경로·헤더 값은 저장하지 않는다. hint 는 `failed_at` 14일 전부터 24시간 뒤까지 기록된 변화만 보고, 그 항목이 지금도 바뀐 값일 때만 낸다. `robots_now_disallows`(`high`, 한 번으로 충분): 호출자의 벤더 토큰(`agent_vendor`), 벤더가 없으면 AHN 자신의 토큰이 사이트 루트에 대해 허용에서 금지로 바뀜. `new_bot_defense`(`medium`): 홈 페이지가 AHN 의 최근 두 확인을 거절했고(`home_now_gated` 와 같은 조건) 그 봇 방어 업체가 이전 14일의 일별 집계에 없었음. 거절 한 번이면 `home_gate_unconfirmed` 로 남는다. `terms_signal_changed`(`medium`, `undetermined`, 정보일 뿐): `llms.txt` 삭제 또는 데이터 마이닝 유보 신설. 원래 답이 `no_measurement` 이거나 `cause` 가 없을 때만 나오고, `line` 이 접근 차단이 아님을 밝힌다. `error_class=service_error` 를 보낸 호출자에게는 세 hint 모두 주지 않는다.
 
 `AHN_CAUSE_HINT=0`(D73)이면 `cause` 가 빠지고 답이 이전과 같아진다. 기본은 켜짐.
 
@@ -583,7 +583,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 | kind | 내용 | 출처 |
 |---|---|---|
-| `access_profile` | 최근 확정 `robots.txt`·`llms.txt` 판독. 운영자 내보내기 레코드와 같되 판독 시각을 UTC 날짜로 자른다(`observed_at`·`received_at`·`record_id` 가 `T00:00:00Z`) | 공개 시드 목록([`ahn/seed_hosts.txt`](../ahn/seed_hosts.txt)) 중 Tranco 블록을 여는 `# Hosts chosen from the Tranco top 1,000` 주석 위의 큐레이션 부분 호스트만 |
+| `access_profile` | 최근 확정 `robots.txt`·`llms.txt` 판독. 운영자 내보내기 레코드와 같되 판독 시각을 UTC 날짜로 자른다(`observed_at`·`received_at`·`record_id` 가 `T00:00:00Z`). 선택 `payload.host_change`(D75, 변화가 없으면 생략): 이 호스트의 선언된 접근 정책의 최근 30일 변화, 최신 최대 40개를 오래된 것부터, 각각 `{field, from, to, day}`(짧은 코드와 UTC 날짜. `field` 는 `robots_status`, `robots_verdict:<에이전트 토큰>`, `llms_presence`, `tdm_root`, `site_declared_api`, `site_declared_reservation`, `home_outcome`, `bot_vendor` 중 하나이고 판정은 `allow`/`block`). 모르는 필드는 무시하면 된다 | 공개 시드 목록([`ahn/seed_hosts.txt`](../ahn/seed_hosts.txt)) 중 Tranco 블록을 여는 `# Hosts chosen from the Tranco top 1,000` 주석 위의 큐레이션 부분 호스트만 |
 | `official_path` | `name`, `api_docs`, `developer_portal`, `note`, 그리고 `access`(인증, 키 발급, 한도, 샌드박스, OpenAPI, MCP, 약관). `access` 는 API 와 같은 90일 규칙으로 파일의 유효 기간 내내 유효할 때만 넣는다 | 큐레이션 표 [`ahn/official_paths.py`](../ahn/official_paths.py) |
 | `status_source` | `source_name`, `status_page_url`, `api_url`, `feed_kind`(링크만 있는 페이지는 둘 다 `null`) | [`ahn/status_refresh.py`](../ahn/status_refresh.py) 의 큐레이션 `SOURCES`·`OFFICIAL_STATUS_PAGES`. 이 호스트 중 상당수는 Tranco 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 직접 확인했으며 순위는 담지 않는다 |
 

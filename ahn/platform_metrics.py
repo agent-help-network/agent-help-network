@@ -168,6 +168,13 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM robots_read_daily WHERE day < CURRENT_DATE - 89")
     except psycopg.Error as exc:
         print(f"signal_history_prune failed={type(exc).__name__}")
+    # Changes in a host's declared access policy (migration 035, ahn/host_access_changes.py, D75): 90 days (the literal matches
+    # host_access_changes.RETENTION_DAYS; the policy-coverage test checks it). Own transaction, as above.
+    try:
+        with connect_url(database_url) as conn:
+            conn.execute("DELETE FROM host_access_changes WHERE at < now() - interval '90 days'")
+    except psycopg.Error as exc:
+        print(f"host_access_changes_prune failed={type(exc).__name__}")
     # AHN server check of home pages (migration 033, ahn/site_probe.py, D67): the current row per host 30 days after its
     # check, daily counts and the automatic-stop counters 35 days. Own transaction, as above.
     try:

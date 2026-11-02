@@ -1019,11 +1019,12 @@
          "outage_episodes",
          "site_probe",
          "site_probe_daily",
-         "lookup_signals_hourly"
+         "lookup_signals_hourly",
+         "host_access_changes"
         ],
         "type": "string"
        },
-       "maxItems": 5,
+       "maxItems": 6,
        "title": "Basis",
        "type": "array"
       },
@@ -1056,7 +1057,10 @@
         "others_failing_same_hour",
         "your_side_likely",
         "no_measurement",
-        "home_gate_unconfirmed"
+        "home_gate_unconfirmed",
+        "robots_now_disallows",
+        "terms_signal_changed",
+        "new_bot_defense"
        ],
        "title": "Hint",
        "type": "string"
