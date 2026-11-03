@@ -3,7 +3,7 @@
 A Statuspage ``status.json`` indicator is one value for the whole page. Cloudflare's page reads ``major``
 for months while every product component is operational and only data-center groups are down; RubyGems
 reads ``maintenance`` with no maintenance scheduled because two components were left "under
-maintenance" years ago. So when a refresh of an Atlassian Statuspage feed reads an active indicator
+maintenance" years ago. So when a refresh of a Statuspage-shaped feed reads an active indicator
 (minor or above, or maintenance) we read two more small public lists from the same page; a page that
 reads none costs its one status.json request only:
 

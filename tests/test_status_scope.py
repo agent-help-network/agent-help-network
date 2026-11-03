@@ -162,6 +162,9 @@ def test_other_feed_kinds_and_calls_without_scope_make_one_request():
      "c0e43449-112f-4c8d-8a00-3dac671ec84c"),                                       # lowercase UUID
     ({"page": {"id": "C0E43449-112F-4C8D-8A00-3DAC671EC84C", "time_zone": "Etc/UTC"}}, None),   # upper-case UUID
     ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c"}}, None),                # UUID, no time_zone
+    ({"page": {"id": "{c0e43449-112f-4c8d-8a00-3dac671ec84c}", "time_zone": "Etc/UTC"}}, None),   # braced UUID
+    ({"page": {"id": "c0e43449-112F-4c8d-8A00-3dac671ec84c", "time_zone": "Etc/UTC"}}, None),     # mixed-case UUID
+    ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c\n", "time_zone": "Etc/UTC"}}, None),   # trailing newline
     ({"page": {"id": "c0e43449-112f-4c8d-8a00-3dac671ec84c/../x", "time_zone": "Etc/UTC"}}, None),
     ({"page": {"id": "01JMDK9XYNY6RXSED6SDWW50WY", "time_zone": "Etc/UTC"}}, None),   # ULID
     ({"page": {"id": "yh6f0r4529hb"}}, None),                                        # no time_zone
@@ -169,7 +172,7 @@ def test_other_feed_kinds_and_calls_without_scope_make_one_request():
     ({"status": {"indicator": "none"}}, None),
     ([], None),
 ])
-def test_only_atlassian_statuspage_bodies_are_recognized(page, expected):
+def test_only_statuspage_shaped_bodies_are_recognized(page, expected):
     assert status_scope.statuspage_page_id(page) == expected
 
 
