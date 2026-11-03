@@ -68,7 +68,7 @@ PROVIDER_MAX_AGE = timedelta(days=3)   # a status-page problem older than this a
 MEASURE_WINDOW = timedelta(hours=12)   # how close a home-page check must be to the failure time to describe it
 ROBOTS_LINE_FRESH = timedelta(hours=24)   # a robots.txt reason names the present only while the stored row is this recent
 NOTE = "Information only; follow next_action."   # on every cause, as ahn_check carries its own note
-PROBE_FRESH = timedelta(days=8)        # a refusal is re-measured after 7 days (site_probe.REFUSED_EXCLUDE_DAYS)
+PROBE_FRESH = timedelta(days=8)        # a first refusal is re-measured after 24 hours, later ones every 7 days (site_probe)
 OTHERS_MIN_SOURCES = 3                 # other clients seen with service errors in the failure hour: "several"
 OTHERS_MEDIUM_SOURCES = 10
 PERSISTENT_DAYS = 3                    # separate UTC days of refused lookups

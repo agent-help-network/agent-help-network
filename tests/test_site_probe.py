@@ -128,14 +128,17 @@ def previous(refusals=0, failures=0):
     return {"consecutive_refusals": refusals, "consecutive_failures": failures}
 
 
-def test_e4_a_refusal_takes_the_host_off_the_list_for_7_days_flat():
+def test_e4_a_refusal_takes_the_host_off_the_list_for_7_days_flat_after_the_first_counted_one():
     # D68: a refusal, challenge, rate limit, login wall or 503 is not a failure; the host is simply not asked for a week.
+    # D83: the first counted refusal (bot challenge, refused) is confirmed once after 24 hours.
     prev = None
+    waits = []
     for outcome in ("bot_challenge", "refused", "rate_limited", "login_wall", "bot_challenge"):
         wait, refusals, failures = site_probe.schedule(outcome, prev, None)
-        assert wait == timedelta(days=site_probe.REFUSED_EXCLUDE_DAYS) == timedelta(days=7)
+        waits.append(wait)
         assert failures == 0
         prev = previous(refusals, failures)
+    assert waits == [timedelta(hours=24)] + [timedelta(days=site_probe.REFUSED_EXCLUDE_DAYS)] * 4
     assert prev["consecutive_refusals"] == 3  # bot_challenge and refused still feed the refusal count
     wait, refusals, failures = site_probe.schedule("server_error", previous(0, 2), None, 503)
     assert (wait, failures) == (timedelta(days=7), 0)
@@ -143,11 +146,46 @@ def test_e4_a_refusal_takes_the_host_off_the_list_for_7_days_flat():
     assert site_probe.schedule("server_error", None, None, 500)[0] == timedelta(hours=6)
 
 
+def test_d83_only_a_first_counted_refusal_is_confirmed_after_24_hours():
+    for outcome in ("bot_challenge", "refused"):
+        assert site_probe.schedule(outcome, None, None) == (timedelta(hours=24), 1, 0)
+        assert site_probe.schedule(outcome, previous(0, 3), None) == (timedelta(hours=24), 1, 0)   # failures reset
+        assert site_probe.schedule(outcome, previous(1), None) == (timedelta(days=7), 2, 0)
+        assert site_probe.schedule(outcome, previous(5), None) == (timedelta(days=7), 6, 0)
+    # a rate limit, a login wall and a 503 do not count, so they never get the short wait (a login wall is handled separately)
+    for outcome, status in (("rate_limited", None), ("login_wall", None), ("server_error", 503)):
+        assert site_probe.schedule(outcome, None, None, status) == (timedelta(days=7), 0, 0)
+        assert site_probe.schedule(outcome, previous(1), None, status) == (timedelta(days=7), 1, 0)
+    # after a normal answer the count is 0 again, so the next refusal is a first one again
+    assert site_probe.schedule("reachable", previous(4), None)[1] == 0
+    assert site_probe.schedule("refused", previous(0), None)[0] == timedelta(hours=24)
+
+
+def test_d83_a_first_refusal_never_asks_sooner_than_retry_after_or_later_than_7_days():
+    assert site_probe.schedule("refused", None, 60)[0] == timedelta(hours=24)
+    assert site_probe.schedule("refused", None, 10 * 3600)[0] == timedelta(hours=24)
+    assert site_probe.schedule("refused", None, 48 * 3600)[0] == timedelta(hours=48)
+    assert site_probe.schedule("bot_challenge", None, 30 * 86400)[0] == timedelta(days=7)
+    assert site_probe.schedule("bot_challenge", None, None)[0] == timedelta(hours=site_probe.CONFIRM_AFTER_HOURS)
+
+
+def test_d83_the_switch_off_restores_the_flat_7_days(monkeypatch):
+    monkeypatch.setenv("AHN_REFUSAL_CONFIRM", "0")
+    prev = None
+    for outcome in ("bot_challenge", "refused", "bot_challenge"):
+        wait, refusals, failures = site_probe.schedule(outcome, prev, 48 * 3600)
+        assert wait == timedelta(days=7)
+        prev = previous(refusals, failures)
+    assert prev["consecutive_refusals"] == 3
+    monkeypatch.setenv("AHN_REFUSAL_CONFIRM", "1")
+    assert site_probe.schedule("refused", None, None)[0] == timedelta(hours=24)
+
+
 def test_e4_retry_after_neither_lengthens_nor_shortens_the_7_days():
     assert site_probe.schedule("rate_limited", None, 5 * 86400)[0] == timedelta(days=7)
     assert site_probe.schedule("rate_limited", None, 40 * 86400)[0] == timedelta(days=7)
     assert site_probe.schedule("rate_limited", None, 60)[0] == timedelta(days=7)
-    assert site_probe.schedule("refused", None, 10 * 3600)[0] == timedelta(days=7)
+    assert site_probe.schedule("refused", previous(1), 10 * 3600)[0] == timedelta(days=7)
     assert site_probe._retry_after_seconds("120", NOW) == 120
     assert site_probe._retry_after_seconds("Sun, 01 Nov 2026 14:00:00 GMT", NOW) == 7200
     assert site_probe._retry_after_seconds(str(40 * 86400), NOW) == 7 * 86400

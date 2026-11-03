@@ -348,6 +348,43 @@ def test_the_home_gate_sentence_has_the_age_and_the_provider_of_the_stored_check
 
 # --- policy_closed: home_now_gated, persistent_refusal --------------------------------------------------------------------
 
+def _refuse(db, monkeypatch, host, at):
+    """A real home-page check of ``host`` that is answered with a 403 (stubbed request), stored by site_probe.measure."""
+    from ahn import site_probe
+    monkeypatch.setenv("AHN_SITE_PROBE", "1")
+    monkeypatch.setattr(site_probe, "PAUSE_SECONDS", 0.0)
+    with connect(db) as conn:
+        conn.execute("INSERT INTO bandwidth_guard_state (name,period_start,checked_at,usage_gb,state) VALUES ('web',now(),now(),1,'normal') "
+                     "ON CONFLICT DO NOTHING")
+    access_profile.get_profile(db, host, now=at, reader=lambda site_host, path, **_: (
+        ("ok", ROBOTS, "http_200") if path == "/robots.txt" else ("absent", None, "http_404")))
+    body = b"<html>no</html>"
+    result = {"label": None, "status": 403, "headers": {}, "cookies": [], "body": body, "complete": True, "ms": 80, "bytes_read": len(body)}
+    row = site_probe.measure(db, host, "daily", now=at, reader=lambda _host: dict(result), paced=False)
+    assert row is not None and row["outcome"] == "refused" and row["consecutive_refusals"] == 1
+    return row
+
+
+def test_d83_a_first_refusal_confirmed_after_24_hours_changes_only_recheck_after(db, monkeypatch):
+    """D83: the shorter first wait (from a real check, not a seeded time) moves recheck_after and nothing the caller is told."""
+    short, flat = "d83-short.org", "d83-flat.org"
+    at = now() - timedelta(hours=1)
+    stored_short = _refuse(db, monkeypatch, short, at)
+    monkeypatch.setenv("AHN_REFUSAL_CONFIRM", "0")
+    stored_flat = _refuse(db, monkeypatch, flat, at)
+    assert stored_short["next_due_at"] == at + timedelta(hours=24) and stored_flat["next_due_at"] == at + timedelta(days=7)
+    monkeypatch.setenv("AHN_REFUSAL_CONFIRM", "1")
+    a = look(db, short, error_class="site_access")
+    b = look(db, flat, error_class="site_access")
+    assert a["cause"]["recheck_after"] == iso(at + timedelta(hours=24)) and b["cause"]["recheck_after"] == iso(at + timedelta(days=7))
+    for key in ("recommendation", "summary_line"):
+        assert a[key] == b[key], key
+    assert a["next_action"]["do"] == b["next_action"]["do"]
+    left = {k: v for k, v in a["cause"].items() if k != "recheck_after"}
+    right = {k: v for k, v in b["cause"].items() if k != "recheck_after"}
+    assert left == right and left["hint"] == "home_gate_unconfirmed" and left["branch"] == "undetermined"
+
+
 def test_two_refusals_in_a_row_are_a_policy_block_and_one_is_only_undetermined(db):
     two, one = "gate-two.org", "gate-one.org"
     due = now() + timedelta(days=7)
