@@ -159,7 +159,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 | `use_official_path` | 차단 선언(아래)이 있고 공식 경로가 있다. | high |
 | `stop_declared_block` | 차단 선언이 있고 공식 경로가 없다. 페이지 자동 재시도를 멈춘다. | medium |
 | `use_official_path` | 호스트 경계가 `robots.txt` 읽기를 거절했고(`robots_status: refused`) 공식 경로가 있다. | medium |
-| `unknown` | `refused` 이고 공식 경로가 없다(사유 `robots_fetch_refused`). 비슷한 환경의 페이지 자동화도 거절될 것으로 본다. | medium |
+| `unknown` | `refused` 이고 공식 경로가 없다(사유 `robots_fetch_refused`). 비슷한 환경의 페이지 자동화도 거절될 수 있다. | medium |
 | `use_official_path` | 부분 차단이나 와일드카드 단독 금지(아래)이고 공식 경로가 있다. | medium |
 | `unknown` | 부분 차단이나 와일드카드 단독 금지이고 공식 경로가 없다(사유 `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`). 허락으로 읽지 않는다. | low |
 | `use_official_path` | 공식 경로가 있고 `error_class` 가 없거나 `site_access`, `service_error` 다(D63 뒤로는 실패 신호가 있거나 robots 가 clear 가 아닐 때만. 라이브가 쓰는 D66 모드에서는 실패 신호도, `status_check`·`preflight` 인 `task_step` 도 없는 조회를 `site_access` 를 보낸 것처럼 판정하므로 이 행에도 온다). | medium |

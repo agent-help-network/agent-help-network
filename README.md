@@ -166,7 +166,7 @@ Where it applies, a fourth, separate field adds **registry facts about the domai
 | `use_official_path` | A declared block (below) and an official path is listed. | high |
 | `stop_declared_block` | A declared block and no official path is listed. Stop automated retries against pages. | medium |
 | `use_official_path` | The host's edge refused the `robots.txt` read (`robots_status: refused`) and an official path is listed. | medium |
-| `unknown` | `refused` and no official path is listed (reason `robots_fetch_refused`). Expect page automation from a similar environment to be refused too. | medium |
+| `unknown` | `refused` and no official path is listed (reason `robots_fetch_refused`). Page automation from a similar environment may be refused too. | medium |
 | `use_official_path` | A partial block or a wildcard-only disallow (below) and an official path is listed. | medium |
 | `unknown` | A partial block or a wildcard-only disallow and no official path is listed (reasons `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`). Do not read it as permission. | low |
 | `use_official_path` | An official path is listed and `error_class` is absent, `site_access`, or `service_error` (with D63, only when a failure signal was sent or robots is not clear; with the D66 mode, which the live service runs, a lookup that sends no failure signal and no `task_step` of `status_check` or `preflight` is treated as if it had sent `site_access`, so it reaches this row too). | medium |

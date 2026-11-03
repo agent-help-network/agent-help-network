@@ -700,7 +700,7 @@ class CheckResponse(StrictModel):
     site_host: str
     generated_at: datetime
     # D51: present unless AHN_RESPONSE_GUIDE=0; left out (never null) otherwise.
-    summary_line: str | None = Field(default=None, min_length=1, max_length=200, pattern=r"^[ -~]+$", exclude_if=_omit_none)
+    summary_line: str | None = Field(default=None, min_length=1, max_length=401, pattern=r"^[ -~]+$", exclude_if=_omit_none)
     next_action: NextAction | None = Field(default=None, exclude_if=_omit_none)
     links: Links | None = Field(default=None, exclude_if=_omit_none)
     # D73: present only on a failure lookup while AHN_CAUSE_HINT is not 0 and a cause can be said; left out (never null) otherwise.

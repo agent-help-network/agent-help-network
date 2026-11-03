@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6
+
+- A server `summary_line` of up to 401 printable ASCII characters is used as sent (the limit was 200). The service now puts the status sentence before the robots sentence in a `task_step=status_check` answer that rests on a robots block, so that line can be longer than one sentence.
+
 ## 0.6.5
 
 - `ahn.local_digest` with `cache_dir`: the padding file is now read, extended and written inside one operating-system lock on `padding.lock` (the system releases it if the holder dies; the lock file is never deleted). Before, two processes starting at the same time, or both growing the same stored set, could each request their own padding and only the last file written stayed, so one client could ask for two different padding sets. If the lock is not free within 10 seconds, or the set cannot be stored, nothing is requested and the note is `padding_unreadable`. In a folder you cannot write to, a stored set that is big enough is used as it is; if it would have to grow or be created, nothing is requested. Leftover `.padding-*` temp files are cleaned up. The guarantee holds only when every process that uses the same `cache_dir` runs 0.6.5 or newer; an older client does not take the lock. On Windows a lock file that exists but cannot be opened for writing is waited for only when it cannot be read either (another program holds it); a read-only lock file or one denied by permissions is treated at once as a folder we cannot write to, and a stored set that is big enough is still used.

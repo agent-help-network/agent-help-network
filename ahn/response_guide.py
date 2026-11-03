@@ -24,6 +24,9 @@ LOG = logging.getLogger(__name__)
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%+=&?#-]*)?$")
 URL_MAX = 200
 LINE_MAX = 200
+# D79: a status_check answer that rests on a robots block is the status sentence followed by the row's own robots sentence, so it
+# may be longer than one sentence. Each part stays within LINE_MAX, the pair within this.
+STATUS_LINE_MAX = 2 * LINE_MAX + 1
 MAX_STOP_TOKENS = 16
 RETRY_MAX = 3600
 
@@ -55,7 +58,7 @@ ROWS: dict[str, tuple[str, str]] = {
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
     "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
     "O4": ("use_official_path", "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; use the listed official developer path."),
-    "O5": ("use_official_path", "The site refused even a plain automated robots.txt read. Expect page automation to be refused too; use the listed official developer path."),
+    "O5": ("use_official_path", "The site refused even a plain automated robots.txt read. Page automation may be refused too; use the listed official developer path."),
     "O6": ("use_official_path", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed). Do not read that as permission; use the listed official developer path."),
     "O7": ("use_official_path", "An official developer path is listed for this site. Prefer that documented API or portal over page automation."),
     "O7-N": ("use_official_path", "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation."),
@@ -71,7 +74,7 @@ ROWS: dict[str, tuple[str, str]] = {
     "U3": ("stop_if_listed", "robots.txt blocks some agent tokens; this applies to requests that send them (next_action.stop_if_you_are). If yours is one, stop retrying pages; else send agent_vendor."),
     "U4": ("no_clear_action", "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; tell the user before automating pages."),
     "U5": ("no_clear_action", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed), and no official path is listed. Do not read this as permission."),
-    "U6": ("no_clear_action", "The site refused even a plain automated robots.txt read, and no official path is listed. Expect page automation to be refused; hand off if needed."),
+    "U6": ("no_clear_action", "The site refused even a plain automated robots.txt read, and no official path is listed. Page automation may be refused; hand off if needed."),
     "U7": ("no_clear_action", "The site's robots.txt could not be read, so no declared policy is known. No official path is listed; follow your operator's rules."),
     "U8": ("lookup_apex_host", "Policy is read only for a site's main domain, not this subdomain. Look up next_action.lookup_host for the site-wide declaration."),
     "U9": ("no_clear_action", "No declared policy could be read for this host and no official path is listed. Nothing here forbids the step; follow your operator's rules and the site's terms."),
@@ -86,6 +89,9 @@ STATUS_ROWS: dict[str, str] = {
     "T5": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the status page at next_action.status_url.",
     "T5-N": "AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up. Check the provider's own status page, or tell your user its status is unverified.",
     "T4": "AHN knows no official status page for this site, so it cannot say whether it is up. Check the site itself, or tell your user its status is unverified.",
+    # D79: the status sentence put before a robots sentence. It never sends the caller to the site or to a page the robots block covers.
+    "T4-R": "AHN knows no official status page for this site, so it cannot say whether it is up; tell your user its status is unverified.",
+    "T3-R": "AHN reads no status feed for this site, so it cannot say whether it is up; tell your user its status is unverified.",
 }
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
 # A row decided by the site's own robots policy keeps its sentence under status_check: the T sentences say nothing about the block.
@@ -127,7 +133,7 @@ CONSUMER_ROWS: dict[str, str] = {
     "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + CONSUMER_HAND_TAIL,
     "O3": "robots.txt blocks the tokens in next_action.stop_if_you_are, for requests that send them. Use the official path." + CONSUMER_HAND_TAIL,
     "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + CONSUMER_HAND_TAIL,
-    "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + CONSUMER_HAND_TAIL,
+    "O5": "The site refused even a plain robots.txt read; pages may refuse too. Use the listed official path." + CONSUMER_HAND_TAIL,
     "O6": "robots.txt disallows the root for tokens not in robots.agents_allowed; not permission. Use the official path." + CONSUMER_HAND_TAIL,
     "O7": _CONSUMER_O7,
     "O7-N": _CONSUMER_O7,
@@ -408,6 +414,15 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
                 and not (do == "lookup_apex_host" and status_url is None)):
             sentence = STATUS_ROWS[status_id]
+        elif (robots_kept and do not in STATUS_KEEP_DO and do != "proceed" and row not in RETRY_ROWS
+                and not (do == "lookup_apex_host" and status_url is None)):
+            # D79: the first sentence answers "is it up"; the row's robots sentence is kept, after it. ``do`` and ``url`` stay.
+            # The status sentence does not say "check the site itself" (the robots sentence that follows says otherwise), and a status
+            # page on the looked-up site's own domain is not pointed at (D76).
+            lead = status_id
+            if status_id == "T4" or (status_id == "T3" and same_site(status_url, result["site_host"])):
+                lead = "T4-R" if status_id == "T4" else "T3-R"
+            sentence = f"{STATUS_ROWS[lead]} {sentence}"
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:
