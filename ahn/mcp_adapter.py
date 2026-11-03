@@ -17,6 +17,7 @@ from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
+from .check_text import VENDOR_NAMES, age_text
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
@@ -175,19 +176,7 @@ PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing bloc
                 "your tool, the site's edge, robots.txt or a login: tell your user what was refused and by whom.")
 
 
-_VENDOR_NAMES = {"cloudflare": "Cloudflare", "datadome": "DataDome", "perimeterx": "PerimeterX", "aws_waf": "AWS WAF",
-                 "vercel": "Vercel", "generic_captcha": "a human-verification widget", "unknown": "an unidentified provider"}
 _CHECK_CAVEAT = "This is what AHN's data-center server got; your network may get a different answer."
-
-
-def _age_text(seconds: int) -> str:
-    if seconds < 300:
-        return "just now"
-    if seconds < 3600:
-        return f"{seconds // 60} min ago"
-    if seconds < 86400:
-        return f"{seconds // 3600} h ago"
-    return f"{seconds // 86400} days ago"
 
 
 def ahn_check_line(check) -> str | None:
@@ -197,14 +186,14 @@ def ahn_check_line(check) -> str | None:
         return None
     status = f"{check.http_status}, " if check.http_status else ""
     if check.outcome == "bot_challenge":
-        vendor = f" ({_VENDOR_NAMES.get(check.bot_defense.vendor, 'unknown')})" if check.bot_defense else ""
+        vendor = f" ({VENDOR_NAMES.get(check.bot_defense.vendor, 'unknown')})" if check.bot_defense else ""
         what = f"{status}bot challenge{vendor}"
     else:
         what = {"reachable": f"{status}home page answered", "redirected_same_host": f"{status}redirected within the site",
                 "refused": f"{status}refused", "rate_limited": f"{status}rate limited", "login_wall": "leads to a sign-in page",
                 "redirected_offsite": f"{status}redirected to another site", "server_error": f"{status}server error",
                 "unreachable": "could not connect", "other_status": f"{status}other answer".strip(", ")}[check.outcome]
-    return f"AHN server check {_age_text(check.age_seconds)}: {what}. {_CHECK_CAVEAT}"
+    return f"AHN server check {age_text(check.age_seconds)}: {what}. {_CHECK_CAVEAT}"
 
 
 def check_result(response: CheckResponse):

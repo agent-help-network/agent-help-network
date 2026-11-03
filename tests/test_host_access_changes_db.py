@@ -78,7 +78,7 @@ def test_retention_constants_match_the_prune_and_the_policy_statement():
     assert hac.RETENTION_DAYS == 90 and hac.BUNDLE_DAYS == 30
 
 
-def test_the_three_cause_lines_are_printable_ascii_within_120_characters():
+def test_the_three_cause_lines_are_printable_ascii_within_200_characters():
     from ahn import cause
 
     start, end = datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), datetime(2027, 1, 2, 23, 59, tzinfo=timezone.utc)

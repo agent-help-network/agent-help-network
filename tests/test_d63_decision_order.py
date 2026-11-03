@@ -348,7 +348,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D78 (before D78: 9e94722ff9c445cdbd22996199384863506c9a6bf13ed43e6bc39eb868952241), which adds only the optional `cause.note`.
     # and for D79 (before D79: 53c5c63e3bc311b93eb29511920ad2c255d102461633d581766df1d0f359b75b), which only raises `summary_line` max length from 200 to 401.
     # and for D80 (before D80: fdd242ef66cd5fc7034e702e1093e0aa3567d183a0fc050f037542c3a89be55a), which adds only `provider_status.source_time: page` and the optional `official_status_page.covers`.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "207ef86950ceacec1f107ab266ca259cf2359d70782e63378683fbb504359a88"
+    # and for D82 (before D82: 207ef86950ceacec1f107ab266ca259cf2359d70782e63378683fbb504359a88), which only raises `cause.line` max length from 120 to 200.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "73bf6c3db40b2403b49ce99e3ceb050a50ecb65dd7b25f70909a4c9479d6265d"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():
