@@ -69,14 +69,15 @@ def maintenance_only(indicator: str, *, incidents=0, maintenances=2) -> dict:
 
 
 def answer(site_host="example.com", *, error_class=None, provider_status=None, access_profile=None, official=None, official_page=None,
-           not_read=False, regional=False, vendor=None, checks=False) -> dict:
+           not_read=False, regional=False, vendor=None, checks=False, edge_refusal=False) -> dict:
     rec = recommendation(error_class, provider_status, access_profile, official, profile_not_read=not_read, provider_regional=regional,
-                         now=NOW, agent_vendor=vendor)
+                         now=NOW, agent_vendor=vendor, edge_refusal=edge_refusal)
     result = {"site_host": site_host, "provider_status": provider_status, "official_status_page": official_page, "access_profile": access_profile,
               "official_paths": official, "recommendation": rec}
     if checks:
         result["next_checks"] = next_checks(error_class, provider_status, "no_reports", None, access_profile, official, profile_not_read=not_read,
-                                            provider_partial=regional, now=NOW, agent_vendor=vendor)
+                                            provider_partial=regional, now=NOW, agent_vendor=vendor,
+                                            edge_refusal=triage.EDGE_CODE in rec["reasons"])
     return result
 
 
@@ -182,6 +183,10 @@ def edge_cases():
     for error_class, official in itertools.product(ERROR_CLASSES, (None, OFFICIAL)):
         yield dict(site_host="app.example.com", error_class=error_class, official=official, not_read=True)
         yield dict(error_class=error_class, official=official)
+    # D85: the caller reported site_access and AHN's own check was refused too (row H3).
+    for profile, official, vendor in itertools.product((robots("User-agent: *\nAllow: /\n"), PROFILES[6], robots(block("ChatGPT-User"))),
+                                                       (None, OFFICIAL), (None, "anthropic")):
+        yield dict(error_class="site_access", access_profile=profile, official=official, vendor=vendor, edge_refusal=True)
 
 
 def space():
@@ -200,14 +205,14 @@ def lines(n: int) -> dict:
 
 
 EXTRA_TABLES = (response_guide.PROCEED_OFFICIAL_ROWS, response_guide.PROCEED_CONSUMER_ROWS, response_guide.CONSUMER_ROWS,
-                response_guide.STATUS_ROWS)
+                response_guide.STATUS_ROWS, response_guide.EDGE_CONSUMER_ROWS)
 # D63: the tables beside ROWS are held to the same length, character and forbidden-phrase checks.
 ALL_LINES = {text for n in (0, 5, 120, 300, 3600) for text in lines(n).values()}
 ALL_LINES |= {text.replace("{n}", str(n)) for n in (0, 5, 120, 300, 3600) for table in EXTRA_TABLES for text in table.values()}
 TEMPLATES = [re.compile(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}"))
              for sentence in [sentence for _do, sentence in ROWS.values()] + list(response_guide.PROCEED_OFFICIAL_ROWS.values())
              + list(response_guide.PROCEED_CONSUMER_ROWS.values()) + list(response_guide.CONSUMER_ROWS.values())
-             + list(response_guide.STATUS_ROWS.values())]
+             + list(response_guide.STATUS_ROWS.values()) + list(response_guide.EDGE_CONSUMER_ROWS.values())]
 
 
 def from_table(text: str) -> bool:
@@ -287,8 +292,8 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
     assert used == set(ROWS), set(ROWS) - used
 
 
-def test_the_table_has_the_34_rows_and_the_nine_do_values():
-    assert len(ROWS) == 34  # W8 came with D57; P1-V, P2-V, P3, O7-N and O7-K with D63
+def test_the_table_has_the_35_rows_and_the_nine_do_values():
+    assert len(ROWS) == 35  # W8 came with D57; P1-V, P2-V, P3, O7-N and O7-K with D63; H3 with D85
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
@@ -787,7 +792,7 @@ def test_every_triage_reason_code_is_known_to_the_table():
     # Reasons the table reads; a new reason in triage that is not here must be read (or named) before the table is complete.
     read = {"provider_scope", "provider_scope_partial", "provider_components_only", "provider_incident_stale", "provider_update_time_unknown",
             "provider_maintenance_only", "provider_history_incident",
-            "human_handoff", "account_handoff",
+            "human_handoff", "account_handoff", "edge_refusal_confirmed",
             "profile_pending", "official_path_available", "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
             "robots_fetch_refused", "robots_wildcard_disallow", "robots_blocks_not_your_agent", "robots_allows_agents", "robots_unknown",
             "profile_not_read"}

@@ -22,6 +22,20 @@ def report_retention_days_from_env() -> int:
 
 
 LOG = logging.getLogger(__name__)
+_EDGE_WARNED = False
+
+
+def parse_edge_refusal_switch(raw: str) -> bool:
+    """AHN_EDGE_REFUSAL_HANDOFF (D85): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
+    answer is the risky side), and logs one warning per process: the code only, never the value."""
+    global _EDGE_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _EDGE_WARNED:
+        _EDGE_WARNED = True
+        LOG.warning("edge_refusal_switch_unknown_value")
+    return False
 
 
 def parse_proceed_mode(raw: str) -> tuple[str, str]:
@@ -91,6 +105,9 @@ class Settings:
     # AHN_STATUS_CHECK_COMPACT=0 keeps access_profile.robots.rules in task_step=status_check answers (D71). On by default: the
     # answer then leaves the per-token rules out and gives robots.rules_omitted (their count).
     status_check_compact: bool = True
+    # AHN_EDGE_REFUSAL_HANDOFF=0 (D85) keeps a proceed answer for a site_access lookup even where AHN's own home-page check was refused
+    # too. On by default; an unknown value is read as off (with one warning), never as on.
+    edge_refusal_handoff: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -145,4 +162,5 @@ class Settings:
                    proceed_without_failure=proceed[0] != "off", proceed_mode=proceed[1],
                    status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0",
                    cause_hint=os.environ.get("AHN_CAUSE_HINT", "").strip() != "0",
-                   status_check_compact=os.environ.get("AHN_STATUS_CHECK_COMPACT", "").strip() != "0")
+                   status_check_compact=os.environ.get("AHN_STATUS_CHECK_COMPACT", "").strip() != "0",
+                   edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")))

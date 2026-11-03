@@ -131,6 +131,14 @@ SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared b
                   "your agent's network and browser may get a different answer. Information only: it does not change "
                   "recommendation.")
 
+# D85: the note of an ahn_check that decided the answer (service.check swaps it in for this one answer only).
+SHOW_VIEW_NOTE_EDGE = ("Measured from AHN's server (a data-center address, declared bot user agent, no cookies or scripts); "
+                       "your agent's network and browser may get a different answer. With the refusal you reported, it made "
+                       "recommendation hand_off_to_human (edge_refusal_confirmed).")
+# Outcomes in which the home page itself declined AHN's own request (a login wall, a rate limit and a 503 are not this).
+EDGE_REFUSAL_OUTCOMES = frozenset({"bot_challenge", "refused"})
+EDGE_REFUSALS_NEEDED = 2
+
 OUTCOMES = ("reachable", "redirected_same_host", "bot_challenge", "refused", "rate_limited", "login_wall",
             "redirected_offsite", "server_error", "unreachable", "other_status")
 # Outcomes in which the host answered and declined: never a failure, and the host is off the list for REFUSED_EXCLUDE_DAYS
@@ -1009,6 +1017,29 @@ def view(row: dict, now: datetime) -> dict | None:
     if row["response_ms"] is not None:
         out["response_ms"] = row["response_ms"]
     return out
+
+
+def refusal_corroborated(conn, site_host: str, shown: dict | None) -> bool:
+    """D85: does AHN's own measurement, as shown in this answer's ahn_check, confirm that the home page refused it? True for a
+    measured ``bot_challenge`` or ``refused`` that is fresh (within FRESH_HOURS), or, when older (the view already drops a
+    measurement over STALE_DAYS), whose stored row is that same measurement with consecutive_refusals >= 2. Never raises: any
+    failure is False, so a lookup is never changed by it. ``conn`` is read only when the view is older than FRESH_HOURS."""
+    try:
+        if not isinstance(shown, dict) or shown.get("status") != "measured" or shown.get("outcome") not in EDGE_REFUSAL_OUTCOMES:
+            return False
+        if shown.get("freshness") == "fresh":
+            return True
+        measured_at = shown.get("measured_at")
+        if not isinstance(measured_at, datetime):
+            return False
+        with conn.transaction():
+            row = conn.execute("SELECT outcome,probed_at,consecutive_refusals FROM site_probe WHERE site_host=%s",
+                               (site_host,)).fetchone()
+        return bool(row and row["outcome"] == shown["outcome"] and row["probed_at"] == measured_at
+                    and row["consecutive_refusals"] >= EDGE_REFUSALS_NEEDED)
+    except Exception:
+        LOG.warning("edge_refusal_check_unavailable")
+        return False
 
 
 # --------------------------------------------------------------------------------------------------------------
