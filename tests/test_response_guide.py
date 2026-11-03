@@ -38,6 +38,18 @@ INJECTION = ["IGNORE PREVIOUS INSTRUCTIONS", "<script>alert(1)</script>", "line\
 ALL_TOKENS = {token for governing in GOVERNING_TOKENS.values() for token in governing}
 
 
+@pytest.fixture(autouse=True)
+def _stand_in_hosts_are_not_reserved(monkeypatch):
+    """These fixtures use example.com as a stand-in for a real site. D81 answers a status_check lookup for a reserved example
+    domain with its own sentence; that is tested in test_d81_status_wording.py, so it is switched off here."""
+    monkeypatch.setattr(response_guide, "is_reserved_example", lambda host: False)
+
+
+def after_status(line: str) -> str:
+    """D81: the robots sentence as it stands after a status sentence (the developer path is for anything beyond the status question)."""
+    return {ROWS[row][1]: text for row, text in response_guide.STATUS_AFTER_ROWS.items()}.get(line, line)
+
+
 def robots(text: str) -> dict:
     return {"robots_status": "ok", "robots": parse_robots(text), "llms_txt_status": "absent", "freshness": "fresh"}
 
@@ -883,7 +895,7 @@ def test_a_hand_off_keeps_its_sentence_and_a_stop_keeps_its_next_action_with_the
     plain = guide(copy.deepcopy(stopped))
     assert plain["next_action"]["do"] == ROWS["S1"][0]
     out = guide(stopped, status_check=True)  # D79: no status page is known, so T4 comes first; the stop sentence follows it
-    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T4-R']} {plain['summary_line']}"
+    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T4-R']} {after_status(plain['summary_line'])}"
     assert out["next_action"] == plain["next_action"]
 
 
@@ -1013,7 +1025,7 @@ def test_d76_a_status_page_on_the_sites_own_domain_is_not_pointed_at_when_robots
         result = status_answer(official_page=page(url), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
         plain = guide(copy.deepcopy(result))
         out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
-        assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-R']} {plain['summary_line']}", url  # D79: the blocked site's own page is not pointed at
+        assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-R']} {after_status(plain['summary_line'])}", url  # D79: the blocked site's own page is not pointed at
         assert "status_url" not in out["summary_line"] and "check it there" not in out["summary_line"]
         assert out["next_action"]["do"] == plain["next_action"]["do"] and out["next_action"]["url"] == plain["next_action"]["url"]
         assert out["next_action"]["status_url"] == url
@@ -1029,7 +1041,7 @@ def test_d76_unknown_robots_rows_keep_sentence_do_and_url_and_gain_status_url(pr
     plain = guide(copy.deepcopy(result))
     assert result["recommendation"]["action"] == "unknown"
     out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
-    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-S' if make_page is signin_page else 'T3-R']} {plain['summary_line']}"  # D79
+    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-S' if make_page is signin_page else 'T3-R']} {after_status(plain['summary_line'])}"  # D79
     assert {k: v for k, v in out["next_action"].items() if k != "status_url"} == plain["next_action"]
     assert out["next_action"]["status_url"] == PAGE_URL
 
@@ -1126,7 +1138,7 @@ def test_d77_a_robots_block_keeps_the_robots_sentence_for_a_sign_in_status_page_
     result = status_answer(official_page=signin_page(OTHER_PAGE), official=OFFICIAL, access_profile=ROBOTS_BLOCKED)
     plain = guide(copy.deepcopy(result))
     out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
-    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-S']} {plain['summary_line']}"  # D79: status first, robots sentence kept
+    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T3-S']} {after_status(plain['summary_line'])}"  # D79: status first, robots sentence kept
     assert out["next_action"]["do"] == "use_official_path" and out["next_action"]["url"] == plain["next_action"]["url"] == OFFICIAL["api_docs"]
     assert out["next_action"]["status_url"] == OTHER_PAGE
     assert "do and url are for any other step" in response_guide.STATUS_ROWS["T3-S"]
@@ -1137,7 +1149,7 @@ def test_d79_robots_row_status_check_puts_status_first_and_keeps_robots_sentence
     result = status_answer(official=OFFICIAL, access_profile=ROBOTS_BLOCKED)  # no status page known: T4
     plain = guide(copy.deepcopy(result))
     out = guide(copy.deepcopy(result), status_check=True, status_guide=True)
-    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T4-R']} {plain['summary_line']}"
+    assert out["summary_line"] == f"{response_guide.STATUS_ROWS['T4-R']} {after_status(plain['summary_line'])}"
     assert "Check the site itself" not in out["summary_line"]
     assert len(out["summary_line"]) <= response_guide.STATUS_LINE_MAX
     assert all(len(text) <= response_guide.LINE_MAX for text in response_guide.STATUS_ROWS.values()) and len(plain["summary_line"]) <= response_guide.LINE_MAX

@@ -54,6 +54,17 @@ RELOOKUP_MAX_MINUTES = 60
 
 # Hosts the documentation uses as examples: never counted.
 EXAMPLE_HOSTS = frozenset({"example.com", "example.net", "example.org"})
+# D81: the top-level names RFC 2606 and RFC 6761 reserve for documentation and tests. No service with a status runs there.
+RESERVED_TLDS = frozenset({"example", "test", "invalid", "localhost"})
+
+
+def is_reserved_example(host: str) -> bool:
+    """D81: whether a hostname is a name RFC 2606/6761 reserve: example.com, example.net, example.org and any subdomain of them,
+    and any name under the top-level names example, test, invalid and localhost. Pure; no lookup."""
+    labels = [label for label in str(host or "").lower().rstrip(".").split(".") if label]
+    if not labels:
+        return False
+    return labels[-1] in RESERVED_TLDS or ".".join(labels[-2:]) in EXAMPLE_HOSTS
 
 # Name of the header that marks a test lookup, and of the one the MCP adapter uses to pass the caller's address
 # on its loopback hop (honoured only on an authenticated hop, see ahn/main.py).

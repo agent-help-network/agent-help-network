@@ -16,6 +16,7 @@ import re
 from urllib.parse import urlparse
 
 from .background_reads import FEED_RETRY_MINUTES
+from .lookup_signals import is_reserved_example
 from .official_paths import customer_url
 from .triage import blocked_governing_tokens
 
@@ -92,6 +93,29 @@ STATUS_ROWS: dict[str, str] = {
     # D79: the status sentence put before a robots sentence. It never sends the caller to the site or to a page the robots block covers.
     "T4-R": "AHN knows no official status page for this site, so it cannot say whether it is up; tell your user its status is unverified.",
     "T3-R": "AHN reads no status feed for this site, so it cannot say whether it is up; tell your user its status is unverified.",
+}
+# D81 (wording only): the same status sentences when the page the sentence rests on is not what a status question needs.
+# T3-A / T3-RA: the curated status page says it covers only the provider's API (official_status_page.covers == "api").
+# T-EX: a name RFC 2606/6761 reserves for documentation; there is no service whose status could be checked.
+STATUS_ROWS["T3-A"] = ("AHN reads no status feed for this site, so it cannot say whether it is up. Its status page, "
+                       "next_action.status_url, covers only the provider's API, not the whole site; check it there for API status.")
+STATUS_ROWS["T3-RA"] = ("AHN reads no status feed for this site, so it cannot say whether it is up; the status page it knows covers "
+                        "only the provider's API. Tell your user the site's status is unverified.")
+STATUS_ROWS["T-EX"] = "This is a reserved example domain (RFC 2606) for documentation; it runs no service with a status to check."
+# D81: a robots sentence that follows the status sentence in a status_check answer says the developer path is for anything
+# beyond the status question (an agent that only asks "is it up" was sent to partner API documents). Only the plain rows with
+# no customer path; every sentence stays within LINE_MAX. Keyed by the row id, one table per wording of D63.
+_BEYOND = "for anything beyond the status question, use the listed official developer path."
+STATUS_AFTER_ROWS: dict[str, str] = {
+    "O2": "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages; " + _BEYOND,
+    "O3": "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). For anything beyond the status question, use the listed official developer path.",
+    "O4": "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; " + _BEYOND,
+    "O5": "The site refused even a plain automated robots.txt read. Page automation may be refused too; " + _BEYOND,
+    "O6": "The site's robots.txt disallows the root for agents it does not name. Do not read that as permission; " + _BEYOND,
+}
+STATUS_AFTER_ROWS_BEFORE: dict[str, str] = {
+    "O3": "The site's robots.txt blocks some agent tokens (next_action.stop_if_you_are). For anything beyond the status question, use the listed official developer path.",
+    "O6": "The site's robots.txt disallows the root for agents it does not name. Do not read that as permission; " + _BEYOND,
 }
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
 # A row decided by the site's own robots policy keeps its sentence under status_check: the T sentences say nothing about the block.
@@ -397,6 +421,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         reasons = set(recommendation.get("reasons") or ())
         robots_kept = bool(reasons & STATUS_KEEP_REASONS)
         status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        reserved = is_reserved_example(result["site_host"])  # D81
+        covers_api = (result.get("official_status_page") or {}).get("covers") == "api"
         if (status_url and recommendation.get("action") == "use_official_path" and row not in RETRY_ROWS
                 and not (robots_kept and same_site(status_url, result["site_host"]))
                 # D77: a sign-in page is never the url, so under a robots block nothing justifies replacing the robots sentence.
@@ -404,7 +430,7 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             # D76: a use_official_path row with no re-lookup to wait for answers "is it up" with the status page: sentence and
             # url say the same thing. ``do`` stays a function of recommendation.action. A robots block on the site's own pages
             # does not answer the question, but a status page on the same site is not pointed at either (the row stays).
-            sentence = STATUS_ROWS[status_id]
+            sentence = STATUS_ROWS["T3-A" if status_id == "T3" and covers_api else status_id]
             if status_id != "T3-S":  # D77: a status page that needs the user's sign-in is handed over as status_url, never made the url
                 action["url"] = status_url
         elif (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
@@ -413,7 +439,7 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 and row != "P2"
                 # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
                 and not (do == "lookup_apex_host" and status_url is None)):
-            sentence = STATUS_ROWS[status_id]
+            sentence = STATUS_ROWS["T-EX" if reserved else "T3-A" if status_id == "T3" and covers_api else status_id]
         elif (robots_kept and do not in STATUS_KEEP_DO and do != "proceed" and row not in RETRY_ROWS
                 and not (do == "lookup_apex_host" and status_url is None)):
             # D79: the first sentence answers "is it up"; the row's robots sentence is kept, after it. ``do`` and ``url`` stay.
@@ -422,6 +448,14 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             lead = status_id
             if status_id == "T4" or (status_id == "T3" and same_site(status_url, result["site_host"])):
                 lead = "T4-R" if status_id == "T4" else "T3-R"
+            if lead == "T3-R" and covers_api:
+                lead = "T3-RA"
+            if reserved:
+                lead = "T-EX"
+            elif lead == "T3" and covers_api:
+                lead = "T3-A"
+            if customer is None:  # D81: the developer path is not a way to check status
+                sentence = (STATUS_AFTER_ROWS if on else STATUS_AFTER_ROWS_BEFORE).get(row, sentence)
             sentence = f"{STATUS_ROWS[lead]} {sentence}"
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
