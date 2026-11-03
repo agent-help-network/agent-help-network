@@ -346,7 +346,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D72, which adds only the optional `official_status_page.requires_sign_in`.
     # and for D75 (before D75: ea8bcbb1fc82d2d06f5f116fbce2084a39c97f9daa2c60a318a467d47810be5d), which adds only three `cause.hint` values and the `host_access_changes` basis value,
     # and for D78 (before D78: 9e94722ff9c445cdbd22996199384863506c9a6bf13ed43e6bc39eb868952241), which adds only the optional `cause.note`.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "53c5c63e3bc311b93eb29511920ad2c255d102461633d581766df1d0f359b75b"
+    # and for D79 (before D79: 53c5c63e3bc311b93eb29511920ad2c255d102461633d581766df1d0f359b75b), which only raises `summary_line` max length from 200 to 401.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "fdd242ef66cd5fc7034e702e1093e0aa3567d183a0fc050f037542c3a89be55a"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

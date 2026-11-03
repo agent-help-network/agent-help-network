@@ -22,6 +22,6 @@ from ._digest import Digest, digest_markdown, local_digest, shard_id
 from ._memory import ADVICE, FailureLog
 from ._result import NextAction, Result
 
-__version__ = "0.6.5"
+__version__ = "0.6.6"
 __all__ = ["check", "classify", "clear_cache", "diagnose", "signals", "local_digest", "digest_markdown", "shard_id", "Digest",
            "FailureLog", "ADVICE", "Result", "NextAction", "__version__"]

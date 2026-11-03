@@ -176,7 +176,7 @@ def test_bad_fields_inside_next_action_are_dropped():
         assert parse(body).next_action.retry_after_seconds is None
 
 
-@pytest.mark.parametrize("line", [None, 5, "", "x" * 201, "bad é line", "two\nlines"])
+@pytest.mark.parametrize("line", [None, 5, "", "x" * 402, "bad é line", "two\nlines"])
 def test_a_bad_summary_line_falls_back_to_the_old_sentence(line):
     result = parse({**answer("proceed"), "summary_line": line})
     assert result.summary_line is None
@@ -294,7 +294,7 @@ def test_summary_stays_within_700_with_long_values():
 
 
 def test_next_action_is_exported():
-    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.5"
+    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.6"
     assert _result.NextAction is NextAction
 
 
@@ -439,3 +439,11 @@ def test_an_older_service_with_an_unknown_verdict_never_gets_a_site_wait(sent, s
 
 def test_an_explicit_unknown_still_merges_for_an_older_service():
     assert parse(old_answer("unknown")).wait_seconds("gt_3600") == 3600
+
+
+def test_a_two_sentence_server_line_of_300_characters_is_used_as_sent():
+    line = ("Status first, robots sentence after. " * 9).strip()[:300]  # the length of a merged D79 line
+    assert 275 <= len(line) <= 401
+    assert parse({**answer("use_official_path"), "summary_line": line}).summary_line == line
+    assert parse({**answer("use_official_path"), "summary_line": "x" * 401}).summary_line == "x" * 401
+    assert parse({**answer("use_official_path"), "summary_line": "x" * 402}).summary_line is None

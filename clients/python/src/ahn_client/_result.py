@@ -27,7 +27,7 @@ WAIT_DO = frozenset({"wait_for_provider", "retry_lookup_once", "no_clear_action"
 MAX_WAIT = 3600  # the largest wait this client reports; a longer one is a reason to hand off
 # The floor of each Retry-After band an adapter already holds (lookup code `retry_after`): the site said at least this long.
 RETRY_BAND_FLOOR = {"none": 0, "lt_60": 0, "60_3600": 60, "gt_3600": MAX_WAIT}
-SERVER_LINE = re.compile(r"^[ -~]{1,200}$")
+SERVER_LINE = re.compile(r"^[ -~]{1,401}$")  # D79: a robots-based status_check line is two sentences
 HOSTNAME = re.compile(r"^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 
 # Without a usable next_action the same gate is read from the verdict: a stop, a hand-off or an official path is not

@@ -3456,7 +3456,7 @@
     "summary_line": {
      "anyOf": [
       {
-       "maxLength": 200,
+       "maxLength": 401,
        "minLength": 1,
        "pattern": "^[ -~]+$",
        "type": "string"

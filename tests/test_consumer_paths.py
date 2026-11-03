@@ -367,7 +367,7 @@ def test_each_consumer_row_is_pinned_and_blocked_rows_hand_off():
         "O2": "The site's robots.txt blocks agent user agents at the root. Stop retrying pages; use the listed official path." + hand,
         "O3": "robots.txt blocks the tokens in next_action.stop_if_you_are, for requests that send them. Use the official path." + hand,
         "O4": "robots.txt blocks your vendor's agent under another name; not permission. Use the listed official path." + hand,
-        "O5": "The site refused even a plain robots.txt read; expect pages to refuse too. Use the listed official path." + hand,
+        "O5": "The site refused even a plain robots.txt read; pages may refuse too. Use the listed official path." + hand,
         "O6": "robots.txt disallows the root for tokens not in robots.agents_allowed; not permission. Use the official path." + hand,
         "O7": lead7 + first, "O7-N": lead7 + first, "O7-K": lead7 + first,
     }
