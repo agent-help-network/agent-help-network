@@ -2486,6 +2486,19 @@
     "OfficialStatusPage": {
      "additionalProperties": true,
      "properties": {
+      "covers": {
+       "anyOf": [
+        {
+         "const": "api",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Covers"
+      },
       "requires_sign_in": {
        "anyOf": [
         {
@@ -2693,7 +2706,10 @@
       "source_time": {
        "anyOf": [
         {
-         "const": "active_items",
+         "enum": [
+          "active_items",
+          "page"
+         ],
          "type": "string"
         },
         {

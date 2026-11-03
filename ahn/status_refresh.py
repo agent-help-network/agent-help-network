@@ -1158,6 +1158,10 @@ OFFICIAL_STATUS_PAGES: dict[str, tuple[str, str]] = {
 # (official_status_page.requires_sign_in) so an agent hands the page to its user instead of searching for it. Members are curated
 # from publisher-owned documentation; every member must be a key of OFFICIAL_STATUS_PAGES.
 SIGN_IN_STATUS_PAGES: frozenset[str] = frozenset({"workday.com"})
+# D80: sites in OFFICIAL_STATUS_PAGES whose listed status page is named by its publisher as covering API or developer services
+# only (official_status_page.covers: "api"), so an agent does not read it as the state of the whole site. Every member must be a
+# key of OFFICIAL_STATUS_PAGES and the page's own name must say API.
+API_ONLY_STATUS_PAGES: frozenset[str] = frozenset({"dhl.com"})
 
 
 def dedicated_status_host(url: str) -> str | None:
@@ -1190,6 +1194,11 @@ _STATUS_PAGE_HOSTS = _page_host_map(OFFICIAL_STATUS_PAGES)
 def status_page_requires_sign_in(page: tuple[str, str] | None) -> bool:
     """D72: true when the (name, url) is the curated status page of a SIGN_IN_STATUS_PAGES site (also when reached through the page's own host, D70)."""
     return page is not None and any(site in OFFICIAL_STATUS_PAGES and OFFICIAL_STATUS_PAGES[site] == page for site in SIGN_IN_STATUS_PAGES)
+
+
+def status_page_covers_api_only(page: tuple[str, str] | None) -> bool:
+    """D80: true when the (name, url) is the curated status page of an API_ONLY_STATUS_PAGES site (also through the page's own host, D70)."""
+    return page is not None and any(site in OFFICIAL_STATUS_PAGES and OFFICIAL_STATUS_PAGES[site] == page for site in API_ONLY_STATUS_PAGES)
 
 
 def official_status_page_for(host: str) -> tuple[str, str] | None:
