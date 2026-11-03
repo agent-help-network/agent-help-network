@@ -107,11 +107,15 @@ LINES: dict[str, str] = {
 # come back at, "recheck_after" is left out.
 HOME_GATE_KINDS = {"bot_challenge": "bot-challenge", "refused": "HTTP", "login_wall": "login-wall"}
 for _outcome, _kind in HOME_GATE_KINDS.items():
+    _a = "an" if _kind == "HTTP" else "a"   # by sound: "an HTTP", "a bot-challenge", "a login-wall"
     LINES[f"home_gate_unconfirmed_{_outcome}"] = (
-        f"Not determined: AHN's last check saw a {_kind} refusal; recheck_after is AHN's next check, not an instruction.")
+        f"Not determined: AHN's last check saw {_a} {_kind} refusal; recheck_after is AHN's next check, not an instruction.")
     LINES[f"home_gate_unconfirmed_{_outcome}_undated"] = (
-        f"Not determined: AHN's last check saw a {_kind} refusal; AHN checks again. That is AHN's check, not an instruction.")
+        f"Not determined: AHN's last check saw {_a} {_kind} refusal; AHN checks again. That is AHN's check, not an instruction.")
 ROBOTS_REASONS = {"robots_disallowed": "no_measurement_robots_disallowed", "robots_refused": "no_measurement_robots_refused"}
+# Stored reasons for which no measurement will come, so the stored time is never offered as recheck_after. not_eligible (not a
+# public host) keeps the general sentence: only the time is left out. robots_unreadable is read again, so it stays.
+NO_RECHECK_REASONS = frozenset(ROBOTS_REASONS) | {"not_eligible"}
 
 _TIME = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?$")
 
@@ -407,7 +411,7 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
     recheck = probe["next_due_at"] if probe is not None and probe["next_due_at"] > now else None
     # a stored robots.txt reason: the stored time is the next robots.txt look, not a measurement, so it is never offered
     robots = ROBOTS_REASONS.get(probe["not_measured_reason"]) if probe is not None and probe["outcome"] == "not_measured" else None
-    if robots:
+    if probe is not None and probe["outcome"] == "not_measured" and probe["not_measured_reason"] in NO_RECHECK_REASONS:
         recheck = None
     measured, normal = _measurement(conn, host, probe, when)
     # the terms signal is information, never a block: it only fills the place of "nothing measured" or of nothing at all
