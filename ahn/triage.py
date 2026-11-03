@@ -18,6 +18,7 @@ CHECKS = {
     "before_target_response": "No target response was observed. Check the agent tool, browser, and connection path first; this does not establish a site outage.",
     "response_observed": "A response was observed. Check whether it came from the target, an intermediary, or a security layer before attributing the failure.",
     "access_denial_observed": "An access denial was observed. Follow the site's stated policy and do not bypass its controls; this does not establish an outage.",
+    "edge_refusal_confirmed": "The site refused you and AHN's own home-page check too (ahn_check), so the refusal is the site's edge, not only your tool. Do not switch tools or user agents; hand the step to your user.",
     "provider_scope": "The provider reports an active issue. Compare its affected services and update time with your blocked step before deciding whether to wait or retry.",
     "provider_components_only": "The provider's page-level status shows an issue, but the provider has announced no incident or maintenance (provider_status.basis is components_only). Some components are marked down or under maintenance; check on the provider's status page whether a component you use is one of them. A minor or maintenance page is not treated as a reason to wait; a major or critical one still is, because an outage can show on components before an incident is posted.",
     "provider_incident_stale": f"The provider's active incidents have had no update for more than {STALE_INCIDENT_DAYS} days (provider_status.incident_updated_at is the latest one) and no maintenance is in progress. An incident left open without updates is not treated as a reason to wait: if provider_status.affected names a service you use, wait for the provider; otherwise continue. A major or critical page above the worst incident's impact is still a reason to wait, because components can show a new outage before an incident is posted.",
@@ -56,6 +57,7 @@ CHECKS_KO = {
     "before_target_response": "대상 응답을 확인하지 못했습니다. 먼저 에이전트 도구·브라우저·연결 경로를 점검하세요. 사이트 장애의 증거는 아닙니다.",
     "response_observed": "응답을 확인했습니다. 원인을 판단하기 전에 대상 사이트, 중간 프록시, 보안 계층 중 어디서 온 응답인지 확인하세요.",
     "access_denial_observed": "접근 거부를 확인했습니다. 사이트가 밝힌 정책을 따르고 제한을 우회하지 마세요. 장애의 증거는 아닙니다.",
+    "edge_refusal_confirmed": "사이트가 당신과 AHN 자체 홈 페이지 확인(ahn_check)을 모두 거절했습니다. 당신 도구만의 문제가 아니라 사이트 가장자리의 거절입니다. 도구나 사용자 에이전트를 바꿔 재시도하지 말고 사용자에게 넘기세요.",
     "provider_scope": "업체가 활성 문제를 발표했습니다. 대기·재시도를 정하기 전에 영향받는 서비스와 발표 시각을 현재 작업과 비교하세요.",
     "provider_components_only": "업체 페이지 전체 표시는 문제를 가리키지만, 업체가 발표한 사건이나 점검은 없습니다(provider_status.basis 가 components_only). 일부 컴포넌트만 장애·점검으로 표시돼 있으니, 업체 상태 페이지에서 사용하는 컴포넌트가 거기 있는지 확인하세요. minor·maintenance 표시는 기다릴 이유로 보지 않지만, major·critical 표시는 사건이 게시되기 전에 컴포넌트에 먼저 장애가 보일 수 있어 계속 기다릴 이유로 봅니다.",
     "provider_incident_stale": f"업체의 활성 사건이 {STALE_INCIDENT_DAYS}일 넘게 업데이트되지 않았고(가장 최근 업데이트는 provider_status.incident_updated_at) 진행 중인 점검도 없습니다. 업데이트 없이 열려 있는 사건은 기다릴 이유로 보지 않습니다. provider_status.affected 에 사용하는 서비스가 있으면 업체를 기다리고, 없으면 진행하세요. 다만 페이지 전체 표시가 가장 심한 사건보다 높은 major·critical 이면 새 장애가 사건 게시 전에 컴포넌트에 먼저 보일 수 있어 계속 기다릴 이유로 봅니다.",
@@ -440,11 +442,16 @@ def _wait(reason: str, provider_regional: bool) -> dict:
     return {"action": "wait_provider_incident", "confidence": "medium", "reasons": [reason]}
 
 
+# D85: the code that marks a hand-off decided by the caller's refusal plus AHN's own refused home-page check.
+EDGE_CODE = "edge_refusal_confirmed"
+EDGE_FAILURE_STAGES = (None, "access_denial_observed")
+
+
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                    official: dict | None, *, profile_not_read: bool = False, provider_regional: bool = False,
                    now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True,
                    failure_stage: str | None = None, proceed_without_failure: bool = True,
-                   assume_failure: bool = False) -> dict:
+                   assume_failure: bool = False, edge_refusal: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
@@ -454,12 +461,18 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     failure_stage, proceed_without_failure: D63. With the switch on, a lookup that reports no failure (neither error_class
     nor failure_stage) and a robots.txt that is clear or absent gets proceed even where an official path is listed.
     assume_failure: D66 (AHN_PROCEED_WITHOUT_FAILURE=d65): the lookup is judged as if it had reported site_access; the reply is
-    then the one such a lookup gets, and no new row exists."""
+    then the one such a lookup gets, and no new row exists.
+    edge_refusal: D85. The caller reported site_access and AHN's own home-page check was refused too (service.edge_refusal_for).
+    Only a proceed answer for a site_access lookup with no failure_stage or access_denial_observed changes: it becomes
+    hand_off_to_human. Every other answer, and the order of the branches in _recommendation, stay as they were."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                              provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
                              failure_stage=failure_stage, proceed_without_failure=proceed_without_failure,
                              assume_failure=assume_failure)
+    if (edge_refusal and result["action"] == "proceed" and error_class == "site_access"
+            and failure_stage in EDGE_FAILURE_STAGES):
+        result = {"action": "hand_off_to_human", "confidence": "medium", "reasons": [EDGE_CODE, *result["reasons"]]}
     if vendor is not None:
         result["agent_vendor"] = vendor
     return result
@@ -548,9 +561,10 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 host_facts: dict | None = None, provider_partial: bool = False,
                 now: datetime | None = None, agent_vendor: str | None = None,
                 vendor_aware: bool = True, proceed_without_failure: bool = True,
-                assume_failure: bool = False) -> list[dict[str, str]]:
+                assume_failure: bool = False, edge_refusal: bool = False) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
-    agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63."""
+    agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63;
+    edge_refusal: D85, True only when recommendation() returned the edge_refusal_confirmed reason; the code follows the failure stage."""
     codes: list[str] = []
     handoff = error_class in {"human_verification", "login_auth"}
     failed = (failure_observed(error_class, failure_stage) or assume_failure) if proceed_without_failure else True
@@ -558,6 +572,8 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
         codes.append(failure_stage)
     elif failed and not handoff:
         codes.append("locate_failure_stage")
+    if edge_refusal and error_class == "site_access" and failure_stage in EDGE_FAILURE_STAGES:
+        codes.append(EDGE_CODE)
     if error_class == "human_verification":
         codes.append("human_handoff")
     elif error_class == "login_auth":

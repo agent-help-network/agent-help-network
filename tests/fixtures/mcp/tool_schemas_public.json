@@ -449,7 +449,7 @@
     },
     "AhnCheck": {
      "additionalProperties": true,
-     "description": "D67: the outcome of AHN's own server's check of the host's home page, as codes. Information only; it is added after\nthe recommendation is decided and changes none of it. Fields that do not apply are left out, never null.",
+     "description": "D67: the outcome of AHN's own server's check of the host's home page, as codes. Information only; it is added after\nthe recommendation is decided and changes none of it (except the D85 case, ``edge_refusal_confirmed``). Fields that do not apply are left out, never null.",
      "properties": {
       "age_seconds": {
        "anyOf": [
@@ -2184,6 +2184,7 @@
         "before_target_response",
         "response_observed",
         "access_denial_observed",
+        "edge_refusal_confirmed",
         "provider_scope",
         "provider_components_only",
         "provider_incident_stale",

@@ -974,7 +974,7 @@ def test_next_check_codes_match_the_contract_list():
         "robots_grouping_differs_by_parser", "robots_unknown",
         "robots_fetch_refused", "profile_not_read", "profile_pending", "llms_txt_present", "content_use_ai_input_declared_no",
         "official_path_available",
-        "government_registry_listed", "government_suffix_restricted", "government_list_version_missing"}
+        "government_registry_listed", "government_suffix_restricted", "government_list_version_missing", "edge_refusal_confirmed"}
 
 
 def test_next_check_codes_match_the_service_model():
@@ -1061,7 +1061,7 @@ def test_manifest_and_marketplace_agree():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     entry, = market["plugins"]
-    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.13"
+    assert manifest["name"] == entry["name"] == "ahn" and manifest["version"] == entry["version"] == "0.3.14"
     assert (ROOT / entry["source"]).resolve() == PLUGIN.resolve()
     assert json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8")) == {
         "mcpServers": {"agent-help-network": {"type": "http", "url": "https://agenthelpnetwork.com/mcp"}}}
