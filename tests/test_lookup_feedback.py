@@ -420,3 +420,16 @@ def test_the_advertised_schemas_and_annotations_match_the_snapshot():
     current = {name: {"input_schema": value[0], "annotations": value[1], "output_schema": value[3]} for name, value in tools.items()}
     snapshot = json.loads((ROOT / "tests" / "fixtures" / "mcp" / "tool_schemas_public.json").read_text(encoding="utf-8"))
     assert current == snapshot
+
+
+def test_agent_instructions_list_exactly_the_allowed_check_codes():
+    """The guidance names every accepted error_class / failure_stage value and no other, so an agent that reads only this
+    text cannot send a value the check refuses (a new enum member fails here until the text names it)."""
+    import re
+    from ahn.models import ErrorClass, FailureStage
+    text = (ROOT / "ahn" / "agent_instructions.txt").read_text(encoding="utf-8")
+    for field, enum in (("error_class", ErrorClass), ("failure_stage", FailureStage)):
+        match = re.search(field + r" is one of (.*?)\.(?= [A-Za-z_]+ )", text)
+        assert match, field
+        listed = set(re.findall(r"(?:^|, )([a-z_]+)(?= \(|,|$)", match.group(1)))
+        assert listed == {item.value for item in enum}, field
