@@ -1066,7 +1066,7 @@
        "type": "string"
       },
       "line": {
-       "maxLength": 120,
+       "maxLength": 200,
        "minLength": 1,
        "pattern": "^[ -~]+$",
        "title": "Line",

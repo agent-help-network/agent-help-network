@@ -84,13 +84,26 @@ def episode(host, first, *, kind="server_error", confirmed=True, ended=None, rea
             (host, kind, first, first + timedelta(minutes=50) if confirmed else None, ended, reason, last or ended or first + timedelta(minutes=50), held))
 
 
-def probe(host, *, outcome="reachable", at=None, refusals=0, due=None, trigger="daily", reason=None):
+def probe(host, *, outcome="reachable", at=None, refusals=0, due=None, trigger="daily", reason=None, vendor=None):
     at = at or now() - timedelta(hours=1)
-    return ("""INSERT INTO site_probe (site_host,read_host,probed_at,outcome,fingerprint_version,next_due_at,consecutive_refusals,trigger_kind,not_measured_reason)
-               VALUES (%s,%s,%s,%s,'v1',%s,%s,%s,%s)
+    return ("""INSERT INTO site_probe (site_host,read_host,probed_at,outcome,fingerprint_version,next_due_at,consecutive_refusals,trigger_kind,not_measured_reason,
+                                       bot_vendor,bot_signal,bot_confidence)
+               VALUES (%s,%s,%s,%s,'v1',%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (site_host) DO UPDATE SET probed_at=EXCLUDED.probed_at, outcome=EXCLUDED.outcome, next_due_at=EXCLUDED.next_due_at,
-                   consecutive_refusals=EXCLUDED.consecutive_refusals, not_measured_reason=EXCLUDED.not_measured_reason""",
-            (host, host, at, outcome, due or at + timedelta(hours=6), refusals, trigger, reason))
+                   consecutive_refusals=EXCLUDED.consecutive_refusals, not_measured_reason=EXCLUDED.not_measured_reason, bot_vendor=EXCLUDED.bot_vendor,
+                   bot_signal=EXCLUDED.bot_signal, bot_confidence=EXCLUDED.bot_confidence""",
+            (host, host, at, outcome, due or at + timedelta(hours=6), refusals, trigger, reason, vendor,
+             "header" if vendor else None, "high" if vendor else None))
+
+
+def observation(host, at, *, outcome="error", error_class="service_error", synthetic=False, state="published", visibility="published", withdrawn=False):
+    """A report from another agent: an incident row of the host and one observation of it."""
+    return [("""INSERT INTO incidents (site_host,task_step,error_class,visibility) VALUES (%s,'status_check',%s,%s)
+                ON CONFLICT (site_host,task_step,error_class) DO UPDATE SET visibility=EXCLUDED.visibility""", (host, error_class, visibility)),
+            ("""INSERT INTO observations (incident_id,reporter_id,observed_at,agent_family,attempt_actor,attempt_env,outcome,challenge_vendor,challenge_kind,
+                                          synthetic,review_state,withdrawn_at)
+                SELECT id,%s,%s,'other','agent','unknown',%s,'none','none',%s,%s,%s FROM incidents WHERE site_host=%s AND error_class=%s""",
+             (PUBLIC_REPORTER_ID, at, outcome, synthetic, state, at if withdrawn else None, host, error_class))]
 
 
 def probe_day(host, day, outcome="reachable", probes=1):
@@ -117,7 +130,7 @@ def seed(settings: Settings, *statements) -> None:
 
 # --- the pure parts ----------------------------------------------------------------------------------------------------
 
-def test_every_line_is_printable_ascii_within_120_characters_with_the_longest_window():
+def test_every_line_is_printable_ascii_within_200_characters_with_the_longest_window():
     start, end = datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), datetime(2027, 1, 2, 23, 59, tzinfo=timezone.utc)
     for key, template in cause.LINES.items():
         for line in (cause.line_for(key), cause.line_for(key, start), cause.line_for(key, start, end)):
@@ -238,9 +251,11 @@ def test_site_errors_open_confirmed_unconfirmed_and_ended(db):
     seed(db, episode("errors-open.org", t0), episode("errors-suspect.org", t0, confirmed=False),
          episode("errors-ended.org", t0, ended=t0 + timedelta(hours=1), reason="answered"),
          episode("errors-refused.org", t0, kind="no_response", ended=t0 + timedelta(hours=1), reason="answered_refused"),
-         episode("errors-held.org", t0, held=2))
+         episode("errors-held.org", t0, held=2), episode("errors-seen.org", t0), *observation("errors-seen.org", t0 + timedelta(hours=1)))
+    # a confirmed period that only AHN's own reads show is medium (D82); another agent's observation of it keeps it high
     opened = look(db, "errors-open.org", error_class="service_error")["cause"]
-    assert (opened["branch"], opened["hint"], opened["confidence"]) == ("transient", "site_errors", "high")
+    assert (opened["branch"], opened["hint"], opened["confidence"]) == ("transient", "site_errors", "medium")
+    assert look(db, "errors-seen.org", error_class="service_error")["cause"]["confidence"] == "high"
     assert opened["basis"] == ["outage_episodes"] and opened["window"] == {"from": iso(t0)}
     assert look(db, "errors-suspect.org", error_class="service_error")["cause"]["confidence"] == "medium"
     # ended with an answer, and the failure was during it: recovered; the end second is outside
@@ -261,6 +276,76 @@ def test_site_errors_open_confirmed_unconfirmed_and_ended(db):
     assert look(db, "errors-stale.org", error_class="service_error").get("cause", {}).get("branch") != "transient"
 
 
+def test_site_errors_say_whose_check_it_was_and_drop_to_medium_without_anyone_else(db):
+    """D82: the sentence names AHN's own checks; with nothing but AHN's measurement behind it the confidence is medium, and any
+    other source that saw the host failing in the period keeps it high."""
+    t0 = now() - timedelta(hours=30)
+    mid = t0 + timedelta(hours=5)
+    names = ("alone", "obs", "obs_other_class", "obs_blocked", "obs_synth", "obs_pending", "obs_hidden", "obs_withdrawn", "obs_before", "obs_after",
+             "hourly3", "hourly2", "hourly_403", "hourly_before", "hourly_spread", "obs_www")
+    hosts = {name: "own-" + name.replace("_", "-") + ".org" for name in names}
+    seed(db, *(episode(host, t0) for host in hosts.values()), episode("own-unconfirmed.org", t0, confirmed=False))
+    seed(db, *observation(hosts["obs"], mid))
+    seed(db, *observation(hosts["obs_other_class"], mid, error_class="site_access"))
+    seed(db, *observation(hosts["obs_blocked"], mid, outcome="blocked"))
+    seed(db, *observation(hosts["obs_synth"], mid, synthetic=True))
+    seed(db, *observation(hosts["obs_pending"], mid, state="pending"))
+    seed(db, *observation(hosts["obs_hidden"], mid, visibility="hidden"))
+    seed(db, *observation(hosts["obs_withdrawn"], mid, withdrawn=True))
+    seed(db, *observation(hosts["obs_before"], t0 - timedelta(hours=1)))
+    seed(db, *observation(hosts["obs_after"], now()))
+    seed(db, *observation("www." + hosts["obs_www"], mid))   # stored under the exact host; the lookup is answered for the host without www.
+    seed(db, hourly(hosts["hourly3"], mid, sources=3, error_class="service_error"), hourly(hosts["hourly2"], mid, sources=2, error_class="service_error"),
+         hourly(hosts["hourly_403"], mid, sources=9, error_class="site_access", http="403"),
+         hourly(hosts["hourly_before"], t0 - timedelta(hours=3), sources=9, error_class="service_error"))
+    # one client looking again in three hours is three rows of sources=1: still one client, not three
+    seed(db, *(hourly(hosts["hourly_spread"], mid + timedelta(hours=n), sources=1, error_class="service_error") for n in range(3)))
+    expected = {"alone": "medium", "obs": "high", "obs_other_class": "medium", "obs_blocked": "medium", "obs_synth": "medium", "obs_pending": "medium",
+                "obs_hidden": "medium", "obs_withdrawn": "medium", "obs_before": "medium", "obs_after": "high", "hourly3": "high", "hourly2": "medium", "hourly_spread": "medium", "obs_www": "high",
+                "hourly_403": "medium", "hourly_before": "medium"}
+    assert set(expected) == set(names)
+    for name, confidence in expected.items():
+        found = look(db, hosts[name], error_class="service_error")["cause"]
+        assert (found["branch"], found["hint"], found["basis"]) == ("transient", "site_errors", ["outage_episodes"]), name
+        assert found["confidence"] == confidence, name
+        assert found["line"].startswith("AHN's own checks have not reached the site (since ") and "it does not tell whether your tool can reach the site." in found["line"], name
+        assert "Retry" not in found["line"] and len(found["line"]) <= 200
+    # an unconfirmed period was medium already, with or without anyone else
+    assert look(db, "own-unconfirmed.org", error_class="service_error")["cause"]["confidence"] == "medium"
+    # an episode that ended with an answer: the same sentence family, the same two confidences
+    first = now() - timedelta(days=1)
+    seed(db, episode("own-ended.org", first, ended=first + timedelta(hours=2), reason="answered"), *observation("own-ended.org", first + timedelta(hours=1)),
+         episode("own-ended-alone.org", first, ended=first + timedelta(hours=2), reason="answered"))
+    failed = iso(first + timedelta(minutes=30))
+    recovered = look(db, "own-ended.org", error_class="service_error", failed_at=failed)["cause"]
+    assert (recovered["hint"], recovered["confidence"]) == ("recovered", "high")
+    assert recovered["line"].startswith("AHN's own checks did not reach the site (") and recovered["line"].endswith("they answer again. That can be AHN's network path alone.")
+    alone = look(db, "own-ended-alone.org", error_class="service_error", failed_at=failed)["cause"]
+    assert (alone["hint"], alone["confidence"], alone["basis"]) == ("recovered", "medium", ["outage_episodes"])
+
+
+def test_the_home_gate_sentence_has_the_age_and_the_provider_of_the_stored_check(db):
+    due = now() + timedelta(days=3)
+    cases = {  # host: (outcome, age, vendor, expected text between "check" and "refusal;")
+        "age-dd.org": ("bot_challenge", timedelta(hours=19), "datadome", "19 h ago saw a DataDome bot-challenge"),
+        "age-cf.org": ("bot_challenge", timedelta(hours=49), "cloudflare", "2 days ago saw a Cloudflare bot-challenge"),
+        "age-novendor.org": ("bot_challenge", timedelta(hours=5), None, "5 h ago saw a bot-challenge"),
+        "age-unknown.org": ("bot_challenge", timedelta(hours=5), "unknown", "5 h ago saw a bot-challenge"),
+        "age-403.org": ("refused", timedelta(hours=47), None, "1 day ago saw an HTTP"),
+        "age-login.org": ("login_wall", timedelta(minutes=2), None, "just now saw a login-wall"),
+    }
+    seed(db, *(probe(host, outcome=outcome, refusals=1, at=now() - age, due=due, vendor=vendor) for host, (outcome, age, vendor, _) in cases.items()))
+    for host, (_outcome, _age, _vendor, text) in cases.items():
+        found = look(db, host, error_class="site_access")["cause"]
+        assert found["hint"] == "home_gate_unconfirmed" and found["confidence"] == "low" and found["basis"] == ["site_probe"], host
+        assert found["line"] == f"Not determined: AHN's check {text} refusal; recheck_after is AHN's next check, not an instruction.", host
+    # no stored next time: the date-less variant carries the same age and provider
+    seed(db, probe("age-undated.org", outcome="bot_challenge", refusals=1, at=now() - timedelta(hours=7), due=now() - timedelta(hours=1), vendor="perimeterx"))
+    undated = look(db, "age-undated.org", error_class="site_access")["cause"]
+    assert undated["line"] == "Not determined: AHN's check 7 h ago saw a PerimeterX bot-challenge refusal; AHN checks again. That is AHN's check, not an instruction."
+    assert "recheck_after" not in undated
+
+
 # --- policy_closed: home_now_gated, persistent_refusal --------------------------------------------------------------------
 
 def test_two_refusals_in_a_row_are_a_policy_block_and_one_is_only_undetermined(db):
@@ -274,7 +359,7 @@ def test_two_refusals_in_a_row_are_a_policy_block_and_one_is_only_undetermined(d
     assert (first["branch"], first["hint"], first["confidence"]) == ("undetermined", "home_gate_unconfirmed", "low")
     assert first["recheck_after"] == iso(due)
     # the sentence says whose check it was and what kind of refusal, gives no count, and is not an instruction (D78)
-    assert first["line"] == "Not determined: AHN's last check saw a login-wall refusal; recheck_after is AHN's next check, not an instruction."
+    assert first["line"] == "Not determined: AHN's check 1 h ago saw a login-wall refusal; recheck_after is AHN's next check, not an instruction."
     assert first["note"] == cause.NOTE == "Information only; follow next_action."
     # a refusal measured long ago says nothing about now; a service error is not what a gate looks like
     seed(db, probe("gate-stale.org", outcome="refused", refusals=3, at=now() - timedelta(days=9)))
@@ -456,7 +541,7 @@ def test_the_wording_change_leaves_the_judgment_and_the_codes_as_they_were(db):
         assert with_cause["recommendation"] == without["recommendation"] and with_cause["next_action"] == without["next_action"]
         assert set(found) <= {"branch", "hint", "confidence", "basis", "line", "note", "recheck_after"}
         assert 1 <= len(found["line"]) <= cause.LINE_MAX and found["line"].isascii() and found["line"].isprintable()
-    assert "saw an HTTP refusal" in cause.LINES["home_gate_unconfirmed_refused"] and " a HTTP" not in " ".join(cause.LINES.values())
+    assert "saw an HTTP refusal" in cause.gate_line("refused", True, timedelta(hours=2)) and " a HTTP" not in " ".join(cause.LINES.values())
     assert all(1 <= len(text) <= cause.LINE_MAX and text.isascii() and text.isprintable() for text in cause.LINES.values())
     # a date-less refusal sentence never points at a recheck_after that is not there
     seed(db, probe("wording-overdue.org", outcome="refused", refusals=1, due=now() - timedelta(hours=1)))
@@ -565,6 +650,7 @@ def test_no_host_name_and_no_site_text_reaches_a_cause(db):
     seed(db, provider_event(hosts[0], t0, "major", "none"), episode(hosts[1], t0), probe(hosts[2], outcome="bot_challenge", refusals=2))
     templates = [re.compile("^" + re.escape(text).replace(re.escape("{win}"), r"(\(since [0-9: -]+ UTC\)|\([0-9: -]+(?:-| to )[0-9: -]+ UTC\))") + "$")
                  for text in cause.LINES.values()] + [re.compile("^" + re.escape(text.replace(" {win}", "")) + "$") for text in cause.LINES.values() if "{win}" in text]
+    templates.append(re.compile(r"Not determined: AHN's check [0-9a-z ]+ saw an? (?:[A-Za-z ]+ )?[a-z-]+ refusal; .*"))
     for host in hosts:
         for params in ({"error_class": "service_error"}, {"error_class": "site_access"}, {"failure_stage": "before_target_response"},
                        {"error_class": "login_auth", "failed_at": iso(t0 + timedelta(minutes=1))}):

@@ -34,6 +34,14 @@ the caller; a host AHN does not measure because of its robots.txt (and the row i
 sentence and no ``recheck_after``; the general no_measurement sentence speaks of a usable check near that time, without a
 count of hours; ``note`` says the object is information only. None of this reads or changes ``branch``, ``hint``,
 ``confidence``, ``basis``, ``recommendation`` or ``next_action``.
+
+Wording (D82): the ``site_errors`` and ``recovered_site`` lines say that AHN's OWN checks did not reach the site and that this
+can be AHN's network path alone. Their ``confidence`` is lowered from high to medium when nothing but AHN's own measurement
+(``outage_episodes``) supports them: no published, non-synthetic observation with outcome ``error`` for the host and no
+OTHERS_MIN_SOURCES separate clients with service errors in ``lookup_signals_hourly`` within one and the same hour, both within the
+period of the measurement (the table counts a client again in every hour, so hours are never added up).
+The ``home_gate_unconfirmed`` lines name the age of the check (the ``age_seconds`` of ``ahn_check``, told in the same words as the MCP first line: minutes, hours under 24 hours, then days) and, when the stored check has one, its bot-defense provider. ``branch``, ``hint``, ``basis`` and everything outside
+``cause`` stay as they were.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from .check_text import VENDOR_NAMES, age_text as _age_text
 from .signal_history import PROVIDER_PROBLEMS, STALE_AFTER
 
 LOG = logging.getLogger(__name__)
@@ -52,7 +61,7 @@ CHANGE_WINDOW = timedelta(days=14)     # a recorded change this long before the 
 CHANGE_LEAD = timedelta(hours=24)      # a change recorded up to this long after it counts too: a re-read finds a change late
 BOT_DEFENSE_LOOKBACK = timedelta(days=14)   # a provider seen in the home-page counts of these days before is not "new"
 
-LINE_MAX = 120                         # a cause line, so an agent can put it into a briefing as it is
+LINE_MAX = 200                         # a cause line, so an agent can put it into a briefing as it is
 RAW_DAYS = 14                          # tables with raw measurements are pruned after this long
 FUTURE_SKEW = timedelta(minutes=5)     # a failed_at this far ahead is a clock difference, not a prediction
 PROVIDER_MAX_AGE = timedelta(days=3)   # a status-page problem older than this at the failure time is not "temporary"
@@ -86,8 +95,8 @@ LINES: dict[str, str] = {
     "provider_incident": "Temporary: provider status page shows a problem {win}. Retry later.",
     "provider_maintenance": "Temporary: provider maintenance {win}. Retry after it ends.",
     "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
-    "site_errors": "Temporary: AHN could not reach the site {win}. Retry later.",
-    "recovered_site": "Temporary: AHN could not reach the site {win}; it answers again. Retry.",
+    "site_errors": "AHN's own checks have not reached the site {win}; that can be AHN's network path alone, so it does not tell whether your tool can reach the site.",
+    "recovered_site": "AHN's own checks did not reach the site {win}; they answer again. That can be AHN's network path alone.",
     "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
     "home_now_gated": "Likely a policy block: the site refused AHN's last two home-page checks.",
@@ -106,12 +115,29 @@ LINES: dict[str, str] = {
 # line says whose check it was and that the next check is AHN's, not an instruction to the caller. Without a stored time to
 # come back at, "recheck_after" is left out.
 HOME_GATE_KINDS = {"bot_challenge": "bot-challenge", "refused": "HTTP", "login_wall": "login-wall"}
-for _outcome, _kind in HOME_GATE_KINDS.items():
-    _a = "an" if _kind == "HTTP" else "a"   # by sound: "an HTTP", "a bot-challenge", "a login-wall"
-    LINES[f"home_gate_unconfirmed_{_outcome}"] = (
-        f"Not determined: AHN's last check saw {_a} {_kind} refusal; recheck_after is AHN's next check, not an instruction.")
-    LINES[f"home_gate_unconfirmed_{_outcome}_undated"] = (
-        f"Not determined: AHN's last check saw {_a} {_kind} refusal; AHN checks again. That is AHN's check, not an instruction.")
+# Display names come from check_text (the MCP first line uses the same table). generic_captcha and unknown name no provider, so
+# they are left out of this sentence (nothing is guessed).
+UNNAMED_VENDORS = frozenset({"generic_captcha", "unknown"})
+
+
+def age_text(age: timedelta) -> str:
+    """The age of a check as ahn_check's age_seconds gives it: the same words as the MCP first line (check_text.age_text)."""
+    return _age_text(int(age.total_seconds()))
+
+
+def gate_line(outcome: str, dated: bool, age: timedelta, vendor: str | None = None) -> str:
+    """The home_gate_unconfirmed sentence: whose check, how old it is, what it saw, and that the next check is AHN's."""
+    kind = HOME_GATE_KINDS[outcome]
+    name = VENDOR_NAMES.get(vendor or "") if outcome == "bot_challenge" and vendor not in UNNAMED_VENDORS else None
+    what = f"{name} {kind}" if name else kind
+    article = "an" if what.split()[0] in ("HTTP", "AWS") else "a"
+    when = age_text(age)
+    head = f"Not determined: AHN's check {when} saw {article} {what} refusal; "
+    if dated:
+        return head + "recheck_after is AHN's next check, not an instruction."
+    return head + "AHN checks again. That is AHN's check, not an instruction."
+
+
 ROBOTS_REASONS = {"robots_disallowed": "no_measurement_robots_disallowed", "robots_refused": "no_measurement_robots_refused"}
 # Stored reasons for which no measurement will come, so the stored time is never offered as recheck_after. not_eligible (not a
 # public host) keeps the general sentence: only the time is left out. robots_unreadable is read again, so it stays.
@@ -177,11 +203,11 @@ def line_for(key: str, start: datetime | None = None, end: datetime | None = Non
 
 
 def _cause(branch: str, hint: str, confidence: str, basis: list[str], line_key: str, *, start: datetime | None = None,
-           end: datetime | None = None, recheck: datetime | None = None) -> dict:
+           end: datetime | None = None, recheck: datetime | None = None, line: str | None = None) -> dict:
     out = {"branch": branch, "hint": hint, "confidence": confidence, "basis": basis}
     if start is not None:
         out["window"] = {"from": _iso(start), **({"to": _iso(end)} if end is not None else {})}
-    out["line"] = line_for(line_key, start, end)
+    out["line"] = line if line is not None else line_for(line_key, start, end)
     out["note"] = NOTE
     if recheck is not None:
         out["recheck_after"] = _iso(recheck)
@@ -236,14 +262,37 @@ def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
         return None
     confidence = "high" if row["confirmed_at"] is not None else "medium"
     ended = row["ended_at"] if row["ended_at"] is not None and row["ended_at"] <= now else None
+    if confidence == "high" and not _others_saw_errors(conn, host, row["first_fail_at"], ended or now):
+        confidence = "medium"   # only AHN's own measurement says so, and it may be AHN's path alone (D82)
     if ended is not None and row["ended_reason"] == "answered":
         return _cause("transient", "recovered", confidence, ["outage_episodes"], "recovered_site", start=row["first_fail_at"], end=ended)
     return _cause("transient", "site_errors", confidence, ["outage_episodes"], "site_errors", start=row["first_fail_at"], end=ended)
 
 
+def _others_saw_errors(conn, host: str, start: datetime, end: datetime) -> bool:
+    """Something other than AHN's own measurement saw the host failing between ``start`` and ``end`` (D82): a published,
+    non-synthetic observation with outcome ``error`` on a service-error incident, or OTHERS_MIN_SOURCES separate clients' lookups
+    with a service error within ONE hour of the period (the same counts as ``others_failing_same_hour``, D47)."""
+    if conn.execute(
+            """SELECT 1 FROM observations o JOIN incidents i ON i.id=o.incident_id
+               WHERE i.site_host IN (%s, 'www.' || %s) AND i.error_class='service_error' AND i.visibility='published' AND o.review_state='published'
+                 AND o.synthetic=false AND o.withdrawn_at IS NULL AND o.outcome='error' AND o.observed_at >= %s AND o.observed_at <= %s
+               LIMIT 1""", (host, host, start, end)).fetchone():
+        return True
+    # one hour at a time: lookup_signals records the same client again in every hour, so clients are only separate within an hour
+    row = conn.execute(
+        """SELECT 1 FROM lookup_signals_hourly WHERE site_host=%s AND hour >= %s AND hour <= %s
+             AND http_status_class NOT IN ('429','401','403','407','451','402')
+             AND (error_class='service_error' OR http_status_class IN ('5xx','408'))
+           GROUP BY hour HAVING sum(sources) >= %s LIMIT 1""",
+        (host, _floor_hour(start), end, OTHERS_MIN_SOURCES)).fetchone()
+    return row is not None
+
+
 def _probe(conn, host: str):
     return conn.execute(
-        "SELECT outcome,probed_at,next_due_at,consecutive_refusals,not_measured_reason FROM site_probe WHERE site_host=%s", (host,)).fetchone()
+        "SELECT outcome,probed_at,next_due_at,consecutive_refusals,not_measured_reason,bot_vendor FROM site_probe WHERE site_host=%s",
+        (host,)).fetchone()
 
 
 def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
@@ -253,8 +302,8 @@ def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
     if probe["consecutive_refusals"] >= 2:
         return _cause("policy_closed", "home_now_gated", "medium", ["site_probe"], "home_now_gated")
     recheck = probe["next_due_at"] if probe["next_due_at"] > now else None
-    return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"],
-                  f"home_gate_unconfirmed_{probe['outcome']}" + ("" if recheck is not None else "_undated"), recheck=recheck)
+    line = gate_line(probe["outcome"], recheck is not None, now - probe["probed_at"], probe["bot_vendor"])
+    return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"], "home_gate_unconfirmed", recheck=recheck, line=line)
 
 
 def _persistent(conn, host: str, when: When, error_class: str | None, failure_stage: str | None) -> dict | None:
