@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from ahn.models import valid_host
 from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host
-from ahn.status_refresh import FEED_KINDS, OFFICIAL_STATUS_PAGES, SOURCES
+from ahn.status_refresh import FEED_KINDS, OFFICIAL_STATUS_PAGES, SIGN_IN_STATUS_PAGES, SOURCES
 
 HOST = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
 _ROOT = Path(__file__).resolve().parents[1]
@@ -101,7 +101,7 @@ RANK_BATCH_6_INSTATUS_HOSTS = {"q10.com"}
 RANK_BATCH_6_BETTERSTACK_HOSTS = {"hf.co"}
 # Demand batch 2026-10-27: the page's public feed parsed with the existing parser on the first check.
 DEMAND_BATCH_2026_10_27_INSTATUS_HOSTS = {"deno.com"}
-STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com", "cloudflare-dns.com", "incognia.com", "lastpass.com", "replit.com", "viator.com"}
+STATUSPAGE_COMPATIBLE_HOSTS = {"duffel.com", "ghost.org", "easypost.com", "rubygems.org", "sinch.com", "cloudflare-dns.com", "incognia.com", "lastpass.com", "replit.com"}
 
 
 def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
@@ -115,3 +115,8 @@ def test_moved_hosts_use_the_parser_of_the_service_that_runs_their_page():
 
 def test_datadog_stays_a_link_because_its_feed_covers_one_region_only():
     assert "datadoghq.com" in OFFICIAL_STATUS_PAGES and "datadoghq.com" not in SOURCES
+
+
+def test_every_sign_in_status_page_is_a_listed_link():
+    assert SIGN_IN_STATUS_PAGES <= set(OFFICIAL_STATUS_PAGES)
+    assert not SIGN_IN_STATUS_PAGES & set(SOURCES)

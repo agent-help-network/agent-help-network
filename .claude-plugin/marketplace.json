@@ -9,7 +9,7 @@
     {
       "name": "ahn",
       "source": "./plugins/claude-code/ahn",
-      "version": "0.3.12",
+      "version": "0.3.13",
       "description": "When a web fetch or browser step is blocked or fails (403, login wall, CAPTCHA, 5xx, timeout), look up the hostname on Agent Help Network: declared agent policy, official developer path, provider status and one recommended action. The hook is read-only and sends only the hostname and fixed codes; the bundled MCP server's report_observation write tool is for use only with the user's explicit approval, never automatically.",
       "author": {"name": "Agent Help Network", "email": "support@agenthelpnetwork.com", "url": "https://agenthelpnetwork.com"},
       "homepage": "https://agenthelpnetwork.com/en/agents",

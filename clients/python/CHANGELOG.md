@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5
+
+- `ahn.local_digest` with `cache_dir`: the padding file is now read, extended and written inside one operating-system lock on `padding.lock` (the system releases it if the holder dies; the lock file is never deleted). Before, two processes starting at the same time, or both growing the same stored set, could each request their own padding and only the last file written stayed, so one client could ask for two different padding sets. If the lock is not free within 10 seconds, or the set cannot be stored, nothing is requested and the note is `padding_unreadable`. In a folder you cannot write to, a stored set that is big enough is used as it is; if it would have to grow or be created, nothing is requested. Leftover `.padding-*` temp files are cleaned up. The guarantee holds only when every process that uses the same `cache_dir` runs 0.6.5 or newer; an older client does not take the lock. On Windows a lock file that exists but cannot be opened for writing is waited for only when it cannot be read either (another program holds it); a read-only lock file or one denied by permissions is treated at once as a folder we cannot write to, and a stored set that is big enough is still used.
+
+## 0.6.4
+
+- `ahn.local_digest(hosts, *, pad_to=16, cache_dir=None, public_key=None, ...)` compares regular sites with the bundle's thin shards on your machine: shard ids are computed locally, random padding shards keep the number of requests fixed, shards are verified against the manifest's SHA-256 (and its Ed25519 signature when you give the key), `If-None-Match` caching, a seven-day changes marker, and `status == "not_in_bundle"` for hosts to check live. The service receives no hostname.
+- With `cache_dir` the padding shard set is stored (`padding.json`) and reused, and every shard asked for is requested the same way; with `public_key=` an unsigned manifest is refused (`signature_missing`); a malformed changes value or failure-file date no longer raises.
+- `ahn.digest_markdown(digest)` renders a card with no text copied from sites.
+- `ahn.FailureLog` and `ahn.ADVICE`: an optional local file of the last 14 days of a site's failures and the advice codes a pattern calls for. Nothing is sent.
+
 ## 0.6.3
 
 - `ahn.check(..., task_step=...)`: `"status_check"` or `"preflight"` tells the service that the lookup only checks whether a site is up

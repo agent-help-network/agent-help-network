@@ -303,6 +303,8 @@ class ProviderStatus(StrictModel):
 class OfficialStatusPage(StrictModel):
     source_name: str
     source_url: str
+    # D72: true only when the listed page needs the user's sign-in; left out (never null) otherwise.
+    requires_sign_in: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class LookupActivity(StrictModel):
@@ -323,7 +325,9 @@ class AgentRule(StrictModel):
 
 
 class RobotsSummary(StrictModel):
-    rules: list[AgentRule]
+    # D71: a task_step=status_check answer leaves `rules` out and gives `rules_omitted` (the count) instead.
+    rules: list[AgentRule] | None = Field(default=None, exclude_if=_omit_none)
+    rules_omitted: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     wildcard_root_allowed: bool
     sitemap: bool = False
     sitemaps: list[str] = Field(default_factory=list)
@@ -622,6 +626,8 @@ class NextAction(StrictModel):
     # D61: with do=use_official_path or, since D63, proceed, the site's own customer page for a task in the user's own
     # account, which a developer API may not reach. Present only when official_paths.consumer is curated.
     customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
+    # D69: the provider's or the official status page, for a task_step=status_check lookup. Present only when one is known.
+    status_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
 
 
 class Links(StrictModel):
@@ -667,6 +673,29 @@ class FeedbackReceipt(StrictModel):
     accepted: Literal[True]
 
 
+class CauseWindow(StrictModel):
+    """D73: the period of the measurement the cause rests on (UTC). ``to`` is left out while it is still going on."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False, populate_by_name=True)
+    from_: datetime = Field(alias="from")
+    to: datetime | None = Field(default=None, exclude_if=_omit_none)
+
+
+class Cause(StrictModel):
+    """D73: why the step failed, from AHN's own stored host-level measurements. Information only: it is added after the
+    recommendation is final and changes none of it. ``line`` is a fixed English sentence with times and no site text."""
+    branch: Literal["policy_closed", "transient", "undetermined"]
+    hint: Literal["home_now_gated", "persistent_refusal", "provider_incident", "site_errors", "recovered", "rate_limited",
+                  "others_failing_same_hour", "your_side_likely", "no_measurement", "home_gate_unconfirmed",
+                  "robots_now_disallows", "terms_signal_changed", "new_bot_defense"]
+    confidence: Literal["high", "medium", "low"]
+    basis: list[Literal["provider_status_events", "outage_episodes", "site_probe", "site_probe_daily",
+                        "lookup_signals_hourly", "host_access_changes"]] = Field(max_length=6)
+    window: CauseWindow | None = Field(default=None, exclude_if=_omit_none)
+    line: str = Field(min_length=1, max_length=120, pattern=r"^[ -~]+$")
+    note: str = Field(default="Information only; follow next_action.", min_length=1, max_length=80, pattern=r"^[ -~]+$")
+    recheck_after: datetime | None = Field(default=None, exclude_if=_omit_none)
+
+
 class CheckResponse(StrictModel):
     site_host: str
     generated_at: datetime
@@ -674,6 +703,8 @@ class CheckResponse(StrictModel):
     summary_line: str | None = Field(default=None, min_length=1, max_length=200, pattern=r"^[ -~]+$", exclude_if=_omit_none)
     next_action: NextAction | None = Field(default=None, exclude_if=_omit_none)
     links: Links | None = Field(default=None, exclude_if=_omit_none)
+    # D73: present only on a failure lookup while AHN_CAUSE_HINT is not 0 and a cause can be said; left out (never null) otherwise.
+    cause: Cause | None = Field(default=None, exclude_if=_omit_none)
     synthetic: bool
     window_hours: int = Field(ge=1, le=168)
     data_horizon_hours: Literal[168]

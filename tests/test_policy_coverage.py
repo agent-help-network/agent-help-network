@@ -161,6 +161,8 @@ LOOKUP_FIELDS = {
     "via": Phrase("via", "via"),
     # D48: chooses the recommendation only; neither counted nor stored (the policy sentence says so).
     "agent_vendor": Phrase("agent_vendor", "agent_vendor"),
+    # D73: chooses which stored measurements the answer's cause is read from; neither counted nor stored (the policy sentence says so).
+    "failed_at": Phrase("failed_at", "failed_at"),
     "window_hours": Exempt("REST only: a whole number 1-168 that narrows the observation window, not data about anyone"),
 }
 
@@ -234,6 +236,7 @@ CHECK_RESPONSE_FIELDS = {
     "observations": Phrase("published observations without any reporter identity", "제보자 신원이 없는 공개 관찰"),
     "lookup_activity": Phrase("coarse lookup-activity band", "대략적인 조회 활동 구간"),
     "host_facts": Phrase("registry facts about the domain", "도메인에 관한 레지스트리 사실"),
+    "cause": Phrase("cause hint", "원인 힌트"),
     "ahn_check": Phrase("what our own server received when it requested the host's home page",
                         "우리 서버가 그 호스트의 홈 페이지(/)를 쿠키와 로그인 없이 요청해 받은 것"),
     "site_host": Exempt("echo of the hostname the caller sent"),
@@ -354,6 +357,10 @@ TABLES = {
     # day-specific keyed IP digests. Deleted by prune_analytics after a fixed period; stated in sections 02 and 06.
     "lookup_signals_hourly": Pruned(Phrase("Hourly per-host counts of lookup codes: {days} days", "호스트별 시간 단위 조회 코드 집계: {days}일"),
                                     Phrase("for {days} days, together with a keyed digest", "{days}일 집계하며")),
+    # Access-policy changes (migration 035, ahn/host_access_changes.py, D75): short codes per hostname, kept 90 days.
+    "host_access_changes": Pruned(Phrase(
+        "Changes in a public host's declared access policy (the time, the field that changed, and its old and new short code; never a file, a path or a header value): {days} days",
+        "공개 호스트의 선언된 접근 정책 변화(시각, 바뀐 항목, 이전·이후 짧은 코드. 파일·경로·헤더 값은 저장하지 않음): {days}일")),
     # Lookup feedback (migration 031, ahn/feedback.py, D58): outcome counts per hostname and hour of the lookup.
     "lookup_feedback_hourly": Pruned(Phrase("Hourly per-host counts of feedback outcomes, with the recommendation given and the kind of client: {days} days",
                                             "호스트별 시간 단위 결과 회신 집계(그때 준 권고와 클라이언트 종류 포함): {days}일")),
