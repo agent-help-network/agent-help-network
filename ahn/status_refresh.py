@@ -760,7 +760,6 @@ SOURCES: dict[str, Source] = {
     "incognia.com": Source("Incognia Status", "https://status.incognia.com/", "https://status.incognia.com/api/v2/status.json"),
     "lastpass.com": Source("LastPass Status", "https://status.lastpass.com/", "https://status.lastpass.com/api/v2/status.json"),
     "replit.com": Source("Replit Status", "https://status.replit.com/", "https://status.replit.com/api/v2/status.json"),
-    "viator.com": Source("Viator Status", "https://status.viator.com/", "https://status.viator.com/api/v2/status.json"),
 }
 # D54: feed kinds whose stored update time is defined by the items the feed lists as active, not by the page. An
 # Instatus summary has no page time: parse_instatus takes the latest updatedAt of the active incidents and active
