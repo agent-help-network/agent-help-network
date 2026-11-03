@@ -4,6 +4,7 @@ AHN_CAUSE_HINT=0. Rows are written straight into the tables the cause reads; not
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from fastapi.testclient import TestClient  # noqa: E402  (after the skip: ahn.ma
 from ahn import access_profile, background_reads, cause, response_guide, service
 from ahn.db import connect, migrate
 from ahn.main import create_app
-from ahn.models import CheckResponse
+from ahn.models import CheckResponse, ErrorClass
 from ahn.service import PUBLIC_REPORTER_ID
 from ahn.settings import Settings
 
@@ -402,6 +403,146 @@ def test_two_refusals_in_a_row_are_a_policy_block_and_one_is_only_undetermined(d
     seed(db, probe("gate-stale.org", outcome="refused", refusals=3, at=now() - timedelta(days=9)))
     assert look(db, "gate-stale.org", error_class="site_access")["cause"]["hint"] == "no_measurement"
     assert look(db, two, error_class="service_error").get("cause", {}).get("branch") != "policy_closed"
+
+
+LOGIN_WALL_LINE = "Likely a sign-in requirement: the site's home page showed a sign-in wall on AHN's last two checks."
+D84_CASES = {  # host: (stored outcome, stored count, daily rows (outcome, days ago[, probes]), confirmed for a failure that is not login_auth)
+    "lw-two.org": ("login_wall", 0, [("login_wall", 7), ("login_wall", 0)], True),
+    "lw-same-day.org": ("login_wall", 0, [("login_wall", 0, 2)], True),
+    "lw-after-normal.org": ("login_wall", 0, [("reachable", 10), ("login_wall", 7), ("login_wall", 0)], True),
+    "lw-one.org": ("login_wall", 0, [("login_wall", 0)], False),
+    "lw-none.org": ("login_wall", 0, [], False),
+    "lw-between-rate.org": ("login_wall", 0, [("login_wall", 7), ("rate_limited", 3), ("login_wall", 0)], False),
+    "lw-between-normal.org": ("login_wall", 0, [("login_wall", 14), ("reachable", 10), ("login_wall", 0)], False),
+    "lw-between-bot.org": ("login_wall", 0, [("login_wall", 7), ("bot_challenge", 3), ("login_wall", 0)], False),
+    # the run is counted after the LAST other outcome, not the first: a normal answer long ago does not rescue it
+    "lw-after-normal-then-bot.org": ("login_wall", 0, [("reachable", 10), ("login_wall", 7), ("bot_challenge", 3), ("login_wall", 0)], False),
+    # a not_measured row resets the stored count too (site_probe.schedule), so it ends the run here as well
+    "lw-between-unmeasured.org": ("login_wall", 0, [("login_wall", 7), ("not_measured", 3), ("login_wall", 0)], False),
+    "lw-between-unreachable.org": ("login_wall", 0, [("login_wall", 7), ("unreachable", 3), ("login_wall", 0)], False),
+    "lw-mixed-day.org": ("login_wall", 0, [("login_wall", 0, 1), ("reachable", 0, 1)], False),
+    # a day that holds another outcome is not counted: one login wall on it and one on the next day are not two in a row
+    "lw-mixed-day-then-next.org": ("login_wall", 0, [("login_wall", 1, 1), ("reachable", 1, 1), ("login_wall", 0, 1)], False),
+    "lw-now-refused.org": ("refused", 1, [("login_wall", 14), ("login_wall", 7), ("refused", 0)], False),
+    "lw-now-normal.org": ("reachable", 0, [("login_wall", 14), ("login_wall", 7), ("reachable", 0)], False),
+}
+
+
+def seed_d84_cases(db, due):
+    today = now().date()
+    for host, (outcome, count, rows, _) in D84_CASES.items():
+        seed(db, probe(host, outcome=outcome, refusals=count, due=due),
+             *[probe_day(host, today - timedelta(days=row[1]), row[0], row[2] if len(row) > 2 else 1) for row in rows])
+
+
+def test_two_login_walls_in_a_row_are_a_policy_block_and_anything_else_stays_undetermined(db):
+    """D84: a login wall does not raise consecutive_refusals, so two in a row are read from site_probe_daily. Only cause
+    differs from an answer with the cause off: recommendation, next_action and summary_line are the same."""
+    off = settings_with(hint=False)
+    due = now() + timedelta(days=7)
+    seed_d84_cases(db, due)
+    for host, (outcome, _, _, confirmed) in D84_CASES.items():
+        for params in ({"error_class": "site_access"}, {"error_class": "human_verification"}):
+            with_cause, without = look(db, host, **params), look(off, host, **params)
+            found = with_cause.get("cause")
+            if confirmed:
+                assert (found["branch"], found["hint"], found["confidence"], found["basis"]) == (
+                    "policy_closed", "home_now_gated", "medium", ["site_probe", "site_probe_daily"]), host
+                assert found["line"] == LOGIN_WALL_LINE
+                assert "recheck_after" not in found and "window" not in found
+            elif outcome == "login_wall":
+                assert (found["branch"], found["hint"], found["confidence"]) == ("undetermined", "home_gate_unconfirmed", "low"), host
+                assert found["basis"] == ["site_probe"] and found["recheck_after"] == iso(due)
+                assert "login-wall refusal" in found["line"]
+            else:
+                assert found is None or found["hint"] != "home_now_gated", host
+            assert {k: v for k, v in strip(with_cause).items() if k != "cause"} == strip(without), host
+            assert with_cause["recommendation"] == without["recommendation"] and with_cause["next_action"] == without["next_action"]
+            assert with_cause["summary_line"] == without["summary_line"]
+    # a service error is not what a login wall looks like
+    assert look(db, "lw-two.org", error_class="service_error").get("cause", {}).get("branch") != "policy_closed"
+
+
+def test_a_step_that_failed_on_a_sign_in_or_names_no_error_class_is_answered_as_before_d84(monkeypatch, db):
+    """D84 does not apply when the caller's error_class is login_auth (the site is expected to ask for a sign-in, and a
+    client reads home_now_gated as "stop visiting") or empty: the whole answer is what it was before."""
+    seed_d84_cases(db, now() + timedelta(days=7))
+    hosts = [host for host, case in D84_CASES.items() if case[3]]
+    assert hosts
+    # an allow list: a class added to the enum later is not covered by D84 until it is added to D84_ERROR_CLASSES on purpose
+    assert set(cause.D84_ERROR_CLASSES) == {c.value for c in ErrorClass} - {"login_auth", "service_error"}
+    for params in ({"error_class": "login_auth"}, {"failure_stage": "access_denial_observed"}, {"failure_stage": "response_observed"},
+                   {"failure_stage": "unknown"}, {"error_class": "login_auth", "failure_stage": "access_denial_observed"}):
+        answers = {host: look(db, host, **params) for host in hosts}
+        with monkeypatch.context() as patch:
+            patch.setattr(cause, "_login_wall_twice", lambda conn, host: False)   # the answer before D84
+            before = {host: look(db, host, **params) for host in hosts}
+        for host in hosts:
+            assert strip(answers[host]) == strip(before[host]), (host, params)
+            found = answers[host]["cause"]
+            assert (found["hint"], found["basis"]) == ("home_gate_unconfirmed", ["site_probe"]), (host, params)
+    assert look(db, hosts[0]).get("cause") is None   # no failure named: no cause at all, as before
+
+
+def test_a_persistent_refusal_over_several_days_wins_over_a_login_wall_confirmation(db):
+    host, today = "lw-persistent.org", now().date()
+    hours = [now() - timedelta(hours=1) - timedelta(days=n) for n in (0, 1, 2)]
+    seed(db, probe(host, outcome="login_wall", due=now() + timedelta(days=7)), probe_day(host, today - timedelta(days=7), "login_wall"),
+         probe_day(host, today, "login_wall"), *[hourly(host, hour, sources=3, error_class="site_access") for hour in hours])
+    found = look(db, host, error_class="site_access")["cause"]
+    assert (found["hint"], found["basis"]) == ("persistent_refusal", ["lookup_signals_hourly"])
+
+
+def test_a_login_wall_after_two_counted_refusals_says_so(db):
+    """The stored count is 2 or more (bot challenges or HTTP refusals) and the latest check is a login wall: the sentence
+    does not claim that the last two checks were refused for the same reason."""
+    due = now() + timedelta(days=7)
+    seed(db, probe("lw-count-two.org", outcome="login_wall", refusals=2, due=due), probe("lw-count-two-bot.org", outcome="bot_challenge", refusals=2, due=due))
+    for params in ({"error_class": "login_auth"}, {"error_class": "site_access"}, {"failure_stage": "access_denial_observed"}):
+        found = look(db, "lw-count-two.org", **params)["cause"]
+        assert (found["hint"], found["basis"]) == ("home_now_gated", ["site_probe"])
+        assert found["line"] == cause.LINES["home_now_gated_latest_login_wall"] == (
+            "Likely a policy block: the site refused AHN's home-page checks at least twice in a row; the latest showed a sign-in wall.")
+    assert look(db, "lw-count-two-bot.org", error_class="site_access")["cause"]["line"] == cause.LINES["home_now_gated"]
+
+
+def test_d84_changes_only_the_login_wall_hosts_it_names_over_a_fixed_set_of_inputs(monkeypatch, db):
+    """The fixed replay behind the numbers in the D84 row: the same hosts and failure shapes with and without the rule."""
+    due, today = now() + timedelta(days=7), now().date()
+    histories = {"none": [], "lw1": [("login_wall", 0, 1)], "lw2": [("login_wall", 7, 1), ("login_wall", 0, 1)],
+                 "lw2same": [("login_wall", 0, 2)], "mixed": [("login_wall", 7, 1), ("bot_challenge", 3, 1), ("login_wall", 0, 1)],
+                 "okthen": [("reachable", 10, 1), ("login_wall", 7, 1), ("login_wall", 0, 1)],
+                 "lwthenok": [("login_wall", 14, 1), ("login_wall", 7, 1), ("reachable", 0, 1)],
+                 "sameday": [("login_wall", 0, 1), ("reachable", 0, 1)]}
+    hosts = {}
+    for n, (outcome, count, name) in enumerate(itertools.product(("login_wall", "bot_challenge", "refused", "rate_limited", "reachable", None),
+                                                                 (0, 1, 2), histories)):
+        host = f"replay{n}.org"
+        hosts[host] = (outcome, count, name)
+        seed(db, *([probe(host, outcome=outcome, refusals=count, due=due)] if outcome else []),
+             *[probe_day(host, today - timedelta(days=days), o, k) for o, days, k in histories[name]])
+    shapes = list(itertools.product((None, "login_auth", "site_access", "human_verification", "service_error"),
+                                    (None, "access_denial_observed", "before_target_response")))
+    at = datetime.now(timezone.utc)
+    when = cause.parse_failed_at(None, at)
+    with connect(settings_with()) as conn:
+        def run():
+            return {(host, ec, st): cause.compute(conn, host, at, when, error_class=ec, failure_stage=st) for host in hosts for ec, st in shapes}
+        after = run()
+        with monkeypatch.context() as patch:
+            patch.setattr(cause, "_login_wall_twice", lambda conn, host: False)
+            before = run()
+    assert len(after) == len(hosts) * len(shapes) == 144 * 15
+    changed = [key for key in after if after[key] != before[key]]
+    for host, ec, st in changed:
+        outcome, count, name = hosts[host]
+        # a stored login wall, a stored count below 2, two login walls in a row in the daily totals, and a failure that
+        # names an error class other than login_auth (service_error never reaches the gate)
+        assert outcome == "login_wall" and count < 2 and name in ("lw2", "lw2same", "okthen"), (host, ec, st)
+        assert ec in ("site_access", "human_verification"), (host, ec, st)
+        assert before[(host, ec, st)]["hint"] == "home_gate_unconfirmed"
+        assert (after[(host, ec, st)]["hint"], after[(host, ec, st)]["line"]) == ("home_now_gated", LOGIN_WALL_LINE)
+    assert len(changed) == 36
 
 
 def test_a_refusal_is_never_evidence_of_a_temporary_problem(db):
