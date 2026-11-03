@@ -287,9 +287,10 @@ class ProviderStatus(StrictModel):
     # may be missing a recent or an older open incident.
     source_kind: Literal["history_atom"] | None = Field(default=None, exclude_if=_omit_none)
     window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
-    # "active_items" (D54): source_updated_at is the latest update of the incidents and maintenances the feed lists as
-    # active (Instatus, Google Gmail), not a page-wide time. Left out for every other feed.
-    source_time: Literal["active_items"] | None = Field(default=None, exclude_if=_omit_none)
+    # What source_updated_at is. "active_items" (D54): the latest update of the incidents and maintenances the feed lists
+    # as active (Instatus, Google Gmail). "page" (D80): the page-wide time the provider last changed its status page, which
+    # need not move with incidents. Left out when there is no source_updated_at (for example the Atom history).
+    source_time: Literal["active_items", "page"] | None = Field(default=None, exclude_if=_omit_none)
     # Scope of a Statuspage-shaped feed (ahn/status_scope.py, D43). Each is left out when it was not read.
     active_incidents: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     max_incident_impact: Literal["none", "minor", "major", "critical"] | None = Field(default=None, exclude_if=_omit_none)
@@ -305,6 +306,9 @@ class OfficialStatusPage(StrictModel):
     source_url: str
     # D72: true only when the listed page needs the user's sign-in; left out (never null) otherwise.
     requires_sign_in: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
+    # D80: "api" only when the page's own name says it covers the provider's API or developer services, not the whole site;
+    # left out (never null) otherwise.
+    covers: Literal["api"] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class LookupActivity(StrictModel):

@@ -410,7 +410,7 @@ def test_the_lookup_answers_the_left_out_minor_pages_as_the_board_judged_them(db
         checks = {item["code"]: item["text"] for item in released["next_checks"]}
         assert "provider_scope" not in checks and checks["provider_incident_stale"] == triage.PAGE_STALE_CHECK
         page_time = lookup(client, "gocardless.com")
-        assert "source_time" not in page_time["provider_status"]
+        assert page_time["provider_status"]["source_time"] == "page"  # D80
         assert page_time["recommendation"] == {"action": "wait_provider_incident", "confidence": "medium",
                                                "reasons": ["provider_scope"]}
         assert [item["code"] for item in page_time["next_checks"] if item["code"].startswith("provider_")] == ["provider_scope"]

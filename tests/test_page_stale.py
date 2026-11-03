@@ -95,7 +95,7 @@ def test_source_time_is_a_public_field_left_out_when_absent():
     assert ProviderStatus(**base, **ITEMS).model_dump(mode="json")["source_time"] == "active_items"
     assert "source_time" not in ProviderStatus(**base).model_dump(mode="json", exclude_none=False)
     with pytest.raises(ValueError):
-        ProviderStatus(**base, source_time="page")
+        ProviderStatus(**base, source_time="weekly")
 
 
 # --- the live shapes ---------------------------------------------------------------------------------------------
@@ -263,7 +263,7 @@ def test_a_stale_feed_is_never_judged():
 
 def scoped(indicator, *, updated, api_url=None, **row) -> dict:
     """A statement built from stored scope columns, as the lookup and the board build it."""
-    stored = {"indicator": indicator, "max_incident_impact": None, "api_url": api_url, **row}
+    stored = {"indicator": indicator, "max_incident_impact": None, "api_url": api_url, "source_updated_at": updated, **row}
     return {"indicator": indicator, "source_updated_at": updated, "freshness": "fresh", **_provider_scope(stored)}
 
 
@@ -300,7 +300,7 @@ def test_a_statuspage_read_that_missed_its_lists_keeps_the_wait(missed):
     # by robots.txt has no basis this time (D46). Its page time is the page's own, so D54 never lifts the wait.
     status = scoped("minor", updated=NOW - timedelta(days=20), api_url="https://www.cloudflarestatus.com/api/v2/status.json",
                     **missed)
-    assert "basis" not in status and "source_time" not in status
+    assert "basis" not in status and status["source_time"] == "page"  # D80: a page-wide time, never active_items
     assert not page_stale(status, NOW)
     assert recommendation(None, status, None, None, now=NOW) == WAIT
 

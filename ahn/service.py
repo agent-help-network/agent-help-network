@@ -16,7 +16,7 @@ from .models import ObservationIn, OutcomeIn
 from .official_paths import official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
-from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_requires_sign_in
+from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_covers_api_only, status_page_requires_sign_in
 from . import response_guide
 from .triage import LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
@@ -349,10 +349,13 @@ def _provider_scope(row: dict) -> dict:
 
     source_time (D54) is "active_items" when the row's feed address is one whose update time is defined by the
     incidents and maintenances it lists as active (status_refresh.ACTIVE_ITEM_TIME_FEEDS: Instatus, Google Gmail), and
-    left out otherwise, including when the address is not known to be one."""
+    left out otherwise, including when the address is not known to be one. D80: any other feed that has a
+    source_updated_at gets "page" (the page-wide time, which need not move with incidents)."""
     out: dict = {}
     if row.get("api_url") in ACTIVE_ITEM_TIME_FEEDS:
         out["source_time"] = "active_items"
+    elif row.get("source_updated_at") is not None:
+        out["source_time"] = "page"
     if row.get("active_incidents") is not None:
         out["active_incidents"] = row["active_incidents"]
         out["max_incident_impact"] = row["max_incident_impact"]
@@ -434,6 +437,8 @@ def official_page_view(official_page: tuple[str, str] | None, host: str) -> dict
     view = {"source_name": official_page[0], "source_url": official_page[1]}
     if status_page_requires_sign_in(official_page):
         view["requires_sign_in"] = True
+    if status_page_covers_api_only(official_page):
+        view["covers"] = "api"
     return view
 
 
