@@ -28,6 +28,12 @@ Time handling: ``failed_at`` is an ISO 8601 time. Without it the failure is take
 Raw measurements are kept 14 days, provider status changes 90 days, so a time older than 14 days is answered from the
 provider's status history alone. A value that cannot be used (bad format, more than five minutes in the future) gives no
 ``cause`` at all, never a cause for a different time.
+
+Wording (D78): the ``home_gate_unconfirmed`` and ``no_measurement`` lines name AHN's own check and are never an instruction to
+the caller; a host AHN does not measure because of its robots.txt (and the row is recent) gets its own no_measurement
+sentence and no ``recheck_after``; the general no_measurement sentence speaks of a usable check near that time, without a
+count of hours; ``note`` says the object is information only. None of this reads or changes ``branch``, ``hint``,
+``confidence``, ``basis``, ``recommendation`` or ``next_action``.
 """
 
 from __future__ import annotations
@@ -51,6 +57,8 @@ RAW_DAYS = 14                          # tables with raw measurements are pruned
 FUTURE_SKEW = timedelta(minutes=5)     # a failed_at this far ahead is a clock difference, not a prediction
 PROVIDER_MAX_AGE = timedelta(days=3)   # a status-page problem older than this at the failure time is not "temporary"
 MEASURE_WINDOW = timedelta(hours=12)   # how close a home-page check must be to the failure time to describe it
+ROBOTS_LINE_FRESH = timedelta(hours=24)   # a robots.txt reason names the present only while the stored row is this recent
+NOTE = "Information only; follow next_action."   # on every cause, as ahn_check carries its own note
 PROBE_FRESH = timedelta(days=8)        # a refusal is re-measured after 7 days (site_probe.REFUSED_EXCLUDE_DAYS)
 OTHERS_MIN_SOURCES = 3                 # other clients seen with service errors in the failure hour: "several"
 OTHERS_MEDIUM_SOURCES = 10
@@ -88,10 +96,22 @@ LINES: dict[str, str] = {
     "terms_signal_changed": "Terms signal changed {win}: llms.txt removed or data-mining reserved. Not an access block.",
     "new_bot_defense": "Likely a policy block: the home page now shows a bot-defense page from a new provider {win}.",
     "your_side_likely": "Not determined: AHN's check was normal then; the cause may be on your side. AHN reads no page content.",
-    "no_measurement": "Not determined: AHN has no measurement of this site around that time.",
-    "home_gate_unconfirmed": "Not determined: the site refused AHN's last home-page check once; one more would confirm a block.",
+    "no_measurement": "Not determined: AHN has no usable home-page check of this site near that time.",
+    "no_measurement_robots_disallowed": "Not determined: AHN does not measure this site because its robots.txt disallows AHN's check.",
+    "no_measurement_robots_refused": "Not determined: AHN does not measure this site because the site refused AHN's request for robots.txt.",
     "too_old": "Not determined: that time is past the 14 days of measurements kept; only provider status history was read.",
 }
+
+# The last refusal of the home page, named by what AHN saw (no count: a login wall does not raise consecutive_refusals). The
+# line says whose check it was and that the next check is AHN's, not an instruction to the caller. Without a stored time to
+# come back at, "recheck_after" is left out.
+HOME_GATE_KINDS = {"bot_challenge": "bot-challenge", "refused": "HTTP", "login_wall": "login-wall"}
+for _outcome, _kind in HOME_GATE_KINDS.items():
+    LINES[f"home_gate_unconfirmed_{_outcome}"] = (
+        f"Not determined: AHN's last check saw a {_kind} refusal; recheck_after is AHN's next check, not an instruction.")
+    LINES[f"home_gate_unconfirmed_{_outcome}_undated"] = (
+        f"Not determined: AHN's last check saw a {_kind} refusal; AHN checks again. That is AHN's check, not an instruction.")
+ROBOTS_REASONS = {"robots_disallowed": "no_measurement_robots_disallowed", "robots_refused": "no_measurement_robots_refused"}
 
 _TIME = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?$")
 
@@ -158,6 +178,7 @@ def _cause(branch: str, hint: str, confidence: str, basis: list[str], line_key: 
     if start is not None:
         out["window"] = {"from": _iso(start), **({"to": _iso(end)} if end is not None else {})}
     out["line"] = line_for(line_key, start, end)
+    out["note"] = NOTE
     if recheck is not None:
         out["recheck_after"] = _iso(recheck)
     return out
@@ -218,7 +239,7 @@ def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
 
 def _probe(conn, host: str):
     return conn.execute(
-        "SELECT outcome,probed_at,next_due_at,consecutive_refusals FROM site_probe WHERE site_host=%s", (host,)).fetchone()
+        "SELECT outcome,probed_at,next_due_at,consecutive_refusals,not_measured_reason FROM site_probe WHERE site_host=%s", (host,)).fetchone()
 
 
 def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
@@ -228,7 +249,8 @@ def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
     if probe["consecutive_refusals"] >= 2:
         return _cause("policy_closed", "home_now_gated", "medium", ["site_probe"], "home_now_gated")
     recheck = probe["next_due_at"] if probe["next_due_at"] > now else None
-    return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"], "home_gate_unconfirmed", recheck=recheck)
+    return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"],
+                  f"home_gate_unconfirmed_{probe['outcome']}" + ("" if recheck is not None else "_undated"), recheck=recheck)
 
 
 def _persistent(conn, host: str, when: When, error_class: str | None, failure_stage: str | None) -> dict | None:
@@ -383,12 +405,22 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
     if gate:
         return gate
     recheck = probe["next_due_at"] if probe is not None and probe["next_due_at"] > now else None
+    # a stored robots.txt reason: the stored time is the next robots.txt look, not a measurement, so it is never offered
+    robots = ROBOTS_REASONS.get(probe["not_measured_reason"]) if probe is not None and probe["outcome"] == "not_measured" else None
+    if robots:
+        recheck = None
     measured, normal = _measurement(conn, host, probe, when)
     # the terms signal is information, never a block: it only fills the place of "nothing measured" or of nothing at all
     terms = _terms_signal_changed(history) if history else None
     if not measured:
-        return terms or _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement",
-                               recheck=recheck)
+        if terms:
+            return terms
+        # AHN does not measure a host whose robots.txt disallows or refused it: the stored row says why, and no later
+        # measurement is due (the next robots.txt look is not a measurement), so no recheck_after is given
+        if robots and probe["probed_at"] >= now - ROBOTS_LINE_FRESH:
+            return _cause("undetermined", "no_measurement", "low", ["site_probe"], robots)
+        return _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement",
+                      recheck=recheck)
     if normal and (failure_stage == "before_target_response" or refusal_like):
         return _cause("undetermined", "your_side_likely", "low", ["site_probe"], "your_side_likely", recheck=recheck)
     return terms

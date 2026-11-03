@@ -1072,6 +1072,14 @@
        "title": "Line",
        "type": "string"
       },
+      "note": {
+       "default": "Information only; follow next_action.",
+       "maxLength": 80,
+       "minLength": 1,
+       "pattern": "^[ -~]+$",
+       "title": "Note",
+       "type": "string"
+      },
       "recheck_after": {
        "anyOf": [
         {

@@ -273,6 +273,9 @@ def test_two_refusals_in_a_row_are_a_policy_block_and_one_is_only_undetermined(d
     first = look(db, one, error_class="site_access")["cause"]
     assert (first["branch"], first["hint"], first["confidence"]) == ("undetermined", "home_gate_unconfirmed", "low")
     assert first["recheck_after"] == iso(due)
+    # the sentence says whose check it was and what kind of refusal, gives no count, and is not an instruction (D78)
+    assert first["line"] == "Not determined: AHN's last check saw a login-wall refusal; recheck_after is AHN's next check, not an instruction."
+    assert first["note"] == cause.NOTE == "Information only; follow next_action."
     # a refusal measured long ago says nothing about now; a service error is not what a gate looks like
     seed(db, probe("gate-stale.org", outcome="refused", refusals=3, at=now() - timedelta(days=9)))
     assert look(db, "gate-stale.org", error_class="site_access")["cause"]["hint"] == "no_measurement"
@@ -397,6 +400,70 @@ def test_no_measurement_names_the_next_measurement_only_when_there_is_one(db):
     # a check due in the past is not a time to come back at
     seed(db, probe("overdue.org", outcome="not_measured", at=now() - timedelta(days=2), due=now() - timedelta(hours=1), reason="budget"))
     assert "recheck_after" not in look(db, "overdue.org", error_class="site_access")["cause"]
+    # the general sentence states the window a home-page check must fall in (D78)
+    assert later["line"] == "Not determined: AHN has no usable home-page check of this site near that time."
+    assert "hours" not in later["line"]   # the absence test is weaker than "none within N hours", so no count is claimed
+
+
+def test_a_host_robots_txt_keeps_ahn_from_measuring_gets_its_own_sentence_and_no_recheck(db):
+    due = now() + timedelta(hours=6)
+    seed(db, probe("robots-no.org", outcome="not_measured", at=now() - timedelta(hours=1), due=due, reason="robots_disallowed"),
+         probe("robots-403.org", outcome="not_measured", at=now() - timedelta(hours=1), due=due, reason="robots_refused"),
+         probe("robots-unreadable.org", outcome="not_measured", at=now() - timedelta(hours=1), due=due, reason="robots_unreadable"))
+    no, refused, unreadable = (look(db, host, error_class="site_access")["cause"]
+                               for host in ("robots-no.org", "robots-403.org", "robots-unreadable.org"))
+    for found in (no, refused):
+        assert (found["branch"], found["hint"], found["confidence"], found["basis"]) == ("undetermined", "no_measurement", "low", ["site_probe"])
+        assert "recheck_after" not in found and found["note"] == cause.NOTE
+    assert no["line"] == "Not determined: AHN does not measure this site because its robots.txt disallows AHN's check."
+    assert refused["line"] == "Not determined: AHN does not measure this site because the site refused AHN's request for robots.txt."
+    # an unreadable robots.txt is a temporary state of AHN's read, not a stated ban: the general sentence and the stored time stay
+    assert unreadable["line"] == cause.LINES["no_measurement"] and unreadable["recheck_after"] == iso(due)
+
+
+def test_the_wording_change_leaves_the_judgment_and_the_codes_as_they_were(db):
+    """D78: the same inputs give the same recommendation, next_action, branch, hint, confidence and basis with the cause on or off."""
+    off = settings_with(hint=False)
+    due = now() + timedelta(days=7)
+    seed(db, probe("wording-bot.org", outcome="bot_challenge", refusals=1, due=due), probe("wording-403.org", outcome="refused", refusals=1, due=due),
+         probe("wording-login.org", outcome="login_wall", refusals=1, due=due),
+         probe("wording-robots.org", outcome="not_measured", at=now() - timedelta(hours=1), reason="robots_disallowed"),
+         probe("wording-backoff.org", outcome="not_measured", at=now() - timedelta(hours=1), reason="backoff"))
+    expected = {"wording-bot.org": ("undetermined", "home_gate_unconfirmed", "low", ["site_probe"]),
+                "wording-403.org": ("undetermined", "home_gate_unconfirmed", "low", ["site_probe"]),
+                "wording-login.org": ("undetermined", "home_gate_unconfirmed", "low", ["site_probe"]),
+                "wording-robots.org": ("undetermined", "no_measurement", "low", ["site_probe"]),
+                "wording-backoff.org": ("undetermined", "no_measurement", "low", ["site_probe"]),
+                "wording-none.org": ("undetermined", "no_measurement", "low", [])}
+    for host, codes in expected.items():
+        with_cause, without = look(db, host, error_class="site_access"), look(off, host, error_class="site_access")
+        found = with_cause["cause"]
+        assert (found["branch"], found["hint"], found["confidence"], found["basis"]) == codes, host
+        assert {k: v for k, v in strip(with_cause).items() if k != "cause"} == strip(without), host
+        assert with_cause["recommendation"] == without["recommendation"] and with_cause["next_action"] == without["next_action"]
+        assert set(found) <= {"branch", "hint", "confidence", "basis", "line", "note", "recheck_after"}
+        assert 1 <= len(found["line"]) <= cause.LINE_MAX and found["line"].isascii() and found["line"].isprintable()
+    assert all(1 <= len(text) <= cause.LINE_MAX and text.isascii() and text.isprintable() for text in cause.LINES.values())
+    # a date-less refusal sentence never points at a recheck_after that is not there
+    seed(db, probe("wording-overdue.org", outcome="refused", refusals=1, due=now() - timedelta(hours=1)))
+    overdue = look(db, "wording-overdue.org", error_class="site_access")["cause"]
+    assert "recheck_after" not in overdue and "recheck_after" not in overdue["line"] and overdue["line"].endswith("not an instruction.")
+
+
+def test_a_robots_reason_never_offers_recheck_after_and_names_the_present_only_while_the_row_is_recent(db):
+    due = now() + timedelta(hours=6)
+    # the row was overwritten by a robots reason after a normal measurement the same UTC day: the answer is your_side_likely,
+    # and the stored time is the next robots.txt look, which is not a measurement
+    seed(db, probe("robots-day.org", outcome="not_measured", at=now() - timedelta(hours=1), due=due, reason="robots_disallowed"),
+         probe_day("robots-day.org", now().date(), "reachable"))
+    side = look(db, "robots-day.org", failure_stage="before_target_response")["cause"]
+    assert (side["branch"], side["hint"], side["basis"]) == ("undetermined", "your_side_likely", ["site_probe"])
+    assert "recheck_after" not in side
+    # a robots row older than a day does not say what is so now: the general sentence, still without recheck_after
+    seed(db, probe("robots-old.org", outcome="not_measured", at=now() - timedelta(hours=30), due=due, reason="robots_refused"))
+    old = look(db, "robots-old.org", error_class="site_access")["cause"]
+    assert (old["hint"], old["basis"]) == ("no_measurement", ["site_probe"]) and "recheck_after" not in old
+    assert old["line"] == cause.LINES["no_measurement"]
 
 
 # --- failed_at on the wire --------------------------------------------------------------------------------------------------
@@ -492,7 +559,7 @@ def test_no_host_name_and_no_site_text_reaches_a_cause(db):
                 continue
             blob = json.dumps(found)
             assert host not in blob and "example-bank" not in blob and "leak-" not in blob
-            assert set(found) <= {"branch", "hint", "confidence", "basis", "window", "line", "recheck_after"}
+            assert set(found) <= {"branch", "hint", "confidence", "basis", "window", "line", "note", "recheck_after"}
             assert any(t.fullmatch(found["line"]) for t in templates), found["line"]
 
 

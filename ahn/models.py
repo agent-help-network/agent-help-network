@@ -692,6 +692,7 @@ class Cause(StrictModel):
                         "lookup_signals_hourly", "host_access_changes"]] = Field(max_length=6)
     window: CauseWindow | None = Field(default=None, exclude_if=_omit_none)
     line: str = Field(min_length=1, max_length=120, pattern=r"^[ -~]+$")
+    note: str = Field(default="Information only; follow next_action.", min_length=1, max_length=80, pattern=r"^[ -~]+$")
     recheck_after: datetime | None = Field(default=None, exclude_if=_omit_none)
 
 
