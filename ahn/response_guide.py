@@ -330,7 +330,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     (O1, U1, U2) or rests on a robots block. status_guide (the same switch, D69) adds next_action.status_url to any answer whose
     status page is known, whatever the task_step. ``do`` and the other keys are those of the row. The one exception (D76): on a
     status_check use_official_path row without a re-lookup, ``url`` is the status page, unless a robots block applies and the
-    status page is on the looked-up site's own domain."""
+    status page is on the looked-up site's own domain. D77: a status page that needs the user's sign-in (T3-S) is never the
+    ``url`` (it goes out as ``status_url`` only), and under a robots block it keeps the robots sentence too."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
