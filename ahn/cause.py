@@ -16,6 +16,10 @@ Rules that hold for every hint:
 * A refusal AHN measured (bot challenge, 403, login wall, rate limit on the home page) is never evidence of a temporary
   problem (D68). It is counted on the policy side, separately, and only as ``consecutive_refusals`` >= 2.
 * One refusal is never a policy change: it gives ``undetermined``; the second measurement in a row gives ``policy_closed``.
+  A login wall does not raise ``consecutive_refusals``, so its second measurement in a row is read from ``site_probe_daily``
+  instead (``_login_wall_twice``, D84): the last two home-page checks stored were both a login wall. It applies only to a
+  lookup that names a failure other than ``login_auth``: for a step that failed on a sign-in the site is expected to ask for
+  one, so the answer stays as it was (the client reads ``home_now_gated`` as "stop visiting", not as "ask the user to log in").
 * Hints from the history of access-profile changes (D75) look at changes that were recorded from CHANGE_WINDOW before the
   failure time to CHANGE_LEAD after it, and only while the changed field still has that value now. ``robots_now_disallows``
   (high) is the caller's vendor tokens, or AHN's own token when no vendor is known, going from allow to block, once.
@@ -74,6 +78,7 @@ OTHERS_MEDIUM_SOURCES = 10
 PERSISTENT_DAYS = 3                    # separate UTC days of refused lookups
 PERSISTENT_MIN_SOURCES = OTHERS_MIN_SOURCES   # distinct clients in one hour of such a day (one client looping cannot make a day)
 
+D84_ERROR_CLASSES = ("site_access", "human_verification")   # the failures to which two login walls in a row apply (D84)
 GATE_OUTCOMES = frozenset({"bot_challenge", "refused", "login_wall"})   # rate_limited is neither gate nor outage
 NORMAL_OUTCOMES = frozenset({"reachable", "redirected_same_host"})
 OUTAGE_KINDS = frozenset({"no_response", "tls_error", "server_error"})
@@ -100,6 +105,8 @@ LINES: dict[str, str] = {
     "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
     "home_now_gated": "Likely a policy block: the site refused AHN's last two home-page checks.",
+    "home_now_gated_login_wall": "Likely a sign-in requirement: the site's home page showed a sign-in wall on AHN's last two checks.",
+    "home_now_gated_latest_login_wall": "Likely a policy block: the site refused AHN's home-page checks at least twice in a row; the latest showed a sign-in wall.",
     "persistent_refusal": "Likely a policy block: clients were refused on 3 or more separate days.",
     "robots_now_disallows": "Likely a policy block: the site's robots.txt now disallows this kind of agent {win}.",
     "terms_signal_changed": "Terms signal changed {win}: llms.txt removed or data-mining reserved. Not an access block.",
@@ -111,7 +118,7 @@ LINES: dict[str, str] = {
     "too_old": "Not determined: that time is past the 14 days of measurements kept; only provider status history was read.",
 }
 
-# The last refusal of the home page, named by what AHN saw (no count: a login wall does not raise consecutive_refusals). The
+# The last refusal of the home page, named by what AHN saw (no count). The
 # line says whose check it was and that the next check is AHN's, not an instruction to the caller. Without a stored time to
 # come back at, "recheck_after" is left out.
 HOME_GATE_KINDS = {"bot_challenge": "bot-challenge", "refused": "HTTP", "login_wall": "login-wall"}
@@ -295,12 +302,30 @@ def _probe(conn, host: str):
         (host,)).fetchone()
 
 
-def _gated(probe, now: datetime, error_class: str | None) -> dict | None:
+def _login_wall_twice(conn, host: str) -> bool:
+    """The last two home-page checks stored for the host were both a login wall (D84). Read from ``site_probe_daily``: every
+    stored check adds one to its day's count of that outcome, so the checks since the last day with any other outcome are the
+    login-wall counts of the days after it. Any other outcome ends the run, a ``not_measured`` row included, as it resets
+    ``consecutive_refusals``. A day that also holds another outcome is not counted (the order inside a day is not kept), so
+    a mixed sequence stays unconfirmed."""
+    rows = conn.execute(
+        "SELECT day, outcome, sum(probes) AS n FROM site_probe_daily WHERE site_host=%s AND probes>0 AND day >= CURRENT_DATE - 34 GROUP BY day, outcome",
+        (host,)).fetchall()
+    other = [row["day"] for row in rows if row["outcome"] != "login_wall"]
+    last_other = max(other) if other else None
+    return sum(row["n"] for row in rows if row["outcome"] == "login_wall" and (last_other is None or row["day"] > last_other)) >= 2
+
+
+def _gated(conn, host: str, probe, now: datetime, error_class: str | None) -> dict | None:
     """Two refusals in a row of AHN's own home-page check. One refusal alone is undetermined."""
     if probe is None or probe["outcome"] not in GATE_OUTCOMES or error_class == "service_error" or probe["probed_at"] < now - PROBE_FRESH:
         return None
     if probe["consecutive_refusals"] >= 2:
-        return _cause("policy_closed", "home_now_gated", "medium", ["site_probe"], "home_now_gated")
+        return _cause("policy_closed", "home_now_gated", "medium", ["site_probe"],
+                      "home_now_gated_latest_login_wall" if probe["outcome"] == "login_wall" else "home_now_gated")
+    # D84: only for the two failures a closed home page explains; a sign-in step (login_auth), an empty class and any class added later are left as they were
+    if probe["outcome"] == "login_wall" and error_class in D84_ERROR_CLASSES and _login_wall_twice(conn, host):
+        return _cause("policy_closed", "home_now_gated", "medium", ["site_probe", "site_probe_daily"], "home_now_gated_login_wall")
     recheck = probe["next_due_at"] if probe["next_due_at"] > now else None
     line = gate_line(probe["outcome"], recheck is not None, now - probe["probed_at"], probe["bot_vendor"])
     return _cause("undetermined", "home_gate_unconfirmed", "low", ["site_probe"], "home_gate_unconfirmed", recheck=recheck, line=line)
@@ -446,8 +471,9 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
         found = _robots_now_disallows(history, agent_vendor)
         if found:
             return found
-    gate = _gated(probe, now, error_class)
-    if gate and gate["branch"] == "policy_closed":
+    gate = _gated(conn, host, probe, now, error_class)
+    if gate and gate["branch"] == "policy_closed" and "site_probe_daily" not in gate["basis"]:
+        # (a D84 login-wall confirmation waits its turn below, after persistent_refusal and others_failing_same_hour, as the unconfirmed sentence did)
         # a new bot-defense provider names the block more exactly, but only once two refusals confirm it (D68)
         return (_new_bot_defense(conn, host, history) if history else None) or gate
     for check in (lambda: _persistent(conn, host, when, error_class, failure_stage),
