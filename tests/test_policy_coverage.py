@@ -915,7 +915,7 @@ BUNDLE_EXCLUDES = {
 }
 
 
-BUNDLE_SINCE = date(2026, 11, 3)  # later than the policy's own date, so the switch must move "Last updated"
+BUNDLE_SINCE = date(2026, 11, 4)  # later than the policy's own date, so the switch must move "Last updated"
 BUNDLE_SELECTION = Phrase("Many of those mapped hosts were found by scanning bands of the Tranco popularity ranking, but each "
                           "mapping was checked on that host's own status page, and no rank is included",
                           "매핑한 호스트 중 상당수는 Tranco 인기 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 "
@@ -978,7 +978,7 @@ def test_policy_date_moves_with_the_bundle_switch():
 
     off = {"en": f"Last updated {POLICY_UPDATED:%B} {POLICY_UPDATED.day}, {POLICY_UPDATED.year}.",
            "ko": f"최종 수정: {POLICY_UPDATED.year}년 {POLICY_UPDATED.month}월 {POLICY_UPDATED.day}일."}
-    on = {"en": "Last updated November 3, 2026.", "ko": "최종 수정: 2026년 11월 3일."}
+    on = {"en": "Last updated November 4, 2026.", "ko": "최종 수정: 2026년 11월 4일."}
     for lang in LANGS:
         assert off[lang] in plain(bundle_policy_text(lang, False)), f"the {lang} policy date changed without the switch"
         assert on[lang] in plain(bundle_policy_text(lang, True)), f"the {lang} policy date does not follow AHN_PUBLIC_BUNDLE_SINCE"
@@ -1229,6 +1229,7 @@ def test_home_check_history_constants_match_the_policy():
     in the policy with the numbers the code uses."""
     from ahn import signal_history, site_probe
     assert site_probe.REFUSED_EXCLUDE_DAYS == 7
+    assert site_probe.CONFIRM_AFTER_HOURS == 24  # D83: the policy's "once more after 24 hours"
     assert site_probe.TRANSIENT_RETRIES == 1
     assert [code for _bound, code in signal_history.RT_BANDS] == ["lt1s", "1to3s", "3s_plus"]
     stage = signal_history.STAGES["1"]  # the stage in use (stage 3 is not built)
@@ -1236,8 +1237,8 @@ def test_home_check_history_constants_match_the_policy():
     assert signal_history.rt_band(999) == "lt1s" and signal_history.rt_band(1000) == "1to3s"
     assert signal_history.rt_band(2999) == "1to3s" and signal_history.rt_band(3000) == "3s_plus"
     wanted = {
-        "exclude": Phrase("a host that refuses a home-page check is not checked again for 7 days",
-                          "홈 페이지 확인을 거절한 호스트는 7일 동안 다시 확인하지 않습니다"),
+        "exclude": Phrase("a host that refuses a home-page check is not checked again for 7 days, except that a bot-challenge refusal, a 401 without a sign-in request or a 403 that comes after any result other than a refusal (an answer, a failure or no check) is checked once more after 24 hours",
+                          "홈 페이지 확인을 거절한 호스트는 7일 동안 다시 확인하지 않습니다. 다만 거절이 아닌 결과(응답·실패·확인 없음) 뒤에 처음 나온 봇 확인, 로그인 요청 없는 401, 403 거절은 24시간 뒤에 한 번 더 확인합니다"),
         "retry": Phrase("is asked once more, after the usual pause, before it counts",
                         "평소 간격을 둔 뒤 한 번 더 묻고 나서 셉니다"),
         "bands": Phrase("under 1 second, 1 to 3 seconds, or 3 seconds or more", "1초 미만, 1~3초, 3초 이상"),

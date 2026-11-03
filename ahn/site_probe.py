@@ -13,7 +13,7 @@ Manners (docs/decisions.md D67; the privacy policy repeats the numbers and tests
 * the robots.txt verdict for "/" was decided in memory when the profile was read (access_profile.home_gate) and is
   used only while that read is under 24 hours old; a refused, unreadable or disallowing robots.txt means no request;
 * one check per host per 6 hours at most, a refusal, challenge, rate limit, login wall or 503 takes the host off the
-  list for 7 days (REFUSED_EXCLUDE_DAYS), a 5xx other than 503 or a connection failure is asked once more after the usual pause
+  list for 7 days (REFUSED_EXCLUDE_DAYS; the first bot challenge or 401/403 only 24 hours, CONFIRM_AFTER_HOURS), a 5xx other than 503 or a connection failure is asked once more after the usual pause
   in a paced check (TRANSIENT_RETRIES) before it counts,
   a failing host is checked again after 6 to 24 hours; 60 checks an hour and 800 a day in all, 300 a day and 40 an
   hour started by lookups; all checks stop while the bandwidth guard is at its warning level or has no recent record;
@@ -85,6 +85,10 @@ LOOKUP_HOURLY_CAP = 40
 # A refusal (401, 403, 429 or any 503), a bot challenge, a rate limit or a login wall takes the host off
 # the check list for this long, flat: the host answered and declined, and asking again sooner adds load for no signal.
 REFUSED_EXCLUDE_DAYS = 7
+# The first counted refusal (a bot challenge, a 403 or a 401 without a sign-in request) after any non-refusal result, of a host's home page is confirmed once, after this long
+# (never sooner than its Retry-After, never later than REFUSED_EXCLUDE_DAYS): the same period as a normal success.
+# The next check after that, and every refusal after it, waits REFUSED_EXCLUDE_DAYS. AHN_REFUSAL_CONFIRM=0 turns it off.
+CONFIRM_AFTER_HOURS = 24
 BACKOFF_FAILED_HOURS = 6
 BACKOFF_FAILED_MAX_HOURS = 24
 SUCCESS_INTERVAL_HOURS = 24
@@ -129,7 +133,8 @@ SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared b
 
 OUTCOMES = ("reachable", "redirected_same_host", "bot_challenge", "refused", "rate_limited", "login_wall",
             "redirected_offsite", "server_error", "unreachable", "other_status")
-# Outcomes in which the host answered and declined: never a failure, and the host is off the list for REFUSED_EXCLUDE_DAYS.
+# Outcomes in which the host answered and declined: never a failure, and the host is off the list for REFUSED_EXCLUDE_DAYS
+# (a first counted refusal after any non-refusal result: CONFIRM_AFTER_HOURS, see schedule).
 REFUSAL_OUTCOMES = frozenset({"bot_challenge", "refused", "rate_limited", "login_wall"})
 NOT_MEASURED_REASONS = ("robots_disallowed", "robots_refused", "robots_unreadable", "robots_stale", "not_eligible",
                         "budget", "backoff", "disabled")
@@ -417,6 +422,10 @@ def classify(site_host: str, fetched: dict, now: datetime) -> dict:
     return result
 
 
+def _confirm_on() -> bool:
+    return os.environ.get("AHN_REFUSAL_CONFIRM", "1").strip() != "0"
+
+
 def schedule(outcome: str, previous: dict | None, retry_after: int | None,
              http_status: int | None = None) -> tuple[timedelta, int, int]:
     """(wait until the next check, consecutive_refusals, consecutive_failures) after a check with this outcome. A 503 is
@@ -425,9 +434,14 @@ def schedule(outcome: str, previous: dict | None, retry_after: int | None,
     failures = previous["consecutive_failures"] if previous else 0
     if outcome in REFUSAL_OUTCOMES or (outcome == "server_error" and http_status == 503):
         # Off the list for REFUSED_EXCLUDE_DAYS, flat. A Retry-After is never longer (it is capped there) and a shorter
-        # one is not taken as an invitation to ask sooner.
+        # one is not taken as an invitation to ask sooner. The one exception is the first counted refusal: the host is
+        # asked once more after CONFIRM_AFTER_HOURS (or its Retry-After, if longer), so one passing refusal does not stand
+        # for a week.
         if outcome in ("bot_challenge", "refused"):
             refusals += 1
+            if refusals == 1 and _confirm_on():
+                wait = max(timedelta(hours=CONFIRM_AFTER_HOURS), timedelta(seconds=retry_after or 0))
+                return min(wait, timedelta(days=REFUSED_EXCLUDE_DAYS)), refusals, 0
         return timedelta(days=REFUSED_EXCLUDE_DAYS), refusals, 0
     if outcome in ("server_error", "unreachable"):
         failures += 1

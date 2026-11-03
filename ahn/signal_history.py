@@ -254,7 +254,7 @@ def record_read(conn, site_host: str, profile: dict, read_at: datetime, trigger:
 
 # Home-page check outcomes (site_probe.OUTCOMES) as the history counts them. A refusal, a bot challenge, a rate limit, a
 # login wall and a 503 say the host answered and declined: never a failure (D27), and a reason to stop checking it for a
-# while (site_probe.REFUSED_EXCLUDE_DAYS), not a sign the site is down.
+# while (site_probe.REFUSED_EXCLUDE_DAYS; a first counted refusal only site_probe.CONFIRM_AFTER_HOURS), not a sign the site is down.
 HOME_ANSWERED = frozenset({"reachable", "redirected_same_host", "redirected_offsite", "other_status"})
 HOME_REFUSED = frozenset({"refused", "bot_challenge", "rate_limited", "login_wall"})
 # Response-time ranges of an answered home-page check: (upper bound in milliseconds, code). No exact time is kept.

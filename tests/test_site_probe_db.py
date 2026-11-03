@@ -213,19 +213,26 @@ def test_e3_a_second_check_of_a_host_within_6_hours_is_not_made(db, monkeypatch)
     assert len(home.calls) == 1
 
 
-def test_e3_a_failing_host_is_retried_no_sooner_than_6_hours_and_a_refusal_waits_7_days(db, monkeypatch):
+def test_e3_a_failing_host_is_retried_no_sooner_than_6_hours_and_a_refusal_waits_24_hours_then_7_days(db, monkeypatch):
     read_profile(db, monkeypatch)
     now = datetime.now(timezone.utc)
     stored = measure(db, home=Home(label="connect_timeout"), now=now)
     assert stored["outcome"] == "unreachable" and stored["next_due_at"] == now + timedelta(hours=6)
-    # Past the due time: refused with no marker is a refusal, off the list for 7 days, flat.
-    stored = measure(db, home=Home(status=403), now=now + timedelta(hours=7))
-    assert stored["outcome"] == "refused" and stored["next_due_at"] - (now + timedelta(hours=7)) == timedelta(days=7)
-    assert measure(db, home=Home(status=403), now=now + timedelta(days=7, hours=6)) is None
-    later = now + timedelta(days=7, hours=8)
-    read_profile(db, monkeypatch, now=later)     # the robots.txt verdict is re-read (it is only good for 24 h)
-    stored = measure(db, home=Home(status=403), now=later)
-    assert stored["consecutive_refusals"] == 2 and stored["next_due_at"] - later == timedelta(days=7)
+    # Past the due time: the first refusal (D83) is confirmed once after 24 hours, not left for a week.
+    first = now + timedelta(hours=7)
+    stored = measure(db, home=Home(status=403), now=first)
+    assert stored["outcome"] == "refused" and stored["consecutive_refusals"] == 1
+    assert stored["next_due_at"] - first == timedelta(hours=24)
+    assert measure(db, home=Home(status=403), now=first + timedelta(hours=23)) is None   # not due before the 24 hours
+    second = first + timedelta(hours=25)
+    read_profile(db, monkeypatch, now=second)    # the robots.txt verdict is re-read (it is only good for 24 h)
+    stored = measure(db, home=Home(status=403), now=second)
+    assert stored["consecutive_refusals"] == 2 and stored["next_due_at"] - second == timedelta(days=7)
+    assert measure(db, home=Home(status=403), now=second + timedelta(days=6, hours=23)) is None
+    third = second + timedelta(days=7, hours=2)
+    read_profile(db, monkeypatch, now=third)
+    stored = measure(db, home=Home(status=403), now=third)
+    assert stored["consecutive_refusals"] == 3 and stored["next_due_at"] - third == timedelta(days=7)
 
 
 def test_e3_daily_cap_boundary_and_the_lookup_cap(db, monkeypatch):
@@ -795,7 +802,7 @@ def test_www_follow_a_challenge_from_the_www_name_is_recorded_with_its_vendor(db
     stored = one_row(db)
     assert routes.calls == [HOST, WWW]
     assert stored["outcome"] == "bot_challenge" and stored["http_status"] == 403 and stored["bot_vendor"] == "cloudflare"
-    assert stored["redirect"]["followed_www"] is True and stored["next_due_at"] > stored["probed_at"] + timedelta(hours=24)
+    assert stored["redirect"]["followed_www"] is True and stored["next_due_at"] >= stored["probed_at"] + timedelta(hours=24)
 
 
 def test_www_follow_a_second_redirect_is_recorded_and_not_followed(db, monkeypatch):
