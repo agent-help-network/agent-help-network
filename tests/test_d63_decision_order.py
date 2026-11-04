@@ -32,6 +32,8 @@ _spec.loader.exec_module(pre)
 _spec_rg = importlib.util.spec_from_file_location("pre_d63_response_guide", HERE / "_pre_d63_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec_rg)
 _spec_rg.loader.exec_module(pre_rg)
+# D93 changed only these sentences since the snapshot; take them as they are now so the comparison keeps covering everything else
+pre_rg.ROWS.update({row: response_guide.ROWS[row] for row in ("O7", "O7-N", "O7-K", "U8") if row in pre_rg.ROWS})
 
 NOW = datetime(2026, 10, 31, 12, 0, tzinfo=timezone.utc)
 HELP = "https://www.example.com/help"

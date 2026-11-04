@@ -29,6 +29,8 @@ from ahn.triage import failure_observed  # noqa: E402
 _spec = importlib.util.spec_from_file_location("pre_d92_response_guide", HERE / "_pre_d92_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
+# D93 changed only these sentences since the snapshot; take them as they are now so the comparison keeps covering everything else
+pre_rg.ROWS.update({row: response_guide.ROWS[row] for row in ("O7", "O7-N", "O7-K", "U8") if row in pre_rg.ROWS})
 
 U3_PROFILE = robots("User-agent: *\nAllow: /\n\nUser-agent: Claude-User\nDisallow: /\n")
 P2_PROFILE = robots(block("Claude-SearchBot"))

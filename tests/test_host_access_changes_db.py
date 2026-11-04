@@ -336,6 +336,7 @@ def test_robots_now_disallows_needs_one_change_and_a_block_that_still_stands(db)
     got = look(db, HOST, error_class="human_verification")["cause"]
     assert (got["branch"], got["hint"], got["confidence"]) == ("policy_closed", "robots_now_disallows", "high")
     assert got["basis"] == ["host_access_changes"] and "robots.txt" in got["line"]
+    assert "AHN's read of the site's robots.txt" in got["line"]  # D93: whose reading it is
     assert got["window"]["from"]
     # the block was lifted again: no longer a cause
     seed_change(db, "robots_verdict:AgentHelpNetwork", "block", "allow", ago=timedelta(hours=1))
@@ -421,6 +422,8 @@ def test_new_bot_defense_only_when_the_vendor_was_not_seen_in_the_14_days_before
     got = look(db, HOST, error_class="human_verification")["cause"]
     assert (got["hint"], got["confidence"]) == ("new_bot_defense", "medium")
     assert got["basis"] == ["host_access_changes", "site_probe_daily"]
+    # D93: the line names AHN's own check as the source and says the caller's view may differ
+    assert got["line"].startswith("Likely a policy block: AHN's home-page check sees a bot-defense page") and "what your tool sees may differ" in got["line"]
     # the same vendor was already in the daily counts a few days before: not new
     seen = "seen.example.org"
     seed_change(db, "bot_vendor", "none", "cloudflare", host=seen, ago=timedelta(hours=4), source="home_check")

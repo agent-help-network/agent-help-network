@@ -51,7 +51,7 @@ A response for `github.com`, captured from the live service on 2026-10-18 and tr
 ```json
 {
   "site_host": "github.com",
-  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). Use it instead of retrying page automation.",
+  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). For API work use it instead of page automation; for an order, return or help page, hand it to your user.",
   "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
   "links": {
     "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
