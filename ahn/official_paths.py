@@ -985,7 +985,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": _GH_DOCS + "site-policy/github-terms/github-terms-of-service",
                   "quote": "Abuse or excessively frequent requests to GitHub via the API may result in the temporary or "
                            "permanent suspension of your Account's access to the API."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "stripe.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.stripe.com/api/authentication"}],
@@ -997,7 +997,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://stripe.com/legal/ssa",
                   "quote": "If User uses an AI Agent to access the Stripe Services, User is solely responsible for each "
                            "action initiated by or through the AI Agent."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "openai.com": {
         "auth": [{"method": "api_key", "source_url": _OPENAI + "api/reference/overview"}],
@@ -1005,7 +1005,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": _OPENAI + "api/docs/guides/rate-limits",
         "openapi_url": "https://raw.githubusercontent.com/openai/openai-openapi/main/openapi.yaml",
         "official_mcp": [{"endpoint": "https://developers.openai.com/mcp", "doc_url": _OPENAI + "learn/docs-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "youtube.com": {
         "auth": [
@@ -1021,7 +1021,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": _YT + "terms/api-services-terms-of-service",
                   "quote": "You and your API Client(s) will not, and will not attempt to, exceed or circumvent use or "
                            "quota restrictions."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "slack.com": {
         "auth": [{"method": "oauth2", "source_url": "https://docs.slack.dev/authentication/installing-with-oauth/"}],
@@ -1032,7 +1032,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://slack.com/terms-of-service/api",
                   "quote": "You may not Commercially Distribute an Application that integrates with the Slack APIs unless "
                            "you are authorized to do so under a separate agreement with Slack or our parent company, Salesforce."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "notion.so": {
         "auth": [{"method": "api_key", "source_url": _NOTION_AUTH}, {"method": "pat", "source_url": _NOTION_AUTH},
@@ -1041,14 +1041,14 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://developers.notion.com/reference/request-limits",
         "official_mcp": [{"endpoint": "https://mcp.notion.com/mcp",
                           "doc_url": "https://developers.notion.com/guides/mcp/get-started-with-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "reddit.com": {
         "auth": [{"method": "oauth2", "source_url": "https://www.reddit.com/dev/api/"}],
         "terms": {"url": "https://redditinc.com/policies/data-api-terms",
                   "quote": "Reddit reserves the right to charge fees for future use or access to the Data APIs, rates to be "
                            "determined at Reddit's sole discretion."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "x.com": {
         "auth": [{"method": "oauth2", "source_url": _X_AUTH}, {"method": "oauth1", "source_url": _X_AUTH},
@@ -1061,7 +1061,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://docs.x.com/developer-terms/policy",
                   "quote": "Services that perform write actions, including posting Posts, following accounts, or sending "
                            "Direct Messages, must follow the Automation Rules."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "wikipedia.org": {
         "auth": [{"method": "oauth2", "source_url": "https://www.mediawiki.org/wiki/OAuth/For_Developers"}],
@@ -1069,7 +1069,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy",
                   "quote": "Scripts should use an informative User-Agent string with contact information, or they may be "
                            "blocked without notice."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "cloudflare.com": {
         "auth": [{"method": "api_key", "source_url": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"}],
@@ -1083,7 +1083,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://www.cloudflare.com/terms/",
                   "quote": "If you permit third parties to access your Cloudflare account (e.g., by providing your API token "
                            "or using OAuth), you do so at your sole risk"},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "gitlab.com": {
         "auth": [
@@ -1096,7 +1096,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://handbook.gitlab.com/handbook/legal/api-terms/",
                   "quote": "GitLab may place limits on your use of the GitLab APIs (like limits on call volumes or requests "
                            "that can be sent and received by the GitLab APIs during a defined period of time)"},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "bitbucket.org": {
         "auth": [
@@ -1106,11 +1106,11 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-tokens/",
         "rate_limits_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-request-limits/",
-        "openapi_url": "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json?_v=2.300.200",
+        "openapi_url": "https://dac-static.atlassian.com/cloud/bitbucket/swagger.v3.json?_v=2.300.203",
         "terms": {"url": "https://developer.atlassian.com/platform/marketplace/atlassian-developer-terms/",
                   "quote": "Atlassian may place limits on access to the Atlassian Platform (e.g., limits on numbers of calls or "
                            "requests, or on points that reflect the work performed in response to an API request)."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "google.dev": {
         "auth": [
@@ -1121,7 +1121,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://ai.google.dev/gemini-api/docs/rate-limits",
         "terms": {"url": "https://ai.google.dev/gemini-api/terms",
                   "quote": "You will not automatically bypass any requests for human confirmation."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "stackexchange.com": {
         "auth": [
@@ -1134,7 +1134,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
                                "daily quota (default size of 10,000).",
                       "source_url": "https://api.stackexchange.com/docs/throttle"},
         "rate_limits_url": "https://api.stackexchange.com/docs/throttle",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "discord.com": {
         "auth": [
@@ -1143,7 +1143,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://docs.discord.com/developers/bots/overview",
         "rate_limits_url": "https://docs.discord.com/developers/topics/rate-limits",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "telegram.org": {
         "auth": [{"method": "api_key", "source_url": "https://core.telegram.org/bots/api"}],
@@ -1154,7 +1154,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://core.telegram.org/bots/faq",
         "terms": {"url": "https://telegram.org/tos/bot-developers",
                   "quote": "Your TPA must not attempt to circumvent or otherwise undermine Telegram rate limits and moderation."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "zoom.us": {
         "auth": [{"method": "oauth2", "source_url": "https://developers.zoom.us/docs/api/using-zoom-apis/"}],
@@ -1163,7 +1163,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://explore.zoom.us/docs/en-us/zoom_api_license_and_tou.html",
                   "quote": "Limitations may include technical limitations, such as call, volume and/or rate limits, or limits "
                            "on your access to some or all of the Zoom APIs."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "asana.com": {
         "auth": [
@@ -1179,7 +1179,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://asana.com/terms/api-terms",
                   "quote": "Asana may monitor and limit the User Content that may be accessed, the rate at which such User Content "
                            "may be accessed, and/or the number of network calls that your App may make to our APIs."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "figma.com": {
         "auth": [
@@ -1194,7 +1194,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://www.figma.com/legal/developer-terms/",
                   "quote": "Figma may change the fees it charges for access to or use of the Developer Resources (including by "
                            "introducing or modifying rate limits) on thirty days' written notice"},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "twilio.com": {
         "auth": [{"method": "api_key", "source_url": "https://www.twilio.com/docs/usage/requests-to-twilio"}],
@@ -1204,14 +1204,14 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://www.twilio.com/en-us/legal/aup",
                   "quote": "Transmitting code, files, scripts, agents, or programs intended to do harm, including viruses or "
                            "malware, or using automated means, such as bots, to gain access to or use the Services."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "vercel.com": {
         "auth": [{"method": "api_key", "source_url": "https://vercel.com/docs/rest-api"}],
         "key_signup_url": "https://vercel.com/docs/rest-api/getting-started",
         "rate_limits_url": "https://vercel.com/docs/rest-api",
         "official_mcp": [{"endpoint": "https://mcp.vercel.com", "doc_url": "https://vercel.com/docs/agent-resources/vercel-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "netlify.com": {
         "auth": [
@@ -1221,7 +1221,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/",
         "rate_limits_url": "https://docs.netlify.com/api-and-cli-guides/api-guides/get-started-with-api/",
         "openapi_url": "https://raw.githubusercontent.com/netlify/open-api/master/swagger.yml",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "digitalocean.com": {
         "auth": [
@@ -1231,7 +1231,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://docs.digitalocean.com/reference/api/create-personal-access-token/",
         "official_mcp": [{"endpoint": "https://mcp.digitalocean.com/mcp",
                           "doc_url": "https://docs.digitalocean.com/reference/mcp/configure-mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "sentry.io": {
         "auth": [
@@ -1241,13 +1241,13 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://docs.sentry.io/api/guides/create-auth-token/",
         "rate_limits_url": "https://docs.sentry.io/api/ratelimits/",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "datadoghq.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.datadoghq.com/api/latest/"}],
         "key_signup_url": "https://docs.datadoghq.com/account_management/api-app-keys/",
         "rate_limits_url": "https://docs.datadoghq.com/api/latest/rate-limits/",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "huggingface.co": {
         "auth": [
@@ -1258,7 +1258,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://huggingface.co/docs/hub/rate-limits",
         "openapi_url": "https://huggingface.co/.well-known/openapi.json",
         "official_mcp": [{"endpoint": "https://huggingface.co/mcp", "doc_url": "https://huggingface.co/docs/hub/agents-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "anthropic.com": {
         "auth": [{"method": "api_key", "source_url": "https://platform.claude.com/docs/en/manage-claude/authentication"}],
@@ -1266,7 +1266,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://platform.claude.com/docs/en/api/rate-limits",
         "terms": {"url": "https://www.anthropic.com/legal/commercial-terms",
                   "quote": "Customer is responsible for all activity under its account."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "perplexity.ai": {
         "auth": [{"method": "api_key", "source_url": "https://docs.perplexity.ai/docs/getting-started/quickstart"}],
@@ -1274,7 +1274,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://docs.perplexity.ai/docs/admin/rate-limits-usage-tiers",
         "official_mcp": [{"endpoint": "https://api.perplexity.ai/mcp",
                           "doc_url": "https://docs.perplexity.ai/docs/getting-started/integrations/mcp-server"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "mistral.ai": {
         "auth": [{"method": "api_key", "source_url": "https://docs.mistral.ai/getting-started/quickstarts/studio/activate-and-generate-api-key"}],
@@ -1284,7 +1284,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://legal.mistral.ai/terms/commercial-terms-of-service/",
                   "quote": "Customer is solely responsible for all use of the Outputs and evaluating the Output for improper "
                            "bias, accuracy, responsiveness, and appropriateness for Customer’s use case."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "groq.com": {
         "auth": [{"method": "api_key", "source_url": "https://console.groq.com/docs/quickstart"}],
@@ -1292,26 +1292,26 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://console.groq.com/docs/rate-limits",
         "terms": {"url": "https://console.groq.com/docs/legal/services-agreement",
                   "quote": "Customer may not resell or lease access to its Account."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "together.ai": {
         "auth": [{"method": "api_key", "source_url": "https://docs.together.ai/docs/api-keys-authentication"}],
         "key_signup_url": "https://docs.together.ai/docs/api-keys-authentication",
         "rate_limits_url": "https://docs.together.ai/docs/serverless/rate-limits",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "deepseek.com": {
         "auth": [{"method": "api_key", "source_url": "https://api-docs.deepseek.com/"}],
         "key_signup_url": "https://api-docs.deepseek.com/",
         "rate_limits_url": "https://api-docs.deepseek.com/quick_start/rate_limit/",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "x.ai": {
         "auth": [{"method": "api_key", "source_url": "https://docs.x.ai/developers/quickstart"}],
         "key_signup_url": "https://docs.x.ai/developers/quickstart",
         "rate_limits_url": "https://docs.x.ai/developers/rate-limits",
         "official_mcp": [{"endpoint": "https://docs.x.ai/api/mcp", "doc_url": "https://docs.x.ai/developers/docs-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "openrouter.ai": {
         "auth": [
@@ -1322,12 +1322,12 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://openrouter.ai/docs/api_reference/limits",
         "openapi_url": "https://openrouter.ai/openapi.json",
         "official_mcp": [{"endpoint": "https://mcp.openrouter.ai/mcp", "doc_url": "https://openrouter.ai/docs/guides/overview/mcp-server"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "elevenlabs.io": {
         "auth": [{"method": "api_key", "source_url": "https://elevenlabs.io/docs/overview/administration/workspaces/api-keys"}],
         "key_signup_url": "https://elevenlabs.io/docs/eleven-api/quickstart",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "supabase.com": {
         "auth": [
@@ -1340,7 +1340,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "official_mcp": [{"endpoint": "https://mcp.supabase.com/mcp", "doc_url": "https://supabase.com/docs/guides/ai-tools/mcp"}],
         "terms": {"url": "https://supabase.com/terms",
                   "quote": "Customer shall not use the Services for any purposes beyond the scope of the access granted in this Agreement."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "linear.app": {
         "auth": [
@@ -1350,7 +1350,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://linear.app/developers/graphql",
         "rate_limits_url": "https://linear.app/developers/rate-limiting",
         "official_mcp": [{"endpoint": "https://mcp.linear.app/mcp", "doc_url": "https://linear.app/docs/mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "shopify.com": {
         "auth": [
@@ -1362,7 +1362,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "sandbox_url": "https://shopify.dev/docs/apps/build/stores/development-stores",
         "terms": {"url": "https://www.shopify.com/legal/api-terms",
                   "quote": "Stay within the limits we set for API calls, and keep your app up to date with API changes."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "paypal.com": {
         "auth": [{"method": "oauth2", "source_url": "https://developer.paypal.com/api/rest/authentication"}],
@@ -1373,7 +1373,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://www.paypal.com/us/legalhub/paypal/xdeveloper-full",
                   "quote": "PayPal may also impose limits on certain features and services or restrict your access to parts of "
                            "or all of the Developer’s Tools without notice or liability."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "squareup.com": {
         "auth": [
@@ -1386,7 +1386,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://squareup.com/us/en/legal/general/developers",
                   "quote": "If Square believes that you have attempted to exceed or circumvent these limitations, your ability to "
                            "use the Developer Tools and Content may be temporarily or permanently blocked."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "spotify.com": {
         "auth": [{"method": "oauth2", "source_url": "https://developer.spotify.com/documentation/web-api/concepts/authorization"}],
@@ -1395,7 +1395,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "terms": {"url": "https://developer.spotify.com/terms",
                   "quote": "Except as otherwise set out in these Developer Terms, you may not store, aggregate or create "
                            "compilations or databases of Spotify Content, other than as strictly necessary to operate your SDA."},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "twitch.tv": {
         "auth": [
@@ -1404,7 +1404,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://dev.twitch.tv/docs/authentication/register-app/",
         "rate_limits_url": "https://dev.twitch.tv/docs/api/guide/",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "kakao.com": {
         "auth": [
@@ -1413,12 +1413,12 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://developers.kakao.com/docs/ko/getting-started/kakao-developers",
         "rate_limits_url": "https://developers.kakao.com/docs/ko/getting-started/quota",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "tosspayments.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.tosspayments.com/reference/using-api/authorization"}],
         "key_signup_url": "https://docs.tosspayments.com/reference/using-api/api-keys",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "replicate.com": {
         "auth": [{"method": "api_key", "source_url": "https://replicate.com/docs/topics/security/api-tokens"}],
@@ -1427,7 +1427,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "openapi_url": "https://api.replicate.com/openapi.json",
         "terms": {"url": "https://replicate.com/terms",
                   "quote": "You are responsible for any and all activities or actions that occur under your Account and/or Login Credentials"},
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "coinbase.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.cdp.coinbase.com/api-reference/v2/authentication"}],
@@ -1436,14 +1436,14 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "openapi_url": "https://docs.cdp.coinbase.com/api-reference/v2/cdp-api-v2.yaml",
         "official_mcp": [{"endpoint": "https://agents.coinbase.com/mcp",
                           "doc_url": "https://docs.cdp.coinbase.com/ai-agents/coinbase-for-agents/coinbase-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "plaid.com": {
         "auth": [{"method": "api_key", "source_url": "https://plaid.com/docs/api/"}],
         "key_signup_url": "https://plaid.com/docs/api/",
         "sandbox_url": "https://plaid.com/docs/api/sandbox/",
         "openapi_url": "https://raw.githubusercontent.com/plaid/plaid-openapi/master/2020-09-14.yml",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "mongodb.com": {
         "auth": [
@@ -1452,106 +1452,106 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         ],
         "key_signup_url": "https://www.mongodb.com/docs/atlas/api/api-authentication/",
         "rate_limits_url": "https://www.mongodb.com/docs/atlas/api/api-rate-limit/",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "sendgrid.com": {
         "auth": [{"method": "api_key", "source_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication"}],
         "key_signup_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/authentication",
         "rate_limits_url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "render.com": {
         "auth": [{"method": "api_key", "source_url": "https://api-docs.render.com/reference/authentication"}],
         "key_signup_url": "https://api-docs.render.com/reference/authentication",
         "rate_limits_url": "https://api-docs.render.com/reference/rate-limiting",
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     # Hosts below carry only `official_mcp`: the endpoint was listed under a domain-verified name in the official MCP
     # registry (candidate finding only) and is printed on the publisher's own documentation page at `doc_url`.
     "atlassian.com": {
         "official_mcp": [{"endpoint": "https://mcp.atlassian.com/v2/mcp",
                           "doc_url": "https://support.atlassian.com/atlassian-ai-gateway/docs/get-started-with-the-atlassian-remote-mcp-server/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "zapier.com": {
         "official_mcp": [{"endpoint": "https://mcp.zapier.com/api/v1/connect",
                           "doc_url": "https://docs.zapier.com/mcp/get-started/connect/other"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "airtable.com": {
         "official_mcp": [{"endpoint": "https://mcp.airtable.com/mcp", "doc_url": "https://airtable.com/developers/agents/mcp/getting-started"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "alchemy.com": {
         "official_mcp": [{"endpoint": "https://mcp.alchemy.com/mcp", "doc_url": "https://www.alchemy.com/docs/alchemy-mcp-server"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "amplitude.com": {
         "official_mcp": [{"endpoint": "https://mcp.amplitude.com/mcp", "doc_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp"},
                          {"endpoint": "https://mcp.eu.amplitude.com/mcp", "doc_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "bitly.com": {
         "official_mcp": [{"endpoint": "https://api-ssl.bitly.com/v4/mcp", "doc_url": "https://dev.bitly.com/bitly-mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "circleci.com": {
         "official_mcp": [{"endpoint": "https://mcp.circleci.com/v1/mcp",
                           "doc_url": "https://circleci.com/docs/guides/toolkit/connecting-to-the-circleci-mcp-server/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "coinmarketcap.com": {
         "official_mcp": [{"endpoint": "https://mcp.coinmarketcap.com/mcp", "doc_url": "https://coinmarketcap.com/api/mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "exa.ai": {
         "official_mcp": [{"endpoint": "https://mcp.exa.ai/mcp", "doc_url": "https://exa.ai/docs/get-started/exa-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "gocardless.com": {
         "official_mcp": [{"endpoint": "https://mcp.gocardless.com", "doc_url": "https://docs.gocardless.com/docs/developer-resources/mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "jotform.com": {
         "official_mcp": [{"endpoint": "https://mcp.jotform.com", "doc_url": "https://www.jotform.com/developers/mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "microsoft.com": {
         "official_mcp": [{"endpoint": "https://learn.microsoft.com/api/mcp",
                           "doc_url": "https://learn.microsoft.com/en-us/training/support/mcp-developer-reference"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "monday.com": {
         "official_mcp": [{"endpoint": "https://mcp.monday.com/mcp",
                           "doc_url": "https://developer.monday.com/api-reference/docs/integrate-with-monday-mcp"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "newrelic.com": {
         "official_mcp": [{"endpoint": "https://mcp.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"},
                          {"endpoint": "https://mcp.eu.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"},
                          {"endpoint": "https://mcp.jp.newrelic.com/mcp/", "doc_url": "https://docs.newrelic.com/docs/agentic-ai/mcp/setup/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "paddle.com": {
         "official_mcp": [{"endpoint": "https://mcp.paddle.com/mcp", "doc_url": "https://developer.paddle.com/sdks/ai/paddle-mcp/"},
                          {"endpoint": "https://sandbox-mcp.paddle.com/mcp", "doc_url": "https://developer.paddle.com/sdks/ai/paddle-mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "postman.com": {
         "official_mcp": [{"endpoint": "https://mcp.postman.com/minimal", "doc_url": "https://www.postman.com/product/mcp-server/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "railway.com": {
         "official_mcp": [{"endpoint": "https://mcp.railway.com", "doc_url": "https://docs.railway.com/ai/mcp-server"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "twelvedata.com": {
         "official_mcp": [{"endpoint": "https://mcp.twelvedata.com/mcp", "doc_url": "https://twelvedata.com/docs/llms/ai/mcp-server.md"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "typeform.com": {
         "official_mcp": [{"endpoint": "https://api.typeform.com/mcp", "doc_url": "https://www.typeform.com/developers/mcp/"}],
-        "verified_at": "2026-10-20",
+        "verified_at": "2026-11-01",
     },
     "etherscan.io": {
         "auth": [{"method": "api_key", "source_url": "https://docs.etherscan.io/set-up-your-api-key"}],
@@ -1561,7 +1561,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://docs.etherscan.io/rate-limits",
         "official_mcp": [{"endpoint": "https://mcp.etherscan.io/mcp", "doc_url": "https://docs.etherscan.io/build-with-ai/mcp"},
                          {"endpoint": "https://mcp-keyless.etherscan.io/mcp", "doc_url": "https://docs.etherscan.io/build-with-ai/mcp"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "porkbun.com": {
         "auth": [{"method": "api_key", "source_url": "https://porkbun.com/api/json/v3/documentation"}],
@@ -1569,7 +1569,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "sandbox_url": "https://porkbun.com/llms/sandbox",
         "openapi_url": "https://porkbun.com/api/json/v3/spec",
         "official_mcp": [{"endpoint": "https://mcp.porkbun.com/mcp", "doc_url": "https://porkbun.com/api/json/v3/documentation"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "googleapis.com": {
         "auth": [{"method": "oauth2", "source_url": "https://docs.cloud.google.com/mcp/authenticate-mcp"}],
@@ -1577,25 +1577,25 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "official_mcp": [{"endpoint": f"https://{_n}.googleapis.com/mcp", "doc_url": "https://docs.cloud.google.com/mcp/supported-products"}
                          for _n in ("bigquery", "compute", "container", "firestore", "sqladmin", "monitoring", "logging",
                                     "cloudresourcemanager", "run", "developerknowledge")],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "kraken.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.kraken.com/home/guides/quickstart"},
                  {"method": "none", "source_url": "https://docs.kraken.com/home/guides/quickstart"}],
         "key_signup_url": "https://docs.kraken.com/home/guides/quickstart",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "kagi.com": {
         "auth": [{"method": "api_key", "source_url": "https://help.kagi.com/kagi/api/quick-start.html"}],
         "key_signup_url": "https://help.kagi.com/kagi/api/quick-start.html",
         "openapi_url": "https://kagi.com/api/docs/_spec/openapi.yaml",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "rubygems.org": {
         "auth": [{"method": "api_key", "source_url": "https://guides.rubygems.org/rubygems-org-api/"}],
         "key_signup_url": "https://guides.rubygems.org/rubygems-org-api/",
         "rate_limits_url": "https://guides.rubygems.org/rubygems-org-rate-limits/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "yelp.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.developer.yelp.com/docs/places-authentication"}],
@@ -1603,7 +1603,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://docs.developer.yelp.com/docs/places-rate-limiting",
         "terms": {"url": "https://www.yelp.com/developers/api_terms",
                   "quote": "All queries sent to the API requesting data must reference your valid login credentials."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "pagerduty.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.pagerduty.com/developer/authentication"},
@@ -1613,14 +1613,14 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "official_mcp": [{"endpoint": "https://mcp.pagerduty.com/mcp", "doc_url": "https://docs.pagerduty.com/developer/mcp-tooling-remote-server"}],
         "terms": {"url": "https://docs.pagerduty.com/developer/pagerduty-developer-agreement",
                   "quote": "Sets out the legal terms governing your use of PagerDuty's APIs, MCP servers, and related developer service documentation."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "etsy.com": {
         "auth": [{"method": "api_key", "source_url": "https://developers.etsy.com/documentation/essentials/authentication"},
                  {"method": "oauth2", "source_url": "https://developers.etsy.com/documentation/essentials/authentication"}],
         "key_signup_url": "https://developers.etsy.com/documentation/essentials/authentication",
         "rate_limits_url": "https://developers.etsy.com/documentation/essentials/rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "ticketmaster.com": {
         "auth": [{"method": "api_key", "source_url": "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/"}],
@@ -1630,33 +1630,33 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/",
         "terms": {"url": "https://developer.ticketmaster.com/support/terms-of-use/",
                   "quote": "we reserve the right to rate limit or block applications that make a large number of calls to the API that are not primarily in response to direct user actions."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "dev.to": {
         "auth": [{"method": "api_key", "source_url": "https://developers.forem.com/api"}],
         "key_signup_url": "https://developers.forem.com/api",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "data.police.uk": {
         "auth": [{"method": "none", "source_url": "https://data.police.uk/docs/authentication/"}],
         "rate_limits_url": "https://data.police.uk/docs/api-call-limits/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "ietf.org": {
         "auth": [{"method": "none", "source_url": "https://datatracker.ietf.org/api/"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "quay.io": {
         "auth": [{"method": "oauth2", "source_url": "https://docs.quay.io/api/"}],
         "key_signup_url": "https://docs.quay.io/api/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "flutterwave.com": {
         "auth": [{"method": "api_key", "source_url": "https://developer.flutterwave.com/docs/authentication"}],
         "key_signup_url": "https://developer.flutterwave.com/docs/authentication",
         "rate_limits_url": "https://developer.flutterwave.com/docs/rate-limit",
         "sandbox_url": "https://developer.flutterwave.com/docs/testing",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "hmrc.gov.uk": {
         "auth": [{"method": "oauth2", "source_url": "https://developer.service.hmrc.gov.uk/api-documentation/docs/authorisation"},
@@ -1664,13 +1664,13 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "sandbox_url": "https://developer.service.hmrc.gov.uk/api-documentation/docs/testing",
         "terms": {"url": "https://developer.service.hmrc.gov.uk/api-documentation/docs/terms-of-use",
                   "quote": "We reserve the right to remove or revoke your access to the Developer Hub and its APIs temporarily or permanently."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "1password.com": {
         "auth": [{"method": "api_key", "source_url": "https://www.1password.dev/service-accounts/get-started"}],
         "key_signup_url": "https://www.1password.dev/service-accounts/get-started",
         "rate_limits_url": "https://www.1password.dev/service-accounts/rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "godaddy.com": {
         "auth": [{"method": "pat", "source_url": "https://developer.godaddy.com/docs/api-users/auth"},
@@ -1678,46 +1678,46 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://developer.godaddy.com/docs/api-users/auth/how-to",
         "rate_limits_url": "https://developer.godaddy.com/docs/api-users/rate-limits",
         "openapi_url": "https://developer.godaddy.com/openapi/domains-v3.json",
-        "official_mcp": [{"endpoint": "https://api.godaddy.com/v1/domains/mcp", "doc_url": "https://developer.godaddy.com/docs/api-users/mcp"}],
-        "verified_at": "2026-10-21",
+        "official_mcp": [{"endpoint": "https://mcp.godaddy.com", "doc_url": "https://developer.godaddy.com/docs/api-users/mcp"}],
+        "verified_at": "2026-11-01",
     },
     "usps.com": {
         "auth": [{"method": "oauth2", "source_url": "https://developers.usps.com/getting-started"}],
         "key_signup_url": "https://developers.usps.com/getting-started",
         "terms": {"url": "https://developers.usps.com/terms-and-conditions",
                   "quote": "ANY USE OF THE SERVICES, CREDENTIALS, AND/OR DATA NOT SPECIFICALLY PERMITTED UNDER THIS AGREEMENT IS STRICTLY PROHIBITED."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "fireworks.ai": {
         "auth": [{"method": "api_key", "source_url": "https://docs.fireworks.ai/api-reference/introduction"}],
         "key_signup_url": "https://docs.fireworks.ai/api-reference/introduction",
         "rate_limits_url": "https://docs.fireworks.ai/serverless/rate-limits",
         "official_mcp": [{"endpoint": "https://docs.fireworks.ai/mcp", "doc_url": "https://docs.fireworks.ai/ecosystem/integrations/development-setup"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "cerebras.ai": {
         "auth": [{"method": "api_key", "source_url": "https://inference-docs.cerebras.ai/api-reference/authentication"}],
         "key_signup_url": "https://inference-docs.cerebras.ai/console/api-keys",
         "rate_limits_url": "https://inference-docs.cerebras.ai/support/rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "deepinfra.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.deepinfra.com/account/authentication"}],
         "key_signup_url": "https://docs.deepinfra.com/account/authentication",
         "rate_limits_url": "https://docs.deepinfra.com/account/rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "assemblyai.com": {
         "auth": [{"method": "api_key", "source_url": "https://www.assemblyai.com/docs/sync-stt/getting-started/quickstart"}],
         "key_signup_url": "https://www.assemblyai.com/docs/sync-stt/getting-started/quickstart",
         "rate_limits_url": "https://www.assemblyai.com/docs/pre-recorded-audio/rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "deepgram.com": {
         "auth": [{"method": "api_key", "source_url": "https://developers.deepgram.com/guides/fundamentals/authenticating"}],
         "key_signup_url": "https://developers.deepgram.com/guides/fundamentals/authenticating",
         "rate_limits_url": "https://developers.deepgram.com/docs/working-with-concurrency-rate-limits",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "tavily.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.tavily.com/documentation/best-practices/api-key-management"},
@@ -1729,7 +1729,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "official_mcp": [{"endpoint": "https://mcp.tavily.com/mcp/", "doc_url": "https://docs.tavily.com/documentation/mcp"}],
         "terms": {"url": "https://www.tavily.com/terms",
                   "quote": "Tavily may make available to Customer an Agent Key that enables automated interaction between Customer's agents and the Services without requiring separate registration or the creation of an Account"},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "firecrawl.dev": {
         "auth": [{"method": "api_key", "source_url": "https://docs.firecrawl.dev/introduction"},
@@ -1737,21 +1737,21 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://docs.firecrawl.dev/rate-limits",
         "official_mcp": [{"endpoint": "https://mcp.firecrawl.dev/v2/mcp-oauth", "doc_url": "https://docs.firecrawl.dev/mcp-server"},
                          {"endpoint": "https://mcp.firecrawl.dev/v2/mcp", "doc_url": "https://docs.firecrawl.dev/mcp-server"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "resend.com": {
         "auth": [{"method": "api_key", "source_url": "https://resend.com/docs/api-reference/introduction"}],
         "key_signup_url": "https://resend.com/docs/api-reference/introduction",
         "rate_limits_url": "https://resend.com/docs/api-reference/rate-limit",
         "official_mcp": [{"endpoint": "https://mcp.resend.com/mcp", "doc_url": "https://resend.com/docs/mcp-server"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "brevo.com": {
         "auth": [{"method": "api_key", "source_url": "https://developers.brevo.com/reference/quickstart-reference"}],
         "key_signup_url": "https://developers.brevo.com/reference/quickstart-reference",
         "rate_limits_url": "https://developers.brevo.com/docs/api-limits",
         "official_mcp": [{"endpoint": "https://mcp.brevo.com/v1/brevo/mcp", "doc_url": "https://developers.brevo.com/docs/mcp-protocol"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "mollie.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.mollie.com/reference/authentication"},
@@ -1760,13 +1760,13 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://docs.mollie.com/reference/rate-limiting",
         "sandbox_url": "https://docs.mollie.com/reference/testing",
         "official_mcp": [{"endpoint": "https://mcp.mollie.com/mcp", "doc_url": "https://docs.mollie.com/docs/mollie-mcp-server"}],
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "wise.com": {
         "auth": [{"method": "oauth2", "source_url": "https://docs.wise.com/guides/developer/auth-and-security"},
                  {"method": "pat", "source_url": "https://docs.wise.com/guides/developer/auth-and-security/personal-api-token"}],
         "key_signup_url": "https://docs.wise.com/guides/developer/auth-and-security/personal-api-token",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "zenodo.org": {
         "auth": [{"method": "oauth2", "source_url": "https://developers.zenodo.org/"},
@@ -1774,20 +1774,20 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "key_signup_url": "https://developers.zenodo.org/",
         "rate_limits_url": "https://developers.zenodo.org/",
         "sandbox_url": "https://developers.zenodo.org/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "abuseipdb.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.abuseipdb.com/"}],
         "key_signup_url": "https://docs.abuseipdb.com/",
         "rate_limits_url": "https://docs.abuseipdb.com/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "openalex.org": {
         "auth": [{"method": "none", "source_url": "https://help.openalex.org/api/authentication/"},
                  {"method": "api_key", "source_url": "https://help.openalex.org/api/authentication/"}],
         "key_signup_url": "https://help.openalex.org/api/authentication/",
         "rate_limits_url": "https://help.openalex.org/api/authentication/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "virustotal.com": {
         "auth": [{"method": "api_key", "source_url": "https://docs.virustotal.com/docs/api-overview"}],
@@ -1795,7 +1795,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "free_tier": {"source_url": "https://docs.virustotal.com/docs/api-overview",
                       "quote": "The public API is a free service, available for any website or application that is free to consumers."},
         "rate_limits_url": "https://docs.virustotal.com/docs/api-overview",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "alphavantage.co": {
         "auth": [{"method": "api_key", "source_url": "https://www.alphavantage.co/support/"}],
@@ -1803,7 +1803,7 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "free_tier": {"source_url": "https://www.alphavantage.co/support/",
                       "quote": "We are pleased to provide free stock API service covering the majority of our datasets for 25 API requests per day and unlimited API requests for verified open-source or educational projects."},
         "rate_limits_url": "https://www.alphavantage.co/support/",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "ipinfo.io": {
         "auth": [{"method": "api_key", "source_url": "https://ipinfo.io/developers"}],
@@ -1813,12 +1813,12 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://ipinfo.io/developers",
         "terms": {"url": "https://ipinfo.io/terms-of-service",
                   "quote": "You are solely responsible for any activity using your Credentials, whether or not you authorized that activity."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "openweathermap.org": {
         "auth": [{"method": "api_key", "source_url": "https://openweathermap.org/appid"}],
         "key_signup_url": "https://openweathermap.org/appid",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "intercom.com": {
         "auth": [{"method": "api_key", "source_url": "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication"},
@@ -1828,21 +1828,21 @@ OFFICIAL_ACCESS: dict[str, dict] = {
                          {"endpoint": "https://mcp.eu.intercom.com/mcp", "doc_url": "https://developers.intercom.com/docs/guides/mcp"}],
         "terms": {"url": "https://developers.intercom.com/docs/publish-to-the-app-store/intercom-developer-terms",
                   "quote": "Developer must keep all Access Credentials confidential."},
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "posthog.com": {
         "auth": [{"method": "pat", "source_url": "https://posthog.com/docs/api/personal-api-keys"},
                  {"method": "oauth2", "source_url": "https://posthog.com/docs/api"}],
         "key_signup_url": "https://posthog.com/docs/api/personal-api-keys",
         "rate_limits_url": "https://posthog.com/docs/api",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
     "ngrok.com": {
         "auth": [{"method": "api_key", "source_url": "https://ngrok.com/docs/api/"}],
         "key_signup_url": "https://ngrok.com/docs/api/",
         "rate_limits_url": "https://ngrok.com/docs/api/",
         "openapi_url": "https://raw.githubusercontent.com/ngrok/ngrok-openapi/refs/heads/main/ngrok.yaml",
-        "verified_at": "2026-10-21",
+        "verified_at": "2026-11-01",
     },
 }
 # Separate hosts of the same publisher and API share one bundle.
