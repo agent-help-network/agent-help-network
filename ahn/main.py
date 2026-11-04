@@ -27,6 +27,7 @@ from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, v
 from .owner_hosts import (OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, OWNER_HOSTS_ORDERS, blocked_hosts, parse_days,
                           parse_order, parse_unmapped, recent_hosts)
 from .rate_limit import RequestLimiter
+from .request_log import RequestLog
 from .service import ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
@@ -810,7 +811,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             head_route.include_in_schema = False
             head_routes.append(head_route)
     app.router.routes.extend(head_routes)
-    app.add_middleware(HeadWithoutBody)  # added last: outermost, so it also strips a body the compression layer would send
+    app.add_middleware(HeadWithoutBody)  # outermost but one, so it also strips a body the compression layer would send
+    if settings.request_log:
+        app.add_middleware(RequestLog)  # added last: outermost, so it sees every request, a HEAD answer's status included
     return app
 
 

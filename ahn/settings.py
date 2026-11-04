@@ -88,6 +88,8 @@ class Settings:
     public_bundle_since: date | None = None
     # AHN_RESPONSE_GZIP=0 turns off gzip for text responses (ahn/compression.py); on by default.
     response_gzip: bool = True
+    # AHN_REQUEST_LOG=0 turns off the one-line-per-request log (ahn/request_log.py); on by default.
+    request_log: bool = True
     # AHN_VENDOR_AWARE_BLOCK=0 turns off the vendor-aware robots rule (D48): agent_vendor is accepted and ignored, and
     # the rule before D48 applies. On by default.
     vendor_aware_block: bool = True
@@ -171,6 +173,7 @@ class Settings:
         proceed = parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))  # once: an unknown value warns once
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
+                   request_log=os.environ.get("AHN_REQUEST_LOG", "").strip() != "0",
                    vendor_aware_block=os.environ.get("AHN_VENDOR_AWARE_BLOCK", "").strip() != "0",
                    response_guide=os.environ.get("AHN_RESPONSE_GUIDE", "").strip() != "0",
                    public_board=public_board, public_board_since=public_board_since,

@@ -18,6 +18,7 @@ os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 from ahn.compression import BUFFER_LIMIT, TextGZipMiddleware, accepts_gzip  # noqa: E402
 from ahn.main import HeadWithoutBody  # noqa: E402
 from ahn.main import create_app  # noqa: E402
+from ahn.request_log import RequestLog  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 
 BIG_TEXT = ("Agent Help Network answers one question for a public hostname. " * 40).strip()  # about 2.4 KB
@@ -377,11 +378,11 @@ def test_the_static_redirect_to_the_cdn_is_untouched():
 
 def test_compression_is_the_outermost_layer_so_the_limiter_and_metrics_see_the_plain_response():
     stack = create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)).user_middleware
-    # [HEAD body strip, compression, the rate-limit/metrics function middleware]: compression still sits outside the limiter and metrics
-    assert stack[0].cls is HeadWithoutBody and stack[1].cls is TextGZipMiddleware and len(stack) == 3
+    # [request log, HEAD body strip, compression, the rate-limit/metrics function middleware]: compression still sits outside the limiter and metrics
+    assert stack[0].cls is RequestLog and stack[1].cls is HeadWithoutBody and stack[2].cls is TextGZipMiddleware and len(stack) == 4
     off = create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, response_gzip=False)).user_middleware
     assert all(item.cls is not TextGZipMiddleware for item in off)
-    assert off[0].cls is HeadWithoutBody and len(off) == 2
+    assert off[0].cls is RequestLog and off[1].cls is HeadWithoutBody and len(off) == 3
 
 
 def test_the_switch_turns_compression_off():
