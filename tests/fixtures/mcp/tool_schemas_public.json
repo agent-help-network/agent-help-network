@@ -2933,7 +2933,7 @@
     },
     "RulesUniform": {
      "additionalProperties": true,
-     "description": "D93: the values every token in the (left-out) `rules` list shares.",
+     "description": "D94: the values every token in the (left-out) `rules` list shares.",
      "properties": {
       "crawl_delay": {
        "anyOf": [
