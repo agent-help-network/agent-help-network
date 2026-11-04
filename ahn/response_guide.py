@@ -208,6 +208,27 @@ CUSTOMER_FIRST_ROWS = frozenset({"O1", "O7", "O7-N", "O7-K"})
 # Rows whose retry_after_seconds is the pending profile's own value (a read is queued).
 RETRY_ROWS = frozenset({"O1", "U1", "U2"})
 # The last row of each action: where a combination the table does not list falls to (logged; tests forbid it).
+# D87: the first line of a lookup that reports a failure says what the failure is. SERVICE_ERROR_ROWS replace the sentence of a proceed row
+# (P1..P3) when the caller reported error_class=service_error: no refusal is implied, and AHN, which sees hosts and not single pages, says
+# it cannot judge this page's 5xx. FAILED_U3 replaces U3 for any lookup with a failure signal (error_class or failure_stage): the robots
+# condition stays, and the caller is told not to switch tools or user agents to retry. Only the sentence changes; the row, ``do`` and
+# every other key are those of the row (with a curated customer path the 5xx sentence also hands the user next_action.customer_url). AHN_FAILURE_KIND_LINES=0 keeps the sentences before D87.
+_FIVE_XX = "AHN sees hosts, not pages, so it cannot judge this 5xx. Retry once later; if it persists, tell your user."
+SERVICE_ERROR_ROWS: dict[str, str] = {
+    "P1": "robots.txt blocks no listed agent vendor at the root. " + _FIVE_XX,
+    "P1-V": "robots.txt does not block your vendor's agent tokens at the root. " + _FIVE_XX,
+    "P2": "robots.txt blocks some tokens; stop if yours is in robots.agents_blocked. " + _FIVE_XX,
+    "P2-V": "robots.txt blocks other agents, not your vendor's. " + _FIVE_XX,
+    "P3": "This site publishes no robots.txt, so nothing declared blocks agents. " + _FIVE_XX,
+}
+# With a curated customer path the 5xx sentence keeps the way to the person: the same prefixes, a shorter 5xx clause and the customer_url hand-over.
+_FIVE_XX_CONSUMER = "AHN cannot judge a single page's 5xx. Retry once later; if it persists, tell your user and hand them next_action.customer_url."
+SERVICE_ERROR_CONSUMER_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX) + _FIVE_XX_CONSUMER for row, sentence in SERVICE_ERROR_ROWS.items()}
+# The list in next_action.stop_if_you_are holds the listed vendors' tokens that robots.txt blocks at the root, at most MAX_STOP_TOKENS; the
+# file may block others too, so the sentence says "some tokens, including those", never "only".
+_U3_STOP = "robots.txt blocks some tokens, including those in next_action.stop_if_you_are; if your requests send one, stop. "
+FAILED_U3 = _U3_STOP + "Either way, do not switch tools or user agents to retry after a refusal; tell your user."
+FAILED_U3_SERVICE_ERROR = _U3_STOP + "Either way, AHN cannot judge this 5xx. Retry once later; if it persists, tell your user."
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
 
@@ -357,7 +378,8 @@ def status_row(provider_status: dict | None, official_status_page: dict | None, 
 
 
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
-          status_guide: bool = False) -> dict:
+          status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
+          failure_kind_lines: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
@@ -368,7 +390,10 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     status page is known, whatever the task_step. ``do`` and the other keys are those of the row. The one exception (D76): on a
     status_check use_official_path row without a re-lookup, ``url`` is the status page, unless a robots block applies and the
     status page is on the looked-up site's own domain. D77: a status page that needs the user's sign-in (T3-S) is never the
-    ``url`` (it goes out as ``status_url`` only), and under a robots block it keeps the robots sentence too."""
+    ``url`` (it goes out as ``status_url`` only), and under a robots block it keeps the robots sentence too.
+    failure_kind_lines (D87, AHN_FAILURE_KIND_LINES, with the D63 switch on, never for a status_check lookup) lets the sentence of a
+    lookup that reports a failure (error_class or failure_stage) follow the kind of failure: SERVICE_ERROR_ROWS for a proceed row when
+    error_class is service_error, FAILED_U3 for U3. Nothing but the sentence changes."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -397,6 +422,11 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         sentence = PROCEED_OFFICIAL_ROWS[row]
     if on and blocked_default and do == "proceed":
         sentence = (BLOCKED_PROCEED_CONSUMER_ROWS if customer else BLOCKED_PROCEED_ROWS)[row]
+    if on and failure_kind_lines and not status_check and (error_class is not None or failure_stage is not None):
+        if do == "proceed" and error_class == "service_error":
+            sentence = (SERVICE_ERROR_CONSUMER_ROWS if customer else SERVICE_ERROR_ROWS)[row]
+        elif row == "U3":
+            sentence = FAILED_U3_SERVICE_ERROR if error_class == "service_error" else FAILED_U3
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))

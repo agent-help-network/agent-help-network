@@ -94,6 +94,7 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 
 `AHN_STATUS_CHECK_GUIDE=0`(D69)이면 `task_step=status_check` 조회도 다른 조회와 같은 `summary_line` 을 받고 `next_action.status_url` 이 빠진다(D76 의 `status_url` 상시 부착과 상태 페이지 우선 `do` 도 함께 꺼진다). 기본은 켜짐.
 `AHN_STATUS_CHECK_COMPACT=0` 이면 `task_step=status_check` 답에도 `access_profile.robots.rules` 를 싣는다(D71). 기본은 켜짐.
+`AHN_FAILURE_KIND_LINES=0`(D87)이면 모든 답의 `summary_line` 이 D87 이전과 정확히 같다. 기본은 켜짐이며 알 수 없는 값은 `0` 으로 읽는다. 두 종류 행의 문장만 다르고 답의 나머지는 건드리지 않는다.
 
 ## 공개 접수 계약
 
@@ -416,6 +417,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 모든 조회 답에는 `summary_line` 과 `next_action` 이 함께 온다. 둘 다 답이 정해진 뒤 `recommendation`·`access_profile`·`official_paths`·`provider_status` 로부터 계산만 하며, 판정인 `recommendation` 과 `next_checks` 는 바꾸지 않는다.
 
 - `summary_line` 은 `ahn/response_guide.py` 의 고정 템플릿 표에서 고른 영어 문장 하나(인쇄 가능한 ASCII 200자 이하, 상태 확인에서 robots 근거 행은 문장 둘 401자 이하(D79))다. 채워 넣는 값은 정수 초 하나뿐이다. 호스트명, 에이전트 토큰, URL, 사이트나 업체에서 온 텍스트는 들어가지 않는다. 같은 입력은 늘 같은 문장이다.
+- **실패 종류에 맞춘 첫 줄(D87).** 실패를 보고한 조회(`error_class` 또는 `failure_stage`)에서 두 종류 행의 문장이 실패 종류를 따른다. `recommendation`·`next_action`·`next_checks`·`cause`·`links` 는 행의 것 그대로다. `error_class=service_error` 의 `proceed` 답은 막는다고 선언한 곳이 없다는 것(P2 는 호출자 토큰이 `robots.agents_blocked` 에 없다면), AHN 은 호스트를 보지 개별 페이지를 보지 않아 이 페이지의 5xx 를 판정하지 못한다는 것, 나중에 한 번만 재시도하고 계속되면 사용자에게 알리라는 것을 말한다(`ahn/response_guide.py` 의 `SERVICE_ERROR_ROWS`). 고객 경로가 큐레이션된 호스트(`next_action.customer_url` 있음)는 끝이 "사용자에게 알리고 `next_action.customer_url` 을 건네라"로 바뀌어(`SERVICE_ERROR_CONSUMER_ROWS`) 5xx 답도 사람의 경로를 가리킨다. 거절이 호출자의 도구·사이트 가장자리·로그인에서 왔다는 문구는 더 이상 없다. `robots_blocks_some_agents` 의 `unknown` 답(`next_action.do` 는 `stop_if_listed`)은 robots.txt 가 일부 토큰을 막으며 `next_action.stop_if_you_are` 의 토큰이 거기 들어 있다고(그 목록은 열거된 벤더의 루트 차단만 최대 16개를 담으므로 다른 토큰도 막혀 있을 수 있다) 말하고, 요청이 그 토큰을 보내면 멈추고, 어느 쪽이든 거절 뒤에 도구나 사용자 에이전트를 바꿔 재시도하지 말고 사용자에게 알리라고 말한다(`service_error` 이면 둘째 절 자리에 5xx 문장이 온다). `agent_vendor` 를 보내라는 말은 더 이상 없다. 실패 신호 없는 조회, 실패 신호 없는 `task_step=status_check` 조회(서비스는 실패 신호가 있는 조회를 status_check 로 넘기지 않는다, D69), 나머지 행은 문장이 그대로다. D63 문장이 켜져 있을 때만 적용된다.
 - `next_action` 은 `do`, `url`, `retry_after_seconds` 를 항상 가진다.
 
 | `do` | 언제 | `url` | `retry_after_seconds` |

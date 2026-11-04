@@ -23,6 +23,20 @@ def report_retention_days_from_env() -> int:
 
 LOG = logging.getLogger(__name__)
 _EDGE_WARNED = False
+_KIND_WARNED = False
+
+
+def parse_failure_kind_switch(raw: str) -> bool:
+    """AHN_FAILURE_KIND_LINES (D87): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an answer is the
+    risky side), and logs one warning per process: the code only, never the value."""
+    global _KIND_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _KIND_WARNED:
+        _KIND_WARNED = True
+        LOG.warning("failure_kind_switch_unknown_value")
+    return False
 
 
 def parse_edge_refusal_switch(raw: str) -> bool:
@@ -108,6 +122,9 @@ class Settings:
     # AHN_EDGE_REFUSAL_HANDOFF=0 (D85) keeps a proceed answer for a site_access lookup even where AHN's own home-page check was refused
     # too. On by default; an unknown value is read as off (with one warning), never as on.
     edge_refusal_handoff: bool = True
+    # AHN_FAILURE_KIND_LINES=0 (D87) keeps the summary_line of a lookup that reports a failure as it was before D87. On by default; an
+    # unknown value is read as off (with one warning), never as on. Only a sentence changes.
+    failure_kind_lines: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -163,4 +180,5 @@ class Settings:
                    status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0",
                    cause_hint=os.environ.get("AHN_CAUSE_HINT", "").strip() != "0",
                    status_check_compact=os.environ.get("AHN_STATUS_CHECK_COMPACT", "").strip() != "0",
-                   edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")))
+                   edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")),
+                   failure_kind_lines=parse_failure_kind_switch(os.environ.get("AHN_FAILURE_KIND_LINES", "")))

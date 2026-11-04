@@ -205,14 +205,17 @@ def lines(n: int) -> dict:
 
 
 EXTRA_TABLES = (response_guide.PROCEED_OFFICIAL_ROWS, response_guide.PROCEED_CONSUMER_ROWS, response_guide.CONSUMER_ROWS,
-                response_guide.STATUS_ROWS, response_guide.EDGE_CONSUMER_ROWS)
+                response_guide.STATUS_ROWS, response_guide.EDGE_CONSUMER_ROWS, response_guide.SERVICE_ERROR_ROWS,
+                response_guide.SERVICE_ERROR_CONSUMER_ROWS,
+                {"U3": response_guide.FAILED_U3, "U3-5xx": response_guide.FAILED_U3_SERVICE_ERROR})
 # D63: the tables beside ROWS are held to the same length, character and forbidden-phrase checks.
 ALL_LINES = {text for n in (0, 5, 120, 300, 3600) for text in lines(n).values()}
 ALL_LINES |= {text.replace("{n}", str(n)) for n in (0, 5, 120, 300, 3600) for table in EXTRA_TABLES for text in table.values()}
 TEMPLATES = [re.compile(re.escape(sentence).replace(re.escape("{n}"), r"[0-9]{1,4}"))
              for sentence in [sentence for _do, sentence in ROWS.values()] + list(response_guide.PROCEED_OFFICIAL_ROWS.values())
              + list(response_guide.PROCEED_CONSUMER_ROWS.values()) + list(response_guide.CONSUMER_ROWS.values())
-             + list(response_guide.STATUS_ROWS.values()) + list(response_guide.EDGE_CONSUMER_ROWS.values())]
+             + list(response_guide.STATUS_ROWS.values()) + list(response_guide.EDGE_CONSUMER_ROWS.values())
+             + list(response_guide.SERVICE_ERROR_ROWS.values()) + list(response_guide.SERVICE_ERROR_CONSUMER_ROWS.values()) + [response_guide.FAILED_U3, response_guide.FAILED_U3_SERVICE_ERROR]]
 
 
 def from_table(text: str) -> bool:
