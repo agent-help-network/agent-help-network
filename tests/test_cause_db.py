@@ -641,14 +641,18 @@ def test_your_side_likely_needs_a_normal_check_and_a_signal_that_points_at_the_c
          probe_day("side-day.org", (now() - timedelta(days=3)).date(), "reachable", 2))
     near = look(db, "side.org", failure_stage="before_target_response")["cause"]
     assert (near["branch"], near["hint"], near["confidence"], near["basis"]) == ("undetermined", "your_side_likely", "low", ["site_probe"])
-    assert "AHN reads no page content" in near["line"] and "recheck_after" in near
+    # D92: the stored check is dated, and the sentence says it covers the home page only (hint, branch, confidence and basis are asserted above)
+    assert near["line"] == cause.side_line(timedelta(hours=1)) and "1 h ago" in near["line"] and "then" not in near["line"].split() and "does not see single pages" in near["line"]
+    assert "recheck_after" in near
     assert look(db, "side.org", error_class="login_auth")["cause"]["hint"] == "your_side_likely"
     assert look(db, "side.org", error_class="human_verification")["cause"]["hint"] == "your_side_likely"
     # the caller saw a plain service error and AHN's check was normal: nothing is claimed
     assert "cause" not in look(db, "side.org", error_class="service_error")
     # a failure three days ago: the day's own record describes it
     past = look(db, "side-day.org", failure_stage="before_target_response", failed_at=iso(now() - timedelta(days=3)))["cause"]
-    assert past["hint"] == "your_side_likely"
+    assert past["hint"] == "your_side_likely" and "3 days ago was normal" in past["line"]  # the stored check near that time is dated
+    # with no stored check near the failure time the day's counts describe it (fixed sentence)
+    assert cause.LINES["your_side_likely"].startswith("Not determined: AHN's home-page checks that day were normal")
     # not normal that day: no claim either
     seed(db, probe_day("side-bad.org", (now() - timedelta(days=2)).date(), "reachable"), probe_day("side-bad.org", (now() - timedelta(days=2)).date(), "other_status"))
     assert "cause" not in look(db, "side-bad.org", failure_stage="before_target_response", failed_at=iso(now() - timedelta(days=2)))
@@ -941,6 +945,7 @@ def test_no_host_name_and_no_site_text_reaches_a_cause(db):
     seed(db, provider_event(hosts[0], t0, "major", "none"), episode(hosts[1], t0), probe(hosts[2], outcome="bot_challenge", refusals=2))
     templates = [re.compile("^" + re.escape(text).replace(re.escape("{win}"), r"(\(since [0-9: -]+ UTC\)|\([0-9: -]+(?:-| to )[0-9: -]+ UTC\))") + "$")
                  for text in cause.LINES.values()] + [re.compile("^" + re.escape(text.replace(" {win}", "")) + "$") for text in cause.LINES.values() if "{win}" in text]
+    templates.append(re.compile(r"Not determined: AHN's home-page check (just now|[0-9]+ (min|h|days?) ago) was normal, .*"))
     templates.append(re.compile(r"Not determined: AHN's check [0-9a-z ]+ saw an? (?:[A-Za-z ]+ )?[a-z-]+ refusal; .*"))
     for host in hosts:
         for params in ({"error_class": "service_error"}, {"error_class": "site_access"}, {"failure_stage": "before_target_response"},
@@ -1009,3 +1014,9 @@ def test_d91_with_a_terms_signal_only_cause_changes_and_the_signal_does_not_disp
     assert new["cause"]["hint"] == "no_measurement" and old["cause"]["hint"] == "your_side_likely"
     for field in ("recommendation", "next_action", "summary_line"):
         assert new.get(field) == old.get(field), field
+
+
+def test_side_line_names_the_age_in_ahn_check_words_and_fits_the_line_limit():
+    for age in (timedelta(0), timedelta(minutes=7), timedelta(hours=5), timedelta(days=1), timedelta(days=13)):
+        line = cause.side_line(age)
+        assert cause.age_text(age) in line and len(line) <= cause.LINE_MAX and line.isascii() and "{" not in line
