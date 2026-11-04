@@ -369,8 +369,8 @@ TABLES = {
                                         Phrase("until five minutes after the token expires, one hour after its lookup", "조회 1시간 뒤 토큰이 만료되고 5분이 지날 때까지")),
     # Adoption measurement (migration 028, ahn/adoption.py, D49): fixed-list categories per day, no hostname, address or digest.
     "lookup_outcome_daily": Pruned(Phrase(
-        "Daily counts of answered lookups by client category (plugin, ahn-client, MCP host, script, browser, crawler, the site's own search page, or unknown), the MCP host family or ahn-client integration label where there is one (each read from the User-Agent header, which is not kept), the recommendation given and whether the hostname's declared-policy read was ready, stale, pending or none (no declared-policy layer for that hostname), with no hostname and no address: {days} days",
-        "응답한 조회의 일별 집계(클라이언트 종류 — 플러그인·ahn-client·MCP 호스트·스크립트·브라우저·크롤러·사이트 자체 검색 페이지·알 수 없음 —, 해당할 때 MCP 호스트 계열이나 ahn-client 연동 라벨(둘 다 User-Agent 헤더에서 읽고 헤더 자체는 보관하지 않음), 준 권고, 그 호스트명의 선언 정책 읽기가 준비·오래됨·대기 중·없음(그 호스트명에 선언 정책 층이 없음) 중 어느 상태였는지, 호스트명과 주소 없음): {days}일")),
+        "Daily counts of answered lookups by client category (plugin, ahn-client, MCP host, script, browser, crawler, the site's own search page, or unknown), the MCP host family or ahn-client integration label where there is one (each read from the User-Agent header, which the database does not keep), the recommendation given and whether the hostname's declared-policy read was ready, stale, pending or none (no declared-policy layer for that hostname), with no hostname and no address: {days} days",
+        "응답한 조회의 일별 집계(클라이언트 종류 — 플러그인·ahn-client·MCP 호스트·스크립트·브라우저·크롤러·사이트 자체 검색 페이지·알 수 없음 —, 해당할 때 MCP 호스트 계열이나 ahn-client 연동 라벨(둘 다 User-Agent 헤더에서 읽고 데이터베이스에는 헤더 자체를 보관하지 않음), 준 권고, 그 호스트명의 선언 정책 읽기가 준비·오래됨·대기 중·없음(그 호스트명에 선언 정책 층이 없음) 중 어느 상태였는지, 호스트명과 주소 없음): {days}일")),
     "lookup_sources_daily": Pruned(Phrase(
         "Keyed IP digests specific to one hostname and one UTC day, with the client's last lookup time, the kind of blocked lookup and the recommendation it was given: {days} days",
         "호스트명과 날짜(UTC)에만 해당하도록 비밀키로 변환한 IP 값과 그 클라이언트의 마지막 조회 시각·막힘 유형·그때 준 권고: {days}일"),
@@ -1249,3 +1249,20 @@ def test_home_check_history_constants_match_the_policy():
                           "45분 이상 떨어진 실패한 읽기·확인이 2번 이상 있어야 열리고, 다음 응답이 닫습니다"),
     }
     assert_phrases("home check history", {lang: policy_text(lang) for lang in LANGS}, wanted)
+
+
+# --- 8. Per-request application log ----------------------------------------------------------
+
+def test_request_log_fields_and_limits_in_the_policy_match_the_code():
+    from ahn import request_log
+    wanted = {
+        "line": Phrase("writes one line per request to its application log at the hosting provider",
+                       "호스팅 업체의 애플리케이션 로그에 요청마다 한 줄을 남깁니다"),
+        "path": Phrase(f"the path without its query string (at most {request_log.PATH_LIMIT} characters",
+                       f"쿼리 문자열을 뺀 경로(최대 {request_log.PATH_LIMIT}자"),
+        "agent": Phrase(f"the first {request_log.UA_LIMIT} characters of the User-Agent", f"User-Agent 앞 {request_log.UA_LIMIT}자"),
+        "nothing_else": Phrase("holds no IP address, query string, other header or body", "IP 주소·쿼리 문자열·그 밖의 헤더·본문이 없으며"),
+        "retention": Phrase("stays with Render under Render's log retention terms and never enters our database",
+                            "Render 의 로그 보존 조건에 따라 Render 에 남으며 우리 데이터베이스에는 들어오지 않습니다"),
+    }
+    assert_phrases("request log", {lang: policy_text(lang) for lang in LANGS}, wanted)
