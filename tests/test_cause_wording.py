@@ -97,3 +97,23 @@ def test_the_provider_names_are_the_codes_the_home_check_can_store():
 
     assert set(cause.VENDOR_NAMES) == set(probe_fingerprints.VENDOR_CODES)
     assert set(cause.UNNAMED_VENDORS) == {"generic_captcha", "unknown"}
+
+
+def test_unfollowed_www_redirect_helper_and_check_line():
+    """D88: one rule names a redirect to the www name that AHN did not follow; the MCP line does not call it an answer."""
+    from ahn import mcp_adapter
+    from ahn.check_text import unfollowed_www_redirect
+    from ahn.models import AhnCheck
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    assert unfollowed_www_redirect("redirected_same_host", www)
+    assert not unfollowed_www_redirect("redirected_same_host", {**www, "followed_www": True})
+    assert not unfollowed_www_redirect("redirected_same_host", {**www, "to_relation": "same_host"})
+    assert not unfollowed_www_redirect("redirected_same_host", None)
+    assert not unfollowed_www_redirect("redirected_same_host", {"to_relation": "www_alias"})   # no followed_www record
+    assert not unfollowed_www_redirect("refused", www)
+    base = {"status": "measured", "basis": "ahn_server", "vantage": {"kind": "datacenter", "region": "us"}, "ua_token": "AgentHelpNetwork",
+            "path_kind": "home", "fingerprint_version": "v1", "note": "n", "age_seconds": 100, "outcome": "redirected_same_host", "http_status": 301}
+    line = mcp_adapter.ahn_check_line(AhnCheck(**base, redirect=www))
+    assert "redirected to the host's other name (www/apex), not followed" in line and "within the site" not in line
+    assert "redirected within the site" in mcp_adapter.ahn_check_line(AhnCheck(**base, redirect={**www, "followed_www": True}))
+    assert "redirected within the site" in mcp_adapter.ahn_check_line(AhnCheck(**base))

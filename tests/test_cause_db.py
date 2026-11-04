@@ -85,16 +85,16 @@ def episode(host, first, *, kind="server_error", confirmed=True, ended=None, rea
             (host, kind, first, first + timedelta(minutes=50) if confirmed else None, ended, reason, last or ended or first + timedelta(minutes=50), held))
 
 
-def probe(host, *, outcome="reachable", at=None, refusals=0, due=None, trigger="daily", reason=None, vendor=None):
+def probe(host, *, outcome="reachable", at=None, refusals=0, due=None, trigger="daily", reason=None, vendor=None, redirect=None):
     at = at or now() - timedelta(hours=1)
     return ("""INSERT INTO site_probe (site_host,read_host,probed_at,outcome,fingerprint_version,next_due_at,consecutive_refusals,trigger_kind,not_measured_reason,
-                                       bot_vendor,bot_signal,bot_confidence)
-               VALUES (%s,%s,%s,%s,'v1',%s,%s,%s,%s,%s,%s,%s)
+                                       bot_vendor,bot_signal,bot_confidence,redirect)
+               VALUES (%s,%s,%s,%s,'v1',%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                ON CONFLICT (site_host) DO UPDATE SET probed_at=EXCLUDED.probed_at, outcome=EXCLUDED.outcome, next_due_at=EXCLUDED.next_due_at,
                    consecutive_refusals=EXCLUDED.consecutive_refusals, not_measured_reason=EXCLUDED.not_measured_reason, bot_vendor=EXCLUDED.bot_vendor,
-                   bot_signal=EXCLUDED.bot_signal, bot_confidence=EXCLUDED.bot_confidence""",
+                   bot_signal=EXCLUDED.bot_signal, bot_confidence=EXCLUDED.bot_confidence, redirect=EXCLUDED.redirect""",
             (host, host, at, outcome, due or at + timedelta(hours=6), refusals, trigger, reason, vendor,
-             "header" if vendor else None, "high" if vendor else None))
+             "header" if vendor else None, "high" if vendor else None, json.dumps(redirect) if redirect is not None else None))
 
 
 def observation(host, at, *, outcome="error", error_class="service_error", synthetic=False, state="published", visibility="published", withdrawn=False):
@@ -650,6 +650,82 @@ def test_your_side_likely_needs_a_normal_check_and_a_signal_that_points_at_the_c
     # not normal that day: no claim either
     seed(db, probe_day("side-bad.org", (now() - timedelta(days=2)).date(), "reachable"), probe_day("side-bad.org", (now() - timedelta(days=2)).date(), "other_status"))
     assert "cause" not in look(db, "side-bad.org", failure_stage="before_target_response", failed_at=iso(now() - timedelta(days=2)))
+
+
+def test_unfollowed_www_redirect_is_no_measurement_not_a_normal_check(db):
+    """D88: a home-page check that ended at a redirect to the other name (www/apex) AHN did not follow says nothing about the
+    home page."""
+    due = now() + timedelta(hours=5)
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    seed(db, probe("www-open.org", outcome="redirected_same_host", due=due, redirect=www),
+         probe("www-followed.org", outcome="redirected_same_host", redirect={**www, "followed_www": True}),
+         probe("www-locale.org", outcome="redirected_same_host", redirect={"followed_www": False, "to_relation": "same_host", "path_class": "locale"}),
+         probe("www-old.org", outcome="redirected_same_host"),
+         probe("www-day.org", outcome="redirected_same_host", redirect=www),
+         probe_day("www-day.org", now().date(), "redirected_same_host", 2))
+    for params in ({"failure_stage": "before_target_response"}, {"error_class": "login_auth"}, {"error_class": "human_verification"}):
+        open_ = look(db, "www-open.org", **params)["cause"]
+        assert (open_["branch"], open_["hint"], open_["basis"]) == ("undetermined", "no_measurement", ["site_probe"]), params
+        # the next check may end at the same redirect, so no home-page measurement is promised
+        assert "recheck_after" not in open_, params
+        assert "your side" not in open_["line"]
+        # the day's counts keep no redirect record, so they do not stand in for the check
+        assert look(db, "www-day.org", **params)["cause"]["hint"] == "no_measurement", params
+        # a followed www answer, a path or locale redirect on the same host and a row without a redirect record stay as they were
+        for host in ("www-followed.org", "www-locale.org", "www-old.org"):
+            assert look(db, host, **params)["cause"]["hint"] == "your_side_likely", (host, params)
+
+
+def test_unfollowed_www_redirect_current_row_of_any_age_keeps_the_days_redirect_count_out_of_the_normal_evidence(db):
+    """D88: the daily path. The current row is an unfollowed redirect, so the day's redirected_same_host count is no normal
+    check, whether the row is 13 hours old or only 1 hour old with a failed_at 20 hours back."""
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    today = now()
+    seed(db, probe("www-late.org", outcome="redirected_same_host", at=today - timedelta(hours=13), redirect=www),
+         probe_day("www-late.org", today.date(), "redirected_same_host", 1),
+         probe("www-failed.org", outcome="redirected_same_host", at=today - timedelta(hours=1), redirect=www),
+         probe_day("www-failed.org", (today - timedelta(hours=20)).date(), "redirected_same_host", 1),
+         # the day's other outcomes are still read: a day that also holds a real normal check keeps its meaning (the limit)
+         probe("www-mixed.org", outcome="redirected_same_host", at=today - timedelta(hours=13), redirect=www),
+         probe_day("www-mixed.org", today.date(), "redirected_same_host", 1), probe_day("www-mixed.org", today.date(), "reachable", 1))
+    for host, extra in (("www-late.org", {}), ("www-failed.org", {"failed_at": iso(today - timedelta(hours=20))})):
+        cause_ = look(db, host, error_class="human_verification", **extra)["cause"]
+        assert (cause_["hint"], cause_["basis"]) == ("no_measurement", ["site_probe"]), host
+        assert "recheck_after" not in cause_, host
+    assert look(db, "www-mixed.org", error_class="human_verification")["cause"]["hint"] == "your_side_likely"
+
+
+def test_unfollowed_www_redirect_gives_site_access_and_service_error_lookups_a_cause_they_lacked(db, monkeypatch):
+    """D88: lookups that named site_access or service_error (no failure_stage) got no cause from a normal-looking check; with an
+    unfollowed redirect they now carry no_measurement. Everything the decision says stays the same."""
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    seed(db, probe("www-sa.org", outcome="redirected_same_host", redirect=www))
+    for params in ({"error_class": "site_access"}, {"error_class": "service_error"}):
+        monkeypatch.setattr(cause, "unfollowed_www_redirect", lambda outcome, redirect: False)
+        assert "cause" not in look(db, "www-sa.org", **params), params   # the old behaviour
+        monkeypatch.undo()
+        body = look(db, "www-sa.org", **params)
+        assert (body["cause"]["branch"], body["cause"]["hint"]) == ("undetermined", "no_measurement"), params
+
+
+def test_unfollowed_www_redirect_only_cause_differs_from_the_old_behaviour(db, monkeypatch):
+    """D88: the same stored row, answered with the helper behaving as before (never matches) and as now: recommendation,
+    next_action and summary_line are the same; only cause differs."""
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    seed(db, probe("www-cmp.org", outcome="redirected_same_host", redirect=www))
+    cases = ({"failure_stage": "before_target_response"}, {"error_class": "login_auth"}, {"error_class": "human_verification"},
+             {"error_class": "site_access"}, {"error_class": "service_error"})
+    now_answers = [look(db, "www-cmp.org", **params) for params in cases]
+    monkeypatch.setattr(cause, "unfollowed_www_redirect", lambda outcome, redirect: False)
+    old_answers = [look(db, "www-cmp.org", **params) for params in cases]
+    for params, new, old in zip(cases, now_answers, old_answers):
+        assert new["recommendation"] == old["recommendation"], params
+        assert new.get("next_action") == old.get("next_action"), params
+        assert new["summary_line"] == old["summary_line"], params
+        assert new["cause"]["hint"] == "no_measurement", params
+        assert old.get("cause", {}).get("hint") != "no_measurement", params
+    assert old_answers[0]["cause"]["hint"] == "your_side_likely"
+    assert "cause" not in old_answers[-1] and "cause" not in old_answers[-2]   # site_access, service_error: no cause before
 
 
 def test_no_measurement_names_the_next_measurement_only_when_there_is_one(db):

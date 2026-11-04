@@ -59,6 +59,7 @@ import urllib3
 from psycopg.types.json import Jsonb
 
 from . import access_profile as ap
+from .check_text import unfollowed_www_redirect
 from .probe_fingerprints import BLOCK_STATUSES, TRACKED_HEADERS, VENDORS, VERSION as FINGERPRINT_VERSION
 from .provenance import operator_id, vantage
 
@@ -435,11 +436,18 @@ def _confirm_on() -> bool:
 
 
 def schedule(outcome: str, previous: dict | None, retry_after: int | None,
-             http_status: int | None = None) -> tuple[timedelta, int, int]:
+             http_status: int | None = None, redirect: dict | None = None) -> tuple[timedelta, int, int]:
     """(wait until the next check, consecutive_refusals, consecutive_failures) after a check with this outcome. A 503 is
-    a server_error outcome but counts as a refusal here, as it does in the history (often a deliberate refusal)."""
+    a server_error outcome but counts as a refusal here, as it does in the history (often a deliberate refusal).
+
+    D88: a check that ended at a redirect to the www name that was not followed (``redirect``, the classified record)
+    reached no answer about the home page, so it is neither a success nor a refusal: both counts stay as the previous
+    check left them (not reset, not raised), and the wait is the one a normal check gets. Resetting the count would let a
+    www name that is refused every other time keep a host from ever reaching two refusals in a row."""
     refusals = previous["consecutive_refusals"] if previous else 0
     failures = previous["consecutive_failures"] if previous else 0
+    if unfollowed_www_redirect(outcome, redirect):
+        return timedelta(hours=SUCCESS_INTERVAL_HOURS), refusals, failures
     if outcome in REFUSAL_OUTCOMES or (outcome == "server_error" and http_status == 503):
         # Off the list for REFUSED_EXCLUDE_DAYS, flat. A Retry-After is never longer (it is capped there) and a shorter
         # one is not taken as an invitation to ask sooner. The one exception is the first counted refusal: the host is
@@ -780,7 +788,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                     read_host = www
                     reserve_www = True
                 wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"],
-                                                    classified["http_status"])
+                                                    classified["http_status"], classified["redirect"])
                 if no_verdict:
                     wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
                 row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,

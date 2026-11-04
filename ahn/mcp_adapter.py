@@ -17,7 +17,7 @@ from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
-from .check_text import VENDOR_NAMES, age_text
+from .check_text import VENDOR_NAMES, age_text, unfollowed_www_redirect
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
@@ -179,6 +179,11 @@ PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing bloc
 _CHECK_CAVEAT = "This is what AHN's data-center server got; your network may get a different answer."
 
 
+def _redirect_codes(check) -> dict | None:
+    redirect = getattr(check, "redirect", None)
+    return redirect.model_dump() if redirect is not None else None
+
+
 def ahn_check_line(check) -> str | None:
     """D67: one line for the first text block when AHN's own server has a measurement of the host's home page; None for
     a pending or not-measured check. It states what was received, the age and the vantage; it advises nothing."""
@@ -189,6 +194,9 @@ def ahn_check_line(check) -> str | None:
         vendor = f" ({VENDOR_NAMES.get(check.bot_defense.vendor, 'unknown')})" if check.bot_defense else ""
         what = f"{status}bot challenge{vendor}"
     else:
+        if unfollowed_www_redirect(check.outcome, _redirect_codes(check)):
+            # D88: the www name's own answer is not known; do not call the redirect an answer from the site
+            return f"AHN server check {age_text(check.age_seconds)}: {status}redirected to the host's other name (www/apex), not followed. {_CHECK_CAVEAT}"
         what = {"reachable": f"{status}home page answered", "redirected_same_host": f"{status}redirected within the site",
                 "refused": f"{status}refused", "rate_limited": f"{status}rate limited", "login_wall": "leads to a sign-in page",
                 "redirected_offsite": f"{status}redirected to another site", "server_error": f"{status}server error",
