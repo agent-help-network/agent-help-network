@@ -502,6 +502,19 @@ def test_llms_txt_names_the_shards_only_while_they_are_served(served, monkeypatc
     assert "## Offline bundle" in text and "shards" not in text
 
 
+def test_the_lenient_signer_also_absorbs_locked_and_unsupported_keys(monkeypatch):
+    from cryptography.exceptions import UnsupportedAlgorithm
+
+    monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", "unused.pem")
+    for error in (TypeError("locked"), UnsupportedAlgorithm("no backend")):
+        def load(_path, error=error):
+            raise error
+        monkeypatch.setattr(export, "load_signing_key", load)
+        assert bundle.signing_or_unsigned() == (None, None, type(error).__name__)
+        with pytest.raises(type(error)):
+            bundle.signing_from_env()
+
+
 def test_signer_uses_the_lenient_reader_and_the_strict_one_still_raises(monkeypatch, tmp_path):
     monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", str(tmp_path / "absent.pem"))
     assert bundle.signing_or_unsigned() == (None, None, "FileNotFoundError")

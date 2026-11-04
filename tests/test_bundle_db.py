@@ -179,6 +179,25 @@ def test_a_signing_key_that_is_not_ed25519_builds_unsigned_and_says_why(db, monk
     assert result["built"] > 0 and result["signed"] is False and result["sign_error"] == "ValueError"
 
 
+def test_a_password_protected_signing_key_builds_unsigned_and_says_why(db, monkeypatch, tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    settings, _seed = db
+    path = tmp_path / "locked.pem"
+    path.write_bytes(Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.BestAvailableEncryption(b"not-the-real-passphrase")))
+    monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", str(path))
+    result = bundle.refresh_if_due(settings.database_url)
+    assert result["built"] > 0 and result["signed"] is False and result["sign_error"] == "TypeError"
+    assert str(path) not in repr(result)
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM public_bundle").fetchone()["n"] == 1
+    with pytest.raises(TypeError):
+        bundle.signing_from_env()
+
+
 def test_a_readable_signing_key_signs_and_reports_no_error(db, monkeypatch, tmp_path):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
