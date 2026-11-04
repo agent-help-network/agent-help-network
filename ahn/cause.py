@@ -55,7 +55,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .check_text import VENDOR_NAMES, age_text as _age_text
+from .check_text import VENDOR_NAMES, age_text as _age_text, unfollowed_www_redirect
 from .signal_history import PROVIDER_PROBLEMS, STALE_AFTER
 
 LOG = logging.getLogger(__name__)
@@ -298,7 +298,7 @@ def _others_saw_errors(conn, host: str, start: datetime, end: datetime) -> bool:
 
 def _probe(conn, host: str):
     return conn.execute(
-        "SELECT outcome,probed_at,next_due_at,consecutive_refusals,not_measured_reason,bot_vendor FROM site_probe WHERE site_host=%s",
+        "SELECT outcome,probed_at,next_due_at,consecutive_refusals,not_measured_reason,bot_vendor,redirect FROM site_probe WHERE site_host=%s",
         (host,)).fetchone()
 
 
@@ -430,11 +430,18 @@ def _new_bot_defense(conn, host: str, history) -> dict | None:
 
 
 def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
-    """(any home-page check around the failure time, and all of them normal). AHN reads no page content."""
+    """(any home-page check around the failure time, and all of them normal). AHN reads no page content. A stored check that
+    ended at a www redirect AHN did not follow (D88) is no measurement of the home page: it is neither normal nor a
+    refusal. The day's counts keep no redirect record, so while the current row is such a redirect (at any age) the day's
+    ``redirected_same_host`` count is not taken as a normal check either; the day's other outcomes still count."""
+    unfollowed = probe is not None and unfollowed_www_redirect(probe["outcome"], probe["redirect"])
     if probe is not None and probe["outcome"] != "not_measured" and abs(probe["probed_at"] - when.at) <= MEASURE_WINDOW:
+        if unfollowed:
+            return False, False
         return True, probe["outcome"] in NORMAL_OUTCOMES
     rows = conn.execute(
-        "SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0",
+        "SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0"
+        + (" AND outcome<>'redirected_same_host'" if unfollowed else ""),
         (host, when.at.astimezone(timezone.utc).date())).fetchall()
     if not rows:
         return False, False
@@ -487,6 +494,10 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
     # a stored robots.txt reason: the stored time is the next robots.txt look, not a measurement, so it is never offered
     robots = ROBOTS_REASONS.get(probe["not_measured_reason"]) if probe is not None and probe["outcome"] == "not_measured" else None
     if probe is not None and probe["outcome"] == "not_measured" and probe["not_measured_reason"] in NO_RECHECK_REASONS:
+        recheck = None
+    if probe is not None and unfollowed_www_redirect(probe["outcome"], probe["redirect"]):
+        # D88: the next check may end at the same redirect (the www name's robots.txt can disallow it), so a home-page
+        # measurement is not promised and the stored time is not offered
         recheck = None
     measured, normal = _measurement(conn, host, probe, when)
     # the terms signal is information, never a block: it only fills the place of "nothing measured" or of nothing at all

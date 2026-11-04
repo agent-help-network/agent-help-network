@@ -572,3 +572,22 @@ def test_d68_listed_hosts_take_public_names_from_the_check_list_and_the_consumer
     finally:
         signal_history.listed_hosts.cache_clear()
     assert listed == frozenset({"github.com", "listed-probe.com", "consumer-host.com"})
+
+
+def test_d88_an_unfollowed_www_redirect_keeps_the_counts_and_the_wait_of_a_normal_check():
+    """D88: a check that ended at a redirect to the other name (not followed) is neither a success nor a refusal, so a
+    refusal before it still counts toward two in a row."""
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    wait, refusals, failures = site_probe.schedule("redirected_same_host", previous(1, 0), None, 301, www)
+    assert (refusals, failures) == (1, 0) and wait == timedelta(hours=site_probe.SUCCESS_INTERVAL_HOURS)
+    assert site_probe.schedule("redirected_same_host", previous(0, 3), None, 301, www)[1:] == (0, 3)
+    assert site_probe.schedule("redirected_same_host", None, None, 301, www)[1:] == (0, 0)
+    # a followed answer, another same-host redirect and a missing record still reset as before
+    for redirect in ({**www, "followed_www": True}, {**www, "to_relation": "same_host"}, None):
+        assert site_probe.schedule("redirected_same_host", previous(1, 2), None, 301, redirect)[1:] == (0, 0), redirect
+    # the sequence that used to start over: refusal (1), unfollowed redirect, refusal -> 2, off the list for 7 days
+    wait, refusals, failures = site_probe.schedule("refused", None, None, 403)
+    assert refusals == 1
+    wait, refusals, failures = site_probe.schedule("redirected_same_host", previous(refusals, failures), None, 301, www)
+    wait, refusals, failures = site_probe.schedule("refused", previous(refusals, failures), None, 403)
+    assert refusals == 2 and wait == timedelta(days=site_probe.REFUSED_EXCLUDE_DAYS)
