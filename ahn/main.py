@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from uuid import UUID
 import psycopg
 from fastapi import FastAPI, Header, Query, Request, Response, Security
 from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import APIKeyHeader
 from fastapi.templating import Jinja2Templates
@@ -115,6 +117,32 @@ def invalid_code(field: str, fields: dict = CHECK_CODE_FIELDS) -> JSONResponse:
                          "allowed_values": [item.value for item in fields[field]]}, status_code=400)
 
 
+# HEAD answers like GET (same status and headers) with no body, so a liveness probe that sends HEAD sees the same status.
+# The routes that run a lookup (and may count it) and the owner pages are never run by a HEAD request, so a link
+# checker or monitor cannot cause a lookup or skew the lookup counts; they keep answering 405 to HEAD.
+HEAD_EXCLUDED_PATHS = ("/v1/incidents/check", "/v1/incidents/{incident_id}", "/{lang}/search", "/{lang}/incidents/{incident_id}")
+HEAD_EXCLUDED_PREFIXES = ("/owner", "/mcp")
+
+
+class HeadWithoutBody:
+    """Drops the body of the answer to a HEAD request; the headers, Content-Length included, stay those of the GET answer."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] != "HEAD":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_headers_only(message):
+            if message["type"] == "http.response.body":
+                message = {"type": "http.response.body", "body": b"", "more_body": message.get("more_body", False)}
+            await send(message)
+
+        await self.app(scope, receive, send_headers_only)
+
+
 def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     settings = settings or Settings.from_env()
     lang_text = {code: dict(values) for code, values in LANG.items()}
@@ -190,6 +218,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         llms_body = llms_body.replace("\n## Pages", "\n" + llms_section(settings.public_board_ahn_check) + "## Pages", 1)
         policy_updated = max(policy_updated, settings.public_board_since or POLICY_UPDATED)
     report_limiter = RequestLimiter(per_client=3, total=20) if settings.public_mode and settings.reporting_enabled else None
+    head_routes: list = []  # routes that answer HEAD only through this module; a HEAD request is not a visit and is not counted
     health_lock = Lock()
     health_cache = {"checked_at": 0.0, "ok": False}
     app.mount("/static", OffloadingStaticFiles(directory=str(ROOT / "static")), name="static")
@@ -316,7 +345,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 if not rejected_body:
                     request._body = bytes(body)
         response = JSONResponse({"error": "body_too_large_or_unframed"}, status_code=413) if rejected_body else await call_next(request)
-        if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS}:
+        if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
             allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
@@ -764,6 +793,15 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             raise ServiceError("not_found", 404)
         return render(request, lang, "support")
 
+    for route in app.routes:
+        if (isinstance(route, APIRoute) and "GET" in route.methods and "HEAD" not in route.methods
+                and route.path not in HEAD_EXCLUDED_PATHS and not route.path.startswith(HEAD_EXCLUDED_PREFIXES)):
+            head_route = copy.copy(route)  # same endpoint and path, HEAD only, left out of the OpenAPI schema
+            head_route.methods = {"HEAD"}
+            head_route.include_in_schema = False
+            head_routes.append(head_route)
+    app.router.routes.extend(head_routes)
+    app.add_middleware(HeadWithoutBody)  # added last: outermost, so it also strips a body the compression layer would send
     return app
 
 
