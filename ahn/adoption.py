@@ -188,8 +188,9 @@ def summary(conn, days: int = 7, today: date | None = None) -> dict:
 
 SIGNALS_NOTE = ("lookups per UTC hour and client kind from lookup_signals_hourly; no mcp_host split, so for the panel-window "
                 "correction of M1 taking all lookups of a client kind inside a window out of m1 gives a lower bound of what is left; "
-                "it counts lookups of eligible public hosts, so it is not the same filter as m1; overflow counts the lookups "
-                "of rows that were folded into the overflow host and are already included in lookups")
+                "it counts lookups of eligible public hosts, so it is not the same filter as m1; unknown_kind lists lookups whose "
+                "client kind was folded into overflow by the row caps (per host and hour, or per hour): they are not in any of the "
+                "five kinds, so in an hour with unknown_kind the lower bound does not hold")
 
 
 def signals_by_hour(conn, days: int = 7, today: date | None = None) -> dict:
@@ -197,24 +198,28 @@ def signals_by_hour(conn, days: int = 7, today: date | None = None) -> dict:
 
     Read only, no new table. The signals table has no MCP host and no adoption category, only the client kind
     (plugin, ahn_client, mcp, web, rest_other), and it is kept ``HOURLY_RETENTION_DAYS`` days (35), so an older part
-    of the window is empty. Rows folded into the overflow host are summed in like any other and reported in
-    ``overflow`` (left out when 0). Hours with no lookup have no row. No host name, address or path is read out.
+    of the window is empty. When a row cap is hit, the write path folds the combination into ``client_kind =
+    'overflow'`` (and, past the per-hour cap, also into the overflow host). Those lookups are not counted into any of
+    the five kinds; they are listed per hour in ``unknown_kind``, and in such an hour the per-kind numbers are not
+    complete. Hours with no lookup have no row. No host name, address or path is read out.
     """
     days = max(1, min(int(days), RETENTION_DAYS))
     today = today or datetime.now(timezone.utc).date()
     start = datetime.combine(today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc)
     end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     rows = conn.execute(
-        """SELECT hour, client_kind, sum(lookups) AS lookups,
-                  coalesce(sum(lookups) FILTER (WHERE site_host = %s), 0) AS overflow
+        """SELECT hour, client_kind, sum(lookups) AS lookups
            FROM lookup_signals_hourly WHERE hour >= %s AND hour < %s
            GROUP BY hour, client_kind ORDER BY hour, client_kind""",
-        (lookup_signals.OVERFLOW_HOST, start, end)).fetchall()
-    out = []
+        (start, end)).fetchall()
+    out, unknown = [], []
     for r in rows:
-        item = {"hour": r["hour"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00:00Z"), "client_kind": r["client_kind"],
-                "lookups": int(r["lookups"])}
-        if int(r["overflow"]):
-            item["overflow"] = int(r["overflow"])
-        out.append(item)
-    return {"retention_days": lookup_signals.HOURLY_RETENTION_DAYS, "note": SIGNALS_NOTE, "rows": out}
+        stamp = r["hour"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:00:00Z")
+        if r["client_kind"] == lookup_signals.OVERFLOW:
+            unknown.append({"hour": stamp, "lookups": int(r["lookups"])})
+        else:
+            out.append({"hour": stamp, "client_kind": r["client_kind"], "lookups": int(r["lookups"])})
+    result = {"retention_days": lookup_signals.HOURLY_RETENTION_DAYS, "note": SIGNALS_NOTE, "rows": out}
+    if unknown:
+        result["unknown_kind"] = unknown
+    return result

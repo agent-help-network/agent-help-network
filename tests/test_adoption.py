@@ -257,28 +257,30 @@ def test_days_parser_takes_one_to_the_retention_limit(raw, expected):
 
 # --- signals_by_hour (read-only hourly view) ------------------------------------------------------
 
-def test_signals_by_hour_groups_by_hour_and_client_kind_and_marks_overflow():
+def test_signals_by_hour_groups_by_hour_and_client_kind_and_lists_unknown_kind_apart():
     hour = datetime(2026, 10, 22, 14, tzinfo=timezone.utc)
     conn = Rows([
-        {"hour": hour, "client_kind": "mcp", "lookups": 5, "overflow": 2},
-        {"hour": hour, "client_kind": "plugin", "lookups": 1, "overflow": 0},
-        {"hour": hour.replace(hour=15), "client_kind": "mcp", "lookups": 3, "overflow": 0},
+        {"hour": hour, "client_kind": "mcp", "lookups": 5},
+        {"hour": hour, "client_kind": "overflow", "lookups": 2},
+        {"hour": hour, "client_kind": "plugin", "lookups": 1},
+        {"hour": hour.replace(hour=15), "client_kind": "mcp", "lookups": 3},
     ])
     out = adoption.signals_by_hour(conn, 7, TODAY)
     assert out["rows"] == [
-        {"hour": "2026-10-22T14:00:00Z", "client_kind": "mcp", "lookups": 5, "overflow": 2},   # overflow stays in lookups
-        {"hour": "2026-10-22T14:00:00Z", "client_kind": "plugin", "lookups": 1},               # no overflow key when 0
+        {"hour": "2026-10-22T14:00:00Z", "client_kind": "mcp", "lookups": 5},
+        {"hour": "2026-10-22T14:00:00Z", "client_kind": "plugin", "lookups": 1},
         {"hour": "2026-10-22T15:00:00Z", "client_kind": "mcp", "lookups": 3},
     ]
+    assert out["unknown_kind"] == [{"hour": "2026-10-22T14:00:00Z", "lookups": 2}]     # not one of the five kinds
     assert out["retention_days"] == lookup_signals.HOURLY_RETENTION_DAYS == 35
-    assert "no mcp_host" in out["note"] and "lower bound" in out["note"]
+    assert "no mcp_host" in out["note"] and "does not hold" in out["note"]
+    assert "unknown_kind" not in adoption.signals_by_hour(Rows([{"hour": hour, "client_kind": "web", "lookups": 1}]), 7, TODAY)
 
 
 def test_signals_by_hour_window_matches_summary_and_reads_no_host():
     conn = Rows([])
     adoption.signals_by_hour(conn, 7, TODAY)
-    assert conn.params[0] == lookup_signals.OVERFLOW_HOST
-    assert conn.params[1:] == (datetime(2026, 10, 16, tzinfo=timezone.utc), datetime(2026, 10, 23, tzinfo=timezone.utc))
+    assert conn.params == (datetime(2026, 10, 16, tzinfo=timezone.utc), datetime(2026, 10, 23, tzinfo=timezone.utc))
     assert "SELECT hour, client_kind" in conn.sql and "GROUP BY hour, client_kind" in conn.sql
     assert "SELECT site_host" not in conn.sql and "INSERT" not in conn.sql and "UPDATE" not in conn.sql
     assert adoption.signals_by_hour(Rows([]), 5000, TODAY)["rows"] == []
