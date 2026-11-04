@@ -1,8 +1,8 @@
 """D93: wording only. A listed developer path is for API work (an order, return or help page goes to the user), the subdomain
-re-lookup sentence asks for the same error fields, and two cause lines name AHN's own check or read as their source.
+re-lookup sentence asks for the same fields, and two cause lines name AHN's own check or read as their source.
 
 The guide before D93 is kept as tests/_pre_d93_response_guide.py; the comparison walks the D85/D87/D92 input space and asserts both
-directions: a pair changes only when its row is O7, O7-N, O7-K or U8 and only in summary_line, and no pair outside those rows differs."""
+directions: a pair changes only when its row is O1, O7, O7-N, O7-K or U8 and only in summary_line, and no pair outside those rows differs."""
 
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ _spec = importlib.util.spec_from_file_location("pre_d93_response_guide", HERE / 
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
 
-CHANGED_ROWS = ("O7", "O7-N", "O7-K", "U8")
-OFFICIAL_ROWS = ("O7", "O7-N", "O7-K")
+CHANGED_ROWS = ("O1", "O7", "O7-N", "O7-K", "U8")
+OFFICIAL_ROWS = ("O1", "O7", "O7-N", "O7-K")
 
 
 @pytest.fixture(autouse=True)
@@ -66,23 +66,26 @@ def test_only_four_rows_change_and_only_in_summary_line():
                                                        result["official_paths"], variants=mode[0])
                     seen_rows.add(row)
                     assert row in CHANGED_ROWS, (case, stage, mode, row)
-                    assert new["summary_line"] == ROWS[row][1] and old["summary_line"] == pre_rg.ROWS[row][1], (case, stage, mode)
+                    n = str(new["next_action"]["retry_after_seconds"] or 0)
+                    assert new["summary_line"] == ROWS[row][1].replace("{n}", n) and old["summary_line"] == pre_rg.ROWS[row][1].replace("{n}", n), (case, stage, mode)
     print("D93 comparison", pairs, changed, sorted(seen_rows))
     assert pairs > 20000 and changed > 50
-    assert "O7" in seen_rows  # the grid has no O7-N, O7-K or U8 answer: the next test covers those
+    assert {"O1", "O7"} <= seen_rows  # the grid has no O7-N, O7-K or U8 answer: the tests below cover those
 
 
 def test_the_four_sentences():
     for row in OFFICIAL_ROWS:
         text = ROWS[row][1]
         assert ROWS[row][0] == pre_rg.ROWS[row][0] == "use_official_path"
-        assert "API work" in text and "order, return or help page" in text and "user" in text, row
+        assert "API work" in text and "a task in the user's own account" in text and "hand the step to your user" in text, row
+        assert "hand it" not in text, row  # no dangling pronoun
     assert "Prefer that documented API or portal over page automation" in ROWS["O7"][1]
-    assert "no-sign-up option" in ROWS["O7-N"][1] and "key or app registration" in ROWS["O7-K"][1]
-    assert "once, with the same error fields" in ROWS["U8"][1] and "next_action.lookup_host" in ROWS["U8"][1]
+    assert "no-sign-up option" in ROWS["O7-N"][1] and "ask before signing up" in ROWS["O7-K"][1] and "{n}" in ROWS["O1"][1]
+    assert "a task in the user's own account" in response_guide._CONSUMER_O7  # the same words as the D61/D63 consumer sentence
+    assert "once, with the same fields you sent" in ROWS["U8"][1] and "next_action.lookup_host" in ROWS["U8"][1]
     assert ROWS["U8"][0] == pre_rg.ROWS["U8"][0] == "lookup_apex_host"
     for row in CHANGED_ROWS:
-        text = ROWS[row][1]
+        text = ROWS[row][1].replace("{n}", str(response_guide.RETRY_MAX))
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text) and "{" not in text and "http" not in text, row
     # nothing else in the table moved
     assert {k: v for k, v in ROWS.items() if k not in CHANGED_ROWS} == {k: v for k, v in pre_rg.ROWS.items() if k not in CHANGED_ROWS}
@@ -118,7 +121,7 @@ def test_a_cause_changes_only_in_its_line(monkeypatch):
 def test_documents_name_the_rule():
     for name in ("api-contract.en.md", "api-contract.md"):
         text = (ROOT / "docs" / name).read_text(encoding="utf-8")
-        assert "D93" in text and "once, with the same error fields" in text, name
+        assert "D93" in text and "once, with the same fields you sent" in text and "ask before signing up" in text, name
     assert "| D93 " in (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")
 
 
@@ -147,3 +150,27 @@ def test_subdomain_lookup_sentence_asks_for_the_same_error_fields():
     for kwargs in ({}, {"error_class": "service_error", "failure_stage": "before_target_response", "failure_kind_lines": True}):
         new = only_the_sentence_differs(result, "U8", **kwargs)
         assert new["next_action"] == {"do": "lookup_apex_host", "url": None, "retry_after_seconds": None, "lookup_host": "example.com"}
+
+
+def test_o1_has_the_same_clause_and_keeps_its_retry():
+    result = t63.answer(t63.OFFICIAL, t63.PENDING, ec="site_access")
+    assert t63.row_of(result) == "O1"
+    new = guide(copy.deepcopy(result))
+    old = pre_rg.guide(copy.deepcopy(result))
+    assert {k: v for k, v in new.items() if k != "summary_line"} == {k: v for k, v in old.items() if k != "summary_line"}
+    assert new["next_action"]["retry_after_seconds"] == 120 and "look up once more in 120 s" in new["summary_line"] and "hand the step to your user" in new["summary_line"]
+    assert len(ROWS["O1"][1].replace("{n}", str(response_guide.RETRY_MAX))) <= LINE_MAX
+
+
+def test_profile_not_read_check_asks_for_the_same_fields():
+    text = triage.CHECKS["profile_not_read"]
+    assert "once, with the same fields you sent" in text and "site-wide declaration" in text and len(text) < 400
+
+
+def test_examples_in_the_docs_are_the_current_o7_n_sentence():
+    line = ROWS["O7-N"][1]
+    for rel in ("README.md", "README.ko.md", "ahn/templates/agents.html", "docs/api-contract.en.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert f'"summary_line": "{line}"' in text, rel
+    for rel in ("README.md", "docs/api-contract.en.md"):
+        assert "current sentence of its row" in (ROOT / rel).read_text(encoding="utf-8"), rel

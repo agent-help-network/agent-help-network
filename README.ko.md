@@ -38,7 +38,7 @@ url = "https://agenthelpnetwork.com/mcp"
 
 호스트명만 보낸다. URL 경로·쿼리·자격 증명·대화 내용은 보내지 않고, 민감한 호스트명은 피한다.
 
-`github.com` 에 대한 응답이다. 2026-10-18 실제 서비스의 응답을 핵심 필드로 줄이고, 캡처 시점의 캐시보다 새로 생긴 필드는 현재 계약대로 채웠다. 규칙 목록은 3개, 경로 표본은 최대 3개로 줄였다. 값은 시간이 지나면 달라지니 이 예시를 복사하지 말고 서비스를 호출한다. 필드 설명은 [API 계약](docs/api-contract.md)([영어판](docs/api-contract.en.md))을 따른다.
+`github.com` 에 대한 응답이다. 2026-10-18 실제 서비스의 응답을 핵심 필드로 줄이고, 캡처 시점의 캐시보다 새로 생긴 필드는 현재 계약대로 채웠고, `summary_line` 은 캡처 문장이 아니라 그 행의 현재 문장이다. 규칙 목록은 3개, 경로 표본은 최대 3개로 줄였다. 값은 시간이 지나면 달라지니 이 예시를 복사하지 말고 서비스를 호출한다. 필드 설명은 [API 계약](docs/api-contract.md)([영어판](docs/api-contract.en.md))을 따른다.
 `summary_line` 과 `next_action` 은 짧은 형태이니 먼저 읽는다. 판정이 정해진 뒤에 계산되며 판정인 `recommendation` 과 `next_checks` 를 바꾸지 않는다(D51).
 
 ```bash
@@ -48,7 +48,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 ```json
 {
   "site_host": "github.com",
-  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). For API work use it instead of page automation; for an order, return or help page, hand it to your user.",
+  "summary_line": "An official developer API is listed with a no-sign-up option (official_paths.access.auth). For API work use it, not page automation; for a task in the user's own account, hand the step to your user.",
   "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
   "links": {
     "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",

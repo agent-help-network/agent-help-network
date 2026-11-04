@@ -57,15 +57,15 @@ ROWS: dict[str, tuple[str, str]] = {
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     # D85: the caller reported site_access and AHN's own home-page check (ahn_check) was refused too. H3-C (with a curated customer page) is EDGE_CONSUMER_ROWS.
     "H3": ("hand_off_to_human", "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves."),
-    "O1": ("use_official_path", "An official developer path is listed; use it instead of page automation. The site's robots.txt is still being read: look up once more in {n} s."),
+    "O1": ("use_official_path", "An official developer path is listed; for API work use it, not page automation; for a task in the user's own account, hand the step to your user. robots.txt is pending: look up once more in {n} s."),
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
     "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
     "O4": ("use_official_path", "The site's robots.txt blocks your vendor's agent under another name. Do not read that as permission; use the listed official developer path."),
     "O5": ("use_official_path", "The site refused even a plain automated robots.txt read. Page automation may be refused too; use the listed official developer path."),
     "O6": ("use_official_path", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed). Do not read that as permission; use the listed official developer path."),
-    "O7": ("use_official_path", "An official developer path is listed for this site. Prefer that documented API or portal over page automation for API work; for an order, return or help page, hand it to your user."),
-    "O7-N": ("use_official_path", "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). For API work use it instead of page automation; for an order, return or help page, hand it to your user."),
-    "O7-K": ("use_official_path", "An official developer API is listed; it needs a key or app registration (official_paths.access.auth). For API work use one you have or ask the user; for an order, return or help page, tell your user."),
+    "O7": ("use_official_path", "An official developer path is listed for this site. Prefer that documented API or portal over page automation for API work; for a task in the user's own account, hand the step to your user."),
+    "O7-N": ("use_official_path", "An official developer API is listed with a no-sign-up option (official_paths.access.auth). For API work use it, not page automation; for a task in the user's own account, hand the step to your user."),
+    "O7-K": ("use_official_path", "An official developer API needs a key or sign-up (official_paths.access.auth). For API work use one you have or ask before signing up; for a task in the user's own account, hand the step to your user."),
     "S1": ("stop_automation", "The site's robots.txt explicitly blocks agent user agents at the site root, and no official path is listed. Stop automated retries; hand the step to the user if needed."),
     "P1": ("proceed", "robots.txt does not block any listed agent vendor at the site root. Continue with modest requests; paths below the root may differ, and this is not an access guarantee."),
     "P1-V": ("proceed", "robots.txt does not block your vendor's agent tokens at the site root. Continue with modest requests; paths below the root may differ, and this is not an access guarantee."),
@@ -79,7 +79,7 @@ ROWS: dict[str, tuple[str, str]] = {
     "U5": ("no_clear_action", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed), and no official path is listed. Do not read this as permission."),
     "U6": ("no_clear_action", "The site refused even a plain automated robots.txt read, and no official path is listed. Page automation may be refused; hand off if needed."),
     "U7": ("no_clear_action", "The site's robots.txt could not be read, so no declared policy is known. No official path is listed; follow your operator's rules."),
-    "U8": ("lookup_apex_host", "Policy is read only for a site's main domain, not this subdomain. Look up next_action.lookup_host once, with the same error fields, for the site-wide declaration."),
+    "U8": ("lookup_apex_host", "Policy is read only for a site's main domain, not this subdomain. Look up next_action.lookup_host once, with the same fields you sent, for the site-wide declaration."),
     "U9": ("no_clear_action", "No declared policy could be read for this host and no official path is listed. Nothing here forbids the step; follow your operator's rules and the site's terms."),
 }
 # D69: a task_step=status_check lookup without a failure signal asks "is it up", so its summary line talks about status. Chosen from the

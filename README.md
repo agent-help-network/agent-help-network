@@ -45,13 +45,13 @@ Send the hostname only — never a URL path, query, credential, or conversation 
 curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error_class=site_access"
 ```
 
-A response for `github.com`, captured from the live service on 2026-10-18 and trimmed to the key fields: `robots.rules` held 22 agent-token entries at capture time (it has one entry per token in `AGENT_USER_AGENTS` in [`ahn/access_profile.py`](ahn/access_profile.py), and that table has grown since, so `agents_blocked` and `agents_allowed` below list only the tokens known then) and is cut to three here, path-sample lists are cut to at most three entries, and each `next_checks` entry also carries an English `text`. `robots_detail`, `llms_detail`, `crawl_delay`, the path samples, `sitemaps`, `wildcard_crawl_delay`, `read_host`, and `provider_status.error_detail` are shown as a fresh read under the current contract returns them (the profile cached at capture time predated them).
+A response for `github.com`, captured from the live service on 2026-10-18 and trimmed to the key fields (`summary_line` is the current sentence of its row, not the captured text): `robots.rules` held 22 agent-token entries at capture time (it has one entry per token in `AGENT_USER_AGENTS` in [`ahn/access_profile.py`](ahn/access_profile.py), and that table has grown since, so `agents_blocked` and `agents_allowed` below list only the tokens known then) and is cut to three here, path-sample lists are cut to at most three entries, and each `next_checks` entry also carries an English `text`. `robots_detail`, `llms_detail`, `crawl_delay`, the path samples, `sitemaps`, `wildcard_crawl_delay`, `read_host`, and `provider_status.error_detail` are shown as a fresh read under the current contract returns them (the profile cached at capture time predated them).
 `summary_line` and `next_action` are the short form: read them first. They are computed after the answer is decided and never change `recommendation` or `next_checks`, which stay the verdict (D51; fields in the [contract](docs/api-contract.en.md)).
 
 ```json
 {
   "site_host": "github.com",
-  "summary_line": "An official developer API is listed and has a no-sign-up option (official_paths.access.auth). For API work use it instead of page automation; for an order, return or help page, hand it to your user.",
+  "summary_line": "An official developer API is listed with a no-sign-up option (official_paths.access.auth). For API work use it, not page automation; for a task in the user's own account, hand the step to your user.",
   "next_action": {"do": "use_official_path", "url": "https://docs.github.com/en/rest", "retry_after_seconds": null},
   "links": {
     "feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports",
