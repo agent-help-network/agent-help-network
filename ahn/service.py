@@ -489,7 +489,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
-          failed_at: str | None = None):
+          failed_at: str | None = None, fold_rules: bool = True):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -505,6 +505,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``agent_vendor`` (D48) is an accepted value (triage.accepted_vendor) or None. It only chooses the recommendation
     and is never stored; AHN_VENDOR_AWARE_BLOCK=0 ignores it.
+
+    ``fold_rules`` (D94) is False for the HTML search page and the incident detail, which read ``robots.rules`` token by token;
+    the REST and MCP lookup route leaves it on. AHN_ROBOTS_RULES_FOLD=0 turns the fold off everywhere.
 
     ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
     is answered like a status_check lookup.
@@ -771,7 +774,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             conn.commit()
     if settings.status_check_compact and task_step == "status_check" and not failure_observed(error_class, failure_stage):
         result = _compact_status_check(result)
-    elif settings.robots_rules_fold:
+    elif settings.robots_rules_fold and fold_rules:
         result = _fold_uniform_rules(result)
     return result
 
@@ -793,7 +796,7 @@ _UNIFORM_FIELDS = ("explicit_group", "root_allowed", "disallow_count", "crawl_de
 
 
 def _fold_uniform_rules(result: dict) -> dict:
-    """D93: where every token in access_profile.robots.rules has the same values (a host with no robots.txt, or one whose only
+    """D94: where every token in access_profile.robots.rules has the same values (a host with no robots.txt, or one whose only
     group is "*"), the final answer leaves `rules` out and states the shared values once as robots.rules_uniform, plus
     rules_omitted (their count). Only when agents_blocked is empty: a client then has no per-token `kind` to look up. Works on
     copies, runs after the recommendation, next_checks and guide, which saw the full profile, so the verdict is unchanged."""
@@ -910,7 +913,7 @@ def public_incident(settings: Settings, incident_id: UUID):
         row = conn.execute("SELECT id,site_host,task_step,error_class FROM incidents WHERE id=%s AND visibility='published'", (incident_id,)).fetchone()
     if not row:
         raise ServiceError("not_found", 404)
-    result = check(settings, row["site_host"], row["error_class"], row["task_step"], 168)
+    result = check(settings, row["site_host"], row["error_class"], row["task_step"], 168, fold_rules=False)
     if result["evidence_level"] == "no_reports":
         raise ServiceError("not_found", 404)
     return {"id": str(row["id"]), "site_host": row["site_host"], "task_step": row["task_step"], "error_class": row["error_class"], **result}

@@ -1,4 +1,4 @@
-"""D93 over REST against the dedicated ahn_test database: where every robots token has the same values the answer states them
+"""D94 over REST against the dedicated ahn_test database: where every robots token has the same values the answer states them
 once; the verdict is the same with the fold on and off. Every read uses a stub."""
 
 from __future__ import annotations

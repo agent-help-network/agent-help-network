@@ -121,7 +121,7 @@ class Settings:
     # AHN_STATUS_CHECK_COMPACT=0 keeps access_profile.robots.rules in task_step=status_check answers (D71). On by default: the
     # answer then leaves the per-token rules out and gives robots.rules_omitted (their count).
     status_check_compact: bool = True
-    # AHN_ROBOTS_RULES_FOLD=0 (D93) keeps all per-token robots.rules in an answer where every token has the same values. On by default;
+    # AHN_ROBOTS_RULES_FOLD=0 (D94) keeps all per-token robots.rules in an answer where every token has the same values. On by default;
     # the answer then states the shared values once as robots.rules_uniform and gives rules_omitted.
     robots_rules_fold: bool = True
     # AHN_EDGE_REFUSAL_HANDOFF=0 (D85) keeps a proceed answer for a site_access lookup even where AHN's own home-page check was refused
