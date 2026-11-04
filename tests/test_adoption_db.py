@@ -428,14 +428,12 @@ def _signal_row(conn, hour, host, kind, lookups, action="proceed"):
 
 
 def test_owner_json_adds_signals_by_hour_and_leaves_the_other_fields_alone(db):
-    from ahn import lookup_signals
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     lookup(TestClient(create_app(db)), headers={"User-Agent": "Mozilla/5.0"})
     with connect(db) as conn:
         conn.execute("DELETE FROM lookup_signals_hourly")
         _signal_row(conn, now, "a-site.io", "mcp", 3)
         _signal_row(conn, now, "b-site.io", "mcp", 2, action="hand_off_to_human")
-        _signal_row(conn, now, lookup_signals.OVERFLOW_HOST, "mcp", 4)
         _signal_row(conn, now, "a-site.io", "plugin", 1)
         _signal_row(conn, now - timedelta(hours=1), "a-site.io", "web", 7)
         _signal_row(conn, now - timedelta(days=30), "a-site.io", "mcp", 9)     # outside the 7-day window
@@ -445,13 +443,51 @@ def test_owner_json_adds_signals_by_hour_and_leaves_the_other_fields_alone(db):
     stamp = now.strftime("%Y-%m-%dT%H:00:00Z")
     assert signals["rows"] == [
         {"hour": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:00:00Z"), "client_kind": "web", "lookups": 7},
-        {"hour": stamp, "client_kind": "mcp", "lookups": 9, "overflow": 4},
+        {"hour": stamp, "client_kind": "mcp", "lookups": 5},
         {"hour": stamp, "client_kind": "plugin", "lookups": 1},
     ]
-    assert "a-site.io" not in str(signals) and "(overflow)" not in str(signals)
+    assert "unknown_kind" not in signals and "a-site.io" not in str(signals) and "(overflow)" not in str(signals)
     with connect(db) as conn:
         expected = adoption.summary(conn, 7)
     assert body == expected                       # every other field is what summary() gives
+
+
+def test_owner_json_lists_both_kinds_of_cap_overflow_apart_from_the_five_kinds(db, monkeypatch):
+    """Rows come from the real write path: past the per-host cap the host stays and the kind becomes 'overflow';
+    past the per-hour cap the host becomes '(overflow)' too."""
+    from ahn import lookup_signals
+    from ahn.lookup_signals import LookupSignal
+    monkeypatch.setattr(lookup_signals, "HOST_HOUR_ROW_CAP", 2)
+    monkeypatch.setattr(lookup_signals, "HOUR_ROW_CAP", 4)
+    now = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
+    stamp = now.replace(minute=0).strftime("%Y-%m-%dT%H:00:00Z")
+
+    def write(host, via):
+        lookup_signals.record(conn, "pepper", host, "site_access", None, LookupSignal(client_kind="mcp", via=via), "proceed", now)
+
+    with connect(db) as conn:
+        conn.execute("DELETE FROM lookup_signals_hourly")
+        write("a-site.io", "v1"); write("a-site.io", "v2")        # two real mcp rows (host cap 2)
+        write("a-site.io", "v3"); write("a-site.io", "v4")        # past the host cap: host kept, kind folded
+        write("b-site.io", "v1"); write("b-site.io", "v2")        # v1 is the 4th row of the hour (cap 4), v2 is past it
+        write("c-site.io", "v1")                                  # past the hour cap: host and kind folded too
+        hosts = {(r["site_host"], r["client_kind"]): r["lookups"] for r in conn.execute(
+            "SELECT site_host, client_kind, sum(lookups) AS lookups FROM lookup_signals_hourly GROUP BY 1, 2").fetchall()}
+    assert ("a-site.io", "overflow") in hosts and (lookup_signals.OVERFLOW_HOST, "overflow") in hosts
+    owner = replace(db, owner_allowed_ips=(OPERATOR_IP,))
+    signals = TestClient(create_app(owner)).get("/owner/adoption.json", headers={"CF-Connecting-IP": OPERATOR_IP}).json()["signals_by_hour"]
+    assert signals["rows"] == [{"hour": stamp, "client_kind": "mcp", "lookups": 3}]
+    assert signals["unknown_kind"] == [{"hour": stamp, "lookups": 4}]
+    assert "overflow" not in str([r["client_kind"] for r in signals["rows"]]) and "site.io" not in str(signals)
+
+
+def test_owner_json_marks_an_unexpected_failure_of_the_hourly_view(db, monkeypatch):
+    def broken(conn, days):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(adoption, "signals_by_hour", broken)
+    response = TestClient(create_app(db)).get("/owner/adoption.json", headers={"CF-Connecting-IP": OPERATOR_IP})
+    body = response.json()
+    assert response.status_code == 200 and body["signals_by_hour"] == {"error": "unavailable"} and "m1" in body
 
 
 def test_owner_json_without_the_signals_table_still_answers_without_the_field(db):

@@ -505,8 +505,11 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         try:
             with connect(settings) as conn:
                 adoption_summary["signals_by_hour"] = adoption.signals_by_hour(conn, days)
-        except Exception:
+        except psycopg.errors.UndefinedTable:
             pass
+        except Exception:
+            logging.getLogger(__name__).warning("signals_by_hour_unavailable", exc_info=True)
+            adoption_summary["signals_by_hour"] = {"error": "unavailable"}
         return JSONResponse(adoption_summary, headers=OWNER_HEADERS)
 
     @app.get("/owner/hosts", include_in_schema=False)
