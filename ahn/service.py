@@ -744,7 +744,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 status_check = (settings.status_check_guide and task_step == "status_check"
                                 and not failure_observed(error_class, failure_stage))  # D69
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
-                                                   settings.status_check_guide))
+                                                   settings.status_check_guide, error_class, failure_stage,
+                                                   settings.failure_kind_lines))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:
