@@ -416,3 +416,62 @@ def test_owner_adoption_json_without_the_table_is_503_not_a_crash(db):
     finally:
         with connect(db) as conn:
             conn.execute("ALTER TABLE lookup_outcome_daily_away RENAME TO lookup_outcome_daily")
+
+
+# --- signals_by_hour on the owner JSON -------------------------------------------------------------
+
+def _signal_row(conn, hour, host, kind, lookups, action="proceed"):
+    conn.execute(
+        """INSERT INTO lookup_signals_hourly (hour,site_host,error_class,failure_stage,http_status_class,challenge,retry_after,via,client_kind,action,after_action,lookups,sources)
+           VALUES (%s,%s,'unspecified','unspecified','unspecified','unspecified','unspecified','unspecified',%s,%s,'none',%s,0)""",
+        (hour, host, kind, action, lookups))
+
+
+def test_owner_json_adds_signals_by_hour_and_leaves_the_other_fields_alone(db):
+    from ahn import lookup_signals
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    lookup(TestClient(create_app(db)), headers={"User-Agent": "Mozilla/5.0"})
+    with connect(db) as conn:
+        conn.execute("DELETE FROM lookup_signals_hourly")
+        _signal_row(conn, now, "a-site.io", "mcp", 3)
+        _signal_row(conn, now, "b-site.io", "mcp", 2, action="hand_off_to_human")
+        _signal_row(conn, now, lookup_signals.OVERFLOW_HOST, "mcp", 4)
+        _signal_row(conn, now, "a-site.io", "plugin", 1)
+        _signal_row(conn, now - timedelta(hours=1), "a-site.io", "web", 7)
+        _signal_row(conn, now - timedelta(days=30), "a-site.io", "mcp", 9)     # outside the 7-day window
+    owner = replace(db, owner_allowed_ips=(OPERATOR_IP,))
+    body = TestClient(create_app(owner)).get("/owner/adoption.json", headers={"CF-Connecting-IP": OPERATOR_IP}).json()
+    signals = body.pop("signals_by_hour")
+    stamp = now.strftime("%Y-%m-%dT%H:00:00Z")
+    assert signals["rows"] == [
+        {"hour": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:00:00Z"), "client_kind": "web", "lookups": 7},
+        {"hour": stamp, "client_kind": "mcp", "lookups": 9, "overflow": 4},
+        {"hour": stamp, "client_kind": "plugin", "lookups": 1},
+    ]
+    assert "a-site.io" not in str(signals) and "(overflow)" not in str(signals)
+    with connect(db) as conn:
+        expected = adoption.summary(conn, 7)
+    assert body == expected                       # every other field is what summary() gives
+
+
+def test_owner_json_without_the_signals_table_still_answers_without_the_field(db):
+    with connect(db) as conn:
+        conn.execute("ALTER TABLE lookup_signals_hourly RENAME TO lookup_signals_hourly_away")
+    try:
+        response = TestClient(create_app(db)).get("/owner/adoption.json", headers={"CF-Connecting-IP": OPERATOR_IP})
+        assert response.status_code == 200 and "signals_by_hour" not in response.json() and "m1" in response.json()
+    finally:
+        with connect(db) as conn:
+            conn.execute("ALTER TABLE lookup_signals_hourly_away RENAME TO lookup_signals_hourly")
+
+
+def test_owner_json_days_window_applies_to_the_hourly_view(db):
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    with connect(db) as conn:
+        conn.execute("DELETE FROM lookup_signals_hourly")
+        _signal_row(conn, now - timedelta(days=3), "a-site.io", "mcp", 2)
+    owner = replace(db, owner_allowed_ips=(OPERATOR_IP,))
+    client = TestClient(create_app(owner))
+    headers = {"CF-Connecting-IP": OPERATOR_IP}
+    assert client.get("/owner/adoption.json?days=2", headers=headers).json()["signals_by_hour"]["rows"] == []
+    assert len(client.get("/owner/adoption.json?days=7", headers=headers).json()["signals_by_hour"]["rows"]) == 1

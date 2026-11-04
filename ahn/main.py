@@ -501,6 +501,12 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         adoption_summary = owner_adoption(days)
         if adoption_summary is None:
             return JSONResponse({"error": "monitor_data_unavailable"}, status_code=503, headers=OWNER_HEADERS)
+        # Added after the summary, so the summary's own fields are the same; left out when the signals table is not there.
+        try:
+            with connect(settings) as conn:
+                adoption_summary["signals_by_hour"] = adoption.signals_by_hour(conn, days)
+        except Exception:
+            pass
         return JSONResponse(adoption_summary, headers=OWNER_HEADERS)
 
     @app.get("/owner/hosts", include_in_schema=False)
