@@ -408,13 +408,16 @@ def signing_from_env():
 def signing_or_unsigned():
     """(key, key id, error class name or None): the lenient form of signing_from_env for unattended builds.
 
-    A key that is set but cannot be read here (no such file on this service, not PEM, not Ed25519) yields
-    (None, None, "<ExceptionClass>"), so the caller builds hash-only and can say why. Neither the path nor the key
-    content is returned. Operator commands keep the strict signing_from_env.
+    A key that is set but cannot be read here (no such file on this service, not PEM, not Ed25519, password-protected,
+    or an algorithm this build cannot load) yields (None, None, "<ExceptionClass>"), so the caller builds hash-only
+    and can say why. Neither the path nor the key content is returned. Operator commands keep the strict
+    signing_from_env.
     """
+    from cryptography.exceptions import UnsupportedAlgorithm
+
     try:
         key, kid = signing_from_env()
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, TypeError, UnsupportedAlgorithm) as error:
         return None, None, type(error).__name__
     return key, kid, None
 
