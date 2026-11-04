@@ -248,6 +248,8 @@ def test_the_matcher_agrees_with_the_regular_expression_it_replaced_and_cannot_b
 # its count. A new place, or a changed count, fails this test: it is then decided whether the request is one a robots.txt
 # gate must precede (a status feed: add the gate and list it here) or one to another service (list it as such).
 REQUEST_SITES = {
+    # The HEAD body strip in main.py forwards an ASGI message with send(); it is not an outgoing request.
+    ('main.py', '__call__.send_headers_only', 'send'): 1,
     # The declared-policy layer's own reads of /robots.txt and /llms.txt of a looked-up apex host.
     ("access_profile.py", "build_profile", "ref:fetch_public_file"): 1,
     ("access_profile.py", "fetch_public_file", "fetch_public_file"): 2,
