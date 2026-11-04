@@ -2863,6 +2863,17 @@
        "default": null,
        "title": "Rules Omitted"
       },
+      "rules_uniform": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/RulesUniform"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
       "sitemap": {
        "default": false,
        "title": "Sitemap",
@@ -2918,6 +2929,59 @@
       "wildcard_root_allowed"
      ],
      "title": "RobotsSummary",
+     "type": "object"
+    },
+    "RulesUniform": {
+     "additionalProperties": true,
+     "description": "D93: the values every token in the (left-out) `rules` list shares.",
+     "properties": {
+      "crawl_delay": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Crawl Delay"
+      },
+      "disallow_count": {
+       "minimum": 0,
+       "title": "Disallow Count",
+       "type": "integer"
+      },
+      "disallow_paths": {
+       "anyOf": [
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Disallow Paths"
+      },
+      "explicit_group": {
+       "title": "Explicit Group",
+       "type": "boolean"
+      },
+      "root_allowed": {
+       "title": "Root Allowed",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "explicit_group",
+      "root_allowed",
+      "disallow_count"
+     ],
+     "title": "RulesUniform",
      "type": "object"
     },
     "SiteDeclared": {

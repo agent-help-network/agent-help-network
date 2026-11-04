@@ -328,10 +328,21 @@ class AgentRule(StrictModel):
     disallow_paths: list[str] = Field(default_factory=list)
 
 
+class RulesUniform(StrictModel):
+    """D93: the values every token in the (left-out) `rules` list shares."""
+    explicit_group: bool
+    root_allowed: bool
+    disallow_count: int = Field(ge=0)
+    crawl_delay: float | None = Field(default=None, exclude_if=_omit_none)
+    disallow_paths: list[str] | None = Field(default=None, exclude_if=_omit_none)
+
+
 class RobotsSummary(StrictModel):
     # D71: a task_step=status_check answer leaves `rules` out and gives `rules_omitted` (the count) instead.
     rules: list[AgentRule] | None = Field(default=None, exclude_if=_omit_none)
     rules_omitted: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    # D93: where every token has the same values, `rules` is left out and the shared values are given here once.
+    rules_uniform: RulesUniform | None = Field(default=None, exclude_if=_omit_none)
     wildcard_root_allowed: bool
     sitemap: bool = False
     sitemaps: list[str] = Field(default_factory=list)

@@ -353,7 +353,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D80 (before D80: fdd242ef66cd5fc7034e702e1093e0aa3567d183a0fc050f037542c3a89be55a), which adds only `provider_status.source_time: page` and the optional `official_status_page.covers`.
     # and for D82 (before D82: 207ef86950ceacec1f107ab266ca259cf2359d70782e63378683fbb504359a88), which only raises `cause.line` max length from 120 to 200.
     # and for D85 (before D85: 73bf6c3db40b2403b49ce99e3ceb050a50ecb65dd7b25f70909a4c9479d6265d), which only adds the `edge_refusal_confirmed` value to the next_checks code enum and the D85 exception to the `ahn_check` description.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "dc9d2ff0832237967489aae0b60534f2bb7d08297ef10f1f29f3b32623a800b0"
+    # and for D93 (before D93: dc9d2ff0832237967489aae0b60534f2bb7d08297ef10f1f29f3b32623a800b0), which adds only the optional `robots.rules_uniform` object and its RulesUniform definition.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "c7e64c6660a0f404758367672be987b3190b1de6b50331e8bdfb461f11f9a520"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

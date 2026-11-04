@@ -771,6 +771,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             conn.commit()
     if settings.status_check_compact and task_step == "status_check" and not failure_observed(error_class, failure_stage):
         result = _compact_status_check(result)
+    elif settings.robots_rules_fold:
+        result = _fold_uniform_rules(result)
     return result
 
 
@@ -785,6 +787,36 @@ def _compact_status_check(result: dict) -> dict:
     slim = {key: value for key, value in robots.items() if key != "rules"}
     slim["rules_omitted"] = len(robots["rules"])
     return {**result, "access_profile": {**profile, "robots": slim}}
+
+# The AgentRule fields other than the token and its kind: when every token has the same values, they are stated once.
+_UNIFORM_FIELDS = ("explicit_group", "root_allowed", "disallow_count", "crawl_delay", "disallow_paths")
+
+
+def _fold_uniform_rules(result: dict) -> dict:
+    """D93: where every token in access_profile.robots.rules has the same values (a host with no robots.txt, or one whose only
+    group is "*"), the final answer leaves `rules` out and states the shared values once as robots.rules_uniform, plus
+    rules_omitted (their count). Only when agents_blocked is empty: a client then has no per-token `kind` to look up. Works on
+    copies, runs after the recommendation, next_checks and guide, which saw the full profile, so the verdict is unchanged."""
+    profile = result.get("access_profile")
+    robots = profile.get("robots") if isinstance(profile, dict) else None
+    rules = robots.get("rules") if isinstance(robots, dict) else None
+    if not isinstance(rules, list) or len(rules) < 2 or robots.get("agents_blocked"):
+        return result
+    if not all(isinstance(rule, dict) for rule in rules):
+        return result
+    first = {key: rules[0].get(key) for key in _UNIFORM_FIELDS}
+    if any({key: rule.get(key) for key in _UNIFORM_FIELDS} != first for rule in rules[1:]):
+        return result
+    uniform = {key: first[key] for key in ("explicit_group", "root_allowed", "disallow_count")}
+    if first["crawl_delay"] is not None:
+        uniform["crawl_delay"] = first["crawl_delay"]
+    if first["disallow_paths"]:
+        uniform["disallow_paths"] = first["disallow_paths"]
+    slim = {key: value for key, value in robots.items() if key != "rules"}
+    slim["rules_omitted"] = len(rules)
+    slim["rules_uniform"] = uniform
+    return {**result, "access_profile": {**profile, "robots": slim}}
+
 
 HOME_EXAMPLE_HOST = "target.com"
 # Other curated hosts the card lists below the main answer, when their answer is cached too (a different branch each).

@@ -121,6 +121,9 @@ class Settings:
     # AHN_STATUS_CHECK_COMPACT=0 keeps access_profile.robots.rules in task_step=status_check answers (D71). On by default: the
     # answer then leaves the per-token rules out and gives robots.rules_omitted (their count).
     status_check_compact: bool = True
+    # AHN_ROBOTS_RULES_FOLD=0 (D93) keeps all per-token robots.rules in an answer where every token has the same values. On by default;
+    # the answer then states the shared values once as robots.rules_uniform and gives rules_omitted.
+    robots_rules_fold: bool = True
     # AHN_EDGE_REFUSAL_HANDOFF=0 (D85) keeps a proceed answer for a site_access lookup even where AHN's own home-page check was refused
     # too. On by default; an unknown value is read as off (with one warning), never as on.
     edge_refusal_handoff: bool = True
@@ -183,5 +186,6 @@ class Settings:
                    status_check_guide=os.environ.get("AHN_STATUS_CHECK_GUIDE", "").strip() != "0",
                    cause_hint=os.environ.get("AHN_CAUSE_HINT", "").strip() != "0",
                    status_check_compact=os.environ.get("AHN_STATUS_CHECK_COMPACT", "").strip() != "0",
+                   robots_rules_fold=os.environ.get("AHN_ROBOTS_RULES_FOLD", "").strip() != "0",
                    edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")),
                    failure_kind_lines=parse_failure_kind_switch(os.environ.get("AHN_FAILURE_KIND_LINES", "")))
