@@ -3,7 +3,7 @@
     pip install ahn-client browser-use
     python browser_use_hook_example.py https://example.com/
 
-The hook (https://docs.browser-use.com/customize/hooks; check it against the version you have installed) runs
+The hook (https://docs.browser-use.com/open-source/customize/hooks; shape as documented for browser-use 0.13; check it against the version you have installed) runs
 after every step. It reads only the current page's URL and title; when the title looks like a block page it looks
 the host up and prints the answer for you. Browser Use documents no supported way for a hook to add text to the
 model's context, so this hook only reports to the developer, and Browser Use does not give hooks the step's error

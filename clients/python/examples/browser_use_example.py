@@ -4,9 +4,11 @@
     python browser_use_example.py https://example.com/
 
 Build ``llm`` as the Browser Use documentation shows for your provider; the Agent call
-below follows its documented ``Agent(task=..., llm=...)`` / ``await agent.run()`` shape,
-so check it against the version you have installed. The lookup sends only the target
-hostname and a coarse error class, and the script stops or hands off when told to.
+below follows its documented ``Agent(task=..., llm=...)`` / ``await agent.run()`` shape
+(as documented for browser-use 0.13; check it against the version you have installed).
+The lookup sends only the target hostname, a coarse error class and the optional codes the
+exception already holds (HTTP status, challenge marker, ``via=browser``), and the script stops
+or hands off when told to. It does not try to get past a site's controls.
 """
 
 import asyncio
@@ -15,12 +17,14 @@ import sys
 import ahn_client as ahn
 from browser_use import Agent
 
+ADAPTER = "browser-use"  # shows up in the User-Agent so the service can count client kinds
+
 
 def handle_failure(target_url, exc):
     """Print what to do next. Returns True when another attempt is reasonable."""
     error_class, stage = ahn.classify(exc)
     # error_class is None for a 404 or a bad request: not a block, so nothing is looked up
-    answer = ahn.check(target_url, error_class, stage) if error_class else None  # blocking, 4 s at most; never raises
+    answer = ahn.check(target_url, error_class, stage, adapter=ADAPTER, **ahn.signals(exc, via="browser")) if error_class else None  # blocking, 4 s at most; never raises
     if answer is None:
         print("No answer from Agent Help Network (not a block or an outage, or an excluded host). Not retrying automatically.")
         return False
