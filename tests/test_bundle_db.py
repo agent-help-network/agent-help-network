@@ -153,3 +153,40 @@ def test_daily_budget_lives_in_the_database_and_survives_a_restart(db, monkeypat
     bundle.refresh_if_due(settings.database_url, force=True)
     with connect(settings) as conn:
         assert conn.execute("SELECT served_bytes FROM public_bundle").fetchone()["served_bytes"] == 2 * size
+
+
+def test_a_missing_signing_key_file_builds_unsigned_and_says_why(db, monkeypatch, tmp_path):
+    settings, _seed = db
+    missing = tmp_path / "no-such-key.pem"
+    monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", str(missing))
+    result = bundle.refresh_if_due(settings.database_url)
+    assert result["built"] > 0 and result["signed"] is False and result["sign_error"] == "FileNotFoundError"
+    assert str(missing) not in repr(result)
+    with connect(settings) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM public_bundle").fetchone()["n"] == 1
+
+
+def test_a_signing_key_that_is_not_ed25519_builds_unsigned_and_says_why(db, monkeypatch, tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    settings, _seed = db
+    path = tmp_path / "rsa.pem"
+    path.write_bytes(rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", str(path))
+    result = bundle.refresh_if_due(settings.database_url)
+    assert result["built"] > 0 and result["signed"] is False and result["sign_error"] == "ValueError"
+
+
+def test_a_readable_signing_key_signs_and_reports_no_error(db, monkeypatch, tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    settings, _seed = db
+    path = tmp_path / "ed.pem"
+    path.write_bytes(Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    monkeypatch.setenv("AHN_EXPORT_SIGNING_KEY", str(path))
+    result = bundle.refresh_if_due(settings.database_url)
+    assert result["signed"] is True and "sign_error" not in result

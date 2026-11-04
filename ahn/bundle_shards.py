@@ -282,10 +282,8 @@ class ShardBudget:
 
 def _signer():
     """(key, key id) when AHN_EXPORT_SIGNING_KEY is readable here, else (None, None): the manifest is then hash-only."""
-    try:
-        return bundle.signing_from_env()
-    except (OSError, ValueError):
-        return None, None
+    key, kid, _error = bundle.signing_or_unsigned()
+    return key, kid
 
 
 def manifest_document(shards: ShardSet, changes_file: tuple[bytes, bytes, str], signer: tuple | None = None) -> dict:

@@ -405,6 +405,20 @@ def signing_from_env():
     return (export.load_signing_key(path), export.key_id()) if path else (None, None)
 
 
+def signing_or_unsigned():
+    """(key, key id, error class name or None): the lenient form of signing_from_env for unattended builds.
+
+    A key that is set but cannot be read here (no such file on this service, not PEM, not Ed25519) yields
+    (None, None, "<ExceptionClass>"), so the caller builds hash-only and can say why. Neither the path nor the key
+    content is returned. Operator commands keep the strict signing_from_env.
+    """
+    try:
+        key, kid = signing_from_env()
+    except (OSError, ValueError) as error:
+        return None, None, type(error).__name__
+    return key, kid, None
+
+
 def bundle_seed_hosts(path=None) -> list[str]:
     """Seed hosts listed above the Tranco block's opening comment (the curated part), under the reader's eligibility rules.
 
@@ -494,11 +508,14 @@ def refresh_if_due(database_url: str, *, now: datetime | None = None, force: boo
         row = conn.execute("SELECT generated_at FROM public_bundle WHERE id=1").fetchone()
         if row and not force and now - row["generated_at"] < REBUILD_AFTER:
             return {"skipped": "fresh"}
-        signing_key, kid = signing_from_env()
+        signing_key, kid, sign_error = signing_or_unsigned()
         bundle = build_from_db(conn, now=now, signing_key=signing_key, kid=kid)
         store(conn, bundle)
-    return {"built": bundle.record_count, "bytes": len(bundle.body), "sha256": bundle.sha256,
-            "signed": signing_key is not None}
+    result = {"built": bundle.record_count, "bytes": len(bundle.body), "sha256": bundle.sha256,
+              "signed": signing_key is not None}
+    if sign_error:
+        result["sign_error"] = sign_error
+    return result
 
 
 # --- Serving ----------------------------------------------------------------------------------
