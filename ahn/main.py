@@ -389,7 +389,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return response
 
     if settings.response_gzip:
-        # Added after the function middleware above, so it is the outermost layer: the rate limiter and the
+        # Added after the function middleware above, so it wraps it (only the HEAD body strip, added last, is further out): the rate limiter and the
         # request metrics see the identity response, and a 429 never pays for compression. The MCP endpoint and the
         # offline bundle are never transformed; the MCP adapter's own loopback hop skips it too (no wire to save).
         app.add_middleware(

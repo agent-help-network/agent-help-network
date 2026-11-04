@@ -112,3 +112,30 @@ def test_head_is_not_in_the_openapi_schema():
     with client() as c:
         paths = c.get("/openapi.json").json()["paths"]
     assert all("head" not in ops for ops in paths.values())
+
+
+HEAD_PATHS = {
+    "/", "/.well-known/agentboard-verify/{handle}", "/.well-known/mcp-registry-auth", "/.well-known/mcp/server-card.json",
+    "/.well-known/openai-apps-challenge", "/agent-instructions.txt", "/favicon.ico", "/health", "/llms.txt", "/robots.txt", "/sitemap.xml",
+    "/v1/incidents", "/{lang}/", "/{lang}/agents", "/{lang}/connect", "/{lang}/contribute", "/{lang}/disclaimer", "/{lang}/human",
+    "/{lang}/policy", "/{lang}/report", "/{lang}/support", "/{lang}/terms",
+}
+
+
+def test_the_set_of_routes_that_answer_head_is_pinned():
+    # A new GET route gets a HEAD copy automatically; this test makes adding one a deliberate choice
+    # (add it here, or add it to HEAD_EXCLUDED_PATHS in ahn/main.py if running it has a side effect).
+    with client() as c:
+        found = {r.path for r in c.app.routes if getattr(r, "methods", None) == {"HEAD"}}
+    assert found == HEAD_PATHS
+
+
+def test_head_is_not_swallowed_by_the_root_mcp_mount_of_the_combined_app():
+    from starlette.applications import Starlette
+
+    app = create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True))
+    app.mount("/", Starlette())  # as ahn/combined.py does for the MCP app: anything the site routes do not answer falls here and is a 404
+    with TestClient(app, follow_redirects=False) as c:
+        for path in ("/health", "/", "/v1/incidents"):
+            status = c.head(path).status_code
+            assert status != 404 and status != 405, path
