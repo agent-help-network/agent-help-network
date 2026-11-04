@@ -1,32 +1,32 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
-  "version": "0.1.5",
-  "description": "Look up a public hostname's agent access profile: declared robots.txt policy for agents, the official API path, provider status, and optional observations.",
+  "version": "0.1.6",
+  "description": "When a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
   "author": {
     "name": "Agent Help Network",
     "url": "https://agenthelpnetwork.com"
   },
   "homepage": "https://agenthelpnetwork.com/en/agents",
   "keywords": [
-    "agent access",
-    "robots.txt",
-    "official api",
-    "website access",
-    "agent tools"
+    "site down",
+    "blocked website",
+    "access denied",
+    "login wall",
+    "robots.txt"
   ],
   "extensions": {
     "com.openai": {
       "interface": {
         "displayName": "Agent Help Network",
-        "shortDescription": "Check what hosts allow agents",
-        "longDescription": "When a web step is blocked, check a public hostname for what the host allows agents to do: its declared robots.txt policy per agent token and llms.txt presence (declared policy, not an access guarantee), the official API or developer path, the provider's own status, and optional published observations. no_reports is normal and leaves current access status unknown. The plugin never attempts the task and never bypasses login or human verification. The service may request the host's home page from its own server unless the host's robots.txt disallows it, and says so in the answer (ahn_check).",
+        "shortDescription": "When a site is blocked or down",
+        "longDescription": "Use this when a website won't open for you or your agent: it seems down, shows \"access denied\" or a 403, stops at a login wall, or asks you to verify you are human. Give the site's public hostname and get one next step: wait for the provider, use the site's own developer API, do that step yourself, or stop retrying. The answer also shows the provider's own status page when one exists, what the site's robots.txt declares for agents (declared policy, not an access guarantee), and published reports from other agents. no_reports means current status is unknown, not that the site works. Agent Help Network never attempts your task, never signs in, and never bypasses login or human verification. Its server may read the site's public robots.txt, llms.txt, status feed and home page (not the home page if robots.txt disallows it). It is an independent service, not affiliated with the sites it describes.",
         "developerName": "Agent Help Network",
         "category": "Productivity",
         "capabilities": [
-          "Read a host's declared agent policy",
-          "Find the official API path",
-          "Distinguish provider statements from observations"
+          "Get a next step when a site won't open",
+          "Separate provider status from reports",
+          "Point to the site's own developer API"
         ],
         "websiteURL": "https://agenthelpnetwork.com/en/agents",
         "supportURL": "https://agenthelpnetwork.com/en/support",
@@ -35,8 +35,9 @@
         "composerIcon": "./icon.svg",
         "logo": "./icon.svg",
         "defaultPrompt": [
-          "What does github.com allow agents to do, and is there an official API path?",
-          "Check the agent access profile for example.org before I retry my blocked web task."
+          "nytimes.com keeps showing me \"access denied\". Is it down or blocking my agent, and what should I do next?",
+          "My agent hit a \"verify you are human\" check on github.com. What should it do next?",
+          "Is example.org down right now? What does it mean if there are no reports?"
         ]
       },
       "review": {
@@ -44,34 +45,34 @@
         "test_cases": {
           "positive": [
             {
+              "description": "Access denied points to the official path",
+              "prompt": "nytimes.com keeps showing me \"access denied\". Is it down or blocking my agent, and what should I do next?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host nytimes.com. Explain that the host's robots.txt disallows the root for the agent tokens listed in access_profile.robots.agents_blocked, that recommendation.action is use_official_path with reasons robots_blocks_some_agents (no agent_vendor sent; with agent_vendor openai the reason is robots_blocks_agents) and official_path_available, that an agent whose fetcher identifies as one of those tokens should stop retrying pages, and suggest the listed developer API instead of retrying or bypassing page controls."
+            },
+            {
+              "description": "Human verification is handed to the user",
+              "prompt": "My agent hit a \"verify you are human\" check on github.com. What should it do next?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host github.com and error_class human_verification. Report recommendation.action hand_off_to_human and tell the user to complete the check themselves; never suggest solving or bypassing the verification."
+            },
+            {
+              "description": "Down check with no reports remains unknown",
+              "prompt": "Is example.org down right now? What does it mean if there are no reports?",
+              "tools_triggered": "check_incident",
+              "expected_behavior": "Call check_incident with site_host example.org and task_step status_check. Explain that no_reports means no matching published observation in the data horizon, that current_site_status stays unknown, and that it does not show the site works; do not say the site is up or down."
+            },
+            {
               "description": "Access profile with an official path",
               "prompt": "What does github.com allow agents to do, and is there an official API path?",
               "tools_triggered": "check_incident",
               "expected_behavior": "Call check_incident with site_host github.com. Report access_profile.robots as declared robots.txt policy (agents_blocked, agents_allowed, llms_txt_status), not an access guarantee; give official_paths.api_docs; state recommendation.action (use_official_path) and its reasons; show provider_status with its source and fetch time. Do not claim the user's own access was tested."
             },
             {
-              "description": "Declared block points to the official path",
-              "prompt": "My agent keeps failing to read pages on nytimes.com. Should it keep retrying?",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host nytimes.com. Explain that the host's robots.txt disallows the root for the agent tokens listed in access_profile.robots.agents_blocked, that recommendation.action is use_official_path with reasons robots_blocks_some_agents (no agent_vendor sent; with agent_vendor openai the reason is robots_blocks_agents) and official_path_available, that an agent whose fetcher identifies as one of those tokens should stop retrying pages, and suggest the listed developer API instead of retrying or bypassing page controls."
-            },
-            {
-              "description": "Human verification is handed to the user",
-              "prompt": "My agent hit a human verification check on github.com. What should it do next?",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host github.com and error_class human_verification. Report recommendation.action hand_off_to_human and tell the user to complete the check themselves; never suggest solving or bypassing the verification."
-            },
-            {
               "description": "Unknown is not permissive",
               "prompt": "Look up netflix.com. Is there an official API, and may my agent automate its pages?",
               "tools_triggered": "check_incident",
               "expected_behavior": "Call check_incident with site_host netflix.com. Report that official_paths lists no public API and links only an official status page (provider_source_state official_page_only), and that recommendation.action is unknown because of robots_wildcard_disallow; treat the host as unknown, not as permission to automate."
-            },
-            {
-              "description": "No reports remains unknown",
-              "prompt": "Check example.org for recent access observations. What does no_reports mean?",
-              "tools_triggered": "check_incident",
-              "expected_behavior": "Call check_incident with site_host example.org. Explain that no_reports means no matching published observation in the data horizon, that current_site_status stays unknown, and that it does not show the site works."
             }
           ],
           "negative": [
@@ -91,7 +92,7 @@
         }
       },
       "publication": {
-        "release_notes": "Privacy policy rewritten (data, purposes, recipients, retention, controls); publisher identified on the site; listing text updated to the access-profile product. Demo video v3 and review test cases now cover the access profile, official paths and recommendation."
+        "release_notes": "Listing text now starts from the situations people meet (a site that is down, blocked, behind a login or a human check) and states which public files and pages the service may read. Starter prompts and review test cases match the new text."
       }
     }
   }
