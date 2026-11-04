@@ -591,3 +591,49 @@ def test_d88_an_unfollowed_www_redirect_keeps_the_counts_and_the_wait_of_a_norma
     wait, refusals, failures = site_probe.schedule("redirected_same_host", previous(refusals, failures), None, 301, www)
     wait, refusals, failures = site_probe.schedule("refused", previous(refusals, failures), None, 403)
     assert refusals == 2 and wait == timedelta(days=site_probe.REFUSED_EXCLUDE_DAYS)
+
+
+def test_d91_a_kept_refusal_count_expires_with_the_refusal_it_counts():
+    """D91: a refusal followed by unfollowed www redirects keeps its count only while the refusal is within
+    REFUSAL_CARRY_DAYS (longer than the 7-day wait after a confirmed refusal); a later passing refusal after weeks of
+    redirects is a first refusal, not a second."""
+    www = {"followed_www": False, "to_relation": "www_alias", "path_class": "other"}
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    days = timedelta(days=1)
+
+    def prev(count, counted_at, probed_at=None):
+        return {"consecutive_refusals": count, "consecutive_failures": 0, "refusal_counted_at": counted_at, "probed_at": probed_at or now}
+
+    # recent: refusal (1), redirect, refusal -> 2 and off the list for 7 days
+    wait, refusals, _ = site_probe.schedule("redirected_same_host", prev(1, now - 3 * days), None, 301, www, now)
+    assert refusals == 1
+    assert site_probe.schedule("refused", prev(refusals, now - 3 * days), None, 403, None, now) == (timedelta(days=7), 2, 0)
+    # the reviewer's order: refusal, redirect, refusal (2, off the list for 7 days), the first check after the wait is a
+    # redirect, a day later a refusal -> 3, not a first refusal again
+    wait, refusals, _ = site_probe.schedule("refused", prev(1, now - 2 * days), None, 403, None, now)
+    assert (wait, refusals) == (timedelta(days=7), 2)
+    wait, refusals, _ = site_probe.schedule("redirected_same_host", prev(2, now - 7 * days), None, 301, www, now)
+    assert refusals == 2 and wait == timedelta(hours=24)
+    assert site_probe.schedule("refused", prev(refusals, now - 7 * days), None, 403, None, now + days) == (timedelta(days=7), 3, 0)
+    # old: the same chain weeks later starts over, so the passing refusal is the first and is re-asked after 24 hours
+    wait, refusals, _ = site_probe.schedule("redirected_same_host", prev(1, now - 20 * days), None, 301, www, now)
+    assert refusals == 0  # outside the window: a run of redirects this long is no longer 'two in a row'
+    assert site_probe.schedule("refused", prev(refusals, None), None, 403, None, now) == (timedelta(hours=24), 1, 0)
+    # the boundary and the legacy row (no refusal_counted_at: probed_at stands in; no now: the D88 behaviour)
+    assert site_probe.schedule("redirected_same_host", prev(1, now - timedelta(days=site_probe.REFUSAL_CARRY_DAYS)), None, 301, www, now)[1] == 1
+    assert site_probe.schedule("redirected_same_host", prev(1, now - timedelta(days=site_probe.REFUSAL_CARRY_DAYS, seconds=1)), None, 301, www, now)[1] == 0
+    assert site_probe.schedule("redirected_same_host", prev(1, None, now - 2 * days), None, 301, www, now)[1] == 1
+    assert site_probe.schedule("redirected_same_host", prev(1, None, now - 15 * days), None, 301, www, now)[1] == 0
+    assert site_probe.schedule("redirected_same_host", prev(1, now - 30 * days), None, 301, www)[1] == 1
+    # failures are kept as D88 left them
+    assert site_probe.schedule("redirected_same_host", {**prev(0, None), "consecutive_failures": 3}, None, 301, www, now)[1:] == (0, 3)
+
+
+def test_d91_refusal_counted_at_follows_the_count():
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    then = now - timedelta(days=2)
+    assert site_probe.refusal_counted_at("refused", None, 1, now) == now
+    assert site_probe.refusal_counted_at("bot_challenge", {"refusal_counted_at": then}, 2, now) == now
+    assert site_probe.refusal_counted_at("redirected_same_host", {"refusal_counted_at": then, "probed_at": now}, 1, now) == then
+    assert site_probe.refusal_counted_at("redirected_same_host", {"refusal_counted_at": None, "probed_at": then}, 1, now) == then
+    assert site_probe.refusal_counted_at("reachable", {"refusal_counted_at": then}, 0, now) is None

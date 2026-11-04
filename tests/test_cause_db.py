@@ -423,6 +423,8 @@ D84_CASES = {  # host: (stored outcome, stored count, daily rows (outcome, days 
     "lw-mixed-day.org": ("login_wall", 0, [("login_wall", 0, 1), ("reachable", 0, 1)], False),
     # a day that holds another outcome is not counted: one login wall on it and one on the next day are not two in a row
     "lw-mixed-day-then-next.org": ("login_wall", 0, [("login_wall", 1, 1), ("reachable", 1, 1), ("login_wall", 0, 1)], False),
+    # D91: a redirected_same_host day also ends the run (the daily counts cannot tell an unfollowed www redirect from a path move)
+    "lw-between-redirect.org": ("login_wall", 0, [("login_wall", 7), ("redirected_same_host", 3), ("login_wall", 0)], False),
     "lw-now-refused.org": ("refused", 1, [("login_wall", 14), ("login_wall", 7), ("refused", 0)], False),
     "lw-now-normal.org": ("reachable", 0, [("login_wall", 14), ("login_wall", 7), ("reachable", 0)], False),
 }
@@ -695,6 +697,41 @@ def test_unfollowed_www_redirect_current_row_of_any_age_keeps_the_days_redirect_
     assert look(db, "www-mixed.org", error_class="human_verification")["cause"]["hint"] == "your_side_likely"
 
 
+def test_d91_the_days_redirect_count_is_no_normal_evidence_whatever_the_current_row_is(db, monkeypatch):
+    """D91: failed_at three days ago, that day's counts hold only redirected_same_host (possibly unfollowed www redirects), the
+    current row is a normal check (older than 12 hours), a not_measured row or has no redirect record: AHN did not see the home
+    page that day, so no your_side_likely. A day that also holds a real normal check is still read."""
+    today = now()
+    day = (today - timedelta(days=3)).date()
+    failed = iso(today - timedelta(days=3))
+    seed(db, probe("d91-reach.org", outcome="reachable", at=today - timedelta(hours=13)), probe_day("d91-reach.org", day, "redirected_same_host", 2),
+         probe("d91-notmeas.org", outcome="not_measured", at=today - timedelta(hours=1), reason="robots_unreadable"),
+         probe_day("d91-notmeas.org", day, "redirected_same_host", 1),
+         probe("d91-mixed.org", outcome="reachable", at=today - timedelta(hours=13)),
+         probe_day("d91-mixed.org", day, "redirected_same_host", 1), probe_day("d91-mixed.org", day, "reachable", 1))
+    for host in ("d91-reach.org", "d91-notmeas.org"):
+        body = look(db, host, failure_stage="before_target_response", failed_at=failed)
+        assert (body["cause"]["branch"], body["cause"]["hint"], body["cause"]["basis"]) == ("undetermined", "no_measurement", ["site_probe"]), host
+    assert look(db, "d91-mixed.org", failure_stage="before_target_response", failed_at=failed)["cause"]["hint"] == "your_side_likely"
+    # the same stored row answered with the D88 rule (the daily filter applied only while the current row is an unfollowed
+    # redirect): recommendation, next_action and summary_line are the same, only cause differs
+    def d88_measurement(conn, host, probe_row, when):
+        if probe_row is not None and probe_row["outcome"] != "not_measured" and abs(probe_row["probed_at"] - when.at) <= cause.MEASURE_WINDOW:
+            return True, probe_row["outcome"] in cause.NORMAL_OUTCOMES
+        rows = conn.execute("SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0",
+                            (host, when.at.astimezone(timezone.utc).date())).fetchall()
+        return (True, all(r["outcome"] in cause.NORMAL_OUTCOMES for r in rows)) if rows else (False, False)
+
+    for params in ({"failure_stage": "before_target_response"}, {"error_class": "login_auth"}, {"error_class": "human_verification"}):
+        new = look(db, "d91-reach.org", failed_at=failed, **params)
+        monkeypatch.setattr(cause, "_measurement", d88_measurement)
+        old = look(db, "d91-reach.org", failed_at=failed, **params)
+        monkeypatch.undo()
+        assert old["cause"]["hint"] == "your_side_likely" and new["cause"]["hint"] == "no_measurement", params
+        for field in ("recommendation", "next_action", "summary_line"):
+            assert new.get(field) == old.get(field), (field, params)
+
+
 def test_unfollowed_www_redirect_gives_site_access_and_service_error_lookups_a_cause_they_lacked(db, monkeypatch):
     """D88: lookups that named site_access or service_error (no failure_stage) got no cause from a normal-looking check; with an
     unfollowed redirect they now carry no_measurement. Everything the decision says stays the same."""
@@ -946,3 +983,29 @@ def test_mcp_passes_failed_at_on_as_text_and_publishes_the_input():
     tool = next(t for t in asyncio.run(mcp_adapter.mcp.list_tools()) if t.name == "check_incident")
     assert tool.input_schema["properties"]["failed_at"]["type"] == "string" and "failed_at" not in tool.input_schema.get("required", [])
     assert "cause" in tool.output_schema["properties"] and "cause" not in tool.output_schema.get("required", [])
+
+
+def test_d91_with_a_terms_signal_only_cause_changes_and_the_signal_does_not_displace_it(db, monkeypatch):
+    """D91 with a terms signal on the host: the day's redirect count is no normal evidence, so the cause line is the terms
+    signal (it fills the place of no_measurement) instead of your_side_likely; recommendation, next_action and summary_line
+    are the same as when the daily count is read as a normal check (the D88 rule)."""
+    today = now()
+    day = (today - timedelta(days=3)).date()
+    failed = iso(today - timedelta(days=3))
+    seed(db, probe("d91-terms.org", outcome="reachable", at=today - timedelta(hours=13)), probe_day("d91-terms.org", day, "redirected_same_host", 2))
+    with connect(db) as conn:
+        conn.execute("INSERT INTO host_access_changes (site_host,at,field,from_code,to_code,source) VALUES (%s,%s,%s,%s,%s,%s)",
+                     ("d91-terms.org", today - timedelta(hours=5), "llms_presence", "present", "absent", "read"))
+
+    def d88_measurement(conn, host, probe_row, when):
+        rows = conn.execute("SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0",
+                            (host, when.at.astimezone(timezone.utc).date())).fetchall()
+        return (True, all(r["outcome"] in cause.NORMAL_OUTCOMES for r in rows)) if rows else (False, False)
+
+    new = look(db, "d91-terms.org", failure_stage="before_target_response", failed_at=failed)
+    monkeypatch.setattr(cause, "_measurement", d88_measurement)
+    old = look(db, "d91-terms.org", failure_stage="before_target_response", failed_at=failed)
+    monkeypatch.undo()
+    assert new["cause"]["hint"] == "no_measurement" and old["cause"]["hint"] == "your_side_likely"
+    for field in ("recommendation", "next_action", "summary_line"):
+        assert new.get(field) == old.get(field), field
