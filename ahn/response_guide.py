@@ -224,11 +224,19 @@ SERVICE_ERROR_ROWS: dict[str, str] = {
 # With a curated customer path the 5xx sentence keeps the way to the person: the same prefixes, a shorter 5xx clause and the customer_url hand-over.
 _FIVE_XX_CONSUMER = "AHN cannot judge a single page's 5xx. Retry once later; if it persists, tell your user and hand them next_action.customer_url."
 SERVICE_ERROR_CONSUMER_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX) + _FIVE_XX_CONSUMER for row, sentence in SERVICE_ERROR_ROWS.items()}
+# D92: a lookup that reports no response at all (failure_stage=before_target_response) is not a 5xx: nothing was received to be a status
+# code. The same prefixes, then a clause that matches next_checks (check your tool and path first). Chosen only when error_class is
+# service_error and failure_stage is before_target_response; any other service_error keeps the 5xx sentences above.
+_NO_RESPONSE = "No response came (timeout or connection). Check your tool and path; retry once later; if it persists, tell your user."
+NO_RESPONSE_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX) + _NO_RESPONSE for row, sentence in SERVICE_ERROR_ROWS.items()}
+_NO_RESPONSE_CONSUMER = "No response came (timeout or connection). Check your tool; retry once later, then hand your user next_action.customer_url."
+NO_RESPONSE_CONSUMER_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX) + _NO_RESPONSE_CONSUMER for row, sentence in SERVICE_ERROR_ROWS.items()}
 # The list in next_action.stop_if_you_are holds the listed vendors' tokens that robots.txt blocks at the root, at most MAX_STOP_TOKENS; the
 # file may block others too, so the sentence says "some tokens, including those", never "only".
 _U3_STOP = "robots.txt blocks some tokens, including those in next_action.stop_if_you_are; if your requests send one, stop. "
 FAILED_U3 = _U3_STOP + "Either way, do not switch tools or user agents to retry after a refusal; tell your user."
 FAILED_U3_SERVICE_ERROR = _U3_STOP + "Either way, AHN cannot judge this 5xx. Retry once later; if it persists, tell your user."
+FAILED_U3_NO_RESPONSE = _U3_STOP + "Either way, no response came; check your tool, retry once later, then tell your user."
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
 
@@ -424,9 +432,14 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         sentence = (BLOCKED_PROCEED_CONSUMER_ROWS if customer else BLOCKED_PROCEED_ROWS)[row]
     if on and failure_kind_lines and not status_check and (error_class is not None or failure_stage is not None):
         if do == "proceed" and error_class == "service_error":
-            sentence = (SERVICE_ERROR_CONSUMER_ROWS if customer else SERVICE_ERROR_ROWS)[row]
+            no_response = error_class == "service_error" and failure_stage == "before_target_response"
+            table = (NO_RESPONSE_CONSUMER_ROWS if customer else NO_RESPONSE_ROWS) if no_response else (SERVICE_ERROR_CONSUMER_ROWS if customer else SERVICE_ERROR_ROWS)
+            sentence = table[row]
         elif row == "U3":
-            sentence = FAILED_U3_SERVICE_ERROR if error_class == "service_error" else FAILED_U3
+            if error_class == "service_error":
+                sentence = FAILED_U3_NO_RESPONSE if failure_stage == "before_target_response" else FAILED_U3_SERVICE_ERROR
+            else:
+                sentence = FAILED_U3
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))

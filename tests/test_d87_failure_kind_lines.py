@@ -44,8 +44,13 @@ def _stand_in_hosts_are_not_reserved(monkeypatch):
     monkeypatch.setattr(pre_rg, "is_reserved_example", lambda host: False)
 
 
-def expected_sentence(row: str, error_class: str | None, customer: bool = False):
+def expected_sentence(row: str, error_class: str | None, customer: bool = False, stage: str | None = None):
     """The sentence the D87 condition gives for a row, else None (the row is outside the condition). Written from the contract, not from guide()."""
+    if error_class == "service_error" and stage == "before_target_response":
+        # D92: no response at all is not a 5xx; tests/test_d92_no_response_lines.py holds those sentences
+        if row.startswith("P"):
+            return (response_guide.NO_RESPONSE_CONSUMER_ROWS if customer else response_guide.NO_RESPONSE_ROWS)[row]
+        return response_guide.FAILED_U3_NO_RESPONSE if row == "U3" else None
     if row.startswith("P") and error_class == "service_error":
         return (SERVICE_ERROR_CONSUMER_ROWS if customer else SERVICE_ERROR_ROWS)[row]
     if row == "U3":
@@ -75,7 +80,7 @@ def compare(stride: int) -> dict:
                 row, _listed = pre_rg.select_row(rec, result["access_profile"], result["provider_status"], result["site_host"],
                                                  result["official_paths"], variants=on)
                 curated = bool(response_guide.customer_url(result.get("official_paths")))  # the curated consumer path of the case
-                want = expected_sentence(row, error_class, curated)
+                want = expected_sentence(row, error_class, curated, stage)
                 inside = bool(on and not status_check and failure_observed(error_class, stage) and want is not None)
                 if not inside:
                     assert new == old, (case_e, stage, mode)

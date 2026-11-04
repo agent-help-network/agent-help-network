@@ -111,7 +111,7 @@ LINES: dict[str, str] = {
     "robots_now_disallows": "Likely a policy block: the site's robots.txt now disallows this kind of agent {win}.",
     "terms_signal_changed": "Terms signal changed {win}: llms.txt removed or data-mining reserved. Not an access block.",
     "new_bot_defense": "Likely a policy block: the home page now shows a bot-defense page from a new provider {win}.",
-    "your_side_likely": "Not determined: AHN's check was normal then; the cause may be on your side. AHN reads no page content.",
+    "your_side_likely": "Not determined: AHN's home-page checks that day were normal, but they do not see single pages; the cause may be on your side.",
     "no_measurement": "Not determined: AHN has no usable home-page check of this site near that time.",
     "no_measurement_robots_disallowed": "Not determined: AHN does not measure this site because its robots.txt disallows AHN's check.",
     "no_measurement_robots_refused": "Not determined: AHN does not measure this site because the site refused AHN's request for robots.txt.",
@@ -130,6 +130,11 @@ UNNAMED_VENDORS = frozenset({"generic_captcha", "unknown"})
 def age_text(age: timedelta) -> str:
     """The age of a check as ahn_check's age_seconds gives it: the same words as the MCP first line (check_text.age_text)."""
     return _age_text(int(age.total_seconds()))
+
+
+def side_line(age: timedelta) -> str:
+    """D92: the your_side_likely sentence when the home-page check is a stored one: how old it is, and that it covers the home page only."""
+    return f"Not determined: AHN's home-page check {age_text(age)} was normal, but it does not see single pages; the cause may be on your side."
 
 
 def gate_line(outcome: str, dated: bool, age: timedelta, vendor: str | None = None) -> str:
@@ -516,5 +521,8 @@ def compute(conn, host: str, now: datetime, when: When, *, error_class: str | No
         return _cause("undetermined", "no_measurement", "low", ["site_probe"] if probe is not None else [], "no_measurement",
                       recheck=recheck)
     if normal and (failure_stage == "before_target_response" or refusal_like):
-        return _cause("undetermined", "your_side_likely", "low", ["site_probe"], "your_side_likely", recheck=recheck)
+        # D92: a stored check near the failure time is dated; otherwise the day's counts describe it (fixed sentence)
+        dated = probe is not None and probe["outcome"] != "not_measured" and abs(probe["probed_at"] - when.at) <= MEASURE_WINDOW
+        return _cause("undetermined", "your_side_likely", "low", ["site_probe"], "your_side_likely", recheck=recheck,
+                      line=side_line(now - probe["probed_at"]) if dated else None)
     return terms
