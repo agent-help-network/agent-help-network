@@ -800,6 +800,8 @@ COLUMNS = {
     "host_access_profile.content_use": Phrase(
         "content-use preferences it declares (Content-Signal and Content-Usage lines) as normalized yes, no or unset values",
         "콘텐츠 이용 선호(Content-Signal·Content-Usage 줄)를 yes·no·unset 으로 정규화한 값"),
+    "site_probe.refusal_counted_at": Phrase(
+        "the time of the latest refusal counted toward two in a row", "두 번 연속 세기에 센 가장 최근 거절의 시각"),
     "host_access_profile.home_gate": Phrase(
         "whether the host's robots.txt allows the home page", "그 호스트의 robots.txt 가 홈 페이지를 허용하는지"),
     "host_access_profile.site_declared": Phrase(
@@ -1229,6 +1231,7 @@ def test_home_check_history_constants_match_the_policy():
     in the policy with the numbers the code uses."""
     from ahn import signal_history, site_probe
     assert site_probe.REFUSED_EXCLUDE_DAYS == 7
+    assert site_probe.REFUSAL_CARRY_DAYS == site_probe.REFUSED_EXCLUDE_DAYS + 7  # D91: a count survives the longest wait plus a week
     assert site_probe.CONFIRM_AFTER_HOURS == 24  # D83: the policy's "once more after 24 hours"
     assert site_probe.TRANSIENT_RETRIES == 1
     assert [code for _bound, code in signal_history.RT_BANDS] == ["lt1s", "1to3s", "3s_plus"]

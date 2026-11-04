@@ -761,6 +761,35 @@ def test_www_follow_is_not_made_when_the_www_robots_txt_disallows_the_home_page(
     assert one_row(db)["outcome"] == "redirected_same_host" and rows(db, "SELECT * FROM background_reads") == []
 
 
+def test_d91_the_kept_refusal_count_carries_its_time_and_expires_after_the_carry_window(db, monkeypatch):
+    """D91: refusal (counted at t0), unfollowed redirect inside 7 days (count and time kept), unfollowed redirects up to REFUSAL_CARRY_DAYS (14 days, kept), one after that
+    (count and time cleared), so a refusal after that is a first one."""
+    t0 = datetime.now(timezone.utc)
+
+    def at(moment, reader):   # the robots.txt verdicts are only fresh for a day: read both profiles at the simulated time
+        read_profile(db, monkeypatch, now=moment)
+        read_profile(db, monkeypatch, host=WWW, robots=DENY_HOME, now=moment)
+        site_probe.measure(db, HOST, "lookup", reader=reader, paced=False, now=moment)
+
+    at(t0, Home(status=403))
+    stored = one_row(db)
+    assert (stored["consecutive_refusals"], stored["refusal_counted_at"]) == (1, t0)
+    redirect = Routes({HOST: Home(status=301, headers=TO_WWW), WWW: Home()})
+    at(t0 + timedelta(days=2), redirect)
+    stored = one_row(db)
+    assert stored["redirect"]["followed_www"] is False and (stored["consecutive_refusals"], stored["refusal_counted_at"]) == (1, t0)
+    for days in (8, 14):   # past the 7-day wait, still inside the window
+        at(t0 + timedelta(days=days), redirect)
+        stored = one_row(db)
+        assert (stored["consecutive_refusals"], stored["refusal_counted_at"]) == (1, t0), days
+    at(t0 + timedelta(days=16), redirect)
+    stored = one_row(db)
+    assert stored["redirect"]["followed_www"] is False and (stored["consecutive_refusals"], stored["refusal_counted_at"]) == (0, None)
+    at(t0 + timedelta(days=18), Home(status=403))
+    stored = one_row(db)
+    assert stored["consecutive_refusals"] == 1 and stored["next_due_at"] - stored["probed_at"] == timedelta(hours=site_probe.CONFIRM_AFTER_HOURS)
+
+
 def test_www_follow_is_not_made_when_the_www_verdict_is_over_24_hours_old(db, monkeypatch):
     read_profile(db, monkeypatch)
     read_profile(db, monkeypatch, host=WWW, now=datetime.now(timezone.utc) - timedelta(hours=30))

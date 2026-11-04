@@ -86,6 +86,14 @@ LOOKUP_HOURLY_CAP = 40
 # A refusal (401, 403, 429 or any 503), a bot challenge, a rate limit or a login wall takes the host off
 # the check list for this long, flat: the host answered and declined, and asking again sooner adds load for no signal.
 REFUSED_EXCLUDE_DAYS = 7
+# D91: how long a refusal count is kept across checks that ended at an unfollowed www redirect (neither a success nor a
+# refusal). The wait after a confirmed refusal is REFUSED_EXCLUDE_DAYS, so the first check after it comes at least that long
+# after the refusal was counted; if that check is a redirect, the next one comes one normal interval (SUCCESS_INTERVAL_HOURS,
+# a day) later, and a few more such days must still fit. REFUSED_EXCLUDE_DAYS + 7 keeps the count across the longest wait
+# plus a week of daily redirects, and drops it for a host that redirects for longer than that (a stale count). It is wider
+# than cause.PROBE_FRESH (8 days): that only decides how long a stored refusal is shown as current, not how long a count may
+# lead to the next one.
+REFUSAL_CARRY_DAYS = REFUSED_EXCLUDE_DAYS + 7
 # The first counted refusal (a bot challenge, a 403 or a 401 without a sign-in request) after any non-refusal result, of a host's home page is confirmed once, after this long
 # (never sooner than its Retry-After, never later than REFUSED_EXCLUDE_DAYS): the same period as a normal success.
 # The next check after that, and every refusal after it, waits REFUSED_EXCLUDE_DAYS. AHN_REFUSAL_CONFIRM=0 turns it off.
@@ -436,17 +444,28 @@ def _confirm_on() -> bool:
 
 
 def schedule(outcome: str, previous: dict | None, retry_after: int | None,
-             http_status: int | None = None, redirect: dict | None = None) -> tuple[timedelta, int, int]:
+             http_status: int | None = None, redirect: dict | None = None,
+             now: datetime | None = None) -> tuple[timedelta, int, int]:
     """(wait until the next check, consecutive_refusals, consecutive_failures) after a check with this outcome. A 503 is
     a server_error outcome but counts as a refusal here, as it does in the history (often a deliberate refusal).
 
     D88: a check that ended at a redirect to the www name that was not followed (``redirect``, the classified record)
     reached no answer about the home page, so it is neither a success nor a refusal: both counts stay as the previous
     check left them (not reset, not raised), and the wait is the one a normal check gets. Resetting the count would let a
-    www name that is refused every other time keep a host from ever reaching two refusals in a row."""
+    www name that is refused every other time keep a host from ever reaching two refusals in a row.
+
+    D91: the refusal count is kept across such a redirect only while the refusal it counts is recent (within
+    REFUSAL_CARRY_DAYS of ``now``, read from ``refusal_counted_at``, or ``probed_at`` for a row stored before that column).
+    The window is longer than the 7-day wait after a confirmed refusal, so the redirect that follows that wait still keeps
+    the count and the next refusal is the third, not a first. A host that redirects every day for weeks has not shown two
+    refusals in a row when one passing refusal follows, so an older count starts over. Without ``now`` the count is kept (the D88 behaviour)."""
     refusals = previous["consecutive_refusals"] if previous else 0
     failures = previous["consecutive_failures"] if previous else 0
     if unfollowed_www_redirect(outcome, redirect):
+        if refusals and now is not None:
+            counted = _counted_at(previous) if previous else None
+            if counted is not None and counted < now - timedelta(days=REFUSAL_CARRY_DAYS):
+                refusals = 0
         return timedelta(hours=SUCCESS_INTERVAL_HOURS), refusals, failures
     if outcome in REFUSAL_OUTCOMES or (outcome == "server_error" and http_status == 503):
         # Off the list for REFUSED_EXCLUDE_DAYS, flat. A Retry-After is never longer (it is capped there) and a shorter
@@ -464,6 +483,24 @@ def schedule(outcome: str, previous: dict | None, retry_after: int | None,
         wait = min(timedelta(hours=BACKOFF_FAILED_HOURS) * 2 ** (failures - 1), timedelta(hours=BACKOFF_FAILED_MAX_HOURS))
         return wait, 0, failures
     return timedelta(hours=SUCCESS_INTERVAL_HOURS), 0, 0
+
+
+def _counted_at(previous: dict) -> datetime | None:
+    """D91: the stored row's refusal_counted_at, or its probed_at for a row stored before that column (plain key reads, no
+    ``.get``, so this module's network-verb count stays exact)."""
+    if "refusal_counted_at" in previous and previous["refusal_counted_at"] is not None:
+        return previous["refusal_counted_at"]
+    return previous["probed_at"] if "probed_at" in previous else None
+
+
+def refusal_counted_at(outcome: str, previous: dict | None, refusals: int, now: datetime) -> datetime | None:
+    """D91: when the latest counted refusal (bot_challenge, refused) behind ``refusals`` was seen: now for such a check, the
+    previous value carried while the count is kept (rate limit, login wall, 503, unfollowed redirect), None at zero."""
+    if outcome in ("bot_challenge", "refused"):
+        return now
+    if not refusals or not previous:
+        return None
+    return _counted_at(previous)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -574,11 +611,12 @@ def _store(conn, site_host: str, row: dict, now: datetime) -> None:
         """INSERT INTO site_probe (site_host,read_host,probed_at,outcome,http_status,bot_vendor,bot_signal,bot_confidence,
                                    edge_vendors,redirect,login_signal,response_ms,bytes_read,not_measured_reason,
                                    fingerprint_version,next_due_at,consecutive_refusals,consecutive_failures,trigger_kind,
-                                   origin_operator,vantage,user_agent)
+                                   origin_operator,vantage,user_agent,refusal_counted_at)
            VALUES (%(site_host)s,%(read_host)s,%(probed_at)s,%(outcome)s,%(http_status)s,%(bot_vendor)s,%(bot_signal)s,
                    %(bot_confidence)s,%(edge_vendors)s,%(redirect)s,%(login_signal)s,%(response_ms)s,%(bytes_read)s,
                    %(not_measured_reason)s,%(fingerprint_version)s,%(next_due_at)s,%(consecutive_refusals)s,
-                   %(consecutive_failures)s,%(trigger_kind)s,%(origin_operator)s,%(vantage)s,%(user_agent)s)
+                   %(consecutive_failures)s,%(trigger_kind)s,%(origin_operator)s,%(vantage)s,%(user_agent)s,
+                   %(refusal_counted_at)s)
            ON CONFLICT (site_host) DO UPDATE SET read_host=EXCLUDED.read_host,probed_at=EXCLUDED.probed_at,
                outcome=EXCLUDED.outcome,http_status=EXCLUDED.http_status,bot_vendor=EXCLUDED.bot_vendor,
                bot_signal=EXCLUDED.bot_signal,bot_confidence=EXCLUDED.bot_confidence,edge_vendors=EXCLUDED.edge_vendors,
@@ -587,7 +625,7 @@ def _store(conn, site_host: str, row: dict, now: datetime) -> None:
                fingerprint_version=EXCLUDED.fingerprint_version,next_due_at=EXCLUDED.next_due_at,
                consecutive_refusals=EXCLUDED.consecutive_refusals,consecutive_failures=EXCLUDED.consecutive_failures,
                trigger_kind=EXCLUDED.trigger_kind,origin_operator=EXCLUDED.origin_operator,vantage=EXCLUDED.vantage,
-               user_agent=EXCLUDED.user_agent""",
+               user_agent=EXCLUDED.user_agent,refusal_counted_at=EXCLUDED.refusal_counted_at""",
         {**row, "site_host": site_host, "redirect": Jsonb(row["redirect"]) if row["redirect"] is not None else None,
          "vantage": Jsonb(row["vantage"])})
     conn.execute(
@@ -604,7 +642,7 @@ def _vantage_codes() -> dict:
 
 def _row(read_host: str, now: datetime, trigger: str, *, outcome: str, next_due: datetime, previous: dict | None,
          refusals: int = 0, failures: int = 0, reason: str | None = None, fetched: dict | None = None,
-         classified: dict | None = None) -> dict:
+         classified: dict | None = None, counted_at: datetime | None = None) -> dict:
     classified = classified or {}
     fetched = fetched or {}
     return {
@@ -616,6 +654,7 @@ def _row(read_host: str, now: datetime, trigger: str, *, outcome: str, next_due:
         "fingerprint_version": FINGERPRINT_VERSION, "next_due_at": next_due, "consecutive_refusals": refusals,
         "consecutive_failures": failures, "trigger_kind": trigger, "origin_operator": operator_id(),
         "vantage": _vantage_codes(), "user_agent": ap.USER_AGENT,
+        "refusal_counted_at": counted_at,
     }
 
 
@@ -788,11 +827,12 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
                     read_host = www
                     reserve_www = True
                 wait, refusals, failures = schedule(classified["outcome"], previous, classified["retry_after"],
-                                                    classified["http_status"], classified["redirect"])
+                                                    classified["http_status"], classified["redirect"], now)
                 if no_verdict:
                     wait = min(wait, timedelta(hours=MIN_GAP_HOURS))  # the www verdict is on its way: look again soon
                 row = _row(read_host, now, trigger, outcome=classified["outcome"], next_due=now + wait,
-                           previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified)
+                           previous=previous, refusals=refusals, failures=failures, fetched=fetched, classified=classified,
+                           counted_at=refusal_counted_at(classified["outcome"], previous, refusals, now))
             _store(conn, site_host, row, now)
             # D75: a changed outcome or bot-defense provider since the check this one replaces, as codes; a first check, a
             # failure and a skipped check write nothing. Own savepoint; never raises.

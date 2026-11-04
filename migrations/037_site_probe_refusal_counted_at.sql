@@ -1,0 +1,11 @@
+-- D91: when the latest counted home-page refusal (outcome bot_challenge or refused) behind site_probe.consecutive_refusals was seen.
+-- A check that ends at a www redirect AHN did not follow keeps the refusal count (D88); this column lets the count be kept
+-- only while that refusal is recent (site_probe.REFUSAL_CARRY_DAYS, 14 days), so one passing refusal after weeks of such
+-- redirects does not make two in a row. Nullable, no default: a row stored before this migration has no value and the code reads
+-- probed_at in its place; that is the time of the row, which is later than the refusal when the previous row was a pre-037
+-- redirect, 429, login wall or 503, so such a count expires up to that much later. One short catalog lock on a small table.
+-- Rollback: first deploy the code without this change (nothing else reads or writes the column), then run:
+--           Do not redeploy this code before the column is dropped: the values left in it would be old, and kept counts would expire early.
+--           ALTER TABLE site_probe DROP COLUMN refusal_counted_at;
+--           DELETE FROM schema_migrations WHERE version=37;
+ALTER TABLE site_probe ADD COLUMN IF NOT EXISTS refusal_counted_at timestamptz;

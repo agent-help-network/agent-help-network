@@ -307,7 +307,10 @@ def _login_wall_twice(conn, host: str) -> bool:
     stored check adds one to its day's count of that outcome, so the checks since the last day with any other outcome are the
     login-wall counts of the days after it. Any other outcome ends the run, a ``not_measured`` row included, as it resets
     ``consecutive_refusals``. A day that also holds another outcome is not counted (the order inside a day is not kept), so
-    a mixed sequence stays unconfirmed."""
+    a mixed sequence stays unconfirmed. A day of ``redirected_same_host`` also ends the run (D91: kept on purpose; the daily
+    counts cannot tell a www redirect AHN did not follow, which ``schedule`` does not reset, from a path or locale move,
+    which it does, so reading it as neutral could confirm two login walls that a real answer separated; the cost is only a
+    confirmation that waits for the next check)."""
     rows = conn.execute(
         "SELECT day, outcome, sum(probes) AS n FROM site_probe_daily WHERE site_host=%s AND probes>0 AND day >= CURRENT_DATE - 34 GROUP BY day, outcome",
         (host,)).fetchall()
@@ -432,8 +435,9 @@ def _new_bot_defense(conn, host: str, history) -> dict | None:
 def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
     """(any home-page check around the failure time, and all of them normal). AHN reads no page content. A stored check that
     ended at a www redirect AHN did not follow (D88) is no measurement of the home page: it is neither normal nor a
-    refusal. The day's counts keep no redirect record, so while the current row is such a redirect (at any age) the day's
-    ``redirected_same_host`` count is not taken as a normal check either; the day's other outcomes still count."""
+    refusal. The day's counts keep no redirect record, so a ``redirected_same_host`` count may be such a redirect and is
+    never taken as a normal check on the day-count path, whatever the current row is (D91; D88 looked at the current row
+    only, which misread a day of unfollowed redirects once the row had moved on); the day's other outcomes still count."""
     unfollowed = probe is not None and unfollowed_www_redirect(probe["outcome"], probe["redirect"])
     if probe is not None and probe["outcome"] != "not_measured" and abs(probe["probed_at"] - when.at) <= MEASURE_WINDOW:
         if unfollowed:
@@ -441,7 +445,7 @@ def _measurement(conn, host: str, probe, when: When) -> tuple[bool, bool]:
         return True, probe["outcome"] in NORMAL_OUTCOMES
     rows = conn.execute(
         "SELECT outcome FROM site_probe_daily WHERE site_host=%s AND day=%s AND outcome<>'not_measured' AND probes>0"
-        + (" AND outcome<>'redirected_same_host'" if unfollowed else ""),
+        " AND outcome<>'redirected_same_host'",
         (host, when.at.astimezone(timezone.utc).date())).fetchall()
     if not rows:
         return False, False
