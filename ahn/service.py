@@ -745,11 +745,11 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # D51: computed from the finished answer, after everything above; it changes none of it. A failure here
             # leaves the three keys out: the answer is still the one before D51 and the lookup record below still runs.
             try:
-                status_check = (settings.status_check_guide and task_step == "status_check"
-                                and not failure_observed(error_class, failure_stage))  # D69
+                status_check = response_guide.status_check_applies(task_step, settings.status_check_guide,
+                                                                   settings.d96_status_check_one_action, error_class, failure_stage)  # D69, D96
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
                                                    settings.status_check_guide, error_class, failure_stage,
-                                                   settings.failure_kind_lines))
+                                                   settings.failure_kind_lines, settings.d96_status_check_one_action))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:
