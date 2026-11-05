@@ -1882,6 +1882,11 @@ def _entry_link(url: str, source_url: str) -> dict:
 
 
 CONSUMER_PATHS: dict[str, dict] = {
+    "bestbuy.com": {"paths": [
+        _help("https://www.bestbuy.com/contact-us", "https://www.bestbuy.com/"),
+        _help("https://www.bestbuy.com/site/help-topics/return-exchange-policy/pcmcat260800050014.c?id=pcmcat260800050014",
+              "https://www.bestbuy.com/"),
+    ], "verified_at": "2026-11-05"},
     "walgreens.com": {"paths": [
         _help("https://www.walgreens.com/topic/help/default.jsp", "https://www.walgreens.com/"),
         _help("https://www.walgreens.com/mktg/contactus/contact-us-landing.jsp", "https://www.walgreens.com/"),
