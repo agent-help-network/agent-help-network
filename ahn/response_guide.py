@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from .background_reads import FEED_RETRY_MINUTES
 from .lookup_signals import is_reserved_example
 from .official_paths import customer_url
-from .triage import blocked_governing_tokens
+from .triage import blocked_governing_tokens, failure_observed
 
 LOG = logging.getLogger(__name__)
 
@@ -123,6 +123,19 @@ STATUS_AFTER_ROWS_BEFORE: dict[str, str] = {
     "O3": "The site's robots.txt blocks some agent tokens (next_action.stop_if_you_are). For anything beyond the status question, use the listed official developer path.",
     "O6": "The site's robots.txt disallows the root for agents it does not name. Do not read that as permission; " + _BEYOND,
 }
+# D96: the status page itself failed to open for the caller (the looked-up host is the status page's host). The status answer cannot send the
+# caller to that page, so it hands the step to the user with the reading AHN has (or says the status is unverified). Keyed by the T row.
+STATUS_ROWS["T1-F"] = ("The provider's status feed reports no active issue (provider_status, see its fetched_at). That status page did not open "
+                       "for you; give your user this reading, not a guess.")
+STATUS_ROWS["T2-F"] = ("A provider status feed is listed (provider_status), but it gives no clear current state, and the status page did not "
+                       "open for you. Tell your user the status is unverified.")
+STATUS_ROWS["T3-F"] = ("AHN reads no status feed for this site, and its status page did not open for you, so AHN cannot say whether it is up. "
+                       "Tell your user the status is unverified.")
+STATUS_ROWS["T5-F"] = ("AHN could not read this provider's status feed just now, and the status page did not open for you. "
+                       "Tell your user the status is unverified.")
+STATUS_FAILED_ROW = {"T1": "T1-F", "T2": "T2-F", "T5": "T5-F", "T3": "T3-F", "T3-S": "T3-F"}
+# D96: a failure of these kinds goes to a person whatever the lookup asked; the status answer does not apply to it.
+STATUS_HANDOFF_ERRORS = frozenset({"human_verification", "login_auth"})
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
 # A row decided by the site's own robots policy keeps its sentence under status_check: the T sentences say nothing about the block.
 STATUS_KEEP_REASONS = frozenset({"robots_blocks_agents", "robots_fetch_refused", "robots_wildcard_disallow", "robots_names_vendor_alias",
@@ -394,9 +407,58 @@ def status_row(provider_status: dict | None, official_status_page: dict | None, 
     return "T3-S" if official_status_page.get("requires_sign_in") else "T3"
 
 
+def status_check_applies(task_step: str | None, status_guide: bool, one_action: bool, error_class: str | None,
+                         failure_stage: str | None) -> bool:
+    """Whether guide() gets status_check=True. Before D96: task_step=status_check and no failure signal. With D96
+    (AHN_D96_STATUS_CHECK_ONE_ACTION) a failure signal no longer switches the status answer off, except a human_verification
+    or login_auth failure, which goes to a person."""
+    if not (status_guide and task_step == "status_check"):
+        return False
+    if not failure_observed(error_class, failure_stage):
+        return True
+    return one_action and error_class not in STATUS_HANDOFF_ERRORS
+
+
+def _status_url(result: dict, provider_status: dict | None) -> str | None:
+    for candidate in ((provider_status or {}).get("source_url"), (result.get("official_status_page") or {}).get("source_url")):
+        if candidate:
+            found = safe_url(candidate)
+            if found is None:
+                LOG.warning("response_guide_url_dropped")
+                continue
+            return found
+    return None
+
+
+def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None, status_id: str, site_host: str,
+                 robots_kept: bool, failed: bool, one_action: bool, reserved: bool = False) -> str | None:
+    """How a status_check answer treats the row: "self_failed" (D96: the status page is the host that failed), "official_path" (D76: the
+    status page is the url of a use_official_path row), "widened" (D96: the same for any row that does not wait, hand off, stop or
+    re-look-up), "sentence" (D69), "after" (D79: the robots sentence follows) or None (the row's own sentence)."""
+    page_host = (urlparse(status_url).hostname or "").lower() if status_url else ""
+    keeps = do in STATUS_KEEP_DO or do == ROWS["S1"][0] or row in RETRY_ROWS or row == "P2" or robots_kept
+    if one_action and failed and status_url and not keeps and page_host == site_host.lower():
+        return "self_failed"
+    if (status_url and row not in RETRY_ROWS and not (robots_kept and same_site(status_url, site_host))
+            # D77: a sign-in page is never the url, so under a robots block nothing justifies replacing the robots sentence.
+            and not (robots_kept and status_id == "T3-S")):
+        if recommendation.get("action") == "use_official_path":
+            return "official_path"
+        if one_action and not keeps and status_id != "T3-S" and not reserved:  # D81: a reserved example name has no service to check
+            return "widened"
+    if (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
+            and row != "P2"
+            and not (do == "lookup_apex_host" and status_url is None)):
+        return "sentence"
+    if (robots_kept and do not in STATUS_KEEP_DO and do != "proceed" and row not in RETRY_ROWS
+            and not (do == "lookup_apex_host" and status_url is None)):
+        return "after"
+    return None
+
+
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
           status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
-          failure_kind_lines: bool = False) -> dict:
+          failure_kind_lines: bool = False, one_action: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
@@ -410,7 +472,13 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     ``url`` (it goes out as ``status_url`` only), and under a robots block it keeps the robots sentence too.
     failure_kind_lines (D87, AHN_FAILURE_KIND_LINES, with the D63 switch on, never for a status_check lookup) lets the sentence of a
     lookup that reports a failure (error_class or failure_stage) follow the kind of failure: SERVICE_ERROR_ROWS for a proceed row when
-    error_class is service_error, FAILED_U3 for U3. Nothing but the sentence changes."""
+    error_class is service_error, FAILED_U3 for U3. Nothing but the sentence changes.
+    one_action (D96, AHN_D96_STATUS_CHECK_ONE_ACTION, only with status_check): a status_check answer gives the status page as the one next
+    action (do use_official_path, url the status page) on every row that does not wait, hand off, stop, wait for a re-lookup or rest on a
+    robots block, not only on a use_official_path row; and when the lookup reports a failure and the status page is on the looked-up host
+    itself, it hands the step to the user (do hand_off_to_human, url null, STATUS_ROWS T*-F). A lookup that reports a failure keeps its own
+    sentence (D87) wherever no status sentence applies, and on a robots block unless the status page is on another site. With no status page
+    known, a developer path is never the url: url is null, do is hand_off_to_human after a failure (sentence T4-R) or no_clear_action."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -439,6 +507,18 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         sentence = PROCEED_OFFICIAL_ROWS[row]
     if on and blocked_default and do == "proceed":
         sentence = (BLOCKED_PROCEED_CONSUMER_ROWS if customer else BLOCKED_PROCEED_ROWS)[row]
+    status_url = _status_url(result, provider_status) if (status_check or status_guide) else None
+    mode = None
+    status_id = None
+    if status_check:
+        failed = bool(one_action and (error_class is not None or failure_stage is not None))
+        status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        robots_kept = bool(set(recommendation.get("reasons") or ()) & STATUS_KEEP_REASONS)
+        mode = _status_mode(recommendation, row, do, status_url, status_id, result["site_host"], robots_kept, failed, one_action,
+                            is_reserved_example(result["site_host"]))
+        if failed and mode in (None, "after"):
+            status_check = False  # D96: no status sentence applies to this failed lookup; it is answered as before D96
+            mode = None
     if on and failure_kind_lines and not status_check and (error_class is not None or failure_stage is not None):
         if do == "proceed" and error_class == "service_error":
             no_response = error_class == "service_error" and failure_stage == "before_target_response"
@@ -469,42 +549,41 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         action["lookup_host"] = apex_host(result["site_host"])
     if customer:
         action["customer_url"] = customer
-    status_url = None
-    if status_check or status_guide:
-        for candidate in ((provider_status or {}).get("source_url"), (result.get("official_status_page") or {}).get("source_url")):
-            if candidate:
-                status_url = safe_url(candidate)
-                if status_url is None:
-                    LOG.warning("response_guide_url_dropped")
-                    continue
-                break
-        if status_url:
-            action["status_url"] = status_url
+    if (status_check or status_guide) and status_url:
+        action["status_url"] = status_url
     if status_check:
-        reasons = set(recommendation.get("reasons") or ())
-        robots_kept = bool(reasons & STATUS_KEEP_REASONS)
-        status_id = status_row(provider_status, result.get("official_status_page"), status_url)
         reserved = is_reserved_example(result["site_host"])  # D81
         covers_api = (result.get("official_status_page") or {}).get("covers") == "api"
-        if (status_url and recommendation.get("action") == "use_official_path" and row not in RETRY_ROWS
-                and not (robots_kept and same_site(status_url, result["site_host"]))
-                # D77: a sign-in page is never the url, so under a robots block nothing justifies replacing the robots sentence.
-                and not (robots_kept and status_id == "T3-S")):
+        if mode == "self_failed":
+            # D96: the status page is what failed; sending the caller back to it (or to a developer page) answers nothing.
+            sentence = STATUS_ROWS[STATUS_FAILED_ROW[status_id]]
+            action["do"], action["url"] = "hand_off_to_human", None
+            action.pop("lookup_host", None)
+        elif mode in ("official_path", "widened"):
             # D76: a use_official_path row with no re-lookup to wait for answers "is it up" with the status page: sentence and
-            # url say the same thing. ``do`` stays a function of recommendation.action. A robots block on the site's own pages
-            # does not answer the question, but a status page on the same site is not pointed at either (the row stays).
+            # url say the same thing. A robots block on the site's own pages does not answer the question, but a status page on the
+            # same site is not pointed at either (the row stays). D96 (widened): any other row that does not wait, hand off, stop or
+            # re-look-up does the same, so a status question has one action; ``do`` becomes use_official_path.
             sentence = STATUS_ROWS["T3-A" if status_id == "T3" and covers_api else status_id]
             if status_id != "T3-S":  # D77: a status page that needs the user's sign-in is handed over as status_url, never made the url
                 action["url"] = status_url
-        elif (do not in STATUS_KEEP_DO and do != ROWS["S1"][0] and row not in RETRY_ROWS and not robots_kept
-                # D77: P2 (a block naming other agents, no agent_vendor sent) ends in a conditional stop that no T sentence carries.
-                # With D63 off the row text is ROWS_BEFORE["P2"], which has no such condition; P2 still keeps its own sentence then.
-                and row != "P2"
-                # A subdomain with no status page of its own keeps U8: the site-wide lookup it names may carry the provider's status.
-                and not (do == "lookup_apex_host" and status_url is None)):
-            sentence = STATUS_ROWS["T-EX" if reserved else "T3-A" if status_id == "T3" and covers_api else status_id]
-        elif (robots_kept and do not in STATUS_KEEP_DO and do != "proceed" and row not in RETRY_ROWS
-                and not (do == "lookup_apex_host" and status_url is None)):
+            if mode == "widened":
+                action["do"] = "use_official_path"
+                action.pop("lookup_host", None)
+        elif mode == "sentence":
+            # D77: P2 (a block naming other agents, no agent_vendor sent) ends in a conditional stop that no T sentence carries, so it
+            # keeps its own sentence; a subdomain with no status page of its own keeps U8 (the site-wide lookup may carry the status).
+            lead = status_id
+            if status_id == "T4" and failed and not reserved:
+                lead = "T4-R"  # D96: the lookup reports a failure, so "check the site itself" is not what it needs; say it is unverified
+            sentence = STATUS_ROWS["T-EX" if reserved else "T3-A" if status_id == "T3" and covers_api else lead]
+            if one_action and status_url is None and action["url"] is not None and action["url"] != customer:
+                # D96: no status page is known, so the row's url can only be a developer path, which is never the url of a status
+                # answer (it stays in official_paths). The step is the user's when a failure was reported, else it has no action.
+                action["url"] = None
+                action["do"] = "hand_off_to_human" if failed else "no_clear_action"
+                action.pop("lookup_host", None)
+        elif mode == "after":
             # D79: the first sentence answers "is it up"; the row's robots sentence is kept, after it. ``do`` and ``url`` stay.
             # The status sentence does not say "check the site itself" (the robots sentence that follows says otherwise), and a status
             # page on the looked-up site's own domain is not pointed at (D76).

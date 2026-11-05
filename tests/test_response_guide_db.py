@@ -138,12 +138,16 @@ def test_d69_a_status_check_lookup_gets_a_status_sentence_and_status_url_unless_
     body = checked.json()
     CheckResponse(**body)
     assert body["summary_line"] == STATUS_ROWS["T3"] and body["next_action"]["status_url"] == "https://status.plain-example.org/"
-    assert body["next_action"]["do"] == plain["next_action"]["do"] and body["next_action"]["url"] == plain["next_action"]["url"]
+    # D96: the status page is the one next action of a status_check lookup (the plain answer here is proceed, with no url)
+    assert plain["next_action"]["do"] == "proceed" and plain["next_action"]["url"] is None
+    assert body["next_action"]["do"] == "use_official_path" and body["next_action"]["url"] == "https://status.plain-example.org/"
     assert body["recommendation"] == plain["recommendation"]
     assert failed.status_code == other_step.status_code == 200
-    for other in (failed.json(), other_step.json(), plain):
-        # the sentence is the status one only for a status_check lookup without a failure signal; the status page is known to all
+    for other in (other_step.json(), plain):
+        # the sentence is the status one only for a status_check lookup; the status page is known to all
         assert other["summary_line"] not in STATUS_ROWS.values() and other["next_action"]["status_url"] == "https://status.plain-example.org/"
+    # D96: a failure signal no longer switches the status answer off
+    assert failed.json()["summary_line"] == STATUS_ROWS["T3"] and failed.json()["next_action"]["url"] == "https://status.plain-example.org/"
     off = Settings(TEST_URL, "test-pepper-must-be-at-least-thirty-two-chars", public_mode=True, reporting_enabled=True,
                    collect_lookup_metrics=True, response_guide=True, status_check_guide=False)
     with TestClient(create_app(off)) as client:

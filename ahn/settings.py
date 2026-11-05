@@ -25,6 +25,7 @@ LOG = logging.getLogger(__name__)
 _EDGE_WARNED = False
 _KIND_WARNED = False
 _D95_WARNED = False
+_D96_WARNED = False
 
 
 def parse_failure_kind_switch(raw: str) -> bool:
@@ -50,6 +51,19 @@ def parse_d95_switch(raw: str) -> bool:
     if value != "0" and not _D95_WARNED:
         _D95_WARNED = True
         LOG.warning("d95_switch_unknown_value")
+    return False
+
+
+def parse_d96_switch(raw: str) -> bool:
+    """AHN_D96_STATUS_CHECK_ONE_ACTION (D96): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
+    answer is the risky side), and logs one warning per process: the code only, never the value."""
+    global _D96_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _D96_WARNED:
+        _D96_WARNED = True
+        LOG.warning("d96_switch_unknown_value")
     return False
 
 
@@ -163,6 +177,10 @@ class Settings:
     # AHN_D95_NO_DEV_PATH_ON_FAILURE=0 (D95) gives a service_error lookup (a 5xx or no response) on a host with only a developer path
     # the answer from before D95 (use_official_path). On by default; an unknown value is read as off (with one warning), never as on.
     d95_no_dev_path_on_failure: bool = True
+    # AHN_D96_STATUS_CHECK_ONE_ACTION=0 (D96) gives a task_step=status_check lookup the answer from before D96: no status answer when a
+    # failure signal is sent, and a status page as next_action.url only on a use_official_path row. On by default; an unknown value is
+    # read as off (with one warning), never as on.
+    d96_status_check_one_action: bool = True
     # AHN_D99_UNREADABLE_NOT_PENDING=0 (D99) shows ahn_check as pending (with retry_after_seconds) again for a host whose robots.txt AHN
     # could not read and that has no read queued. On by default; an unknown value is read as off (with one warning), never as on.
     d99_unreadable_not_pending: bool = True
@@ -226,4 +244,5 @@ class Settings:
                    edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")),
                    failure_kind_lines=parse_failure_kind_switch(os.environ.get("AHN_FAILURE_KIND_LINES", "")),
                    d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")),
-                   d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")))
+                   d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")),
+                   d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")))
