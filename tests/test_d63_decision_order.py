@@ -300,7 +300,7 @@ def test_t38_the_switch_reads_the_environment_and_reaches_the_guide(monkeypatch)
 
 def test_t27_t27b_every_sentence_fits_and_names_no_host():
     tables = [{k: v[1] for k, v in ROWS.items()}, PROCEED_OFFICIAL_ROWS, PROCEED_CONSUMER_ROWS, CONSUMER_ROWS]
-    assert len(ROWS) == 35  # H3 came with D85
+    assert len(ROWS) == 37  # H3 came with D85; U7-O and U9-O with D95
     for table in tables:
         for row, text in table.items():
             text = text.replace("{n}", "3600")

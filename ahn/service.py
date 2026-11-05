@@ -698,7 +698,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                      provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
                                      vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
                                      proceed_without_failure=settings.proceed_without_failure,
-                                     assume_failure=assume_failure, edge_refusal=edge_refusal)
+                                     assume_failure=assume_failure, edge_refusal=edge_refusal,
+                                     service_error_reference_only=settings.d95_no_dev_path_on_failure)
         edge_decided = EDGE_CODE in recommended["reasons"]
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),

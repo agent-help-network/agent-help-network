@@ -242,7 +242,7 @@ def edge_answer(official=None, **kwargs):
 
 
 def test_h3_has_the_fixed_sentences_the_row_and_no_host_or_url():
-    assert ROWS["H3"][0] == "hand_off_to_human" and len(ROWS) == 35
+    assert ROWS["H3"][0] == "hand_off_to_human" and len(ROWS) == 37
     assert ROWS["H3"][1] == ("The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents "
                              "to retry; tell your user, who can open the page themselves.")
     assert EDGE_CONSUMER_ROWS["H3"] == ("The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools to retry; "
