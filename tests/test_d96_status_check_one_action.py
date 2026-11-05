@@ -31,6 +31,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import ALLOWS, CONSUMER, FULL, NOW, STAGES, variants  # noqa: E402
 from test_response_guide import OTHER_PAGE, fresh_none, page, signin_page  # noqa: E402
+import _d97_scope  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.response_guide import LINE_MAX, RETRY_ROWS, ROWS, STATUS_FAILED_ROW, STATUS_ROWS, guide, status_check_applies  # noqa: E402
@@ -149,6 +150,10 @@ def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid()
                     # the answer before D96: the service asked for the status answer only without a failure signal
                     old_plain = pre_rg.guide(copy.deepcopy(result), *args, False, *tail)
                     old_sc = pre_rg.guide(copy.deepcopy(result), *args, True, *tail)
+                    # D97 later changed U6/U7/U9 after a service_error where no status answer applies (and with a curated customer path)
+                    row0, _ = response_guide.select_row(rec, result["access_profile"], result["provider_status"], result["site_host"],
+                                                        result["official_paths"], variants=pwf)
+                    old_plain = _d97_scope.adjust(old_plain, row0, pwf, False, ec, stage, kind, result.get("official_paths"))
                     old = old_sc if not failed else old_plain
                     # switch off: the answer before D96, for every pair
                     sc_off = status_check_applies("status_check", True, False, ec, stage)
