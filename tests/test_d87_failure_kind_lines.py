@@ -219,7 +219,7 @@ def test_the_new_sentences_are_short_plain_ascii_without_host_url_placeholder_or
 
 
 def test_the_tables_the_new_sentences_replace_are_untouched():
-    assert response_guide.ROWS == pre_rg.ROWS and response_guide.ROWS_BEFORE == pre_rg.ROWS_BEFORE
+    assert {k: v for k, v in response_guide.ROWS.items() if k not in ("U7-O", "U9-O")} == pre_rg.ROWS and response_guide.ROWS_BEFORE == pre_rg.ROWS_BEFORE
     assert response_guide.BLOCKED_PROCEED_ROWS == pre_rg.BLOCKED_PROCEED_ROWS
     assert response_guide.PROCEED_OFFICIAL_ROWS == pre_rg.PROCEED_OFFICIAL_ROWS
     assert response_guide.PROCEED_CONSUMER_ROWS == pre_rg.PROCEED_CONSUMER_ROWS

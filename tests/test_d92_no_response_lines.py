@@ -128,7 +128,7 @@ def test_sentences_are_short_and_say_no_5xx():
     assert all("next_action.customer_url" in t for t in NO_RESPONSE_CONSUMER_ROWS.values())
     assert not any("customer_url" in t for t in NO_RESPONSE_ROWS.values())
     assert "robots.agents_blocked" in NO_RESPONSE_ROWS["P2"]
-    assert response_guide.ROWS == pre_rg.ROWS and response_guide.SERVICE_ERROR_ROWS == pre_rg.SERVICE_ERROR_ROWS
+    assert {k: v for k, v in response_guide.ROWS.items() if k not in ("U7-O", "U9-O")} == pre_rg.ROWS and response_guide.SERVICE_ERROR_ROWS == pre_rg.SERVICE_ERROR_ROWS
 
 
 def test_documents_name_the_rule():

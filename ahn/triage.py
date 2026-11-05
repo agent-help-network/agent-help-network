@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import status_scope
 from .access_profile import AGENT_VENDORS, GOVERNING_TOKENS, VENDOR_ALIASES, ai_input_declared_no
+from .official_paths import customer_url
 
 # D45: an incident whose latest update is older than this no longer makes the answer "wait" on its own.
 STALE_INCIDENT_DAYS = 7
@@ -451,7 +452,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
                    official: dict | None, *, profile_not_read: bool = False, provider_regional: bool = False,
                    now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True,
                    failure_stage: str | None = None, proceed_without_failure: bool = True,
-                   assume_failure: bool = False, edge_refusal: bool = False) -> dict:
+                   assume_failure: bool = False, edge_refusal: bool = False,
+                   service_error_reference_only: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
@@ -464,12 +466,19 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     then the one such a lookup gets, and no new row exists.
     edge_refusal: D85. The caller reported site_access and AHN's own home-page check was refused too (service.edge_refusal_for).
     Only a proceed answer for a site_access lookup with no failure_stage or access_denial_observed changes: it becomes
-    hand_off_to_human. Every other answer, and the order of the branches in _recommendation, stay as they were."""
+    hand_off_to_human. Every other answer, and the order of the branches in _recommendation, stay as they were.
+    service_error_reference_only: D95 (AHN_D95_NO_DEV_PATH_ON_FAILURE; the service passes the setting, the default here is the answer
+    before D95). With the D63 switch on, a service_error lookup (a 5xx or no response) on a host with a listed developer path and no
+    curated customer path no longer gets use_official_path unless robots.txt itself blocks pages (the branches before it are
+    unchanged): a robots.txt that is clear or absent gives proceed, one that could not be read gives unknown, a pending read gives
+    unknown with a re-lookup. The developer path stays in official_paths and as the reason official_path_available."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                              provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
                              failure_stage=failure_stage, proceed_without_failure=proceed_without_failure,
-                             assume_failure=assume_failure)
+                             assume_failure=assume_failure,
+                             reference_only=service_error_reference_only and error_class == "service_error"
+                             and proceed_without_failure)
     if (edge_refusal and result["action"] == "proceed" and error_class == "site_access"
             and failure_stage in EDGE_FAILURE_STAGES):
         result = {"action": "hand_off_to_human", "confidence": "medium", "reasons": [EDGE_CODE, *result["reasons"]]}
@@ -481,7 +490,7 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
 def _recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                     official: dict | None, *, profile_not_read: bool, provider_regional: bool, now: datetime | None,
                     agent_vendor: str | None, vendor_aware: bool, failure_stage: str | None = None,
-                    proceed_without_failure: bool = True, assume_failure: bool = False) -> dict:
+                    proceed_without_failure: bool = True, assume_failure: bool = False, reference_only: bool = False) -> dict:
     wait_reason = provider_wait_reason(provider_status, now)
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
@@ -504,8 +513,12 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
     if error_class == "login_auth":
         return {"action": "hand_off_to_human", "confidence": "medium", "reasons": ["account_handoff"]}
     official_listed = bool(official and (official.get("api_docs") or official.get("developer_portal")))
+    # D95: a failure that is not a robots block, on a host whose only listed path is for developers: that path is reference, not the next step.
+    reference_only = reference_only and official_listed and customer_url(official) is None
     if profile_pending(access_profile):
         # No declared-policy evidence yet: decide as for an unreadable robots.txt, and say a read is under way.
+        if reference_only:
+            return {"action": "unknown", "confidence": "low", "reasons": ["profile_pending", "official_path_available"]}
         if official_listed:
             return {"action": "use_official_path", "confidence": "medium", "reasons": ["profile_pending", "official_path_available"]}
         return {"action": "unknown", "confidence": "low", "reasons": ["profile_pending"]}
@@ -532,6 +545,15 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
         # D63: nothing sent reports a failure and robots.txt is clear (or absent): continue, and name the official path.
         return {"action": "proceed", "confidence": "low",
                 "reasons": (robots_codes or ["robots_allows_agents"]) + (["official_path_available"] if official_listed else [])}
+    if reference_only and not access_profile and profile_not_read:
+        # D95: a subdomain or tenant host inherits the root domain's developer path but has no policy read of its own: say so (the guide
+        # sends a subdomain to its root domain, whose answer then follows D95).
+        return {"action": "unknown", "confidence": "low", "reasons": ["profile_not_read", "official_path_available"]}
+    if reference_only and access_profile:
+        # D95: robots.txt is clear or absent: proceed (the D87/D92 sentence says what failed); unread: unknown. Both name the listed path.
+        if clear:
+            return {"action": "proceed", "confidence": "low", "reasons": (robots_codes or ["robots_allows_agents"]) + ["official_path_available"]}
+        return {"action": "unknown", "confidence": "low", "reasons": ["robots_unknown", "official_path_available"]}
     if official_listed and error_class in (None, "site_access", "service_error"):
         # A block that is not the caller's (D48) stays visible next to the official path.
         not_yours = [code for code in robots_codes if code == "robots_blocks_not_your_agent"]

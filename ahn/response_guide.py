@@ -79,6 +79,10 @@ ROWS: dict[str, tuple[str, str]] = {
     "U5": ("no_clear_action", "The site's robots.txt disallows the root for agents it does not name (every token not in robots.agents_allowed), and no official path is listed. Do not read this as permission."),
     "U6": ("no_clear_action", "The site refused even a plain automated robots.txt read, and no official path is listed. Page automation may be refused; hand off if needed."),
     "U7": ("no_clear_action", "The site's robots.txt could not be read, so no declared policy is known. No official path is listed; follow your operator's rules."),
+    # D95: a service_error lookup on a host with a listed developer path and a robots.txt that could not be read (the path is reference).
+    "U7-O": ("no_clear_action", "The site's robots.txt could not be read, so no declared policy is known. A developer API is listed (official_paths) for API work; for pages, tell your user."),
+    # D95: the same for a host with no policy read of its own and no root domain to look up (a tenant host).
+    "U9-O": ("no_clear_action", "No declared policy could be read for this host. A developer API is listed (official_paths) for API work; for pages, follow your operator's rules and tell your user."),
     "U8": ("lookup_apex_host", "Policy is read only for a site's main domain, not this subdomain. Look up next_action.lookup_host once, with the same fields you sent, for the site-wide declaration."),
     "U9": ("no_clear_action", "No declared policy could be read for this host and no official path is listed. Nothing here forbids the step; follow your operator's rules and the site's terms."),
 }
@@ -237,6 +241,9 @@ _U3_STOP = "robots.txt blocks some tokens, including those in next_action.stop_i
 FAILED_U3 = _U3_STOP + "Either way, do not switch tools or user agents to retry after a refusal; tell your user."
 FAILED_U3_SERVICE_ERROR = _U3_STOP + "Either way, AHN cannot judge this 5xx. Retry once later; if it persists, tell your user."
 FAILED_U3_NO_RESPONSE = _U3_STOP + "Either way, no response came; check your tool, retry once later, then tell your user."
+# D95: the failure-kind sentences of U7-O (a developer API is listed, robots.txt unread; the failure is a 5xx or no response).
+U7_O_NO_RESPONSE = "No response came (timeout or connection), and AHN could not read the site's robots.txt either. Check your tool and path; retry once later; then tell your user."
+U7_O_SERVICE_ERROR = "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Retry once later; if it persists, tell your user. API work: official_paths."
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
 
@@ -319,9 +326,11 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
         for code, row in (("robots_blocks_some_agents", "U3"), ("robots_names_vendor_alias", "U4"),
                           ("robots_wildcard_disallow", "U5"), ("robots_fetch_refused", "U6"), ("robots_unknown", "U7")):
             if code in reasons:
-                return row, True
+                return ("U7-O" if row == "U7" and "official_path_available" in reasons else row), True
         if "profile_not_read" in reasons:
-            return ("U8" if apex_host(site_host) else "U9"), True
+            if apex_host(site_host):
+                return "U8", True
+            return ("U9-O" if "official_path_available" in reasons else "U9"), True
         if not reasons:
             return "U9", True
     return DEFAULT_ROW.get(action, "U9"), False
@@ -435,6 +444,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             no_response = error_class == "service_error" and failure_stage == "before_target_response"
             table = (NO_RESPONSE_CONSUMER_ROWS if customer else NO_RESPONSE_ROWS) if no_response else (SERVICE_ERROR_CONSUMER_ROWS if customer else SERVICE_ERROR_ROWS)
             sentence = table[row]
+        elif row in ("U7-O", "U9-O") and error_class == "service_error":
+            sentence = U7_O_NO_RESPONSE if failure_stage == "before_target_response" else U7_O_SERVICE_ERROR
         elif row == "U3":
             if error_class == "service_error":
                 sentence = FAILED_U3_NO_RESPONSE if failure_stage == "before_target_response" else FAILED_U3_SERVICE_ERROR
