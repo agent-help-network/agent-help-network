@@ -57,6 +57,8 @@ ROWS: dict[str, tuple[str, str]] = {
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     # D85: the caller reported site_access and AHN's own home-page check (ahn_check) was refused too. H3-C (with a curated customer page) is EDGE_CONSUMER_ROWS.
     "H3": ("hand_off_to_human", "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves."),
+    # D98: the caller reported site_access and AHN's own plain robots.txt read was refused too (no developer path). H3-R-C is EDGE_CONSUMER_ROWS.
+    "H3-R": ("hand_off_to_human", "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; tell your user, who can open the page themselves."),
     "O1": ("use_official_path", "An official developer path is listed; for API work use it, not page automation; for a task in the user's own account, hand the step to your user. robots.txt is pending: look up once more in {n} s."),
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
     "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
@@ -169,6 +171,7 @@ CONSUMER_ROWS_BEFORE = {
 }
 EDGE_CONSUMER_ROWS: dict[str, str] = {
     "H3": "The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools to retry; hand your user the step and the site's customer page, next_action.customer_url.",
+    "H3-R": "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; hand your user the site's customer page, next_action.customer_url.",
 }
 CONSUMER_HAND_TAIL = " The API may not reach the user's own account; hand the user next_action.customer_url."
 # D63: where robots.txt does not block pages (O1, O7) the customer page comes first and the developer API is the tail.
@@ -331,6 +334,8 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
             return "H2", True
         if "edge_refusal_confirmed" in reasons:
             return "H3", True
+        if "edge_refusal_robots" in reasons:
+            return "H3-R", True
     elif action == "use_official_path":
         for code, row in (("profile_pending", "O1"), ("robots_blocks_agents", "O2"), ("robots_blocks_some_agents", "O3"),
                           ("robots_names_vendor_alias", "O4"), ("robots_fetch_refused", "O5"),
@@ -519,14 +524,14 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     if not on and row in ROWS_BEFORE:
         sentence = ROWS_BEFORE[row]
     customer = None
-    if (do == "use_official_path" and row in CONSUMER_ROWS) or (on and (do == "proceed" or row == "H3")):
+    if (do == "use_official_path" and row in CONSUMER_ROWS) or (on and (do == "proceed" or row in ("H3", "H3-R"))):
         raw = customer_url(result.get("official_paths"))
         customer = safe_url(raw) if raw else None
         if raw and customer is None:
             LOG.warning("response_guide_url_dropped")
         if customer:
-            if row == "H3":
-                sentence = EDGE_CONSUMER_ROWS[row]  # D85: only reached with the D63 switch on, like the proceed answer it replaces
+            if row in ("H3", "H3-R"):
+                sentence = EDGE_CONSUMER_ROWS[row]  # D85 (D98: H3-R the same way): only reached with the D63 switch on, like the proceed answer it replaces
             elif on:
                 sentence = PROCEED_CONSUMER_ROWS[row] if do == "proceed" else CONSUMER_ROWS[row]
             else:

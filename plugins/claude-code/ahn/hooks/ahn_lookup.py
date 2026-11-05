@@ -123,7 +123,7 @@ FRESHNESS = frozenset({"fresh", "stale", "pending"})
 EVIDENCE_LEVELS = frozenset({"no_reports", "single_observation", "multiple_observations", "later_success_observed",
                              "stale_reports"})
 NEXT_CHECKS = frozenset({"locate_failure_stage", "before_target_response", "response_observed", "access_denial_observed",
-                         "edge_refusal_confirmed", "human_handoff", "account_handoff", "robots_fetch_refused", "robots_unknown",
+                         "edge_refusal_confirmed", "edge_refusal_robots", "human_handoff", "account_handoff", "robots_fetch_refused", "robots_unknown",
                          "robots_blocks_agents", "robots_blocks_some_agents", "robots_names_vendor_alias",
                          "robots_blocks_not_your_agent", "robots_allows_agents", "robots_wildcard_disallow",
                          "robots_grouping_differs_by_parser", "profile_not_read",

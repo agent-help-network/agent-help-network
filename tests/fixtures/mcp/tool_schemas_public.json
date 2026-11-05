@@ -2185,6 +2185,7 @@
         "response_observed",
         "access_denial_observed",
         "edge_refusal_confirmed",
+        "edge_refusal_robots",
         "provider_scope",
         "provider_components_only",
         "provider_incident_stale",

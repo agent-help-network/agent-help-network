@@ -293,11 +293,12 @@ def test_every_answer_is_on_a_listed_row_and_every_row_is_used():
                           "proceed": "P", "unknown": "U"}[action]
     assert count > 20000
     # U7-O (D95) needs the D95 switch on, which this space leaves at the default of recommendation(); test_d95_no_dev_path_on_failure.py uses it.
-    assert used | {"U7-O", "U9-O"} == set(ROWS), set(ROWS) - used
+    # H3-R (D98) likewise needs robots_refusal_handoff; test_d98_robots_refusal_handoff.py uses it.
+    assert used | {"U7-O", "U9-O", "H3-R"} == set(ROWS), set(ROWS) - used
 
 
 def test_the_table_has_the_36_rows_and_the_nine_do_values():
-    assert len(ROWS) == 37  # W8 came with D57; P1-V, P2-V, P3, O7-N and O7-K with D63; H3 with D85; U7-O and U9-O with D95
+    assert len(ROWS) == 38  # W8 came with D57; P1-V, P2-V, P3, O7-N and O7-K with D63; H3 with D85; U7-O and U9-O with D95; H3-R with D98
     assert set(DO_VALUES) == set(NextAction.model_fields["do"].annotation.__args__) and len(DO_VALUES) == 9
 
 
