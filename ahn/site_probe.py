@@ -968,6 +968,10 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
             if why == "joined":
                 return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
         _queue(conn, site_host)
+        if row is None and getattr(settings, "d99_unreadable_not_pending", True) and _robots_unreadable_idle(access_profile):
+            # D99: the profile's robots.txt read failed and none is queued, so no home check will happen soon: say so
+            # instead of a wait that no later lookup would end.
+            return _valid(not_measured_view("robots_unreadable"))
         return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
     except Exception:
         LOG.warning("site_probe_lookup_unavailable")
@@ -976,6 +980,13 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
         except Exception:
             pass
         return None
+
+
+def _robots_unreadable_idle(access_profile: dict | None) -> bool:
+    """D99: the profile's robots.txt read failed (error), has never succeeded (no fetched_at) and carries no
+    retry_after_seconds (no read is queued now)."""
+    return (isinstance(access_profile, dict) and access_profile.get("robots_status") == "error"
+            and access_profile.get("fetched_at") is None and "retry_after_seconds" not in access_profile)
 
 
 def _valid(shown: dict | None) -> dict | None:

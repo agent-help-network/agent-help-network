@@ -53,6 +53,22 @@ def parse_d95_switch(raw: str) -> bool:
     return False
 
 
+_D99_WARNED = False
+
+
+def parse_d99_switch(raw: str) -> bool:
+    """AHN_D99_UNREADABLE_NOT_PENDING (D99): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
+    answer is the risky side), and logs one warning per process: the code only, never the value."""
+    global _D99_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _D99_WARNED:
+        _D99_WARNED = True
+        LOG.warning("d99_switch_unknown_value")
+    return False
+
+
 def parse_edge_refusal_switch(raw: str) -> bool:
     """AHN_EDGE_REFUSAL_HANDOFF (D85): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
     answer is the risky side), and logs one warning per process: the code only, never the value."""
@@ -147,6 +163,9 @@ class Settings:
     # AHN_D95_NO_DEV_PATH_ON_FAILURE=0 (D95) gives a service_error lookup (a 5xx or no response) on a host with only a developer path
     # the answer from before D95 (use_official_path). On by default; an unknown value is read as off (with one warning), never as on.
     d95_no_dev_path_on_failure: bool = True
+    # AHN_D99_UNREADABLE_NOT_PENDING=0 (D99) shows ahn_check as pending (with retry_after_seconds) again for a host whose robots.txt AHN
+    # could not read and that has no read queued. On by default; an unknown value is read as off (with one warning), never as on.
+    d99_unreadable_not_pending: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -206,4 +225,5 @@ class Settings:
                    robots_rules_fold=os.environ.get("AHN_ROBOTS_RULES_FOLD", "").strip() != "0",
                    edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")),
                    failure_kind_lines=parse_failure_kind_switch(os.environ.get("AHN_FAILURE_KIND_LINES", "")),
-                   d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")))
+                   d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")),
+                   d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")))
