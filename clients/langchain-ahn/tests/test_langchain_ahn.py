@@ -293,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.1"
+    assert langchain_ahn.__version__ == "0.2.2"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 
@@ -381,6 +381,18 @@ def test_private_helper_signature_still_takes_the_keywords():
 GUIDED = {**ANSWER, "summary_line": "An official developer path is listed for this site. Prefer that documented API or portal over page automation.",
           "next_action": {"do": "use_official_path", "url": "https://developer.example.com/apis", "retry_after_seconds": None},
           "links": {"feedback": "https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports"}}
+
+
+def test_customer_url_reaches_the_model_and_is_absent_when_not_sent(transport):
+    customer = "https://help.example.com/account"
+    transport(body={**GUIDED, "next_action": {**GUIDED["next_action"], "customer_url": customer}})
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert data["next_action"]["customer_url"] == customer
+    assert f"Customer path: {customer}" in summary
+    ahn_client.clear_cache()  # the client caches answers per host for 10 minutes
+    transport(body=GUIDED)
+    summary, data = split(AHNLookupTool().invoke({"hostname": "example.com"}))
+    assert "customer_url" not in data["next_action"] and "Customer path:" not in summary
 
 
 def test_the_services_line_and_next_action_reach_the_model(transport):
