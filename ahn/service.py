@@ -18,7 +18,7 @@ from .provenance import operator_id
 from .settings import Settings
 from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_covers_api_only, status_page_requires_sign_in
 from . import response_guide
-from .triage import EDGE_CODE, EDGE_FAILURE_STAGES, LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
+from .triage import EDGE_CODE, EDGE_FAILURE_STAGES, EDGE_ROBOTS_CODE, LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
 
 
 LOG = logging.getLogger(__name__)
@@ -694,13 +694,18 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 edge_refusal = site_probe.refusal_corroborated(conn, host, ahn_check)
             except Exception:
                 LOG.warning("edge_refusal_check_unavailable")
+        # D98: a site_access lookup on a host that refused AHN's plain robots.txt read and lists no developer path is handed to the user,
+        # whatever the task_step: a status_check lookup that reports the failure gets the same recommendation.
+        robots_refusal = bool(settings.d98_robots_refusal_handoff and not plain_view)
         recommended = recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                                      provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
                                      vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
                                      proceed_without_failure=settings.proceed_without_failure,
                                      assume_failure=assume_failure, edge_refusal=edge_refusal,
-                                     service_error_reference_only=settings.d95_no_dev_path_on_failure)
+                                     service_error_reference_only=settings.d95_no_dev_path_on_failure,
+                                     robots_refusal_handoff=robots_refusal)
         edge_decided = EDGE_CODE in recommended["reasons"]
+        robots_edge_decided = EDGE_ROBOTS_CODE in recommended["reasons"]
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
             "synthetic": test_query, "window_hours": window_hours, "data_horizon_hours": 168,
@@ -721,7 +726,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                        provider_partial=provider_partial, now=now, agent_vendor=agent_vendor,
                                        vendor_aware=settings.vendor_aware_block,
                                        proceed_without_failure=settings.proceed_without_failure,
-                                       assume_failure=assume_failure, edge_refusal=edge_decided),
+                                       assume_failure=assume_failure, edge_refusal=edge_decided,
+                                       robots_refusal=robots_edge_decided),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts

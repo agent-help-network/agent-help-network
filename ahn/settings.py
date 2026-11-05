@@ -67,6 +67,22 @@ def parse_d96_switch(raw: str) -> bool:
     return False
 
 
+_D98_WARNED = False
+
+
+def parse_d98_switch(raw: str) -> bool:
+    """AHN_D98_ROBOTS_REFUSAL_HANDOFF (D98): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
+    answer is the risky side), and logs one warning per process: the code only, never the value."""
+    global _D98_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _D98_WARNED:
+        _D98_WARNED = True
+        LOG.warning("d98_switch_unknown_value")
+    return False
+
+
 _D99_WARNED = False
 
 
@@ -181,6 +197,10 @@ class Settings:
     # failure signal is sent, and a status page as next_action.url only on a use_official_path row. On by default; an unknown value is
     # read as off (with one warning), never as on.
     d96_status_check_one_action: bool = True
+    # AHN_D98_ROBOTS_REFUSAL_HANDOFF=0 (D98) keeps the answer from before D98 (unknown, robots_fetch_refused) for a site_access lookup on a
+    # host that refused AHN's plain robots.txt read and lists no developer path. On by default; an unknown value is read as off (with one
+    # warning), never as on.
+    d98_robots_refusal_handoff: bool = True
     # AHN_D99_UNREADABLE_NOT_PENDING=0 (D99) shows ahn_check as pending (with retry_after_seconds) again for a host whose robots.txt AHN
     # could not read and that has no read queued. On by default; an unknown value is read as off (with one warning), never as on.
     d99_unreadable_not_pending: bool = True
@@ -244,5 +264,6 @@ class Settings:
                    edge_refusal_handoff=parse_edge_refusal_switch(os.environ.get("AHN_EDGE_REFUSAL_HANDOFF", "")),
                    failure_kind_lines=parse_failure_kind_switch(os.environ.get("AHN_FAILURE_KIND_LINES", "")),
                    d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")),
+                   d98_robots_refusal_handoff=parse_d98_switch(os.environ.get("AHN_D98_ROBOTS_REFUSAL_HANDOFF", "")),
                    d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")),
                    d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")))
