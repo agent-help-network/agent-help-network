@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import ABSENT, ALLOWS, FORBIDDEN, FULL, GUIDE_MODES, STAGES, rec_of, result_of, variants  # noqa: E402
 from test_response_guide import block, robots  # noqa: E402
+import _d97_scope  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.response_guide import FAILED_U3, FAILED_U3_SERVICE_ERROR, LINE_MAX, SERVICE_ERROR_CONSUMER_ROWS, SERVICE_ERROR_ROWS, guide  # noqa: E402
@@ -85,7 +86,8 @@ def compare(stride: int) -> dict:
                 want = expected_sentence(row, error_class, curated, stage)
                 inside = bool(on and not status_check and failure_observed(error_class, stage) and want is not None)
                 if not inside:
-                    assert new == old, (case_e, stage, mode)
+                    # D97 later changed U6/U7/U9 after a service_error (and with a curated customer path); nothing else differs
+                    assert new == _d97_scope.adjust(old, row, on, status_check, error_class, stage, True, result.get("official_paths")), (case_e, stage, mode)
                     continue
                 counts["changed"] += 1
                 counts["service_error_changed" if row.startswith("P") else "u3_changed"] += 1

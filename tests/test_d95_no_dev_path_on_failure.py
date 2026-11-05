@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import ABSENT, ALLOWS, CONSUMER, FULL, GUIDE_MODES, NOW, OFFICIAL, STAGES, checks_of, result_of, variants  # noqa: E402
 from test_response_guide import block, edge_cases, pending, robots  # noqa: E402
+import _d97_scope  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.response_guide import LINE_MAX, ROWS, U7_O_NO_RESPONSE, U7_O_SERVICE_ERROR, guide  # noqa: E402
@@ -103,6 +104,10 @@ def test_the_pairs_that_change_are_exactly_the_d95_condition_in_the_whole_grid()
                     continue
                 for kind in (True, False):
                     old_out = pre_rg.guide(result_of(case, old), *mode, case.get("error_class"), stage, kind)
+                    old_row, _ = response_guide.select_row(old, case.get("access_profile"), case.get("provider_status"),
+                                                           case.get("site_host", "example.com"), case.get("official"), variants=mode[0])
+                    # D97 later changed U6/U7/U9 after a service_error; D95's own rows are not among them
+                    old_out = _d97_scope.adjust(old_out, old_row, mode[0], mode[2], case.get("error_class"), stage, kind, case.get("official"))
                     # the guide alone: an answer that is not a D95 one is rendered as before
                     assert guide(result_of(case, old), *mode, case.get("error_class"), stage, kind) == old_out, (case, stage, mode)
                     new_out = guide(result_of(case, new), *mode, case.get("error_class"), stage, kind)

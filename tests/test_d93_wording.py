@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))
 import test_d63_decision_order as t63  # noqa: E402
 import test_response_guide as trg  # noqa: E402
 from test_d85_edge_refusal import FULL, GUIDE_MODES, STAGES, rec_of, result_of, variants  # noqa: E402
+import _d97_scope  # noqa: E402
 
 from ahn import cause, response_guide, triage  # noqa: E402
 from ahn.response_guide import CONSUMER_ROWS, LINE_MAX, ROWS, guide  # noqa: E402
@@ -56,6 +57,10 @@ def test_only_four_rows_change_and_only_in_summary_line():
                     continue
                 for kind in (True,):
                     old = pre_rg.guide(copy.deepcopy(result), *mode, error_class, stage, kind)
+                    row0, _ = response_guide.select_row(rec, result["access_profile"], result["provider_status"], result["site_host"],
+                                                        result["official_paths"], variants=mode[0])
+                    # D97 later changed U6/U7/U9 after a service_error; the rows D93 changed are not among them
+                    old = _d97_scope.adjust(old, row0, mode[0], mode[2], error_class, stage, kind, result.get("official_paths"))
                     new = guide(copy.deepcopy(result), *mode, error_class, stage, kind)
                     pairs += 1
                     assert {k: v for k, v in new.items() if k != "summary_line"} == {k: v for k, v in old.items() if k != "summary_line"}, (case, stage, mode)

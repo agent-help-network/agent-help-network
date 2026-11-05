@@ -20,6 +20,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import ABSENT, ALLOWS, FULL, GUIDE_MODES, STAGES, rec_of, result_of, variants  # noqa: E402
 from test_response_guide import block, robots  # noqa: E402
+import _d97_scope  # noqa: E402
 
 from ahn import response_guide, triage  # noqa: E402
 from ahn.response_guide import (FAILED_U3_NO_RESPONSE, FAILED_U3_SERVICE_ERROR, LINE_MAX, NO_RESPONSE_CONSUMER_ROWS,  # noqa: E402
@@ -68,7 +69,8 @@ def test_only_service_error_with_no_response_changes_and_only_the_summary_line()
                 inside = bool(on and not status_check and error_class == "service_error" and stage == "before_target_response"
                               and (row.startswith("P") or row == "U3"))
                 if not inside:
-                    assert new == old, (case, stage, mode)
+                    # D97 later changed U6/U7/U9 after a service_error (and with a curated customer path); nothing else differs
+                    assert new == _d97_scope.adjust(old, row, on, status_check, error_class, stage, True, result.get("official_paths")), (case, stage, mode)
                     continue
                 changed += 1
                 assert new["summary_line"] != old["summary_line"] and "5xx" not in new["summary_line"]

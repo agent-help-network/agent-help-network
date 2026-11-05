@@ -257,6 +257,31 @@ FAILED_U3_NO_RESPONSE = _U3_STOP + "Either way, no response came; check your too
 # D95: the failure-kind sentences of U7-O (a developer API is listed, robots.txt unread; the failure is a 5xx or no response).
 U7_O_NO_RESPONSE = "No response came (timeout or connection), and AHN could not read the site's robots.txt either. Check your tool and path; retry once later; then tell your user."
 U7_O_SERVICE_ERROR = "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Retry once later; if it persists, tell your user. API work: official_paths."
+# D97: the same failure-kind sentences for the three rows that list no developer path (a customer path may be curated) (U6 the site refused AHN's plain robots.txt read,
+# U7 robots.txt unread, U9 no policy read for the host). Chosen only with the D87 switch on, for error_class=service_error (no response, or any
+# other 5xx). With a curated customer path the clause hands the user next_action.customer_url (``url`` stays null).
+NO_PATH_ROWS = ("U6", "U7", "U9")
+_NO_PATH_CAUSE = {"U6": "the site refused AHN's plain robots.txt read too", "U7": "AHN could not read the site's robots.txt either",
+                  "U9": "AHN has no declared policy for this host"}
+_NO_PATH_CAUSE_5XX = {"U6": "; the site also refused AHN's plain robots.txt read", "U7": ", and could not read the site's robots.txt",
+                      "U9": ", and has no declared policy for this host"}
+_NO_PATH_NO_RESPONSE = "No response came (timeout or connection), and "
+_NO_PATH_5XX = "AHN cannot judge a single page's 5xx"
+_NO_PATH_RETRY = "Retry once later; if it persists, tell your user."
+NO_PATH_NO_RESPONSE_ROWS: dict[str, str] = {row: f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[row]}. Check your tool and path; retry once later; then tell your user."
+                                            for row in NO_PATH_ROWS}
+NO_PATH_NO_RESPONSE_CONSUMER_ROWS: dict[str, str] = {row: f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[row]}. Check your tool; retry once later, then hand your user next_action.customer_url."
+                                                     for row in NO_PATH_ROWS}
+NO_PATH_SERVICE_ERROR_ROWS: dict[str, str] = {row: f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[row]}. {_NO_PATH_RETRY}" for row in NO_PATH_ROWS}
+NO_PATH_SERVICE_ERROR_CONSUMER_ROWS: dict[str, str] = {row: f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[row]}. Retry once later; if it persists, tell your user and hand them next_action.customer_url."
+                                                       for row in NO_PATH_ROWS}
+# D97: with no failure signal, a curated customer path replaces "no official path is listed": the page is named, ``url`` stays null.
+_NO_PATH_CUSTOMER = "A customer page is listed (next_action.customer_url) for tasks a person does on the site."
+NO_PATH_CONSUMER_ROWS: dict[str, str] = {
+    "U6": "The site refused even a plain automated robots.txt read. Page automation may be refused; hand off if needed. " + _NO_PATH_CUSTOMER,
+    "U7": "The site's robots.txt could not be read, so no declared policy is known. " + _NO_PATH_CUSTOMER + " Follow your operator's rules.",
+    "U9": "No declared policy could be read for this host. " + _NO_PATH_CUSTOMER + " Follow your operator's rules and the site's terms.",
+}
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
 
@@ -478,7 +503,10 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     robots block, not only on a use_official_path row; and when the lookup reports a failure and the status page is on the looked-up host
     itself, it hands the step to the user (do hand_off_to_human, url null, STATUS_ROWS T*-F). A lookup that reports a failure keeps its own
     sentence (D87) wherever no status sentence applies, and on a robots block unless the status page is on another site. With no status page
-    known, a developer path is never the url: url is null, do is hand_off_to_human after a failure (sentence T4-R) or no_clear_action."""
+    known, a developer path is never the url: url is null, do is hand_off_to_human after a failure (sentence T4-R) or no_clear_action.
+    D97 (failure_kind_lines, never for a status_check lookup): U6, U7 and U9 (no official path of any kind) take the NO_PATH_* sentences after
+    a service_error (no response or 5xx), and, with a curated customer path, name next_action.customer_url (``url`` stays null; with no
+    failure signal NO_PATH_CONSUMER_ROWS). Nothing but the sentence, and customer_url on those rows, changes."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -531,6 +559,21 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                 sentence = FAILED_U3_NO_RESPONSE if failure_stage == "before_target_response" else FAILED_U3_SERVICE_ERROR
             else:
                 sentence = FAILED_U3
+    if on and failure_kind_lines and not status_check and row in NO_PATH_ROWS:
+        # D97: U6/U7/U9 (no official path of any kind) after a 5xx or no response, or with a curated customer path and no failure signal
+        signal = error_class is not None or failure_stage is not None
+        if error_class == "service_error" or not signal:
+            raw = customer_url(result.get("official_paths"))
+            customer = safe_url(raw) if raw else None
+            if raw and customer is None:
+                LOG.warning("response_guide_url_dropped")
+            if error_class == "service_error":
+                if failure_stage == "before_target_response":
+                    sentence = (NO_PATH_NO_RESPONSE_CONSUMER_ROWS if customer else NO_PATH_NO_RESPONSE_ROWS)[row]
+                else:
+                    sentence = (NO_PATH_SERVICE_ERROR_CONSUMER_ROWS if customer else NO_PATH_SERVICE_ERROR_ROWS)[row]
+            elif customer:
+                sentence = NO_PATH_CONSUMER_ROWS[row]
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))
