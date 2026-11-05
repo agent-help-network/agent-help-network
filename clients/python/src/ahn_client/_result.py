@@ -86,13 +86,18 @@ class NextAction:
     """The service's ``next_action`` (D51), validated field by field. ``do`` is one of ``DO_VALUES``. ``url`` is an https URL
     from the service's curated official paths or None. ``retry_after_seconds`` is when to repeat the same lookup once (not a
     polling interval) or None. ``stop_if_you_are`` lists agent tokens that, if your requests send one, mean a declared block
-    (empty tuple when the service did not send it). ``lookup_host`` is the site's main domain whose policy covers this host."""
+    (empty tuple when the service did not send it). ``lookup_host`` is the site's main domain whose policy covers this host.
+    ``customer_url`` (0.6.7) is the site's own customer page for a task in the user's own account, which a developer API may
+    not reach: hand it to your user. ``status_url`` (0.6.7) is the provider's or the official status page for a
+    ``task_step=status_check`` lookup. Both are https URLs or None (an older service does not send them)."""
 
     do: str
     url: Optional[str] = None
     retry_after_seconds: Optional[int] = None
     stop_if_you_are: Tuple[str, ...] = ()
     lookup_host: Optional[str] = None
+    customer_url: Optional[str] = None
+    status_url: Optional[str] = None
 
     @classmethod
     def parse(cls, value: Any) -> Optional["NextAction"]:
@@ -107,6 +112,8 @@ class NextAction:
             retry_after_seconds=_seconds(data.get("retry_after_seconds")),
             stop_if_you_are=tuple(item for item in tokens if isinstance(item, str) and TOKEN.fullmatch(item))[:16],
             lookup_host=lookup if isinstance(lookup, str) and HOSTNAME.fullmatch(lookup) else None,
+            customer_url=_url(data.get("customer_url")),
+            status_url=_url(data.get("status_url")),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -120,6 +127,10 @@ class NextAction:
             data["stop_if_you_are"] = list(self.stop_if_you_are)
         if self.lookup_host:
             data["lookup_host"] = self.lookup_host
+        if self.customer_url:
+            data["customer_url"] = self.customer_url
+        if self.status_url:
+            data["status_url"] = self.status_url
         return data
 
 
@@ -128,6 +139,10 @@ def _head(host: str, line: str, action: Optional[NextAction], site_retry_after: 
     parts = [f"AHN {host}: {line}"]
     if action and action.url:
         parts.append(f"URL: {action.url}")
+    if action and action.customer_url and action.customer_url != action.url:
+        parts.append(f"Customer path: {action.customer_url}")
+    if action and action.status_url and action.status_url not in (action.url, action.customer_url):
+        parts.append(f"Status page: {action.status_url}")
     if action and action.stop_if_you_are:
         parts.append("Stop if you are: " + ", ".join(action.stop_if_you_are[:6]) + ".")
     if action and action.lookup_host:

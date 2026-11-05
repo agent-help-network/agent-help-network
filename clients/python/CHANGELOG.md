@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7
+
+- `NextAction` keeps `customer_url` (the site's own customer page for a task in the user's own account) and `status_url` (the status page for a `task_step=status_check` lookup); before, both were dropped. They are https URLs or None, are part of `to_dict()` and, when they differ from `url`, of `summary()` ("Customer path:", "Status page:"). An older service that does not send them gives None.
+
 ## 0.6.6
 
 - A server `summary_line` of up to 401 printable ASCII characters is used as sent (the limit was 200). The service now puts the status sentence before the robots sentence in a `task_step=status_check` answer that rests on a robots block, so that line can be longer than one sentence.

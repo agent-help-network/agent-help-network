@@ -294,7 +294,7 @@ def test_summary_stays_within_700_with_long_values():
 
 
 def test_next_action_is_exported():
-    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.6"
+    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.7"
     assert _result.NextAction is NextAction
 
 
@@ -447,3 +447,37 @@ def test_a_two_sentence_server_line_of_300_characters_is_used_as_sent():
     assert parse({**answer("use_official_path"), "summary_line": line}).summary_line == line
     assert parse({**answer("use_official_path"), "summary_line": "x" * 401}).summary_line == "x" * 401
     assert parse({**answer("use_official_path"), "summary_line": "x" * 402}).summary_line is None
+
+
+# --- customer_url and status_url (D61, D69; ahn-client 0.6.7) --------------------------------------------------
+
+CUSTOMER = "https://help.example.com/account/billing"
+STATUS_PAGE = "https://status.example.com/"
+
+
+def test_customer_url_and_status_url_are_kept_and_shown():
+    body = answer("use_official_path")
+    body["next_action"].update(customer_url=CUSTOMER, status_url=STATUS_PAGE)
+    action = parse(body).next_action
+    assert action.customer_url == CUSTOMER and action.status_url == STATUS_PAGE
+    assert action.to_dict()["customer_url"] == CUSTOMER and action.to_dict()["status_url"] == STATUS_PAGE
+    summary = parse(body).summary()
+    assert f"Customer path: {CUSTOMER}" in summary and f"Status page: {STATUS_PAGE}" in summary
+    assert len(summary) <= MAX_SUMMARY
+
+
+def test_an_older_answer_without_the_keys_still_parses():
+    for do in sorted(CASES):
+        result = parse(answer(do))
+        assert result.next_action.customer_url is None and result.next_action.status_url is None
+        assert "customer_url" not in result.next_action.to_dict() and "status_url" not in result.next_action.to_dict()
+        assert "Customer path:" not in result.summary() and "Status page:" not in result.summary()
+
+
+def test_customer_url_equal_to_url_is_not_repeated_and_bad_values_are_dropped():
+    body = answer("use_official_path")
+    body["next_action"]["customer_url"] = body["next_action"]["url"]
+    assert "Customer path:" not in parse(body).summary()
+    for bad in ("http://evil.example/x", "https://a.example/x y", 7, None, "https://" + "a" * 200 + ".example/"):
+        body["next_action"]["customer_url"] = bad
+        assert parse(body).next_action.customer_url is None
