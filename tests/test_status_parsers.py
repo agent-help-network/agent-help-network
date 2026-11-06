@@ -130,13 +130,17 @@ def _betterstack(state, updated_at="2026-10-19T21:18:50.858Z", **extra):
 
 @pytest.mark.parametrize("state,indicator", [("operational", "none"), ("degraded", "minor"), ("downtime", "major"), ("maintenance", "maintenance")])
 def test_betterstack_states_map_to_indicators(state, indicator):
-    expected = (indicator, datetime(2026, 10, 19, 21, 18, 50, 858000, tzinfo=timezone.utc))
-    assert parse_betterstack(_betterstack(state)) == expected
-    assert _read(BETTERSTACK, lambda _r: httpx.Response(200, json=_betterstack(state))) == expected
+    # D104: the page's own updated_at is not the update time; this body lists no report, so there is none (tests/test_d104_betterstack_time.py).
+    assert parse_betterstack(_betterstack(state)) == (indicator, None)
+    assert _read(BETTERSTACK, lambda _r: httpx.Response(200, json=_betterstack(state))) == (indicator, None)
+    # The reading from before D104 (switch AHN_D104_BETTERSTACK_UPDATED_AT=0) still takes the page's updated_at.
+    assert parse_betterstack(_betterstack(state), events=False) == (
+        indicator, datetime(2026, 10, 19, 21, 18, 50, 858000, tzinfo=timezone.utc))
 
 
 def test_betterstack_update_time_is_optional():
     assert parse_betterstack(_betterstack("operational", updated_at=None)) == ("none", None)
+    assert parse_betterstack(_betterstack("operational", updated_at=None), events=False) == ("none", None)
 
 
 @pytest.mark.parametrize("state", ["Operational", "outage", "UP", "partial_outage", "", None, 0])
@@ -147,14 +151,20 @@ def test_betterstack_unknown_state_is_invalid_body(state):
 
 
 @pytest.mark.parametrize("body", [[], "operational", None, {}, {"data": None}, {"data": []}, {"data": {}}, {"data": {"attributes": None}},
-                                  {"data": {"attributes": {}}}, {"page": {"status": "operational"}},
-                                  _betterstack("operational", updated_at="soon"), _betterstack("operational", updated_at=5),
-                                  _betterstack("operational", updated_at="2026-10-19T21:18:50")])
+                                  {"data": {"attributes": {}}}, {"page": {"status": "operational"}}])
 def test_betterstack_malformed_body_is_invalid_body(body):
     with pytest.raises(ValueError):
         parse_betterstack(body)
     assert _read_label(BETTERSTACK, lambda _r: httpx.Response(200, json=body)) == "invalid_body"
     assert _read_label(BETTERSTACK, lambda _r: httpx.Response(200, content=b"{not json")) == "invalid_body"
+
+
+@pytest.mark.parametrize("updated_at", ["soon", 5, "2026-10-19T21:18:50"])
+def test_betterstack_bad_page_time_fails_only_the_reading_from_before_d104(updated_at):
+    body = _betterstack("operational", updated_at=updated_at)
+    with pytest.raises(ValueError):
+        parse_betterstack(body, events=False)
+    assert parse_betterstack(body) == ("none", None)  # D104 never reads the page's updated_at
 
 
 def _padded(size):
