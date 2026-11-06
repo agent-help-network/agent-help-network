@@ -121,3 +121,12 @@ def test_a_recovered_profile_is_measured_at_once(db, monkeypatch):
     stored = measure(db, home=home, now=later)
     assert home.calls == [HOST] and stored["outcome"] == "reachable"
     assert lookup(db)["ahn_check"]["status"] == "measured"
+
+
+def test_a_profile_with_its_reread_already_queued_keeps_pending(db, monkeypatch):
+    read_profile(db, monkeypatch, status="error")                           # never read successfully
+    with connect(db) as conn:
+        conn.execute("UPDATE host_access_profile SET last_error_at=now()-interval '2 hours'")   # retry window over: a re-read is due
+    shown = lookup(db)
+    assert "retry_after_seconds" in shown["access_profile"]
+    assert shown["ahn_check"]["status"] == "pending"                        # the same rule as D99
