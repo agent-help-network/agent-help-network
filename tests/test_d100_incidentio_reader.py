@@ -1,5 +1,5 @@
 """D100: an incident.io-shaped status page keeps its overall indicator at "none" while an incident that names no component is
-open, so the feed reader also reads that page's summary.json (its unresolved incidents), whatever the indicator says.
+open, so the feed reader also reads that page's summary.json (its unresolved incidents), while its indicator is not active (minor or above, maintenance).
 
 Pure tests on synthetic bodies (MockTransport; no real status page, no database). The request order of a Statuspage page that is
 not of this shape is held to what it was before: one request for a quiet page, three for an active one."""
@@ -91,9 +91,18 @@ def test_the_two_shapes_never_overlap():
         assert not (status_scope.incidentio_page_id(body) and status_scope.statuspage_page_id(body))
 
 
-# --- an incident.io page: summary.json is read once, whatever the indicator -------------------------------------------------
+# --- an incident.io page: summary.json is read once while the indicator is not active --------------------------------------
 
-@pytest.mark.parametrize("indicator", ["none", "minor", "major", "critical", "maintenance", "unknown"])
+@pytest.mark.parametrize("indicator", ["minor", "major", "critical", "maintenance"])
+def test_an_incident_io_page_with_an_active_indicator_is_read_as_before_d100(indicator, no_gap):
+    routes = {STATUS_JSON: status_body(indicator), SUMMARY_JSON: summary_body([incident()])}
+    read_indicator, box, seen = read(routes, scope={})
+    assert read_indicator == indicator
+    assert seen == [STATUS_JSON]                                     # no summary.json, no Statuspage list either
+    assert "platform" not in box and "scope" not in box and no_gap == []
+
+
+@pytest.mark.parametrize("indicator", ["none", "unknown"])
 def test_an_incident_io_page_reads_summary_json_once_and_not_the_two_statuspage_lists(indicator, no_gap):
     routes = {STATUS_JSON: status_body(indicator), SUMMARY_JSON: summary_body([incident()])}
     read_indicator, box, seen = read(routes, scope={})
@@ -292,3 +301,20 @@ def test_the_switch_parses_like_its_siblings(monkeypatch, caplog):
 
 def test_a_summary_body_is_valid_json_the_tests_can_round_trip():
     assert json.loads(json.dumps(summary_body([incident()])))["incidents"][0]["status"] == "monitoring"
+
+
+def test_a_listed_incident_on_an_incident_io_page_is_due_on_the_active_interval():
+    from datetime import datetime, timedelta, timezone
+
+    from ahn.background_reads import feed_next_due
+
+    t = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
+    base = {"indicator": "none", "fetched_at": t, "last_error_at": None, "failures": None, "last_error_detail": None}
+    listed = {**base, "feed_platform": "incident_io", "active_incidents": 1}
+    for idle in (timedelta(hours=1), timedelta(hours=2)):
+        assert feed_next_due(listed, idle) == t + timedelta(minutes=15)
+        for quiet in ({**base, "feed_platform": "incident_io", "active_incidents": 0},
+                      {**base, "feed_platform": "incident_io", "active_incidents": None},
+                      {**base, "feed_platform": None, "active_incidents": 1},
+                      {**base, "feed_platform": None, "active_incidents": None}):
+            assert feed_next_due(quiet, idle) == t + idle

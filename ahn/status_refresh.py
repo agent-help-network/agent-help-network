@@ -1644,8 +1644,9 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     The robots.txt decision for this feed's host (D50) is the caller's: _read_and_store asks the gate first and passes
     scope=None when the host's robots.txt disallows a list. Nothing in here consults the gate.
 
-    incidentio (D100), if given for a Statuspage-shaped address: when the status.json body has the incident.io shape, whatever
-    its indicator, ``incidentio["platform"]`` is set and the page's summary.json is read once (unresolved incidents) into
+    incidentio (D100), if given for a Statuspage-shaped address: when the status.json body has the incident.io shape and its
+    indicator is not active (minor or above, or maintenance: such a page is read and stored as before D100, no summary.json
+    request), ``incidentio["platform"]`` is set and the page's summary.json is read once (unresolved incidents) into
     ``incidentio["scope"]``. ``incidentio["allowed"]()`` is asked once before the request (rest after failures, time budget,
     robots.txt decision for that path, the run's count limit); when it refuses, the list is skipped, not a failure.
 
@@ -1689,7 +1690,11 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
             scope.update(status_scope.read_scope(
                 _paced(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP)), page_id,
                 label=failure_label, allowed=scope_allowed or (lambda: True)))
-    if (incidentio is not None and source.kind == "statuspage" and source.api_url.endswith(STATUS_JSON_SUFFIX)):
+    # An active indicator is the page's own statement and keeps the scope path as before: the list is read only where the
+    # indicator reads "none" (the case D100 is about), so an incident.io page with an active indicator is read and answered as
+    # it was before D100, and costs no further request.
+    if (incidentio is not None and source.kind == "statuspage" and source.api_url.endswith(STATUS_JSON_SUFFIX)
+            and result[0] not in status_scope.ACTIVE_INDICATORS):
         incidentio_id = status_scope.incidentio_page_id(body)
         if incidentio_id:
             incidentio["platform"] = INCIDENTIO_PLATFORM
@@ -1913,7 +1918,7 @@ def _discovered_source(site_host: str, row) -> Source | None:
 
 
 def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | None = None, min_interval: int = 15,
-                wait: bool = False, scope_allowed=None, report_blocked: bool = False) -> bool:
+                wait: bool = False, scope_allowed=None, report_blocked: bool = False, incidentio_slot=None) -> bool:
     """Fetch one verified source now; retain prior data as stale on failure.
 
     Request-path callers leave wait=False: when another thread is already
@@ -1925,6 +1930,10 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
 
     A feed whose host's robots.txt disallows it is not requested (D50) and reads as False; the cron asks with
     ``report_blocked`` to tell that from a failure (it then gets BLOCKED, which is also falsy).
+
+    ``incidentio_slot`` (D100) is the cron's per-run count of incident.io summary.json requests (_read_and_store); a lookup's
+    background refresh passes none, so it has no count limit: it is one feed read for one host, held back by ``min_interval``,
+    the per-host lock, the background reads' pacing and the 15-minute interval below.
     """
     source = SOURCES.get(site_host)
     if source is None:
@@ -1943,7 +1952,8 @@ def refresh_one(settings: Settings, site_host: str, *, client: httpx.Client | No
             return cached
         lock.acquire()
     try:
-        outcome = _read_and_store(settings, [site_host], source, client, min_interval=min_interval, scope_allowed=scope_allowed)
+        outcome = _read_and_store(settings, [site_host], source, client, min_interval=min_interval, scope_allowed=scope_allowed,
+                                 incidentio_slot=incidentio_slot)
         if outcome is BLOCKED:
             return BLOCKED if report_blocked else False
         return bool(_cached_ok(settings, site_host)) if outcome is None else outcome
@@ -2009,7 +2019,7 @@ def _due_groups(conn, now: datetime) -> tuple[list[dict], dict]:
     rows = conn.execute(
         """SELECT s.site_host,s.source_name,s.status_page_url,s.api_url,
                   c.indicator,c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
-                  c.feed_source,c.active_incidents
+                  c.feed_source,c.active_incidents,c.feed_platform
            FROM status_sources s
            LEFT JOIN queried_hosts q ON q.site_host=s.site_host
            LEFT JOIN status_cache c ON c.site_host=s.site_host
@@ -2102,7 +2112,8 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
             attempted += 1
             _pace()
             if source is None:
-                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True)
+                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True,
+                               incidentio_slot=incidentio_slot)
             else:
                 ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget, incidentio_slot=incidentio_slot)
                 if ok is None:

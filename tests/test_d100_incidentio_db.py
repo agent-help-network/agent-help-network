@@ -6,7 +6,7 @@ Stub feeds only (MockTransport); no real status page and no real robots.txt is r
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -295,3 +295,82 @@ def test_the_migration_adds_one_nullable_column_with_a_closed_value_set(lookup):
         with pytest.raises(Exception):
             conn.execute("UPDATE status_cache SET feed_platform='other' WHERE false OR site_host='none'")
             conn.execute("INSERT INTO status_cache (site_host,indicator,feed_platform) VALUES ('x.example','none','other')")
+
+
+# --- an active indicator is answered and stored as before D100 (the switch on and off give one answer) ----------------------
+
+def _stale_incident():
+    when = (datetime.now(timezone.utc) - timedelta(days=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {**OPEN, "created_at": when, "updated_at": when}
+
+
+def _answers_with_switch(monkeypatch, on: bool, indicator: str, maintenance_key: bool):
+    """One lookup round (a plain one, a status check, and a failure report) against an incident.io page with an active indicator."""
+    settings = Settings(TEST_URL, "test-pepper-must-be-at-least-thirty-two-chars", public_mode=True, collect_lookup_metrics=True,
+                        d100_incidentio_incidents=on)
+    with connect(settings) as conn:
+        conn.execute("TRUNCATE status_cache, status_sources, queried_hosts, host_access_profile, background_reads, provider_status_events")
+    summary = summary_body(ULID, [_stale_incident()])
+    if maintenance_key:
+        summary["scheduled_maintenances"] = []
+    feeds = Feeds(**{OPENAI: {"/api/v2/status.json": status_body(ULID, indicator), "/api/v2/summary.json": summary}})
+    remote = httpx.Client(transport=httpx.MockTransport(feeds))
+    monkeypatch.setattr(background_reads, "refresh_feed", lambda s, host: refresh_one(s, host, client=remote, wait=True))
+    with TestClient(create_app(settings)) as client:
+        ask(client, "openai.com")
+        background_reads.process_due(settings, limit=10)
+        answers = [ask(client, "openai.com", error_class="service_error"),
+                   status_check(client, "openai.com"),
+                   ask(client, "openai.com", error_class="service_error", task_step="status_check")]
+    stored = row(settings, "openai.com")
+    return feeds, stored, answers
+
+
+@pytest.mark.parametrize("indicator", ["minor", "major"])
+@pytest.mark.parametrize("maintenance_key", [False, True])
+def test_an_active_indicator_gives_the_same_answer_with_the_switch_on_and_off(lookup, monkeypatch, indicator, maintenance_key):
+    on_feeds, on_row, on_answers = _answers_with_switch(monkeypatch, True, indicator, maintenance_key)
+    off_feeds, off_row, off_answers = _answers_with_switch(monkeypatch, False, indicator, maintenance_key)
+    for feeds in (on_feeds, off_feeds):
+        assert feeds.seen == [f"{OPENAI}/api/v2/status.json"]                # no summary.json for an active indicator
+    for stored in (on_row, off_row):
+        assert stored["indicator"] == indicator and stored["active_incidents"] is None and stored["active_maintenances"] is None
+        assert stored["feed_platform"] is None and stored["affected"] is None
+    assert on_row == off_row
+    for on, off in zip(on_answers, off_answers):
+        for key in ("recommendation", "next_action", "summary_line", "next_checks"):
+            assert on.get(key) == off.get(key), key
+        assert {k: v for k, v in on["provider_status"].items() if k != "fetched_at"} ==             {k: v for k, v in off["provider_status"].items() if k != "fetched_at"}
+        assert "basis" not in on["provider_status"] or on["provider_status"]["basis"] == off["provider_status"]["basis"]
+
+
+def test_a_none_indicator_page_that_lists_an_incident_is_read_again_after_fifteen_minutes(lookup, monkeypatch):
+    settings, client = lookup
+    feeds = openai_feed()
+    with use(monkeypatch, feeds) as remote:
+        read_feed(settings, client, "openai.com")
+        assert row(settings, "openai.com")["active_incidents"] == 1
+        now = datetime.now(timezone.utc)
+        later = now + timedelta(minutes=20)
+        with connect(settings) as conn:
+            ready, _ = status_refresh._due_groups(conn, later)
+            assert [group["hosts"] for group in ready] == [["openai.com"]]       # listed incident: due after 15 minutes, not an hour
+            ready, _ = status_refresh._due_groups(conn, now + timedelta(minutes=10))
+            assert ready == []
+        # the incident is gone: back to the idle interval (one hour in the cron)
+        feeds.pages[OPENAI]["/api/v2/summary.json"] = summary_body(ULID, [])
+        assert refresh_one(settings, "openai.com", client=remote, min_interval=0, wait=True)
+        with connect(settings) as conn:
+            ready, _ = status_refresh._due_groups(conn, datetime.now(timezone.utc) + timedelta(minutes=20))
+            assert ready == []
+
+
+def test_a_refresh_one_with_a_spent_slot_does_not_ask_for_the_summary(lookup, monkeypatch):
+    settings, client = lookup
+    feeds = openai_feed()
+    with use(monkeypatch, feeds) as remote:
+        ask(client, "openai.com")
+        assert refresh_one(settings, "openai.com", client=remote, min_interval=0, wait=True, incidentio_slot=lambda: False)
+    assert feeds.seen == [f"{OPENAI}/api/v2/status.json"]
+    stored = row(settings, "openai.com")
+    assert stored["active_incidents"] is None and stored["feed_platform"] == "incident_io"
