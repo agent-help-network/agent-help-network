@@ -54,7 +54,7 @@ agent = create_agent(model, tools=[fetch_page],
                      middleware=[ahn_tool_failure_middleware(convert_exceptions=True, detect_blocked_text=True)])
 ```
 
-`detect_blocked_text` is conservative: a bot-protection challenge page, or "403 Forbidden", "Access Denied", "verify you are human" in a page's heading or in a short page. A long article that only mentions such words is left alone. It needs `langchain-ahn` 0.2.3 (`ahn-client` 0.6.8). The page text is never sent; the lookup carries only the hostname and enum codes, exactly as before, so nothing changes in what is sent. List the middleware before `ToolRetryMiddleware`. Details: the `ahn_client.langchain` module documentation.
+`detect_blocked_text` is conservative: markup that only a bot-protection challenge page carries, or "403 Forbidden", "Access Denied", "verify you are human" in a page's heading or in a short page (at most 4 KiB). A long article that only mentions such words, a normal page that loads a bot-protection script, and a notice such as "protected by reCAPTCHA" are left alone. Turn it on for a fetch (web access) tool only; a tool whose results can quote such pages (search, code, documentation) should leave it off. It needs `langchain-ahn` 0.2.3 (`ahn-client` 0.6.8). The page text is never sent; the lookup carries only the hostname and enum codes, exactly as before, so nothing changes in what is sent. List the middleware before `ToolRetryMiddleware`. Details: the `ahn_client.langchain` module documentation.
 
 You can use both together.
 

@@ -171,26 +171,35 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
 
 
 # --- classify_body: the text of a page that a fetch tool returned as an ordinary result ------------------------------------
-# A page body is far noisier than an error message: documentation about HTTP, a login form with a CAPTCHA widget or a blog
-# post about bot protection use the same words. So the rules are conservative and read only the start of the body
-# (BODY_HEAD characters), never the whole page:
-#   * a challenge page of a known bot-protection vendor is recognised by markup that only such a page carries
-#     (VENDOR_MARKERS); that is enough alone;
+# A page body is far noisier than an error message: documentation about HTTP, a login form with a CAPTCHA widget, a normal
+# page of a site that runs bot protection or a blog post about it use the same words and often the same scripts. So the rules
+# are conservative and read only the start of the body (BODY_HEAD characters), never the whole page:
+#   * a challenge page of a known bot-protection vendor is recognised by a marker that only a challenge page carries
+#     (VENDOR_MARKERS); that is enough alone. It is looked for in the markup only (tag names and attributes: ids, classes,
+#     hrefs, script src; the <title> text too), never in script bodies or in the words of an article. Markers that a normal
+#     page of a protected site also loads (Cloudflare's /cdn-cgi/challenge-platform and Turnstile scripts, DataDome's
+#     tags.js, Imperva's _Incapsula_Resource, PerimeterX's px-cdn.net sensor) are not markers. The Akamai "Reference #"
+#     number and Imperva's "Incapsula incident ID" have a distinctive form and are also read in the visible text (VENDOR_TEXT);
 #   * otherwise the visible text must say so in words: a status line ("403 Forbidden", "Error 429"), a refusal ("Access
-#     Denied") or a human check ("verify you are human", "captcha"). A short page (block pages are a few hundred
-#     characters) needs one such signal; a long page needs two different kinds, one of them in its <title> or at its
-#     start, so a long article that merely mentions "forbidden" or "403 Forbidden" further down is not read as a block.
-# The word "forbidden" or "blocked" alone is never a signal.
-BODY_HEAD = 4096  # characters of the body that are read
+#     Denied") or a request to prove you are human ("verify you are human", "complete the CAPTCHA"). A short page (at most
+#     BODY_HEAD characters in all, block pages are a few hundred) needs one such signal; any longer page needs two different
+#     kinds, one of them in its <title> or at its start, so a long article that merely mentions "forbidden" or "403 Forbidden"
+#     further down is not read as a block.
+# The word "forbidden" or "blocked" alone, and the words "captcha" or "reCAPTCHA" alone ("protected by reCAPTCHA"), are never a signal.
+BODY_HEAD = 4096  # characters of the body that are read; a longer body is never a "short page"
 SHORT_PAGE = 800  # visible characters up to which one signal is enough
 EARLY_TEXT = 200  # visible characters at the start of a page that count as its heading
 VENDOR_MARKERS = re.compile(
-    r"cf-chl-|__cf_chl|cf-browser-verification|challenges\.cloudflare\.com|cdn-cgi/challenge-platform"  # Cloudflare
+    r"cf-chl-|__cf_chl|cf-browser-verification"  # Cloudflare
     r"|attention required! \| cloudflare"
-    r"|captcha-delivery\.com|datadome"  # DataDome
-    r"|px-captcha|px-cdn\.net|_pxcaptcha"  # PerimeterX (HUMAN)
-    r"|errors\.edgesuite\.net|reference\s*#\s*\d+\.[0-9a-f]{4,}"  # Akamai
-    r"|incapsula incident id|_incapsula_resource",  # Imperva Incapsula
+    r"|captcha-delivery\.com"  # DataDome
+    r"|px-captcha|_pxcaptcha"  # PerimeterX (HUMAN)
+    r"|errors\.edgesuite\.net",  # Akamai
+    re.I)
+# Phrases of a challenge page that are printed as visible text and have a form no ordinary page uses.
+VENDOR_TEXT = re.compile(
+    r"reference\s*#\s*\d+\.[0-9a-f]{8}\.\d{10}\.[0-9a-f]+"  # Akamai
+    r"|incapsula incident id",  # Imperva Incapsula
     re.I)
 BODY_STATUS = re.compile(
     r"\b(?:(?P<a>403|429|503)\s+(?:forbidden|too many requests|service (?:temporarily )?unavailable)"
@@ -199,9 +208,11 @@ BODY_DENIAL = re.compile(
     r"access denied|you (?:don.t|do not) have permission to access|you have been blocked|(?:your )?request (?:has been )?blocked"
     r"|access to this (?:page|site|website) (?:has been |is )?(?:denied|blocked)", re.I)
 BODY_HUMAN = re.compile(
-    r"verify (?:that )?you are (?:a )?human|are you a (?:robot|human)|captcha|checking your browser|just a moment\.\.\."
-    r"|unusual traffic", re.I)
+    r"verify (?:that )?you are (?:a )?human|are you a (?:robot|human)|checking your browser|just a moment\.\.\."
+    r"|unusual traffic"
+    r"|(?:complete|solve|pass|prove)\b[^.<>]{0,40}?\bcaptcha|captcha (?:challenge|verification) (?:is )?required", re.I)
 _SCRIPT_STYLE = re.compile(r"<(script|style)\b.*?(?:</\1\s*>|$)", re.I | re.S)
+_SCRIPT_STYLE_BODY = re.compile(r"(<(script|style)\b[^>]*>).*?(?:</\2\s*>|$)", re.I | re.S)
 _TAG = re.compile(r"<[^>]*>?")
 _TITLE = re.compile(r"<title[^>]*>(.*?)(?:</title|$)", re.I | re.S)
 
@@ -220,10 +231,11 @@ def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
     if not isinstance(body, str) or not body.strip():
         return None, None
     head = body[:BODY_HEAD]
-    vendor = bool(VENDOR_MARKERS.search(head))
     title_match = _TITLE.search(head)
     title = " ".join(html.unescape(_TAG.sub(" ", title_match.group(1))).split()) if title_match else ""
     visible = " ".join(html.unescape(_TAG.sub(" ", _SCRIPT_STYLE.sub(" ", head))).split())
+    markup = " ".join(_TAG.findall(_SCRIPT_STYLE_BODY.sub(r"\1", head)))  # tags and attributes only, no script or style bodies
+    vendor = bool(VENDOR_MARKERS.search(markup) or VENDOR_MARKERS.search(title) or VENDOR_TEXT.search(visible))
     if title:
         visible = visible.replace(title, " ", 1).strip()  # the title is read on its own, as the start of the page
     kinds, early, status_code = set(), set(), None
@@ -237,7 +249,7 @@ def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
                 early.add(kind)
             if kind == "status":
                 status_code = status_code or found.group("a") or found.group("b")
-    short = len(visible) + len(title) <= SHORT_PAGE
+    short = len(body) <= BODY_HEAD and len(visible) + len(title) <= SHORT_PAGE
     if not vendor and not (kinds if short else len(kinds) >= 2 and early):
         return None, None
     if vendor or "human" in kinds:

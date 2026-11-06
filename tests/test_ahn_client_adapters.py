@@ -1503,6 +1503,63 @@ def test_classify_body_reads_only_the_start():
     assert ahn.classify_body(late) == (None, None)
 
 
+_HEAVY_HEAD = ('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' + '<link rel="stylesheet" href="/static/app.css">' * 10
+               + "<style>" + "body{margin:0}.a{color:red}" * 60 + "</style>")
+_LONG_TEXT = "<p>" + "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " * 200 + "</p>"
+
+
+def _heavy_page(title, head_extra="", body=_LONG_TEXT):
+    return _HEAVY_HEAD + head_extra + f"<title>{title}</title></head><body><h1>{title}</h1>" + body + "</body></html>"
+
+
+_CF_JSD = ("<script>(function(){var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';"
+           "document.getElementsByTagName('head')[0].appendChild(a);})();</script>")
+
+
+@pytest.mark.parametrize("body", [
+    # Bot Fight Mode / JS detections on a normal small page, a Turnstile login form, normal pages of protected sites
+    "<html><head><title>Acme pricing</title></head><body><h1>Pricing</h1><p>Basic $5/mo, Pro $15/mo.</p>" + _CF_JSD + "</body></html>",
+    "<html><head><title>Acme pricing</title></head><body><h1>Pricing</h1><p>Basic $5/mo.</p>"
+    '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body></html>',
+    "<html><head><title>Sign in</title><script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\" async></script></head>"
+    "<body><form><input name=email><div class=\"cf-turnstile\"></div></form></body></html>",
+    _heavy_page("Shop shoes - Acme", "<script>window.ddjskey='ABCDEF0123';</script><script src=\"https://js.datadome.co/tags.js\" async></script>"),
+    "# DataDome raises Series C to fight bad bots\n\n" + "The company said revenue grew. " * 100,
+    "DataDome said its datadome script runs on the page.",  # the bare word, in a short text
+    _heavy_page("Bank home", '<script src="/_Incapsula_Resource?SWJIYLWA=719d34d31c8e3a6e6fffd425f7e032f3"></script>'),
+    "<html><head><title>Bank</title><script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script></head><body>Welcome</body></html>",
+    _heavy_page("Store", '<script src="//client.px-cdn.net/PXabc123/main.min.js"></script>'),
+    # the words of an article are not markup
+    "<html><head><title>How bot walls work</title></head><body><p>A challenge page contains cf-chl-widget and px-captcha ids and "
+    "errors.edgesuite.net links.</p></body></html>",
+    # a heavy head pushes the page past 4 KiB: a lone title or heading is not enough
+    _heavy_page("Python requests returns 403 Forbidden even with User-Agent - Stack Overflow"),
+    _heavy_page("CAPTCHA"),
+    _heavy_page("What is CAPTCHA? | Cloudflare learning"),
+    # a notice about reCAPTCHA is not a request to solve one
+    "<html><head><title>Contact us</title></head><body><form>Name Email Message Send</form><small>This site is protected by reCAPTCHA "
+    "and the Google Privacy Policy and Terms of Service apply.</small></body></html>",
+    "Order confirmed. Reference #12.abcdef for your records.",
+    "Order confirmed. Reference #18.2d351ab8 for your records.",  # not the Akamai form
+])
+def test_classify_body_leaves_normal_pages_with_vendor_scripts_and_notices_alone(body):
+    assert ahn.classify_body(body) == (None, None)
+
+
+@pytest.mark.parametrize("body,expected", [
+    ("<html><head><title>Attention Required! | Cloudflare</title></head><body>" + "<p>x</p>" * 20 + "</body></html>", "human_verification"),
+    (_heavy_page("Just a moment...", "", "<div id='cf-chl-widget-x'></div>"), "human_verification"),
+    ('<html><body><iframe src="https://geo.captcha-delivery.com/captcha/?initialCid=x"></iframe></body></html>', "human_verification"),
+    ('<html><body><div class="px-captcha-container"></div></body></html>', "human_verification"),
+    ('<html><body><a href="https://errors.edgesuite.net/18.1">x</a></body></html>', "human_verification"),
+    ("<html><body>Request unsuccessful. Incapsula incident ID: 123-456</body></html>", "human_verification"),
+    ("<html><body>Please solve the captcha to continue.</body></html>", "human_verification"),
+    ("<html><body><h1>Access Denied</h1>Reference&#32;&#35;18.2d351ab8.1557333295.a4e16ab</body></html>", "human_verification"),
+])
+def test_classify_body_still_reads_challenge_pages(body, expected):
+    assert ahn.classify_body(body) == (expected, "response_observed")
+
+
 def _async_returning(value):
     async def handler(request):
         return value
