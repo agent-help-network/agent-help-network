@@ -13,12 +13,12 @@ from .access_profile import cached_profile, pending_profile
 from .db import connect, get_reporter_id
 from .lookup_signals import LookupSignal
 from .models import ObservationIn, OutcomeIn
-from .official_paths import official_path_unusable, official_paths
+from .official_paths import customer_url, official_path_unusable, official_paths
 from .provenance import operator_id
 from .settings import Settings
 from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_covers_api_only, status_page_requires_sign_in
 from . import response_guide
-from .triage import EDGE_CODE, EDGE_FAILURE_STAGES, EDGE_ROBOTS_CODE, LOOKUP_ONLY_STEPS, failure_observed, next_checks, recommendation
+from .triage import EDGE_CODE, EDGE_FAILURE_STAGES, EDGE_ROBOTS_CODE, LOOKUP_ONLY_STEPS, NO_PATH_CODE, failure_observed, next_checks, recommendation
 
 
 LOG = logging.getLogger(__name__)
@@ -701,14 +701,26 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         # D98: a site_access lookup on a host that refused AHN's plain robots.txt read and lists no developer path is handed to the user,
         # whatever the task_step: a status_check lookup that reports the failure gets the same recommendation.
         robots_refusal = bool(settings.d98_robots_refusal_handoff and not plain_view)
+        # D101: a service_error lookup whose first line would send the caller to no path outside AHN is handed to the user (the first line and
+        # next_action.do then say the same). Needs the D63 and D87 switches (the sentences), and is withheld from a status_check lookup (D96 wins).
+        no_path = bool(settings.d101_no_path_handoff and not plain_view and error_class == "service_error" and settings.proceed_without_failure
+                       and settings.failure_kind_lines and task_step != "status_check")
+        customer_same_site = apex_lookup = False
+        if no_path:
+            raw_customer = customer_url(official)
+            safe_customer = response_guide.safe_url(raw_customer) if raw_customer else None
+            customer_same_site = bool(safe_customer and response_guide.same_site(safe_customer, site_host))
+            apex_lookup = bool(response_guide.apex_host(site_host))
         recommended = recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                                      provider_regional=provider_regional, now=now, agent_vendor=agent_vendor,
                                      vendor_aware=settings.vendor_aware_block, failure_stage=failure_stage,
                                      proceed_without_failure=settings.proceed_without_failure,
                                      assume_failure=assume_failure, edge_refusal=edge_refusal,
                                      service_error_reference_only=settings.d95_no_dev_path_on_failure,
-                                     robots_refusal_handoff=robots_refusal)
+                                     robots_refusal_handoff=robots_refusal, no_path_handoff=no_path,
+                                     customer_same_site=customer_same_site, apex_lookup=apex_lookup)
         edge_decided = EDGE_CODE in recommended["reasons"]
+        no_path_decided = NO_PATH_CODE in recommended["reasons"]
         robots_edge_decided = EDGE_ROBOTS_CODE in recommended["reasons"]
         result = {
             "site_host": site_host, "generated_at": now.isoformat().replace("+00:00", "Z"),
@@ -731,7 +743,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                        vendor_aware=settings.vendor_aware_block,
                                        proceed_without_failure=settings.proceed_without_failure,
                                        assume_failure=assume_failure, edge_refusal=edge_decided,
-                                       robots_refusal=robots_edge_decided,
+                                       robots_refusal=robots_edge_decided, no_path=no_path_decided,
                                        unresolved_listed=settings.d100_incidentio_incidents),
         }
         if host_facts is not None:
@@ -761,7 +773,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
                                                    settings.status_check_guide, error_class, failure_stage,
                                                    settings.failure_kind_lines, settings.d96_status_check_one_action,
-                                                   settings.d100_incidentio_incidents, incidentio_unread))
+                                                   settings.d100_incidentio_incidents, incidentio_unread,
+                                                   edge_stale=bool(settings.d101_no_path_handoff and edge_decided
+                                                                   and (ahn_check or {}).get("freshness") == "stale")))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:

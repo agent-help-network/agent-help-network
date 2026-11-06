@@ -369,7 +369,7 @@ def test_the_new_sentences_are_short_plain_and_carry_no_host_or_url():
     assert new["T1-F"] == ("The provider's status feed reports no active issue (provider_status, see its fetched_at). "
                            "That status page did not open for you; give your user this reading, not a guess.")
     assert {k: v for k, v in STATUS_ROWS.items() if k not in new and k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
-    assert {k: v for k, v in ROWS.items() if k != "H3-R"} == pre_rg.ROWS                                                          # no row of the main table moved
+    assert {k: v for k, v in ROWS.items() if k != "H3-R" and k not in response_guide.HANDOFF_ROWS} == pre_rg.ROWS                                                          # no row of the main table moved
 
 
 def test_the_switch_parses_like_its_siblings(monkeypatch):

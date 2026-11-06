@@ -242,7 +242,7 @@ def edge_answer(official=None, **kwargs):
 
 
 def test_h3_has_the_fixed_sentences_the_row_and_no_host_or_url():
-    assert ROWS["H3"][0] == "hand_off_to_human" and len(ROWS) == 38
+    assert ROWS["H3"][0] == "hand_off_to_human" and len(ROWS) == 44
     assert ROWS["H3"][1] == ("The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents "
                              "to retry; tell your user, who can open the page themselves.")
     assert EDGE_CONSUMER_ROWS["H3"] == ("The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools to retry; "
@@ -318,7 +318,7 @@ def test_the_contracts_the_policy_and_the_guidance_say_the_new_rule():
     ko = (ROOT / "docs" / "api-contract.md").read_text(encoding="utf-8")
     for name, text in (("en", en), ("ko", ko)):
         assert "AHN_EDGE_REFUSAL_HANDOFF=0" in text and "edge_refusal_confirmed" in text and "D85" in text, name
-    assert "모두 37개 코드" in ko and "모두 35개 코드" not in ko
+    assert "모두 38개 코드" in ko and "모두 35개 코드" not in ko
     policy = (ROOT / "ahn" / "templates" / "policy.html").read_text(encoding="utf-8")
     assert "It changes the recommendation in one case only" in policy and "권고를 바꾸는 경우는 하나뿐입니다" in policy
     assert "it does not change the recommendation, and another" not in policy

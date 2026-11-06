@@ -160,6 +160,7 @@ curl "https://agenthelpnetwork.com/v1/incidents/check?site_host=github.com&error
 | `stop_declared_block` | 차단 선언이 있고 공식 경로가 없다. 페이지 자동 재시도를 멈춘다. | medium |
 | `use_official_path` | 호스트 경계가 `robots.txt` 읽기를 거절했고(`robots_status: refused`) 공식 경로가 있다. | medium |
 | `hand_off_to_human` | `refused` 이고 공식 경로가 없으며, 호출자가 `error_class=site_access` 를 보냈다(`failure_stage` 없음 또는 `access_denial_observed`): 사유 `edge_refusal_robots`, `robots_fetch_refused`(D85, D98). | medium |
+| `hand_off_to_human` | 호출자가 `error_class=service_error`(5xx 또는 응답 없음)를 보냈고, 답이 `unknown` 이며 대신 시도할 이 사이트의 페이지가 없다(공식 경로가 없거나 참고용 개발자 경로뿐), 또는 응답이 아예 없었고 고객 경로가 응답 없던 사이트에 있다: 사유는 종전 그대로 뒤에 `no_path_after_failure`(D101). 첫 줄은 "if one more try fails, tell your user"로 끝난다. | low |
 | `unknown` | `refused` 이고 공식 경로가 없으며 그런 실패 신호는 없다(사유 `robots_fetch_refused`). 비슷한 환경의 페이지 자동화도 거절될 수 있다. | medium |
 | `use_official_path` | 부분 차단이나 와일드카드 단독 금지(아래)이고 공식 경로가 있다. | medium |
 | `unknown` | 부분 차단이나 와일드카드 단독 금지이고 공식 경로가 없다(사유 `robots_blocks_some_agents`, `robots_names_vendor_alias`, `robots_wildcard_disallow`). 허락으로 읽지 않는다. | low |

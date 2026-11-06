@@ -296,6 +296,34 @@ NO_PATH_CONSUMER_ROWS: dict[str, str] = {
     "U7": "The site's robots.txt could not be read, so no declared policy is known. " + _NO_PATH_CUSTOMER + " Follow your operator's rules.",
     "U9": "No declared policy could be read for this host. " + _NO_PATH_CUSTOMER + " Follow your operator's rules and the site's terms.",
 }
+# D101: a service_error answer that sends the caller to no path outside AHN (the five rows above that list no path, and an O7 row whose customer
+# page is on the site that did not answer) is hand_off_to_human, so the first line and next_action.do say the same thing. The sentences are the
+# NO_PATH_* ones with "retry once later" replaced by "if one more try fails" (one more attempt at the page, not a repeat of the lookup).
+# Row ids: the row it replaces plus "-H". ROWS holds the 5xx sentence; guide() picks the no-response or customer one.
+HANDOFF_ROWS = ("U6-H", "U7-H", "U9-H", "U7-O-H", "U9-O-H", "O7-H")
+_HANDOFF_BASE = {"U6-H": "U6", "U7-H": "U7", "U9-H": "U9", "U7-O-H": "U7", "U9-O-H": "U9"}
+_ONE_MORE = "if one more try fails, tell your user."
+_HANDOFF_API = " API work: official_paths."
+_HANDOFF_CAUSE_O = {"U7": "AHN could not read robots.txt", "U9": "AHN has no declared policy for this host"}
+HANDOFF_NO_RESPONSE_ROWS: dict[str, str] = {}
+HANDOFF_SERVICE_ERROR_ROWS: dict[str, str] = {}
+for _row, _base in _HANDOFF_BASE.items():
+    if _row.endswith("-O-H"):
+        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_HANDOFF_CAUSE_O[_base]}. Check your tool; {_ONE_MORE}{_HANDOFF_API}"
+        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_ONE_MORE.capitalize()}{_HANDOFF_API}"
+    else:
+        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[_base]}. Check your tool and path; {_ONE_MORE}"
+        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_ONE_MORE.capitalize()}"
+# With a curated customer page the user gets it (``url`` stays null). No response: the page is on the site that did not answer, so it is said.
+HANDOFF_NO_RESPONSE_CUSTOMER = ("No response came (timeout or connection). The customer page is on the same site and may not open either; "
+                                "if one more try fails, hand your user next_action.customer_url.")
+HANDOFF_SERVICE_ERROR_CUSTOMER = f"{_NO_PATH_5XX}. If one more try fails, tell your user and hand them next_action.customer_url."
+ROWS.update({row: ("hand_off_to_human", HANDOFF_SERVICE_ERROR_ROWS.get(row, HANDOFF_SERVICE_ERROR_CUSTOMER)) for row in HANDOFF_ROWS})
+# D101: the H3 sentence when the home-page check it rests on is over a day old (ahn_check.freshness == "stale"): said so, the hand-off is unchanged.
+H3_STALE = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools to retry; "
+            "tell your user, who can open the page themselves.")
+H3_STALE_CONSUMER = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools to retry; "
+                     "hand your user the step and next_action.customer_url.")
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
 
@@ -339,6 +367,15 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
         if reasons & {"provider_components_only", "provider_incident_stale"}:
             return "W4", True
     elif action == "hand_off_to_human":
+        if "no_path_after_failure" in reasons:  # D101: the row it replaces, plus "-H"
+            official_listed = "official_path_available" in reasons
+            if "robots_fetch_refused" in reasons:
+                return "U6-H", True
+            if "robots_unknown" in reasons:
+                return ("U7-O-H" if official_listed else "U7-H"), True
+            if "profile_not_read" in reasons:
+                return ("U9-O-H" if official_listed else "U9-H"), True
+            return ("O7-H" if official_listed else "U9-H"), True
         if "human_handoff" in reasons:
             return "H1", True
         if "account_handoff" in reasons:
@@ -518,7 +555,8 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
 
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
           status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
-          failure_kind_lines: bool = False, one_action: bool = False, d100: bool = False, incidentio_unread: bool = False) -> dict:
+          failure_kind_lines: bool = False, one_action: bool = False, d100: bool = False, incidentio_unread: bool = False,
+          *, edge_stale: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
@@ -544,7 +582,10 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     known, a developer path is never the url: url is null, do is hand_off_to_human after a failure (sentence T4-R) or no_clear_action.
     D97 (failure_kind_lines, never for a status_check lookup): U6, U7 and U9 (no official path of any kind) take the NO_PATH_* sentences after
     a service_error (no response or 5xx), and, with a curated customer path, name next_action.customer_url (``url`` stays null; with no
-    failure signal NO_PATH_CONSUMER_ROWS). Nothing but the sentence, and customer_url on those rows, changes."""
+    failure signal NO_PATH_CONSUMER_ROWS). Nothing but the sentence, and customer_url on those rows, changes.
+    D101: a recommendation carrying no_path_after_failure selects a HANDOFF_ROWS row (do hand_off_to_human, url null) whose sentence ends in
+    "if one more try fails, tell your user" (or hands the user next_action.customer_url). edge_stale (D101, only the H3 row): the home-page
+    check the hand-off rests on is over a day old, and the sentence says so."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -612,6 +653,19 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
                     sentence = (NO_PATH_SERVICE_ERROR_CONSUMER_ROWS if customer else NO_PATH_SERVICE_ERROR_ROWS)[row]
             elif customer:
                 sentence = NO_PATH_CONSUMER_ROWS[row]
+    if row in HANDOFF_ROWS:
+        # D101: customer_url only where the recommendation kept a customer page (it hands off with one only when it is on the failed site)
+        raw = customer_url(result.get("official_paths"))
+        customer = safe_url(raw) if raw else None
+        if raw and customer is None:
+            LOG.warning("response_guide_url_dropped")
+        no_response = failure_stage == "before_target_response"
+        if customer:
+            sentence = HANDOFF_NO_RESPONSE_CUSTOMER if no_response else HANDOFF_SERVICE_ERROR_CUSTOMER
+        else:
+            sentence = (HANDOFF_NO_RESPONSE_ROWS if no_response else HANDOFF_SERVICE_ERROR_ROWS).get(row, sentence)
+    if edge_stale and row == "H3":
+        sentence = H3_STALE_CONSUMER if customer else H3_STALE
     retry = None
     if row in RETRY_ROWS:
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))

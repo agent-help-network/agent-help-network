@@ -144,7 +144,7 @@ def test_the_code_is_in_the_model_the_contracts_the_readmes_and_the_plugin():
     assert code in NextCheck.model_fields["code"].annotation.__args__
     en = (root / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
     ko = (root / "docs" / "api-contract.md").read_text(encoding="utf-8")
-    assert f"| `{code}` |" in en and f"`{code}`" in ko and "모두 37개 코드" in ko
+    assert f"| `{code}` |" in en and f"`{code}`" in ko and "모두 38개 코드" in ko
     for name in ("README.md", "README.ko.md", "ahn/llms.txt", "plugins/claude-code/ahn/README.md"):
         assert code in (root / name).read_text(encoding="utf-8"), name
     assert "| D57 (2026-10-27" in (root / "docs" / "decisions.md").read_text(encoding="utf-8")
