@@ -126,6 +126,8 @@ def compare(stride: int) -> dict:
                 assert new_out == old_out, (case, stage, pwf, same)
                 continue
             counts["guide_changed"] += 1
+            # D100 only words a status check; with it on, an answer D101 hands off is the same answer
+            assert guide(result_of(case, new_rec), *guide_args(case, stage, pwf), d100=True, incidentio_unread=True) == new_out, (case, stage)
             action = new_out["next_action"]
             assert action["do"] == "hand_off_to_human" and action["url"] is None and action["retry_after_seconds"] is None, (case, stage)
             assert len(new_out["summary_line"]) <= LINE_MAX and new_out["summary_line"] != old_out["summary_line"]
