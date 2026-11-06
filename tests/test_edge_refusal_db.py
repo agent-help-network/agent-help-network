@@ -162,7 +162,8 @@ def test_the_stored_measurement_decides_at_each_boundary_and_nothing_else_moves(
     assert [c for c in on["next_checks"] if c["code"] != EDGE_CODE] == off["next_checks"]
     assert on["next_action"]["do"] == "hand_off_to_human" and on["next_action"]["url"] is None
     # D101: a check over a day old says so in its first line; the decision is the same
-    stale = on["ahn_check"]["freshness"] == "stale"
+    stale = age > timedelta(hours=24)  # from the case's own age, not from the field under test
+    assert on["ahn_check"]["freshness"] == ("stale" if stale else "fresh"), (outcome, age)
     assert on["summary_line"] == (response_guide.H3_STALE if stale else "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves.")
     # everything but the decision and the one note is the answer the switch off gives
     assert same_but(on, off, "recommendation", "next_checks", "summary_line", "next_action", "ahn_check")
@@ -172,6 +173,11 @@ def test_the_stored_measurement_decides_at_each_boundary_and_nothing_else_moves(
     assert abs(on["ahn_check"].pop("age_seconds") - off["ahn_check"].pop("age_seconds")) <= 5
     assert on["ahn_check"] == off["ahn_check"]
     assert on.get("cause") == off.get("cause")
+
+
+def test_the_cases_that_change_cover_both_a_stale_and_a_fresh_check():
+    changing = [age for _, _, age, _, changes in CASES if changes]
+    assert any(age > timedelta(hours=24) for age in changing) and any(age <= timedelta(hours=24) for age in changing)
 
 
 def test_only_site_access_with_no_stage_or_an_access_denial_changes_and_cause_never_does(db):
