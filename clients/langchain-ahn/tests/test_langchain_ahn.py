@@ -293,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.2"
+    assert langchain_ahn.__version__ == "0.2.3"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 

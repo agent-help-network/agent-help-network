@@ -1221,10 +1221,10 @@ def test_extras_are_declared_and_the_base_install_has_no_dependencies():
 
 
 def test_package_version_and_exports():
-    assert ahn.__version__ == "0.6.7"
-    assert set(ahn.__all__) == {"check", "classify", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__",
+    assert ahn.__version__ == "0.6.8"
+    assert set(ahn.__all__) == {"check", "classify", "classify_body", "clear_cache", "diagnose", "signals", "Result", "NextAction", "__version__",
                               "local_digest", "digest_markdown", "shard_id", "Digest", "FailureLog", "ADVICE"}
-    assert (ROOT / "clients" / "python" / "src" / "ahn_client" / "__init__.py").read_text(encoding="utf-8").count('__version__ = "0.6.7"') == 1
+    assert (ROOT / "clients" / "python" / "src" / "ahn_client" / "__init__.py").read_text(encoding="utf-8").count('__version__ = "0.6.8"') == 1
 
 
 def test_examples_parse_and_name_the_browser_use_adapter():
@@ -1448,3 +1448,147 @@ def test_a_url_only_in_the_message_is_not_looked_up(transport):
         assert _adapter.note_for(error, {"query": "no url argument"}, adapter="langchain") is None
         assert _adapter.note_for(error, None, adapter="langchain") is None
     assert calls == []
+
+
+# --- LangChain: detect_blocked_text (a block page returned as an ordinary result) ------------------------------
+
+BLOCK_403 = "<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1><p>nginx</p></body></html>"
+ARTICLE = ("<html><head><title>Gardening in small spaces</title></head><body><h1>Gardening in small spaces</h1>"
+           + "<p>Tomatoes need sun and water. " * 80 + "A fence is forbidden by some leases. Access is blocked by snow in winter.</p></body></html>")
+HTTP_DOC = ("<html><head><title>HTTP status codes - a guide</title></head><body><h1>HTTP status codes</h1>"
+            + "<p>Servers answer requests with a status code and a short reason phrase. " * 12
+            + "<h2>403 Forbidden</h2><p>The server refuses to authorize the request. Access denied pages vary.</p>"
+            + "<p>Use a captcha only when needed.</p></body></html>")
+CHALLENGE = ('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><div id="cf-chl-widget"></div>'
+             + "<p>Enable JavaScript and cookies to continue</p></body></html>")
+
+
+@pytest.mark.parametrize("body,expected", [
+    (BLOCK_403, "site_access"),
+    ("Access Denied. You don't have permission to access this page.", "site_access"),
+    ("Error 403", "site_access"),
+    ("429 Too Many Requests", "service_error"),
+    ("<title>503 Service Temporarily Unavailable</title>", "service_error"),
+    ("Please verify you are human to continue.", "human_verification"),
+    ("<html><body>Complete the CAPTCHA below</body></html>", "human_verification"),
+    (CHALLENGE, "human_verification"),
+    ("<html><head><title>Attention Required! | Cloudflare</title></head><body>Sorry, you have been blocked</body></html>",
+     "human_verification"),
+    ("<html><body><h1>Access Denied</h1>You don't have permission to access this on this server.<p>Reference #18.2d351ab8.1557333295.a4e16ab</p></body></html>",
+     "human_verification"),
+    ("<script>window._pxAppId='x'</script><div id='px-captcha'></div>", "human_verification"),
+    (b"403 Forbidden", "site_access"),
+])
+def test_classify_body_reads_a_block_page(body, expected):
+    assert ahn.classify_body(body) == (expected, "response_observed")
+
+
+@pytest.mark.parametrize("body", [
+    "", "   ", None, 403, "ok",
+    "The door was forbidden to children.",  # the word alone is never a signal
+    "Your account is blocked by an admin policy; contact support.",
+    ARTICLE,  # long, "forbidden" and "blocked" only
+    HTTP_DOC,  # a long page that explains 403 further down under an unrelated title and heading
+    "<html><head><title>Sign in</title></head><body>" + "<p>Welcome back. Enter your details.</p>" * 40
+    + '<div class="g-recaptcha">captcha</div></body></html>',  # a long login page with a CAPTCHA widget: one kind only
+    "<p>" + "Plain text. " * 400 + "</p> 403 Forbidden",  # beyond the first 4 KiB
+    "Resource 404 Not Found",
+])
+def test_classify_body_leaves_other_pages_alone(body):
+    assert ahn.classify_body(body) == (None, None)
+
+
+def test_classify_body_reads_only_the_start():
+    late = "x" * 5000 + "<div id='cf-chl-widget'></div>"  # a vendor marker past BODY_HEAD
+    assert ahn.classify_body(late) == (None, None)
+
+
+def _async_returning(value):
+    async def handler(request):
+        return value
+
+    return handler
+
+
+def test_detect_blocked_text_is_off_by_default(lc, transport):
+    calls = transport()
+    ok = FakeToolMessage(BLOCK_403, "call_1", status="success")
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: ok) is ok
+    assert asyncio.run(ahn_langchain.ahandle_tool_call(lc.request, _async_returning(ok))) is ok
+    assert calls == []
+
+
+def test_the_three_silent_cases_of_a_fetch_tool(lc, transport):
+    """1 an error message, 2 a block page as a success, 3 a raise: only 1 gets a line by default; the options reach 2 and 3."""
+    calls = transport()
+    error = FakeToolMessage("403 Forbidden", "call_1", status="error")
+    page = FakeToolMessage(BLOCK_403, "call_1", status="success")
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: error).content.startswith("403 Forbidden\nAHN example.com:")
+    assert len(calls) == 1
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: page) is page and len(calls) == 1
+    with pytest.raises(HTTPStatusError):
+        ahn_langchain.handle_tool_call(lc.request, raising(forbidden()))
+    assert len(calls) == 1
+    ahn.clear_cache()
+    annotated = ahn_langchain.handle_tool_call(lc.request, lambda request: page, detect_blocked_text=True)
+    assert annotated is not page and page.content == BLOCK_403  # the original message is left alone
+    assert annotated.content.startswith(BLOCK_403 + "\nAHN example.com: recommendation=")
+    assert (annotated.status, annotated.tool_call_id) == ("success", "call_1")
+    assert len(calls) == 2
+    converted = ahn_langchain.handle_tool_call(lc.request, raising(forbidden()), convert_exceptions=True)
+    assert converted.status == "error" and converted.content.startswith("Error: HTTPStatusError (site_access)\nAHN example.com:")
+
+
+def test_detect_blocked_text_sends_the_hostname_and_codes_only(lc, transport):
+    calls = transport()
+    secret = "SECRET-TOKEN-IN-THE-PAGE"
+    page = FakeToolMessage(BLOCK_403.replace("nginx", secret), "call_1", status="success")
+    ahn_langchain.handle_tool_call(lc.request, lambda request: page, detect_blocked_text=True)
+    assert [row[:3] for row in sent(calls)] == [("example.com", "site_access", "response_observed")]
+    url = calls[0][0].full_url
+    assert secret not in url and "private" not in url and "token" not in url.lower() and "403" not in url
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).keys() == {"site_host", "error_class", "failure_stage"}
+
+
+def test_detect_blocked_text_needs_a_host_in_the_arguments(lc, transport):
+    calls = transport()
+    page = FakeToolMessage("403 Forbidden see https://other.example/help", "call_1", status="success")
+    for args in ({"query": "weather"}, {"url": "not a url"}, {}, None):
+        request = SimpleNamespace(tool_call={"name": "fetch_page", "args": args, "id": "call_1"})
+        assert ahn_langchain.handle_tool_call(request, lambda request: page, detect_blocked_text=True) is page
+    assert calls == []  # the page's own text is never searched for a host
+
+
+def test_detect_blocked_text_does_not_flag_ordinary_pages(lc, transport):
+    calls = transport()
+    for body in (ARTICLE, HTTP_DOC, "The weather is sunny.", "Forbidden fruit is sweet."):
+        message = FakeToolMessage(body, "call_1", status="success")
+        assert ahn_langchain.handle_tool_call(lc.request, lambda request: message, detect_blocked_text=True) is message
+    assert calls == []
+
+
+def test_detect_blocked_text_text_parts_and_other_results(lc, transport):
+    calls = transport()
+    parts = FakeToolMessage([{"type": "text", "text": BLOCK_403}, {"type": "image", "url": "x"}], "call_1")
+    result = ahn_langchain.handle_tool_call(lc.request, lambda request: parts, detect_blocked_text=True)
+    assert result.content[:2] == parts.content and result.content[2]["text"].startswith("AHN example.com:")
+    command = object()  # langgraph Command: no status, no content
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: command, detect_blocked_text=True) is command
+    assert len(calls) == 1
+
+
+def test_detect_blocked_text_lookup_failure_leaves_the_result_alone(lc, transport):
+    transport(error=OSError("network down"))
+    page = FakeToolMessage(BLOCK_403, "call_1", status="success")
+    assert ahn_langchain.handle_tool_call(lc.request, lambda request: page, detect_blocked_text=True) is page
+
+
+def test_detect_blocked_text_async_and_middleware_option(lc, transport):
+    calls = transport()
+    page = FakeToolMessage(CHALLENGE, "call_1", status="success")
+    annotated = asyncio.run(ahn_langchain.ahandle_tool_call(lc.request, _async_returning(page), detect_blocked_text=True))
+    assert annotated.content.startswith(CHALLENGE + "\nAHN example.com:")
+    assert [row[1] for row in sent(calls)] == ["human_verification"]
+    import inspect
+    parameter = inspect.signature(ahn_langchain.ahn_tool_failure_middleware).parameters["detect_blocked_text"]
+    assert parameter.default is False and parameter.kind is inspect.Parameter.KEYWORD_ONLY

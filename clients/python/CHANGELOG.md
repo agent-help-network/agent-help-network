@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.8
+
+- `ahn.classify_body(text)` reads the first 4 KiB of the text a fetch tool returned as an ordinary result and says whether it is a block page: `(error_class, "response_observed")` or `(None, None)`. It runs on your machine and sends nothing. A bot-protection challenge (Cloudflare, DataDome, PerimeterX, Akamai, Imperva markup) counts alone; otherwise the page's heading or a short page must say "403 Forbidden", "429 Too Many Requests", "503 Service Unavailable", "Access Denied", "verify you are human", "captcha" or the like, and a long page needs two different kinds of signal, one of them at its start. The word "forbidden" alone, or a long article that mentions a status code further down, is not a block page.
+- LangChain middleware: `ahn_tool_failure_middleware(detect_blocked_text=True)` (also `handle_tool_call` and `ahandle_tool_call`) applies `classify_body` to a successful `ToolMessage` and, when it is a block page and the call's arguments name an http(s) host, appends the same line as for an error message. Off by default; with it off nothing changes. The page text is never sent: only the hostname, as before.
+
 ## 0.6.7
 
 - `NextAction` keeps `customer_url` (the site's own customer page for a task in the user's own account) and `status_url` (the status page for a `task_step=status_check` lookup); before, both were dropped. They are https URLs or None, are part of `to_dict()` and, when they differ from `url`, of `summary()` ("Customer path:", "Status page:"). An older service that does not send them gives None.

@@ -7,6 +7,7 @@ aiohttp are never imported) and an HTTP status carried on the exception.
 
 from __future__ import annotations
 
+import html
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -167,3 +168,80 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
         return valid_signals(found)
     except Exception:
         return {}
+
+
+# --- classify_body: the text of a page that a fetch tool returned as an ordinary result ------------------------------------
+# A page body is far noisier than an error message: documentation about HTTP, a login form with a CAPTCHA widget or a blog
+# post about bot protection use the same words. So the rules are conservative and read only the start of the body
+# (BODY_HEAD characters), never the whole page:
+#   * a challenge page of a known bot-protection vendor is recognised by markup that only such a page carries
+#     (VENDOR_MARKERS); that is enough alone;
+#   * otherwise the visible text must say so in words: a status line ("403 Forbidden", "Error 429"), a refusal ("Access
+#     Denied") or a human check ("verify you are human", "captcha"). A short page (block pages are a few hundred
+#     characters) needs one such signal; a long page needs two different kinds, one of them in its <title> or at its
+#     start, so a long article that merely mentions "forbidden" or "403 Forbidden" further down is not read as a block.
+# The word "forbidden" or "blocked" alone is never a signal.
+BODY_HEAD = 4096  # characters of the body that are read
+SHORT_PAGE = 800  # visible characters up to which one signal is enough
+EARLY_TEXT = 200  # visible characters at the start of a page that count as its heading
+VENDOR_MARKERS = re.compile(
+    r"cf-chl-|__cf_chl|cf-browser-verification|challenges\.cloudflare\.com|cdn-cgi/challenge-platform"  # Cloudflare
+    r"|attention required! \| cloudflare"
+    r"|captcha-delivery\.com|datadome"  # DataDome
+    r"|px-captcha|px-cdn\.net|_pxcaptcha"  # PerimeterX (HUMAN)
+    r"|errors\.edgesuite\.net|reference\s*#\s*\d+\.[0-9a-f]{4,}"  # Akamai
+    r"|incapsula incident id|_incapsula_resource",  # Imperva Incapsula
+    re.I)
+BODY_STATUS = re.compile(
+    r"\b(?:(?P<a>403|429|503)\s+(?:forbidden|too many requests|service (?:temporarily )?unavailable)"
+    r"|(?:http\s*)?(?:error|status)(?:\s*code)?\s*[:#]?\s*(?P<b>403|429|503)\b)", re.I)
+BODY_DENIAL = re.compile(
+    r"access denied|you (?:don.t|do not) have permission to access|you have been blocked|(?:your )?request (?:has been )?blocked"
+    r"|access to this (?:page|site|website) (?:has been |is )?(?:denied|blocked)", re.I)
+BODY_HUMAN = re.compile(
+    r"verify (?:that )?you are (?:a )?human|are you a (?:robot|human)|captcha|checking your browser|just a moment\.\.\."
+    r"|unusual traffic", re.I)
+_SCRIPT_STYLE = re.compile(r"<(script|style)\b.*?(?:</\1\s*>|$)", re.I | re.S)
+_TAG = re.compile(r"<[^>]*>?")
+_TITLE = re.compile(r"<title[^>]*>(.*?)(?:</title|$)", re.I | re.S)
+
+
+def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
+    """``(error_class, failure_stage)`` for the text a fetch tool returned as an ordinary result, or ``(None, None)``.
+
+    Only the first ``BODY_HEAD`` characters are read, locally; nothing is sent. The answer is ``human_verification`` for a
+    bot-protection challenge or a human check, ``site_access`` for a 403 or a refusal and ``service_error`` for a 429 or 503,
+    each with the stage ``response_observed``. A page that is not clearly a block page, however many of the words it
+    contains, gives ``(None, None)`` (see the rules above). Use it for a page that came back as a success, and ``classify``
+    for an exception or an error message.
+    """
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+    if not isinstance(body, str) or not body.strip():
+        return None, None
+    head = body[:BODY_HEAD]
+    vendor = bool(VENDOR_MARKERS.search(head))
+    title_match = _TITLE.search(head)
+    title = " ".join(html.unescape(_TAG.sub(" ", title_match.group(1))).split()) if title_match else ""
+    visible = " ".join(html.unescape(_TAG.sub(" ", _SCRIPT_STYLE.sub(" ", head))).split())
+    if title:
+        visible = visible.replace(title, " ", 1).strip()  # the title is read on its own, as the start of the page
+    kinds, early, status_code = set(), set(), None
+    for is_early, text in ((True, title), (True, visible[:EARLY_TEXT]), (False, visible[EARLY_TEXT:])):
+        for kind, pattern in (("status", BODY_STATUS), ("denial", BODY_DENIAL), ("human", BODY_HUMAN)):
+            found = pattern.search(text)
+            if not found:
+                continue
+            kinds.add(kind)
+            if is_early:
+                early.add(kind)
+            if kind == "status":
+                status_code = status_code or found.group("a") or found.group("b")
+    short = len(visible) + len(title) <= SHORT_PAGE
+    if not vendor and not (kinds if short else len(kinds) >= 2 and early):
+        return None, None
+    if vendor or "human" in kinds:
+        return "human_verification", "response_observed"
+    if status_code in ("429", "503") and "denial" not in kinds:
+        return "service_error", "response_observed"
+    return "site_access", "response_observed"

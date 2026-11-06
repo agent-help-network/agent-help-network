@@ -18,7 +18,7 @@ import re
 import threading
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
-from ._classify import CONNECT_NAMES, _chain, blank_host, classify, signals, without_urls
+from ._classify import CONNECT_NAMES, _chain, blank_host, classify, classify_body, signals, without_urls
 from ._client import check
 from ._hosts import normalize_host
 from ._result import Result
@@ -272,5 +272,42 @@ async def anote_for(error: Any, args: Any = None, *, adapter: str, timeout: floa
         codes = failure_signals(error)
         result = await abounded_check(*target, adapter, timeout, codes or None)
         return result.summary(codes.get("retry_after")) if result else None
+    except Exception:
+        return None
+
+
+def body_target(body: Any, args: Any = None) -> Optional[Tuple[str, str, Optional[str]]]:
+    """``(host, error_class, failure_stage)`` for a page a tool returned as an ordinary result, or None.
+
+    None: no http(s) hostname in the arguments (the page's own text is never searched for one), or a body that
+    ``classify_body`` does not read as a block page. The body is read here and goes nowhere else.
+    """
+    host = host_from_args(args)
+    if not host:
+        return None
+    error_class, stage = classify_body(body)
+    return (host, error_class, stage) if error_class else None
+
+
+def note_for_body(body: Any, args: Any = None, *, adapter: str, timeout: float = DEFAULT_TIMEOUT) -> Optional[str]:
+    """One line from Agent Help Network for a page that is a block page, or None. Only the hostname and codes are sent."""
+    try:
+        target = body_target(body, args)
+        if target is None:
+            return None
+        result = bounded_check(*target, adapter, timeout)
+        return result.summary() if result else None
+    except Exception:
+        return None
+
+
+async def anote_for_body(body: Any, args: Any = None, *, adapter: str, timeout: float = DEFAULT_TIMEOUT) -> Optional[str]:
+    """``note_for_body`` for async code: the wait never blocks the event loop and ends at ``timeout``."""
+    try:
+        target = body_target(body, args)
+        if target is None:
+            return None
+        result = await abounded_check(*target, adapter, timeout)
+        return result.summary() if result else None
     except Exception:
         return None

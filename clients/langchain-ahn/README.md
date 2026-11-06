@@ -42,7 +42,19 @@ from langchain_ahn import ahn_tool_failure_middleware
 agent = create_agent(model, tools=[fetch_page], middleware=[ahn_tool_failure_middleware()])
 ```
 
-This is the middleware from [`ahn-client`](https://github.com/agent-help-network/agent-help-network/tree/main/clients/python) re-exported, so there is one import for both. When a tool call comes back as a `ToolMessage` with `status="error"` and its URL names a host, the line is appended to what the model sees. A tool that raises is re-raised unchanged (`convert_exceptions=True` is opt-in). A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so nothing is added: raise from the tool (`response.raise_for_status()`) or return an error `ToolMessage`. List the middleware before `ToolRetryMiddleware`. Details: the `ahn_client.langchain` module documentation.
+This is the middleware from [`ahn-client`](https://github.com/agent-help-network/agent-help-network/tree/main/clients/python) re-exported, so there is one import for both. When a tool call comes back as a `ToolMessage` with `status="error"` and its URL names a host, the line is appended to what the model sees. A tool that raises is re-raised unchanged (`convert_exceptions=True` is opt-in). Two cases are silent by default, and each has an option:
+
+| The tool... | Default | To get the line |
+|---|---|---|
+| raises (`httpx.HTTPStatusError`, `raise_for_status()`) | re-raised unchanged, no line | `ahn_tool_failure_middleware(convert_exceptions=True)`: the exception becomes an error `ToolMessage` (`Error: <class> (<error class>)` plus the line) |
+| returns a 403 or CAPTCHA page as an ordinary result | not an error to LangChain, no line | `ahn_tool_failure_middleware(detect_blocked_text=True)`: the first 4 KiB of the result are checked on your machine for a block page, and the line is added when the call's arguments name a host |
+
+```python
+agent = create_agent(model, tools=[fetch_page],
+                     middleware=[ahn_tool_failure_middleware(convert_exceptions=True, detect_blocked_text=True)])
+```
+
+`detect_blocked_text` is conservative: a bot-protection challenge page, or "403 Forbidden", "Access Denied", "verify you are human" in a page's heading or in a short page. A long article that only mentions such words is left alone. It needs `langchain-ahn` 0.2.3 (`ahn-client` 0.6.8). The page text is never sent; the lookup carries only the hostname and enum codes, exactly as before, so nothing changes in what is sent. List the middleware before `ToolRetryMiddleware`. Details: the `ahn_client.langchain` module documentation.
 
 You can use both together.
 

@@ -31,16 +31,20 @@ it would turn the first exception into a message and the retries would never run
 
 Nothing else is touched: a failure that is not a block or an outage (404, 422, a typo, a tool-argument validation error),
 an unreachable service, a slow lookup (``timeout``, 2 s) and a missing URL all leave the call exactly as the tool produced it.
-A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so nothing is added; raise
-from the tool (``response.raise_for_status()``) or return ``ToolMessage(..., status="error")`` to opt in. Only the
-hostname and enum codes leave the machine.
+A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so by default nothing is
+added; raise from the tool (``response.raise_for_status()``) or return ``ToolMessage(..., status="error")`` to opt in, or
+turn on ``detect_blocked_text=True``: the start of a successful result's text (the first 4 KiB) is then read on your machine
+for the marks of a block page (a bot-protection challenge, or "403 Forbidden", "Access Denied", "verify you are human" in
+the page's heading or on a short page; a long article that only mentions such words is left alone), and when it is one and
+the call's arguments name a host, the line is appended the same way. The text itself is never sent. Only the hostname and
+enum codes leave the machine.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from ._adapter import DEFAULT_TIMEOUT, anote_for, failure_target, note_for
+from ._adapter import DEFAULT_TIMEOUT, anote_for, anote_for_body, failure_target, note_for, note_for_body
 
 ADAPTER = "langchain"
 
@@ -109,6 +113,19 @@ def _error_text(message: Any) -> Optional[str]:
     return None
 
 
+def _success_text(message: Any) -> Optional[str]:
+    """The text of a successful ToolMessage's content (a string, or the text parts of a list), or None."""
+    if getattr(message, "status", None) == "error":
+        return None
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [part if isinstance(part, str) else part.get("text") for part in content if isinstance(part, (str, dict))]
+        return "\n".join(part for part in parts if isinstance(part, str))
+    return None
+
+
 def _converted(request: Any, error: Exception, error_class: str, note: Optional[str]) -> Any:
     """The error ToolMessage that stands for an exception: its class and the error class, never its text."""
     call = _call(request)
@@ -117,7 +134,7 @@ def _converted(request: Any, error: Exception, error_class: str, note: Optional[
 
 
 def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = False,
-                     timeout: float = DEFAULT_TIMEOUT) -> Any:
+                     detect_blocked_text: bool = False, timeout: float = DEFAULT_TIMEOUT) -> Any:
     """The body of the middleware's ``wrap_tool_call``; usable on its own inside your own middleware."""
     args = _call(request).get("args")
     try:
@@ -141,11 +158,16 @@ def handle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = F
         note = note_for(text, args, adapter=ADAPTER, timeout=timeout)
         if note:
             return _annotated(result, note)
+    elif detect_blocked_text:
+        body = _success_text(result)
+        note = note_for_body(body, args, adapter=ADAPTER, timeout=timeout) if body else None
+        if note:
+            return _annotated(result, note)
     return result
 
 
 async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: bool = False,
-                            timeout: float = DEFAULT_TIMEOUT) -> Any:
+                            detect_blocked_text: bool = False, timeout: float = DEFAULT_TIMEOUT) -> Any:
     """The async twin of ``handle_tool_call``: the wait never blocks the event loop and ends at ``timeout``."""
     args = _call(request).get("args")
     try:
@@ -169,14 +191,22 @@ async def ahandle_tool_call(request: Any, handler: Any, *, convert_exceptions: b
         note = await anote_for(text, args, adapter=ADAPTER, timeout=timeout)
         if note:
             return _annotated(result, note)
+    elif detect_blocked_text:
+        body = _success_text(result)
+        note = await anote_for_body(body, args, adapter=ADAPTER, timeout=timeout) if body else None
+        if note:
+            return _annotated(result, note)
     return result
 
 
-def ahn_tool_failure_middleware(*, convert_exceptions: bool = False, timeout: float = DEFAULT_TIMEOUT):
+def ahn_tool_failure_middleware(*, convert_exceptions: bool = False, detect_blocked_text: bool = False,
+                                timeout: float = DEFAULT_TIMEOUT):
     """A LangChain agent middleware (pass it in ``create_agent(..., middleware=[...])``); needs ``langchain`` v1.
 
     List it before ``ToolRetryMiddleware`` (see the module documentation). ``convert_exceptions=True`` turns a raised
     block or outage into an error ``ToolMessage`` without the exception's text; the default re-raises it unchanged.
+    ``detect_blocked_text=True`` also reads the start of a successful result's text for the marks of a block page (see the
+    module documentation); the default leaves successful results alone.
     """
     from langchain.agents.middleware import AgentMiddleware
 
@@ -184,9 +214,11 @@ def ahn_tool_failure_middleware(*, convert_exceptions: bool = False, timeout: fl
         """Adds an Agent Help Network line to the result of a web tool call that was blocked or failed."""
 
         def wrap_tool_call(self, request, handler):
-            return handle_tool_call(request, handler, convert_exceptions=convert_exceptions, timeout=timeout)
+            return handle_tool_call(request, handler, convert_exceptions=convert_exceptions,
+                                    detect_blocked_text=detect_blocked_text, timeout=timeout)
 
         async def awrap_tool_call(self, request, handler):
-            return await ahandle_tool_call(request, handler, convert_exceptions=convert_exceptions, timeout=timeout)
+            return await ahandle_tool_call(request, handler, convert_exceptions=convert_exceptions,
+                                           detect_blocked_text=detect_blocked_text, timeout=timeout)
 
     return AHNToolFailureMiddleware()
