@@ -124,15 +124,30 @@ _CATEGORY_OF_TYPE = {
 # the header). Tokens are matched in this order; a host that matches none is "other_mcp", and a call with no User-Agent
 # at all, or no label on the hop (no label, a value off the list, or a request with the right token that is not the
 # loopback hop), is "unknown_mcp" (so an unlisted host and a missing header are not counted as the same thing). Hints, like every kind here.
-MCP_HOSTS = ("claude", "chatgpt", "cursor", "vscode", "other_mcp", "unknown_mcp")
+# The Claude family is split three ways (docs/decisions.md D105): the Claude Code client (which includes the MCP server a Claude Code
+# plugin bundles), the claude.ai and desktop connector ("Claude-User"), and any other Anthropic client. The order of the tokens matters:
+# "claude-code" has to be tried before the broad "claude" token of claude_other.
+MCP_HOSTS = ("claude_code", "claude_web", "claude_other", "chatgpt", "cursor", "vscode", "other_mcp", "unknown_mcp")
 MCP_HOST_UNKNOWN = "unknown_mcp"  # no User-Agent (or no label on the hop) to read a family from
 MCP_HOST_NONE = "none"
 _MCP_HOST_TOKENS = (
-    ("claude", ("claude", "anthropic")),
+    ("claude_code", ("claude-code", "claude_code")),
+    ("claude_web", ("claude-user", "claude.ai")),
+    ("claude_other", ("claude", "anthropic")),
     ("chatgpt", ("openai", "chatgpt")),
     ("cursor", ("cursor",)),
     ("vscode", ("vscode", "visual studio code", "copilot")),
 )
+# Rows stored before D105 carry the label "claude", which could not tell the three Claude kinds apart. Nothing is migrated: the
+# summary reads such a row as claude_web (the largest share of that label was the connector), so claude_web is an upper bound for
+# the days before the split and claude_code / claude_other count only from the day it shipped.
+LEGACY_MCP_HOSTS = {"claude": "claude_web"}
+
+
+def reported_mcp_host(label: str) -> str:
+    """The label a stored mcp_host value is counted under in the summary (a pre-D105 "claude" counts as claude_web)."""
+    return LEGACY_MCP_HOSTS.get(label, label)
+
 
 # ahn-client names its framework adapter in the User-Agent: "ahn-client/0.4.0 (+langchain; +https://...)". The names the
 # shipped adapters use are listed (the Claude Agent SDK and OpenAI Agents SDK ones carry a hyphen, stored with an underscore);
