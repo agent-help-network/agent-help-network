@@ -406,6 +406,7 @@ VERB_SITES = {
     ('site_probe.py', '_breaker_cause', 'get'): 1,
     ('site_probe.py', '_breaker_stopped', 'get'): 1,
     ('site_probe.py', '_confirm_on', 'get'): 1,
+    ('site_probe.py', '_d103_on', 'get'): 1,
     ('site_probe.py', '_cookie_names', 'get'): 2,
     ('site_probe.py', '_row', 'get'): 9,
     ('site_probe.py', '_wait_for_profile', 'get'): 1,
