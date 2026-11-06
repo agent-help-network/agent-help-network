@@ -15,13 +15,13 @@ Muse, dots or any site it describes. This client only reads; it never reports.
                 print(answer.summary())
 """
 
-from ._classify import classify, signals
+from ._classify import classify, classify_body, signals
 from ._client import check, clear_cache
 from ._diagnose import diagnose
 from ._digest import Digest, digest_markdown, local_digest, shard_id
 from ._memory import ADVICE, FailureLog
 from ._result import NextAction, Result
 
-__version__ = "0.6.7"
-__all__ = ["check", "classify", "clear_cache", "diagnose", "signals", "local_digest", "digest_markdown", "shard_id", "Digest",
+__version__ = "0.6.8"
+__all__ = ["check", "classify", "classify_body", "clear_cache", "diagnose", "signals", "local_digest", "digest_markdown", "shard_id", "Digest",
            "FailureLog", "ADVICE", "Result", "NextAction", "__version__"]
