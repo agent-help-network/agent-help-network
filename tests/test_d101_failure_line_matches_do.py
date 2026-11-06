@@ -181,7 +181,29 @@ def test_a_bestbuy_shaped_lookup_a_customer_page_on_the_same_site_is_handed_over
     assert rec == {"action": "hand_off_to_human", "confidence": "low", "reasons": ["official_path_available", NO_PATH_CODE]}
     assert out["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None, "customer_url": HELP}
     assert out["summary_line"] == ("No response came (timeout or connection). The customer page is on the same site and may not open either; "
-                                   "if one more try fails, hand your user next_action.customer_url.")
+                                   "if one more try fails, hand your user next_action.customer_url. API work: official_paths.")
+    # the pointer is only there while a developer path is listed
+    rec, out = answer("service_error", BTR, profile=UNREAD, official={**NO_DEV, "consumer": CONSUMER}, same=True)
+    assert out["summary_line"] == response_guide.HANDOFF_NO_RESPONSE_CUSTOMER
+    for stage in (None, "response_observed"):  # a 5xx with the customer page on the same site is answered as before
+        rec, out = answer("service_error", stage, profile=UNREAD, official={**DEV, "consumer": CONSUMER}, same=True)
+        assert rec["action"] == "use_official_path" and NO_PATH_CODE not in rec["reasons"]
+
+
+def test_the_api_pointer_follows_official_path_available_on_every_hand_off_with_a_customer_page():
+    official = {**DEV, "consumer": CONSUMER}
+    for profile in (UNREAD, None, ALLOWS):
+        for stage in (BTR, "response_observed"):
+            for not_read in (False, True):
+                rec, out = answer("service_error", stage, profile=profile, official=official, not_read=not_read, same=stage == BTR)
+                if rec["action"] != "hand_off_to_human" or "customer_url" not in out["next_action"]:
+                    continue
+                assert "official_path_available" in rec["reasons"]
+                assert out["summary_line"].endswith(" API work: official_paths.") and len(out["summary_line"]) <= LINE_MAX
+                assert "next_action.customer_url" in out["summary_line"]
+    assert len(response_guide.HANDOFF_NO_RESPONSE_CUSTOMER + response_guide._HANDOFF_API) <= LINE_MAX
+    assert len(response_guide.HANDOFF_SERVICE_ERROR_CUSTOMER + response_guide._HANDOFF_API) <= LINE_MAX
+    assert "official_paths" in CHECKS[NO_PATH_CODE] and "no page of this site" not in CHECKS[NO_PATH_CODE]
 
 
 def test_a_customer_page_on_another_site_or_after_a_5xx_keeps_the_answer_from_before():
@@ -290,6 +312,7 @@ def test_the_h3_sentence_says_when_the_home_page_check_is_over_a_day_old_and_not
     fresh, stale = h3(None, False), h3(None, True)
     assert fresh["summary_line"] == ROWS["H3"][1]
     assert stale["summary_line"] == response_guide.H3_STALE and "over a day ago" in stale["summary_line"]
+    assert "Do not switch tools or user agents to retry" in stale["summary_line"] and "or user agents" in ROWS["H3"][1]
     assert stale["next_action"] == fresh["next_action"] and stale.get("links") == fresh.get("links")
     curated = {**NO_DEV, "consumer": CONSUMER}
     fresh_c, stale_c = h3(curated, False), h3(curated, True)
@@ -300,6 +323,13 @@ def test_the_h3_sentence_says_when_the_home_page_check_is_over_a_day_old_and_not
     case = dict(error_class="human_verification", access_profile=ALLOWS, official=None)
     assert guide(result_of(case, rec), True, False, False, True, edge_stale=True) == guide(result_of(case, rec), True, False, False, True)
     assert guide(result_of(case, rec), True, False, False, True, edge_stale=True) == pre_rg.guide(result_of(case, rec), True, False, False, True)
+
+
+def test_edge_stale_is_keyword_only_so_a_later_positional_argument_cannot_land_in_it():
+    rec = {"action": "hand_off_to_human", "confidence": "medium", "reasons": ["edge_refusal_confirmed", "robots_allows_agents"]}
+    case = dict(error_class="site_access", access_profile=ALLOWS, official=None)
+    with pytest.raises(TypeError):
+        guide(result_of(case, rec), True, False, False, True, "site_access", None, True, True, True)
 
 
 # --- contract and wiring ----------------------------------------------------------------------------------------------------

@@ -15,7 +15,7 @@ TEST_URL = os.environ.get("AHN_TEST_DATABASE_URL", "")
 if not TEST_URL:
     pytest.skip("AHN_TEST_DATABASE_URL is required", allow_module_level=True)
 
-from ahn import access_profile, background_reads, feedback, service, site_probe  # noqa: E402
+from ahn import access_profile, background_reads, feedback, response_guide, service, site_probe  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.models import CheckResponse  # noqa: E402
 from ahn.service import PUBLIC_REPORTER_ID  # noqa: E402
@@ -161,7 +161,9 @@ def test_the_stored_measurement_decides_at_each_boundary_and_nothing_else_moves(
     assert [c["code"] for c in on["next_checks"]][:2] == ["locate_failure_stage", EDGE_CODE]
     assert [c for c in on["next_checks"] if c["code"] != EDGE_CODE] == off["next_checks"]
     assert on["next_action"]["do"] == "hand_off_to_human" and on["next_action"]["url"] is None
-    assert on["summary_line"] == "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves."
+    # D101: a check over a day old says so in its first line; the decision is the same
+    stale = on["ahn_check"]["freshness"] == "stale"
+    assert on["summary_line"] == (response_guide.H3_STALE if stale else "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves.")
     # everything but the decision and the one note is the answer the switch off gives
     assert same_but(on, off, "recommendation", "next_checks", "summary_line", "next_action", "ahn_check")
     assert {k: v for k, v in on["next_action"].items() if k != "do"} == {k: v for k, v in off["next_action"].items() if k != "do"}
