@@ -154,6 +154,12 @@ def history_incident_open(row) -> bool:
     return row.get("feed_source") == "history_atom" and type(count) is int and count > 0
 
 
+def incidentio_incident_open(row) -> bool:
+    """An incident.io page (feed_platform incident_io, D100) whose stored list holds at least one unresolved incident."""
+    count = row.get("active_incidents")
+    return row.get("feed_platform") == "incident_io" and type(count) is int and count > 0
+
+
 def feed_next_due(row, idle: timedelta) -> datetime | None:
     """When a feed is next due, from its status_cache row (indicator, fetched_at, last_error_at, failures,
     last_error_detail); None when it was never attempted (due now). The lookup path (idle FEED_STALE_HOURS) and
@@ -170,7 +176,9 @@ def feed_next_due(row, idle: timedelta) -> datetime | None:
     # An incident-history reading (D52) has no indicator; with an open incident it makes the answer wait (D57), so it
     # is read on the active interval too, and a resolved incident stops the wait within about FEED_RETRY_MINUTES.
     indicator = row.get("indicator")
-    if history_incident_open(row):
+    # An incident.io page that reads "none" while its list holds an unresolved incident (D100) makes the answer say so, so it is
+    # read on the active interval as well: a resolved incident stops showing within about FEED_RETRY_MINUTES.
+    if history_incident_open(row) or incidentio_incident_open(row):
         indicator = HISTORY_ACTIVE
     due = [fetched_at + feed_refresh_after(indicator, idle)] if fetched_at is not None else []
     if error_at is not None and (fetched_at is None or error_at >= fetched_at):
