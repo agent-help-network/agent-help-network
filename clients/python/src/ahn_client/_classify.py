@@ -176,10 +176,13 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
 # are conservative and read only the start of the body (BODY_HEAD characters), never the whole page:
 #   * a challenge page of a known bot-protection vendor is recognised by a marker that only a challenge page carries
 #     (VENDOR_MARKERS); that is enough alone. It is looked for in the markup only (tag names and attributes: ids, classes,
-#     hrefs, script src; the <title> text too), never in script bodies or in the words of an article. Markers that a normal
-#     page of a protected site also loads (Cloudflare's /cdn-cgi/challenge-platform and Turnstile scripts, DataDome's
-#     tags.js, Imperva's _Incapsula_Resource, PerimeterX's px-cdn.net sensor) are not markers. The Akamai "Reference #"
-#     number and Imperva's "Incapsula incident ID" have a distinctive form and are also read in the visible text (VENDOR_TEXT);
+#     hrefs, script src; the <title> text too), never in the words of an article. Script bodies are not read, with one
+#     exception: Cloudflare's managed challenge defines window._cf_chl_opt there, and Cloudflare documents that a page of
+#     your own must not (CF_CHL_OPT). Markers that a normal page of a protected site also loads (Cloudflare's
+#     /cdn-cgi/challenge-platform and Turnstile scripts, DataDome's tags.js, Imperva's _Incapsula_Resource, PerimeterX's
+#     px-cdn.net sensor) are not markers. The Akamai "Reference #" number has a distinctive form and is read in the visible
+#     text (AKAMAI_TEXT); an Akamai page is an "Access Denied" page, not a CAPTCHA, so it is site_access. Imperva's
+#     "Incapsula incident ID" is a visible-text signal like the ones below (a short page, or a second kind of signal);
 #   * otherwise the visible text must say so in words: a status line ("403 Forbidden", "Error 429"), a refusal ("Access
 #     Denied") or a request to prove you are human ("verify you are human", "complete the CAPTCHA"). A short page (at most
 #     BODY_HEAD characters in all, block pages are a few hundred) needs one such signal; any longer page needs two different
@@ -191,16 +194,18 @@ SHORT_PAGE = 800  # visible characters up to which one signal is enough
 EARLY_TEXT = 200  # visible characters at the start of a page that count as its heading
 VENDOR_MARKERS = re.compile(
     r"cf-chl-|__cf_chl|cf-browser-verification"  # Cloudflare
+    r"|cdn-cgi/styles/challenges\.css|challenge-error-text"  # Cloudflare managed challenge ("Just a moment...")
     r"|attention required! \| cloudflare"
     r"|captcha-delivery\.com"  # DataDome
-    r"|px-captcha|_pxcaptcha"  # PerimeterX (HUMAN)
-    r"|errors\.edgesuite\.net",  # Akamai
+    r"|px-captcha|_pxcaptcha",  # PerimeterX (HUMAN)
     re.I)
-# Phrases of a challenge page that are printed as visible text and have a form no ordinary page uses.
-VENDOR_TEXT = re.compile(
-    r"reference\s*#\s*\d+\.[0-9a-f]{8}\.\d{10}\.[0-9a-f]+"  # Akamai
-    r"|incapsula incident id",  # Imperva Incapsula
-    re.I)
+CF_CHL_OPT = re.compile(r"_cf_chl_opt\s*=")  # in a script body: the managed challenge's own definition
+AKAMAI_MARKUP = re.compile(r"errors\.edgesuite\.net", re.I)  # Akamai "Access Denied" page: a refusal, not a CAPTCHA
+# The Akamai reference number, printed as visible text in a form no ordinary page uses.
+AKAMAI_TEXT = re.compile(r"reference\s*#\s*\d+\.[0-9a-f]{7,8}\.\d{10}\.[0-9a-f]+", re.I)
+BODY_INCAPSULA = re.compile(r"incapsula incident id", re.I)  # Imperva
+# A title that announces a guide about errors ("How to Fix 403 Forbidden Error") is not read as a block page's title.
+GUIDE_TITLE = re.compile(r"^(?:how (?:to|do|can|i)|fix(?:ing)?|what (?:is|does|are)|why)\b|\b(?:fix|fixing|guide|tutorial|troubleshooting)\b", re.I)
 BODY_STATUS = re.compile(
     r"\b(?:(?P<a>403|429|503)\s+(?:forbidden|too many requests|service (?:temporarily )?unavailable)"
     r"|(?:http\s*)?(?:error|status)(?:\s*code)?\s*[:#]?\s*(?P<b>403|429|503)\b)", re.I)
@@ -208,11 +213,12 @@ BODY_DENIAL = re.compile(
     r"access denied|you (?:don.t|do not) have permission to access|you have been blocked|(?:your )?request (?:has been )?blocked"
     r"|access to this (?:page|site|website) (?:has been |is )?(?:denied|blocked)", re.I)
 BODY_HUMAN = re.compile(
-    r"verify (?:that )?you are (?:a )?human|are you a (?:robot|human)|checking your browser|just a moment\.\.\."
+    r"verif(?:y|ying) (?:that )?you are (?:a )?human|are you a (?:robot|human)|checking your browser|just a moment\.\.\."
     r"|unusual traffic"
     r"|(?:complete|solve|pass|prove)\b[^.<>]{0,40}?\bcaptcha|captcha (?:challenge|verification) (?:is )?required", re.I)
 _SCRIPT_STYLE = re.compile(r"<(script|style)\b.*?(?:</\1\s*>|$)", re.I | re.S)
 _SCRIPT_STYLE_BODY = re.compile(r"(<(script|style)\b[^>]*>).*?(?:</\2\s*>|$)", re.I | re.S)
+_SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)(?:</script\s*>|$)", re.I | re.S)
 _TAG = re.compile(r"<[^>]*>?")
 _TITLE = re.compile(r"<title[^>]*>(.*?)(?:</title|$)", re.I | re.S)
 
@@ -235,12 +241,18 @@ def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
     title = " ".join(html.unescape(_TAG.sub(" ", title_match.group(1))).split()) if title_match else ""
     visible = " ".join(html.unescape(_TAG.sub(" ", _SCRIPT_STYLE.sub(" ", head))).split())
     markup = " ".join(_TAG.findall(_SCRIPT_STYLE_BODY.sub(r"\1", head)))  # tags and attributes only, no script or style bodies
-    vendor = bool(VENDOR_MARKERS.search(markup) or VENDOR_MARKERS.search(title) or VENDOR_TEXT.search(visible))
+    scripts = " ".join(_SCRIPT_BODY.findall(head))
+    vendor = bool(VENDOR_MARKERS.search(markup) or VENDOR_MARKERS.search(title) or CF_CHL_OPT.search(scripts))
+    akamai = bool(AKAMAI_MARKUP.search(markup) or AKAMAI_TEXT.search(visible))
     if title:
-        visible = visible.replace(title, " ", 1).strip()  # the title is read on its own, as the start of the page
+        guide = bool(GUIDE_TITLE.search(title))
+        # the title is read on its own, as the start of the page; a guide's title (and its repeat as a heading) is not read at all
+        visible = visible.replace(title, " ", -1 if guide else 1).strip()
+        if guide:
+            title = ""
     kinds, early, status_code = set(), set(), None
     for is_early, text in ((True, title), (True, visible[:EARLY_TEXT]), (False, visible[EARLY_TEXT:])):
-        for kind, pattern in (("status", BODY_STATUS), ("denial", BODY_DENIAL), ("human", BODY_HUMAN)):
+        for kind, pattern in (("status", BODY_STATUS), ("denial", BODY_DENIAL), ("human", BODY_HUMAN), ("incapsula", BODY_INCAPSULA)):
             found = pattern.search(text)
             if not found:
                 continue
@@ -250,10 +262,12 @@ def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
             if kind == "status":
                 status_code = status_code or found.group("a") or found.group("b")
     short = len(body) <= BODY_HEAD and len(visible) + len(title) <= SHORT_PAGE
-    if not vendor and not (kinds if short else len(kinds) >= 2 and early):
+    if not vendor and not akamai and not (kinds if short else len(kinds) >= 2 and early):
         return None, None
-    if vendor or "human" in kinds:
+    if vendor or "human" in kinds or "incapsula" in kinds:
         return "human_verification", "response_observed"
+    if akamai:
+        return "site_access", "response_observed"
     if status_code in ("429", "503") and "denial" not in kinds:
         return "service_error", "response_observed"
     return "site_access", "response_observed"

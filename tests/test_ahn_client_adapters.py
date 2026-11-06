@@ -1459,8 +1459,24 @@ HTTP_DOC = ("<html><head><title>HTTP status codes - a guide</title></head><body>
             + "<p>Servers answer requests with a status code and a short reason phrase. " * 12
             + "<h2>403 Forbidden</h2><p>The server refuses to authorize the request. Access denied pages vary.</p>"
             + "<p>Use a captcha only when needed.</p></body></html>")
-CHALLENGE = ('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><div id="cf-chl-widget"></div>'
-             + "<p>Enable JavaScript and cookies to continue</p></body></html>")
+_TOKENS = "a1B2c3D4e5" * 450
+
+
+def _managed_challenge(title="Just a moment...", head_extra="", body_extra="", markup=True):
+    """A Cloudflare managed challenge as it is served: over 4 KiB, __cf_chl and _cf_chl_opt only in the inline script body,
+    no cf-chl-widget element. ``markup=False`` drops the stylesheet link and the error-text id, leaving only the script."""
+    css = '<link href="/cdn-cgi/styles/challenges.css" rel="stylesheet">' if markup else ""
+    err = ' id="challenge-error-text"' if markup else ""
+    return ('<!DOCTYPE html><html lang="en-US"><head><title>' + title + '</title><meta name="robots" content="noindex,nofollow">'
+            + css + head_extra + '</head><body class="no-js"><div class="main-wrapper" role="main"><div class="main-content">'
+            + body_extra + "<noscript><div><span" + err + ">Enable JavaScript and cookies to continue</span></div></noscript>"
+            + "</div></div><script>(function(){window._cf_chl_opt={cvId: '3',cZone: \"example.com\",cType: 'managed',cH: \""
+            + _TOKENS[:400] + '",cUPMDTk: "/?__cf_chl_tk=' + _TOKENS[:300] + '",md: "' + _TOKENS + '"};'
+            + "var cpo=document.createElement('script');cpo.src='/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=8a1b2c3d4e5f6a7b';"
+            + "document.getElementsByTagName('head')[0].appendChild(cpo);}());</script></body></html>")
+
+
+CHALLENGE = _managed_challenge()
 
 
 @pytest.mark.parametrize("body,expected", [
@@ -1472,10 +1488,16 @@ CHALLENGE = ('<!DOCTYPE html><html><head><title>Just a moment...</title></head><
     ("Please verify you are human to continue.", "human_verification"),
     ("<html><body>Complete the CAPTCHA below</body></html>", "human_verification"),
     (CHALLENGE, "human_verification"),
+    (_managed_challenge(body_extra='<h2 id="challenge-running">Verifying you are human. This may take a few seconds.</h2>'),
+     "human_verification"),
+    (_managed_challenge(markup=False), "human_verification"),  # only the script body defines _cf_chl_opt
+    (_managed_challenge(title="example.com", markup=False), "human_verification"),
     ("<html><head><title>Attention Required! | Cloudflare</title></head><body>Sorry, you have been blocked</body></html>",
      "human_verification"),
     ("<html><body><h1>Access Denied</h1>You don't have permission to access this on this server.<p>Reference #18.2d351ab8.1557333295.a4e16ab</p></body></html>",
-     "human_verification"),
+     "site_access"),  # Akamai: a refusal, not a CAPTCHA
+    ("<html><body><h1>Access Denied</h1><p>Reference #18.2f1c102.1699999999.1a2b3c</p></body></html>", "site_access"),  # 7 hex digits
+    ("<html><head><title>Access Denied</title></head><body>Verifying you are human</body></html>", "human_verification"),
     ("<script>window._pxAppId='x'</script><div id='px-captcha'></div>", "human_verification"),
     (b"403 Forbidden", "site_access"),
 ])
@@ -1488,6 +1510,14 @@ def test_classify_body_reads_a_block_page(body, expected):
     "The door was forbidden to children.",  # the word alone is never a signal
     "Your account is blocked by an admin policy; contact support.",
     ARTICLE,  # long, "forbidden" and "blocked" only
+    _managed_challenge(markup=False, head_extra="<style>" + "a{b:c}" * 200 + "</style>").replace("_cf_chl_opt", "_cf_chl_x").replace("__cf_chl", "__cf_x"),  # a lone "Just a moment..." title; the script without the _cf_chl_opt definition
+    # a guide about 403 errors: its title is not read as a block page's, even when the guide quotes "Access Denied" at the start
+    "<html><head><title>How to Fix 403 Forbidden Error</title></head><body><h1>How to Fix 403 Forbidden Error</h1>"
+    "<p>Access Denied is what you see first. " + "Words about servers and caches. " * 150 + "</p></body></html>",
+    "<html><head><title>How to Fix 403 Forbidden Error</title></head><body><p>Access Denied appears at first. "
+    + "Words about servers and caches. " * 150 + "</p></body></html>",
+    # a forum post that only quotes Imperva's notice is not a block page
+    'Help: I keep getting "Request unsuccessful. Incapsula incident ID: 1-2" on my bank site. ' + "More text. " * 500,
     HTTP_DOC,  # a long page that explains 403 further down under an unrelated title and heading
     "<html><head><title>Sign in</title></head><body>" + "<p>Welcome back. Enter your details.</p>" * 40
     + '<div class="g-recaptcha">captcha</div></body></html>',  # a long login page with a CAPTCHA widget: one kind only
@@ -1549,12 +1579,14 @@ def test_classify_body_leaves_normal_pages_with_vendor_scripts_and_notices_alone
 @pytest.mark.parametrize("body,expected", [
     ("<html><head><title>Attention Required! | Cloudflare</title></head><body>" + "<p>x</p>" * 20 + "</body></html>", "human_verification"),
     (_heavy_page("Just a moment...", "", "<div id='cf-chl-widget-x'></div>"), "human_verification"),
+    (_heavy_page("Just a moment...", '<link href="/cdn-cgi/styles/challenges.css" rel="stylesheet">'), "human_verification"),
     ('<html><body><iframe src="https://geo.captcha-delivery.com/captcha/?initialCid=x"></iframe></body></html>', "human_verification"),
     ('<html><body><div class="px-captcha-container"></div></body></html>', "human_verification"),
-    ('<html><body><a href="https://errors.edgesuite.net/18.1">x</a></body></html>', "human_verification"),
+    ('<html><body><a href="https://errors.edgesuite.net/18.1">x</a></body></html>', "site_access"),
     ("<html><body>Request unsuccessful. Incapsula incident ID: 123-456</body></html>", "human_verification"),
+    (_heavy_page("Access Denied", "", "<p>Request unsuccessful. Incapsula incident ID: 123-456</p>"), "human_verification"),  # long, with a title signal
     ("<html><body>Please solve the captcha to continue.</body></html>", "human_verification"),
-    ("<html><body><h1>Access Denied</h1>Reference&#32;&#35;18.2d351ab8.1557333295.a4e16ab</body></html>", "human_verification"),
+    ("<html><body><h1>Access Denied</h1>Reference&#32;&#35;18.2d351ab8.1557333295.a4e16ab</body></html>", "site_access"),
 ])
 def test_classify_body_still_reads_challenge_pages(body, expected):
     assert ahn.classify_body(body) == (expected, "response_observed")
