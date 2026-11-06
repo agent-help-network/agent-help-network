@@ -18,7 +18,7 @@ os.environ.setdefault("AHN_KEY_PEPPER", PEPPER)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from ahn import adoption, platform_metrics  # noqa: E402
+from ahn import adoption, platform_metrics, traffic  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.main import create_app  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
@@ -108,6 +108,15 @@ def test_mcp_hop_counts_as_mcp_host_with_the_forwarded_family(db):
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "other_mcp"}))  # a host the list does not name
     assert {(r["client_category"], r["mcp_host"]): r["lookups"] for r in stored(db)} == {
         ("mcp_host", "claude_code"): 1, ("mcp_host", "cursor"): 1, ("mcp_host", "unknown_mcp"): 2, ("mcp_host", "other_mcp"): 1}
+
+
+def test_every_mcp_host_label_fits_the_stored_column(db):
+    with connect(db) as conn:
+        width = conn.execute(
+            "SELECT character_maximum_length AS n FROM information_schema.columns "
+            "WHERE table_name = 'lookup_outcome_daily' AND column_name = 'mcp_host'").fetchone()["n"]
+    labels = (*traffic.MCP_HOSTS, traffic.MCP_HOST_NONE, *traffic.LEGACY_MCP_HOSTS, *traffic.LEGACY_MCP_HOSTS.values())
+    assert width and all(len(label) <= width for label in labels), (width, [x for x in labels if len(x) > width])
 
 
 def test_a_caller_cannot_choose_its_own_mcp_host_label(db, client):

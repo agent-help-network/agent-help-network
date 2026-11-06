@@ -156,29 +156,30 @@ def test_m1_counts_the_six_categories_and_leaves_crawlers_and_web_out():
     assert out["m1"] == 2 + 3 + 1 + 4 + 5 + 6 + 7
     assert out["m1_by_category"] == {"plugin": 2, "ahn_client": 4, "mcp_host": 4, "agent_or_script": 5, "browser": 6, "unknown": 7}
     assert out["m1_by_adapter"]["langchain"] == 3 and sum(out["m1_by_adapter"].values()) == 3   # a plain ahn-client row has no adapter
-    assert out["m1_by_mcp_host"] == {"claude_code": 0, "claude_web": 4, "claude_other": 0, "chatgpt": 0, "cursor": 0, "vscode": 0, "other_mcp": 0, "unknown_mcp": 0}
+    assert out["m1_by_mcp_host"] == {"claude_code": 0, "claude_web": 4, "claude_other": 0, "chatgpt": 0, "cursor": 0, "vscode": 0, "other_mcp": 0, "unknown_mcp": 0, "claude_unsplit": 0}
     assert out["left_out"] == {"crawler": 100, "web": 50}
     assert out["automatic_share"] == round((2 + 4 + 4) / 28, 3)
     assert out["m2_sources_upper_bound"] == 2 + 1 + 1 + 3 + 6   # crawler and web rows add nothing, whatever they hold
 
 
 def test_mcp_host_labels_fit_their_column_and_claude_code_is_tried_first():
-    assert all(len(name) <= 24 for name in (*traffic.MCP_HOSTS, traffic.MCP_HOST_NONE))
+    assert all(len(name) <= 16 for name in (*traffic.MCP_HOSTS, traffic.MCP_HOST_NONE))
     names = [name for name, _ in traffic._MCP_HOST_TOKENS]
     assert names.index("claude_code") < names.index("claude_web") < names.index("claude_other")
     assert set(names) <= set(traffic.MCP_HOSTS) and "claude" not in traffic.MCP_HOSTS
 
 
-def test_a_pre_split_claude_label_is_counted_as_claude_web_without_a_migration():
+def test_a_pre_split_claude_label_is_shown_as_claude_unsplit_without_a_migration():
     conn = Rows([
         row(TODAY, "mcp_host", 5, mcp_host="claude"), row(TODAY, "mcp_host", 2, mcp_host="claude_web"),
         row(TODAY, "mcp_host", 3, mcp_host="claude_code"), row(TODAY, "mcp_host", 1, mcp_host="claude_other"),
         row(TODAY, "plugin", 4),  # a non-MCP row never lands in the MCP host split
     ])
     out = adoption.summary(conn, 7, TODAY)
-    assert out["m1_by_mcp_host"]["claude_web"] == 7 and out["m1_by_mcp_host"]["claude_code"] == 3 and out["m1_by_mcp_host"]["claude_other"] == 1
-    assert "claude" not in out["m1_by_mcp_host"]
-    assert sum(out["m1_by_mcp_host"].values()) == 11 and out["m1_by_category"]["mcp_host"] == 11
+    split = out["m1_by_mcp_host"]
+    assert split["claude_unsplit"] == 5 and split["claude_web"] == 2 and split["claude_code"] == 3 and split["claude_other"] == 1
+    assert "claude" not in split and "claude_unsplit" not in traffic.MCP_HOSTS
+    assert sum(split.values()) == 11 and out["m1_by_category"]["mcp_host"] == 11
 
 
 def test_the_window_is_the_last_n_utc_days_including_today():

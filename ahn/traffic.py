@@ -138,14 +138,15 @@ _MCP_HOST_TOKENS = (
     ("cursor", ("cursor",)),
     ("vscode", ("vscode", "visual studio code", "copilot")),
 )
-# Rows stored before D105 carry the label "claude", which could not tell the three Claude kinds apart. Nothing is migrated: the
-# summary reads such a row as claude_web (the largest share of that label was the connector), so claude_web is an upper bound for
-# the days before the split and claude_code / claude_other count only from the day it shipped.
-LEGACY_MCP_HOSTS = {"claude": "claude_web"}
+# Rows stored before D105 carry the label "claude", which cannot be split into the three Claude kinds after the fact. Nothing is
+# migrated: the summary shows such rows under their own key claude_unsplit, so the days before the split stay visible without
+# being credited to any of the three. claude_unsplit is a report key only; it is not in MCP_HOSTS, so the hop never accepts it.
+LEGACY_MCP_HOSTS = {"claude": "claude_unsplit"}
+MCP_HOST_REPORT_KEYS = (*MCP_HOSTS, *LEGACY_MCP_HOSTS.values())
 
 
 def reported_mcp_host(label: str) -> str:
-    """The label a stored mcp_host value is counted under in the summary (a pre-D105 "claude" counts as claude_web)."""
+    """The label a stored mcp_host value is counted under in the summary (a pre-D105 "claude" counts as claude_unsplit)."""
     return LEGACY_MCP_HOSTS.get(label, label)
 
 

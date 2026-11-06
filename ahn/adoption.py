@@ -151,7 +151,7 @@ def summary(conn, days: int = 7, today: date | None = None) -> dict:
     counted = [r for r in rows if r["client_category"] not in EXCLUDED]
     by_category = {name: 0 for name in traffic.CLIENT_CATEGORIES}
     by_adapter = {name: 0 for name in (*traffic.ADAPTERS, traffic.ADAPTER_OTHER)}
-    by_mcp_host = {name: 0 for name in traffic.MCP_HOSTS}
+    by_mcp_host = {name: 0 for name in traffic.MCP_HOST_REPORT_KEYS}
     by_action = {name: 0 for name in (*ACTIONS, OTHER)}
     by_state = {name: 0 for name in PROFILE_STATES}
     daily = {(start + timedelta(days=i)).isoformat(): {"lookups": 0, "sources": 0} for i in range(days)}
