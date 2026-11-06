@@ -222,10 +222,10 @@ def test_every_new_sentence_fits_before_every_row_sentence_that_can_follow_it():
 
 def test_no_table_other_than_the_status_rows_moved():
     assert {k: v for k, v in STATUS_ROWS.items() if k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
-    assert ROWS == pre_rg.ROWS and response_guide.STATUS_AFTER_ROWS == pre_rg.STATUS_AFTER_ROWS
+    assert {k: v for k, v in ROWS.items() if k not in response_guide.HANDOFF_ROWS} == pre_rg.ROWS and response_guide.STATUS_AFTER_ROWS == pre_rg.STATUS_AFTER_ROWS
     assert response_guide.CONSUMER_ROWS == pre_rg.CONSUMER_ROWS and response_guide.PROCEED_CONSUMER_ROWS == pre_rg.PROCEED_CONSUMER_ROWS
     assert {k: v for k, v in STATUS_FAILED_ROW.items() if k not in ("T6", "T1-U")} == pre_rg.STATUS_FAILED_ROW
-    assert triage.CHECKS == pre_t.CHECKS and triage.CHECKS_KO == pre_t.CHECKS_KO
+    assert {k: v for k, v in triage.CHECKS.items() if k != "no_path_after_failure"} == pre_t.CHECKS and {k: v for k, v in triage.CHECKS_KO.items() if k != "no_path_after_failure"} == pre_t.CHECKS_KO  # the D101 code is the only addition
 
 
 def test_documents_name_the_rule():

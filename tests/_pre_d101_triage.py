@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import status_scope
-from .access_profile import AGENT_VENDORS, GOVERNING_TOKENS, VENDOR_ALIASES, ai_input_declared_no
-from .official_paths import customer_url
+from ahn import status_scope
+from ahn.access_profile import AGENT_VENDORS, GOVERNING_TOKENS, VENDOR_ALIASES, ai_input_declared_no
+from ahn.official_paths import customer_url
 
 # D45: an incident whose latest update is older than this no longer makes the answer "wait" on its own.
 STALE_INCIDENT_DAYS = 7
@@ -319,7 +319,7 @@ EXPLICIT, ALIAS, WILDCARD, ALLOWED = "explicit", "alias", "wildcard", "allowed"
 def accepted_vendor(value) -> str | None:
     """agent_vendor as sent when it is one of the listed values (exact match), else None: treated as not sent, never an
     error, like the D47 signal codes. Accepts whatever type arrived (query text or any MCP JSON value)."""
-    from .models import AgentVendor
+    from ahn.models import AgentVendor
     return value if isinstance(value, str) and value in AgentVendor._value2member_map_ else None
 
 

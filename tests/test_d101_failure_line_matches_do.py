@@ -329,7 +329,7 @@ def test_edge_stale_is_keyword_only_so_a_later_positional_argument_cannot_land_i
     rec = {"action": "hand_off_to_human", "confidence": "medium", "reasons": ["edge_refusal_confirmed", "robots_allows_agents"]}
     case = dict(error_class="site_access", access_profile=ALLOWS, official=None)
     with pytest.raises(TypeError):
-        guide(result_of(case, rec), True, False, False, True, "site_access", None, True, True, True)
+        guide(result_of(case, rec), True, False, False, True, "site_access", None, True, True, True, True, True)
 
 
 # --- contract and wiring ----------------------------------------------------------------------------------------------------
