@@ -1528,6 +1528,28 @@ def test_classify_body_leaves_other_pages_alone(body):
     assert ahn.classify_body(body) == (None, None)
 
 
+_GUIDE_SITE_BODY = "<p>Access denied. You do not have permission to view this page.</p>" + "<p>" + "Site footer text and links. " * 60 + "</p>"
+
+
+@pytest.mark.parametrize("title", ["403 Forbidden | Tom's Guide", "403 Forbidden - The Fix Shop"])
+def test_classify_body_reads_a_block_page_whose_site_name_looks_like_a_guide(title):
+    # the guide test reads the title's first part only, so a site name after the separator does not hide a block page
+    body = f"<html><head><title>{title}</title></head><body><h1>{title}</h1>{_GUIDE_SITE_BODY}</body></html>"
+    assert ahn.classify_body(body) == ("site_access", "response_observed")
+    body = f"<html><head><title>{title}</title></head><body>{_GUIDE_SITE_BODY}</body></html>"
+    assert ahn.classify_body(body) == ("site_access", "response_observed")
+
+
+@pytest.mark.parametrize("script", [
+    "<script>if (window._cf_chl_opt == null) { load(); }</script>",  # a comparison, not the challenge's definition
+    '<script id="__NEXT_DATA__" type="application/json">{"q": "why does window._cf_chl_opt = {} appear"}</script>',
+    '<script type="application/ld+json">{"text": "window._cf_chl_opt = {cType: 1}"}</script>',
+])
+def test_classify_body_ignores_cf_chl_opt_outside_the_challenge_definition(script):
+    body = "<html><head><title>Notes</title>" + script + "</head><body>" + "<p>Plain notes about caching. </p>" * 120 + "</body></html>"
+    assert ahn.classify_body(body) == (None, None)
+
+
 def test_classify_body_reads_only_the_start():
     late = "x" * 5000 + "<div id='cf-chl-widget'></div>"  # a vendor marker past BODY_HEAD
     assert ahn.classify_body(late) == (None, None)

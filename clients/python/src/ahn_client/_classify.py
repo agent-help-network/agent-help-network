@@ -177,8 +177,8 @@ def signals(exc: Any, *, via: Optional[str] = None) -> Dict[str, Any]:
 #   * a challenge page of a known bot-protection vendor is recognised by a marker that only a challenge page carries
 #     (VENDOR_MARKERS); that is enough alone. It is looked for in the markup only (tag names and attributes: ids, classes,
 #     hrefs, script src; the <title> text too), never in the words of an article. Script bodies are not read, with one
-#     exception: Cloudflare's managed challenge defines window._cf_chl_opt there, and Cloudflare documents that a page of
-#     your own must not (CF_CHL_OPT). Markers that a normal page of a protected site also loads (Cloudflare's
+#     exception: Cloudflare's managed challenge assigns an object to window._cf_chl_opt there, which in practice only that
+#     page does (CF_CHL_OPT; a comparison or a JSON data script that quotes the name does not count). Markers that a normal page of a protected site also loads (Cloudflare's
 #     /cdn-cgi/challenge-platform and Turnstile scripts, DataDome's tags.js, Imperva's _Incapsula_Resource, PerimeterX's
 #     px-cdn.net sensor) are not markers. The Akamai "Reference #" number has a distinctive form and is read in the visible
 #     text (AKAMAI_TEXT); an Akamai page is an "Access Denied" page, not a CAPTCHA, so it is site_access. Imperva's
@@ -199,7 +199,7 @@ VENDOR_MARKERS = re.compile(
     r"|captcha-delivery\.com"  # DataDome
     r"|px-captcha|_pxcaptcha",  # PerimeterX (HUMAN)
     re.I)
-CF_CHL_OPT = re.compile(r"_cf_chl_opt\s*=")  # in a script body: the managed challenge's own definition
+CF_CHL_OPT = re.compile(r"window\._cf_chl_opt\s*=\s*\{")  # in a script body: the managed challenge's own definition
 AKAMAI_MARKUP = re.compile(r"errors\.edgesuite\.net", re.I)  # Akamai "Access Denied" page: a refusal, not a CAPTCHA
 # The Akamai reference number, printed as visible text in a form no ordinary page uses.
 AKAMAI_TEXT = re.compile(r"reference\s*#\s*\d+\.[0-9a-f]{7,8}\.\d{10}\.[0-9a-f]+", re.I)
@@ -218,7 +218,8 @@ BODY_HUMAN = re.compile(
     r"|(?:complete|solve|pass|prove)\b[^.<>]{0,40}?\bcaptcha|captcha (?:challenge|verification) (?:is )?required", re.I)
 _SCRIPT_STYLE = re.compile(r"<(script|style)\b.*?(?:</\1\s*>|$)", re.I | re.S)
 _SCRIPT_STYLE_BODY = re.compile(r"(<(script|style)\b[^>]*>).*?(?:</\2\s*>|$)", re.I | re.S)
-_SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)(?:</script\s*>|$)", re.I | re.S)
+_SCRIPT_BODY = re.compile(r"<script\b(?![^>]*\btype\s*=\s*[\"']?application/(?:[\w.+-]*\+)?json)[^>]*>(.*?)(?:</script\s*>|$)", re.I | re.S)  # not JSON data scripts
+_TITLE_PART = re.compile(r"\s(?:\||-|–|—|·|::)\s")  # "403 Forbidden | Site name": the guide test reads the first part only
 _TAG = re.compile(r"<[^>]*>?")
 _TITLE = re.compile(r"<title[^>]*>(.*?)(?:</title|$)", re.I | re.S)
 
@@ -245,7 +246,7 @@ def classify_body(body: Any) -> Tuple[Optional[str], Optional[str]]:
     vendor = bool(VENDOR_MARKERS.search(markup) or VENDOR_MARKERS.search(title) or CF_CHL_OPT.search(scripts))
     akamai = bool(AKAMAI_MARKUP.search(markup) or AKAMAI_TEXT.search(visible))
     if title:
-        guide = bool(GUIDE_TITLE.search(title))
+        guide = bool(GUIDE_TITLE.search(_TITLE_PART.split(title, 1)[0]))  # a site name ("Tom's Guide") after a separator is not a guide
         # the title is read on its own, as the start of the page; a guide's title (and its repeat as a heading) is not read at all
         visible = visible.replace(title, " ", -1 if guide else 1).strip()
         if guide:
