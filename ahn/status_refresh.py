@@ -766,8 +766,8 @@ SOURCES: dict[str, Source] = {
 # maintenances. Google's Gmail feed takes the latest modified (or begin) of the open Gmail incidents. Every other kind
 # stores a page-wide time that need not move with incidents: an incident.io page answering status.json kept
 # page.updated_at at 2026-10-16T20:01:40Z while its Atom history listed at least 8 incidents opened and resolved on 2026-10-21
-# to 2026-10-23 (status.openai.com, read 2026-10-24); Atlassian's page.updated_at and Better Stack's updated_at are
-# not shown to follow incidents. Only these kinds may have a minor page judged stale by its time (triage.page_stale).
+# to 2026-10-23 (status.openai.com, read 2026-10-24); Atlassian's page.updated_at is
+# not shown to follow incidents, and Better Stack's page updated_at moves with the page's settings (D104 takes that feed's time from its reports). Only these kinds may have a minor page judged stale by its time (triage.page_stale).
 ACTIVE_ITEM_TIME_KINDS = frozenset({"instatus", "google_gmail"})
 # The feed addresses of those kinds. A stored status_sources.api_url is matched exactly: the cron reads a host with
 # its SOURCES entry (or as a discovered Statuspage page), so an address in this set is always read by one of the
@@ -1513,8 +1513,12 @@ def parse_instatus(body: dict) -> tuple[str, datetime | None]:
 BETTERSTACK_STATES = {"operational": "none", "degraded": "minor", "downtime": "major", "maintenance": "maintenance"}
 
 
-def parse_betterstack(body: dict) -> tuple[str, datetime | None]:
-    """Parse a Better Stack index.json; any aggregate_state outside BETTERSTACK_STATES is rejected, never guessed."""
+def parse_betterstack(body: dict, events: bool = True) -> tuple[str, datetime | None]:
+    """Parse a Better Stack index.json; any aggregate_state outside BETTERSTACK_STATES is rejected, never guessed.
+
+    D104: the page's ``data.attributes.updated_at`` moves whenever the page's settings change (a monitor added, a logo
+    replaced), whatever the status, so it is not an update time of the status. With ``events`` (the default) the time is
+    taken from the reports instead (betterstack_event_time); ``events=False`` is the reading from before D104."""
     data = body.get("data") if isinstance(body, dict) else None
     attributes = data.get("attributes") if isinstance(data, dict) else None
     if not isinstance(attributes, dict) or not isinstance(attributes.get("aggregate_state"), str):
@@ -1522,8 +1526,78 @@ def parse_betterstack(body: dict) -> tuple[str, datetime | None]:
     state = attributes["aggregate_state"]
     if state not in BETTERSTACK_STATES:
         raise ValueError("unknown provider status")
+    if events:
+        return BETTERSTACK_STATES[state], betterstack_event_time(body)
     raw_time = attributes.get("updated_at")
     return BETTERSTACK_STATES[state], None if raw_time is None else _aware_time(raw_time, "provider update time")
+
+
+BETTERSTACK_OPEN_REPORT_STATES = frozenset({"degraded", "downtime", "maintenance"})
+BETTERSTACK_DOWN_STATES = ("downtime", "degraded")
+
+
+def _betterstack_included(body: dict, kind: str) -> list[dict]:
+    included = body.get("included") if isinstance(body, dict) else None
+    if not isinstance(included, list):
+        return []
+    return [item for item in included if isinstance(item, dict) and item.get("type") == kind
+            and isinstance(item.get("attributes"), dict)]
+
+
+def betterstack_event_time(body: dict) -> datetime | None:
+    """D104: the time a Better Stack page's status was last reported on, from ``included`` (status_report, status_update).
+
+    A report is open when its own ``aggregate_state`` is degraded, downtime or maintenance (a finished one reads
+    ``resolved``; ``ends_at`` stays null on finished automatic reports, so it says nothing). With an open report the time
+    is the latest ``published_at`` of its updates (its ``starts_at`` when none is readable). With none, it is the latest
+    ``published_at`` of any report's updates: the last time anything was posted, which keeps a recently resolved incident
+    ahead of a page that has been quiet for months. None when the feed lists no readable report. Items that cannot be read
+    are skipped; the page-level ``updated_at`` is never used."""
+    updates = {}
+    for item in _betterstack_included(body, "status_update"):
+        try:
+            updates[str(item.get("id"))] = _aware_time(item["attributes"].get("published_at"), "provider update time")
+        except (ValueError, TypeError):
+            continue
+    open_times: list[datetime] = []
+    open_reports = 0
+    all_times: list[datetime] = []
+    for report in _betterstack_included(body, "status_report"):
+        relationship = (report.get("relationships") or {}).get("status_updates")
+        refs = relationship.get("data") if isinstance(relationship, dict) else None
+        times = [updates[str(ref.get("id"))] for ref in refs if isinstance(ref, dict) and str(ref.get("id")) in updates] \
+            if isinstance(refs, list) else []
+        all_times += times
+        if report["attributes"].get("aggregate_state") in BETTERSTACK_OPEN_REPORT_STATES:
+            open_reports += 1
+            if times:
+                open_times += times
+            else:
+                try:
+                    open_times.append(_aware_time(report["attributes"].get("starts_at"), "provider update time"))
+                except (ValueError, TypeError):
+                    pass
+    if open_reports:
+        return max(open_times, default=None)
+    return max(all_times, default=None)
+
+
+def betterstack_affected(body: dict) -> list[str] | None:
+    """D104: the names of the resources a Better Stack page shows down or degraded right now (``status_page_resource``
+    whose ``status`` is downtime or degraded), at most status_scope.MAX_AFFECTED, cleaned like every affected name. Down
+    before degraded, then monitors before groups (a group's name only restates its members), then the page's order."""
+    ranked = []
+    for index, item in enumerate(_betterstack_included(body, "status_page_resource")):
+        attributes = item["attributes"]
+        status, name = attributes.get("status"), attributes.get("public_name")
+        if status in BETTERSTACK_DOWN_STATES and isinstance(name, str):
+            ranked.append((BETTERSTACK_DOWN_STATES.index(status), attributes.get("resource_type") == "ResourceGroup", index, name))
+    names: list[str] = []
+    for *_, name in sorted(ranked):
+        cleaned = status_scope._clean(name)
+        if cleaned and cleaned not in names and len(names) < status_scope.MAX_AFFECTED:
+            names.append(cleaned)
+    return names or None
 
 
 def parse_google_gmail(body: list) -> tuple[str, datetime | None]:
@@ -1632,7 +1706,7 @@ STATUS_JSON_SUFFIX = "/api/v2/status.json"
 
 def _read_source(source: Source, client: httpx.Client, digest: dict | None = None,
                  scope: dict | None = None, scope_allowed=None, history: bool = False,
-                 incidentio: dict | None = None) -> tuple[str, datetime | None]:
+                 incidentio: dict | None = None, betterstack_events: bool = True) -> tuple[str, datetime | None]:
     """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received.
 
     scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
@@ -1649,6 +1723,10 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     request), ``incidentio["platform"]`` is set and the page's summary.json is read once (unresolved incidents) into
     ``incidentio["scope"]``. ``incidentio["allowed"]()`` is asked once before the request (rest after failures, time budget,
     robots.txt decision for that path, the run's count limit); when it refuses, the list is skipped, not a failure.
+
+    betterstack_events (D104): a Better Stack feed's update time comes from its reports, not the page's own updated_at, and the
+    resources it shows down or degraded are put in ``scope["affected"]`` (the body already read; no request). False is the
+    reading from before D104.
 
     history (D52): the caller found that this Statuspage page's robots.txt disallows the API path and allows
     /history.atom. The page's Atom history is read instead (no redirect followed, 128 KiB cap; the page owner's
@@ -1680,7 +1758,12 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
     if history:
         return _atom_reading(data), None
     body = httpx.Response(200, content=data).json()
-    result = parse(body)
+    if source.kind == "betterstack":
+        result = parse_betterstack(body, events=betterstack_events)
+        if betterstack_events and scope is not None:
+            scope["affected"] = betterstack_affected(body)  # D104: from the body already read, no further request
+    else:
+        result = parse(body)
     # Only an active indicator needs a scope: a "none" page costs one request (the curated feeds are read on a schedule).
     if (scope is not None and source.kind == "statuspage" and source.api_url.endswith(STATUS_JSON_SUFFIX)
             and result[0] in status_scope.ACTIVE_INDICATORS):
@@ -1886,7 +1969,8 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
                 if history:
                     reading, _ = _read_source(source, client, digest, history=True)
                 else:
-                    indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed, incidentio=incidentio)
+                    indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed, incidentio=incidentio,
+                                                         betterstack_events=getattr(settings, "d104_betterstack_updated_at", True))
             except FeedNotAllowed:
                 return None  # not requested, so neither a read nor a failure
             except READ_ERRORS as exc:
@@ -2112,8 +2196,9 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
             attempted += 1
             _pace()
             if source is None:
-                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True,
-                               incidentio_slot=incidentio_slot)
+                # A group without a SOURCES entry is a discovered Statuspage page: it never reads an incident.io summary.json (D100
+                # needs kind "statuspage"), so the run's count is not passed to refresh_one on this path.
+                ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True)
             else:
                 ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget, incidentio_slot=incidentio_slot)
                 if ok is None:

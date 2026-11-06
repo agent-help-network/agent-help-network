@@ -467,6 +467,10 @@ VERB_SITES = {
     ("status_refresh.py", "_store_read", "get"): 9,
     ("status_refresh.py", "main", "get"): 1,
     ("status_refresh.py", "parse_betterstack", "get"): 4,
+    # D104: dictionary lookups on the parsed Better Stack body (no request).
+    ("status_refresh.py", "_betterstack_included", "get"): 3,
+    ("status_refresh.py", "betterstack_affected", "get"): 3,
+    ("status_refresh.py", "betterstack_event_time", "get"): 9,
     ("status_refresh.py", "parse_google_gmail", "get"): 7,
     ("status_refresh.py", "parse_instatus", "get"): 3,
     ("status_refresh.py", "parse_status", "get"): 4,
