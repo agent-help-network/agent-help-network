@@ -34,8 +34,10 @@ an unreachable service, a slow lookup (``timeout``, 2 s) and a missing URL all l
 A tool that returns the text of a 403 page as an ordinary result is not an error to LangChain, so by default nothing is
 added; raise from the tool (``response.raise_for_status()``) or return ``ToolMessage(..., status="error")`` to opt in, or
 turn on ``detect_blocked_text=True``: the start of a successful result's text (the first 4 KiB) is then read on your machine
-for the marks of a block page (a bot-protection challenge, or "403 Forbidden", "Access Denied", "verify you are human" in
-the page's heading or on a short page; a long article that only mentions such words is left alone), and when it is one and
+for the marks of a block page (markup only a bot-protection challenge page carries, or "403 Forbidden", "Access Denied",
+"verify you are human" in the page's heading or on a short page of at most 4 KiB; a long article that only mentions such
+words, or a normal page that loads a bot-protection script, is left alone; use it on a fetch tool, not on search or code
+tools), and when it is one and
 the call's arguments name a host, the line is appended the same way. The text itself is never sent. Only the hostname and
 enum codes leave the machine.
 """
