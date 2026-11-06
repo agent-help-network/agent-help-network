@@ -389,7 +389,7 @@ def _atom_scope(row: dict) -> dict:
 _FEED_SOURCE_SQL = """SELECT s.source_name,s.status_page_url,s.api_url,c.indicator,c.source_updated_at,
                           c.fetched_at,c.last_error_at,c.last_error_detail,c.failures,
                           c.active_incidents,c.max_incident_impact,c.incident_updated_at,
-                          c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind
+                          c.active_maintenances,c.affected,c.affected_regional,c.feed_source,c.window_blind,c.feed_platform
                    FROM status_sources s LEFT JOIN status_cache c ON c.site_host=s.site_host
                    WHERE s.site_host=%s AND s.enabled=true"""
 
@@ -552,6 +552,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     robots_blocked_page = None  # (name, url) of a status page whose feed its own robots.txt does not allow (D50)
     provider_partial = False
     provider_regional = False
+    incidentio_unread = False  # D100: an incident.io-shaped status page whose incident list AHN has not read
     provider_discovery_attempted_at = None
     lookup_activity = None
     # Layer 1: the host's own declared policy; layer 2: curated official paths.
@@ -584,6 +585,9 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             feed = feed_view(conn, host, now)
             provider_status, provider_partial, provider_regional = feed.provider_status, feed.partial, feed.regional
             robots_blocked_page = feed.blocked_page
+            incidentio_unread = bool(settings.d100_incidentio_incidents and feed.row and provider_status is not None
+                                     and feed.row.get("feed_platform") == "incident_io"
+                                     and provider_status.get("active_incidents") is None)
             if feed.row and mapped_source and (provider_status is not None or feed.queue_decision):
                 # Stale-while-revalidate: answer with the cached statement; once it would read as
                 # stale by age (or was never read), refresh it behind the lookup, not again within
@@ -727,7 +731,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                        vendor_aware=settings.vendor_aware_block,
                                        proceed_without_failure=settings.proceed_without_failure,
                                        assume_failure=assume_failure, edge_refusal=edge_decided,
-                                       robots_refusal=robots_edge_decided),
+                                       robots_refusal=robots_edge_decided,
+                                       unresolved_listed=settings.d100_incidentio_incidents),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
@@ -755,7 +760,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                                                    settings.d96_status_check_one_action, error_class, failure_stage)  # D69, D96
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
                                                    settings.status_check_guide, error_class, failure_stage,
-                                                   settings.failure_kind_lines, settings.d96_status_check_one_action))
+                                                   settings.failure_kind_lines, settings.d96_status_check_one_action,
+                                                   settings.d100_incidentio_incidents, incidentio_unread))
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:

@@ -14,8 +14,12 @@ Each read has the same 32 KiB cap as the feed; a read that fails or is too large
 information out (the indicator is kept as read). Only counts, an impact enum, the latest incident
 update time, at most MAX_AFFECTED names the provider published and one boolean are kept.
 
-Other platforms (incident.io answers ``status.json`` too, but has no such lists) are not asked:
+Other platforms (incident.io answers ``status.json`` too, but has no such lists) are not asked for those two:
 ``statuspage_page_id`` tells the two apart from the ``status.json`` body already read.
+
+incident.io keeps the overall indicator at ``none`` while an incident that names no component is open (D100), so
+for a page of that shape (``incidentio_page_id``) the single ``summary.json`` is read whatever the indicator says;
+it lists the unresolved incidents (``read_summary``). The same stored fields are filled from it.
 """
 
 from __future__ import annotations
@@ -44,6 +48,9 @@ _PAGE_ID = re.compile(r"[a-z0-9]{8,32}")
 # Some Statuspage-shaped pages (Replit Status, read 2026-11-01) carry a lowercase UUID page id and a time_zone,
 # and answer both lists in the same shape, with the same page id on every incident.
 _UUID_PAGE_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# incident.io's Statuspage-compatible pages carry a 26-character upper-case ULID and no time_zone.
+_ULID_PAGE_ID = re.compile(r"[0-9A-Z]{26}")
+SUMMARY_PATH = "summary.json"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]+")
 _SMALLINT = 32_767
 
@@ -77,6 +84,15 @@ def statuspage_page_id(body) -> str | None:
     if not isinstance(page_id, str):
         return None
     return page_id if _PAGE_ID.fullmatch(page_id) or _UUID_PAGE_ID.fullmatch(page_id) else None
+
+
+def incidentio_page_id(body) -> str | None:
+    """The page id when a status.json body has the incident.io shape (a ULID page.id and no time_zone), else None."""
+    page = body.get("page") if isinstance(body, dict) else None
+    if not isinstance(page, dict) or page.get("time_zone") is not None:
+        return None
+    page_id = page.get("id")
+    return page_id if isinstance(page_id, str) and _ULID_PAGE_ID.fullmatch(page_id) else None
 
 
 def _aware(raw) -> datetime:
@@ -209,6 +225,40 @@ def read_scope(fetch, page_id: str, *, label=lambda _exc: "error", allowed=lambd
     out = summarize(parts[0], parts[1], page_id)
     out["scope_outcome"] = "failed" if error else "ok"
     out["scope_error"] = error
+    return out
+
+
+def read_summary(fetch, page_id: str, *, label=lambda _exc: "error", allowed=lambda: True) -> dict:
+    """D100: read an incident.io page's summary.json with fetch(path) -> bytes (which raises on any failure) and summarize
+    its unresolved incidents into the stored fields (the same ones the two Statuspage lists fill).
+
+    allowed() is asked once, before the request (the cron's time and count limits, the robots.txt decision, the rest after
+    failures). The result carries ``scope_outcome`` like read_scope: ``ok``, ``failed`` (``scope_error`` names why) or
+    ``skipped`` (not asked for; not a failure). Incidents are counted when their status is not resolved or postmortem;
+    ``active_maintenances`` is left None when the body has no scheduled_maintenances list; the affected names come from
+    the incidents alone, and the regional flag is never set."""
+    out: dict = {"active_incidents": None, "max_incident_impact": None, "incident_updated_at": None,
+                 "active_maintenances": None, "affected": None, "affected_regional": None,
+                 "scope_outcome": "skipped", "scope_error": None}
+    if not allowed():
+        return out
+    try:
+        body = json.loads(fetch(SUMMARY_PATH))
+        incidents = parse_incidents(body, page_id)
+        maintenances = parse_maintenances(body, page_id) if isinstance(body, dict) and "scheduled_maintenances" in body else None
+    except Exception as exc:  # any failure (HTTP status, too_large, timeout, bad JSON, another page's body) leaves the list out
+        out["scope_outcome"], out["scope_error"] = "failed", label(exc)
+        return out
+    names: list[str] = []
+    for entry_names, _groups in incidents["entries"]:
+        for name in entry_names:
+            cleaned = _clean(name)
+            if cleaned and cleaned not in names and len(names) < MAX_AFFECTED:
+                names.append(cleaned)
+    out.update(active_incidents=min(incidents["count"], _SMALLINT), max_incident_impact=incidents["max_impact"],
+               incident_updated_at=incidents["updated_at"],
+               active_maintenances=None if maintenances is None else min(maintenances["count"], _SMALLINT),
+               affected=names or None, scope_outcome="ok")
     return out
 
 

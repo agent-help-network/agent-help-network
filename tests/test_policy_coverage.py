@@ -788,6 +788,7 @@ COLUMNS = {
     "status_cache.affected_regional": Phrase("whether every affected component is in a region or point-of-presence group",
                                              "영향받는 컴포넌트가 모두 지역·거점 그룹에 속하는지"),
     "status_cache.feed_source": Phrase("and that its source is that feed", "출처가 그 피드라는 표시"),
+    "status_cache.feed_platform": Phrase("a marker of that platform", "그 플랫폼 표시"),
     "status_cache.window_blind": Phrase("whether the feed's window is too short to be trusted", "피드의 창이 너무 짧아 믿을 수 없는지 여부"),
     "status_cache.scope_failures": _SCOPE_FAILURES,
     "status_cache.scope_failed_at": _SCOPE_FAILURES,

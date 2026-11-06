@@ -594,11 +594,14 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 host_facts: dict | None = None, provider_partial: bool = False,
                 now: datetime | None = None, agent_vendor: str | None = None,
                 vendor_aware: bool = True, proceed_without_failure: bool = True,
-                assume_failure: bool = False, edge_refusal: bool = False, robots_refusal: bool = False) -> list[dict[str, str]]:
+                assume_failure: bool = False, edge_refusal: bool = False, robots_refusal: bool = False,
+                unresolved_listed: bool = False) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
     agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63;
     edge_refusal: D85, True only when recommendation() returned the edge_refusal_confirmed reason; the code follows the failure stage.
-    robots_refusal: D98, True only when recommendation() returned the edge_refusal_robots reason; same place as the D85 code."""
+    robots_refusal: D98, True only when recommendation() returned the edge_refusal_robots reason; same place as the D85 code.
+    unresolved_listed: D100 (AHN_D100_INCIDENTIO_INCIDENTS), a fresh reading with the indicator none that lists an unresolved incident
+    gets provider_scope in place of provider_clear. Information only: recommendation() reads neither."""
     codes: list[str] = []
     handoff = error_class in {"human_verification", "login_auth"}
     failed = (failure_observed(error_class, failure_stage) or assume_failure) if proceed_without_failure else True
@@ -660,7 +663,9 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
             if maintenance_only(provider_status):
                 codes.append("provider_maintenance_only")
         elif indicator == "none":
-            codes.append("provider_clear")
+            incidents = provider_status.get("active_incidents")
+            # D100: an incident.io page keeps the indicator at none with a minor incident open; "no active issue" would be wrong.
+            codes.append("provider_scope" if unresolved_listed and type(incidents) is int and incidents >= 1 else "provider_clear")
         else:
             codes.append("provider_unknown")
     else:
