@@ -773,7 +773,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                 result.update(response_guide.guide(result, settings.proceed_without_failure, blocked_default, status_check,
                                                    settings.status_check_guide, error_class, failure_stage,
                                                    settings.failure_kind_lines, settings.d96_status_check_one_action,
-                                                   settings.d100_incidentio_incidents, incidentio_unread,
+                                                   d100=settings.d100_incidentio_incidents, incidentio_unread=incidentio_unread,
                                                    edge_stale=bool(settings.d101_no_path_handoff and edge_decided and settings.proceed_without_failure
                                                                    and settings.failure_kind_lines and task_step != "status_check"
                                                                    and (ahn_check or {}).get("freshness") == "stale")))

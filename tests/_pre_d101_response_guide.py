@@ -16,10 +16,10 @@ import logging
 import re
 from urllib.parse import urlparse
 
-from .background_reads import FEED_RETRY_MINUTES
-from .lookup_signals import is_reserved_example
-from .official_paths import customer_url
-from .triage import blocked_governing_tokens, failure_observed
+from ahn.background_reads import FEED_RETRY_MINUTES
+from ahn.lookup_signals import is_reserved_example
+from ahn.official_paths import customer_url
+from ahn.triage import blocked_governing_tokens, failure_observed
 
 LOG = logging.getLogger(__name__)
 
@@ -303,7 +303,7 @@ DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_o
 
 def apex_host(site_host: str) -> str | None:
     """The shortest registrable apex above site_host that the service reads policy for, else None."""
-    from .service import PUBLIC_SUFFIXES_2, aggregate_eligible_host  # service imports this module
+    from ahn.service import PUBLIC_SUFFIXES_2, aggregate_eligible_host  # service imports this module
     labels = site_host.split(".")
     for width in (2, 3):
         if len(labels) <= width:
