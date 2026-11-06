@@ -99,6 +99,22 @@ def parse_d99_switch(raw: str) -> bool:
     return False
 
 
+_D100_WARNED = False
+
+
+def parse_d100_switch(raw: str) -> bool:
+    """AHN_D100_INCIDENTIO_INCIDENTS (D100): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
+    answer is the risky side), and logs one warning per process: the code only, never the value."""
+    global _D100_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _D100_WARNED:
+        _D100_WARNED = True
+        LOG.warning("d100_switch_unknown_value")
+    return False
+
+
 def parse_edge_refusal_switch(raw: str) -> bool:
     """AHN_EDGE_REFUSAL_HANDOFF (D85): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an
     answer is the risky side), and logs one warning per process: the code only, never the value."""
@@ -204,6 +220,9 @@ class Settings:
     # AHN_D99_UNREADABLE_NOT_PENDING=0 (D99) shows ahn_check as pending (with retry_after_seconds) again for a host whose robots.txt AHN
     # could not read and that has no read queued. On by default; an unknown value is read as off (with one warning), never as on.
     d99_unreadable_not_pending: bool = True
+    # AHN_D100_INCIDENTIO_INCIDENTS=0 (D100) stops reading the summary.json of an incident.io-shaped status page (its unresolved
+    # incidents) and keeps the sentences from before D100. On by default; an unknown value is read as off (with one warning), never as on.
+    d100_incidentio_incidents: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -266,4 +285,5 @@ class Settings:
                    d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")),
                    d98_robots_refusal_handoff=parse_d98_switch(os.environ.get("AHN_D98_ROBOTS_REFUSAL_HANDOFF", "")),
                    d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")),
+                   d100_incidentio_incidents=parse_d100_switch(os.environ.get("AHN_D100_INCIDENTIO_INCIDENTS", "")),
                    d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")))

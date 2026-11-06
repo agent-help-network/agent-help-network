@@ -362,13 +362,13 @@ def test_a_subdomain_with_a_status_page_of_its_own_answers_with_that_page_not_wi
 
 def test_the_new_sentences_are_short_plain_and_carry_no_host_or_url():
     new = {row: STATUS_ROWS[row] for row in ("T1-F", "T2-F", "T3-F", "T5-F")}
-    assert set(STATUS_FAILED_ROW.values()) == set(new)
+    assert set(STATUS_FAILED_ROW.values()) == set(new) | {"T6-F"}   # D100 added T6-F (tests/test_d100_wording.py)
     for row, text in new.items():
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text) and "{" not in text and "http" not in text, row
         assert "status page did not open for you" in text.replace("\n", " ") or "status page did not open" in text
     assert new["T1-F"] == ("The provider's status feed reports no active issue (provider_status, see its fetched_at). "
                            "That status page did not open for you; give your user this reading, not a guess.")
-    assert {k: v for k, v in STATUS_ROWS.items() if k not in new} == pre_rg.STATUS_ROWS
+    assert {k: v for k, v in STATUS_ROWS.items() if k not in new and k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
     assert {k: v for k, v in ROWS.items() if k != "H3-R"} == pre_rg.ROWS                                                          # no row of the main table moved
 
 

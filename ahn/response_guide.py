@@ -135,7 +135,18 @@ STATUS_ROWS["T3-F"] = ("AHN reads no status feed for this site, and its status p
                        "Tell your user the status is unverified.")
 STATUS_ROWS["T5-F"] = ("AHN could not read this provider's status feed just now, and the status page did not open for you. "
                        "Tell your user the status is unverified.")
-STATUS_FAILED_ROW = {"T1": "T1-F", "T2": "T2-F", "T5": "T5-F", "T3": "T3-F", "T3-S": "T3-F"}
+# D100: an incident.io status page keeps its overall indicator at "none" while an incident that names no component is open, so the
+# indicator alone cannot say "no issue". T6: the page lists an unresolved incident (provider_status.active_incidents) though the
+# indicator reads operational. T1-U: the page has that shape and AHN did not read its incident list. T6-F: T6 and the status page
+# did not open for the caller (a T1-U page that failed to open takes T2-F: the status is unverified). Information only: `do`, `url`
+# and the recommendation are those of every other status_check row.
+STATUS_ROWS["T6"] = ("The provider's status page lists an unresolved incident (provider_status.active_incidents), though its overall "
+                     "indicator reads operational. Check next_action.status_url; it may be partly affected.")
+STATUS_ROWS["T1-U"] = ("The provider's status feed's overall indicator reads operational, but AHN did not read its incident list. "
+                       "Check next_action.status_url before telling your user it is up.")
+STATUS_ROWS["T6-F"] = ("The provider's status page lists an unresolved incident (provider_status.active_incidents), and that page did "
+                       "not open for you. Tell your user the service may be partly affected.")
+STATUS_FAILED_ROW = {"T1": "T1-F", "T2": "T2-F", "T5": "T5-F", "T3": "T3-F", "T3-S": "T3-F", "T6": "T6-F", "T1-U": "T2-F"}
 # D96: a failure of these kinds goes to a person whatever the lookup asked; the status answer does not apply to it.
 STATUS_HANDOFF_ERRORS = frozenset({"human_verification", "login_auth"})
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
@@ -424,13 +435,32 @@ def same_site(status_url: str, site_host: str) -> bool:
     return bool(page) and (apex_host(page) or page) == (apex_host(site) or site)
 
 
-def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None) -> str:
-    """D69: the STATUS_ROWS id for a status_check lookup. A row that points at status_url needs one; without it T4."""
+def unresolved_incidents(provider_status: dict | None) -> bool:
+    """D100: a fresh reading whose overall indicator reads operational and that lists at least one unresolved incident (a whole
+    number of 1 or more; a missing or other count is not one). Only an incident.io page can be this: a Statuspage page with the
+    indicator none is not asked for its lists."""
+    if not (provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "none"):
+        return False
+    count = provider_status.get("active_incidents")
+    return type(count) is int and count >= 1
+
+
+def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None,
+               d100: bool = False, incidentio_unread: bool = False) -> str:
+    """D69: the STATUS_ROWS id for a status_check lookup. A row that points at status_url needs one; without it T4.
+
+    d100 (D100): a fresh "none" reading that lists an unresolved incident is T6, and one whose incident list was not read
+    (incidentio_unread: the page has the incident.io shape and no count is stored) is T1-U, not T1."""
     if provider_status and feed_unreadable(provider_status):
         return "T5" if status_url else "T5-N"
     if status_url is None:
         return "T4"
     if provider_status:
+        if d100 and unresolved_incidents(provider_status):
+            return "T6"
+        if (d100 and incidentio_unread and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "none"
+                and provider_status.get("active_incidents") is None):
+            return "T1-U"
         return "T1" if provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "none" else "T2"
     if not official_status_page:
         return "T4"
@@ -488,7 +518,7 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
 
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
           status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
-          failure_kind_lines: bool = False, one_action: bool = False) -> dict:
+          failure_kind_lines: bool = False, one_action: bool = False, d100: bool = False, incidentio_unread: bool = False) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
@@ -500,6 +530,9 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     status_check use_official_path row without a re-lookup, ``url`` is the status page, unless a robots block applies and the
     status page is on the looked-up site's own domain. D77: a status page that needs the user's sign-in (T3-S) is never the
     ``url`` (it goes out as ``status_url`` only), and under a robots block it keeps the robots sentence too.
+    d100 (D100, AHN_D100_INCIDENTIO_INCIDENTS, only with status_check): the status sentence follows the incidents the page lists:
+    T6 for a fresh "none" reading that lists an unresolved incident, T1-U (incidentio_unread) for an incident.io page whose list
+    was not read, T6-F when that status page failed to open for the caller. Nothing but the sentence changes.
     failure_kind_lines (D87, AHN_FAILURE_KIND_LINES, with the D63 switch on, never for a status_check lookup) lets the sentence of a
     lookup that reports a failure (error_class or failure_stage) follow the kind of failure: SERVICE_ERROR_ROWS for a proceed row when
     error_class is service_error, FAILED_U3 for U3. Nothing but the sentence changes.
@@ -545,7 +578,7 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     status_id = None
     if status_check:
         failed = bool(one_action and (error_class is not None or failure_stage is not None))
-        status_id = status_row(provider_status, result.get("official_status_page"), status_url)
+        status_id = status_row(provider_status, result.get("official_status_page"), status_url, d100, incidentio_unread)
         robots_kept = bool(set(recommendation.get("reasons") or ()) & STATUS_KEEP_REASONS)
         mode = _status_mode(recommendation, row, do, status_url, status_id, result["site_host"], robots_kept, failed, one_action,
                             is_reserved_example(result["site_host"]))

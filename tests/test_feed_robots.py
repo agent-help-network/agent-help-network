@@ -297,7 +297,8 @@ REQUEST_SITES = {
     ("status_refresh.py", "_read_and_store", "_read_source"): 2,  # the second: the page's Atom history where only the API is disallowed (D52)
     ("status_refresh.py", "_read_discovered_statuspage", "HTTPSConnectionPool"): 1,
     ("status_refresh.py", "_read_discovered_statuspage", "_pool_get"): 2,
-    ("status_refresh.py", "_read_source", "_get_capped"): 2,
+    ("status_refresh.py", "_read_source", "_get_capped"): 3,  # the third: an incident.io page's summary.json (D100)
+    ("status_scope.py", "read_summary", "fetch"): 1,  # that one list, through the fetcher a gated feed read passes in (D100)
     ("status_refresh.py", "_read_source", "_read_discovered_statuspage"): 1,
     ("status_refresh.py", "discover_source", "_read_discovered_statuspage"): 1,
 }

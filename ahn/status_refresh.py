@@ -1281,7 +1281,7 @@ def _store_blocked(conn, hosts: list[str], reason: str = ROBOTS_DISALLOWED) -> N
                indicator='unknown',source_updated_at=NULL,fetched_at=NULL,last_error_at=NULL,last_error_detail=EXCLUDED.last_error_detail,
                failures=NULL,body_sha256=NULL,active_incidents=NULL,max_incident_impact=NULL,incident_updated_at=NULL,
                active_maintenances=NULL,affected=NULL,affected_regional=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,
-               feed_source=NULL,window_blind=NULL""",
+               feed_source=NULL,window_blind=NULL,feed_platform=NULL""",
             (host, ROBOTS_DISALLOWED),
         )
 
@@ -1290,6 +1290,8 @@ FEED_READ_BUDGET = 10.0  # seconds for a whole feed body, on top of the per-oper
 _clock = time.monotonic  # patched in tests
 _sleep = time.sleep      # patched in tests
 SCOPE_GAP_SECONDS = 1.0  # between two reads of the same status page: at most one request per second per host (D44)
+FEED_INCIDENTIO_LIST_MAX = 40  # D100: incident.io summary.json reads in one cron run (the rest wait for the next run)
+INCIDENTIO_PLATFORM = "incident_io"  # status_cache.feed_platform of a page with the incident.io shape
 FEED_HEADERS = {"Accept": "application/json", "User-Agent": READER_VERSION}  # identified as AgentHelpNetwork
 
 
@@ -1629,7 +1631,8 @@ STATUS_JSON_SUFFIX = "/api/v2/status.json"
 
 
 def _read_source(source: Source, client: httpx.Client, digest: dict | None = None,
-                 scope: dict | None = None, scope_allowed=None, history: bool = False) -> tuple[str, datetime | None]:
+                 scope: dict | None = None, scope_allowed=None, history: bool = False,
+                 incidentio: dict | None = None) -> tuple[str, datetime | None]:
     """Read and parse one feed; digest, if given, receives the SHA-256 of the body as received.
 
     scope, if given, receives the status_scope fields when the feed is Atlassian Statuspage's own and its
@@ -1640,6 +1643,11 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
 
     The robots.txt decision for this feed's host (D50) is the caller's: _read_and_store asks the gate first and passes
     scope=None when the host's robots.txt disallows a list. Nothing in here consults the gate.
+
+    incidentio (D100), if given for a Statuspage-shaped address: when the status.json body has the incident.io shape, whatever
+    its indicator, ``incidentio["platform"]`` is set and the page's summary.json is read once (unresolved incidents) into
+    ``incidentio["scope"]``. ``incidentio["allowed"]()`` is asked once before the request (rest after failures, time budget,
+    robots.txt decision for that path, the run's count limit); when it refuses, the list is skipped, not a failure.
 
     history (D52): the caller found that this Statuspage page's robots.txt disallows the API path and allows
     /history.atom. The page's Atom history is read instead (no redirect followed, 128 KiB cap; the page owner's
@@ -1681,6 +1689,14 @@ def _read_source(source: Source, client: httpx.Client, digest: dict | None = Non
             scope.update(status_scope.read_scope(
                 _paced(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP)), page_id,
                 label=failure_label, allowed=scope_allowed or (lambda: True)))
+    if (incidentio is not None and source.kind == "statuspage" and source.api_url.endswith(STATUS_JSON_SUFFIX)):
+        incidentio_id = status_scope.incidentio_page_id(body)
+        if incidentio_id:
+            incidentio["platform"] = INCIDENTIO_PLATFORM
+            base = source.api_url[: -len("status.json")]
+            incidentio["scope"] = status_scope.read_summary(
+                _paced(lambda path: _get_capped(client, base + path, status_scope.SCOPE_CAP)), incidentio_id,
+                label=failure_label, allowed=incidentio["allowed"])
     return result
 
 
@@ -1696,7 +1712,8 @@ READ_ERRORS = (httpx.HTTPError, urllib3.exceptions.HTTPError, OSError, ValueErro
                json.JSONDecodeError, RecursionError)
 
 
-def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | None, digest: dict, scope: dict) -> None:
+def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | None, digest: dict, scope: dict,
+                platform: str | None = None) -> None:
     """Record a successful read for one host and clear its failure count.
 
     The scope columns are replaced with every successful read: a feed that no longer yields them (a quiet page,
@@ -1705,7 +1722,8 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
     (D46): no column records when the lists were read, and a list of stale incidents carried past a newly posted
     one would lift a wait (D45); an empty scope keeps the wait until the next read (15 minutes for an active page). The scope
     failure counters are cleared when both lists were read, raised when one failed, and kept when the lists were
-    not asked for (status_scope.read_scope ``scope_outcome``)."""
+    not asked for (status_scope.read_scope ``scope_outcome``). ``platform`` (D100) is the page's feed_platform, replaced by
+    every read."""
     outcome = scope.get("scope_outcome") or "skipped"
     error = scope.get("scope_error")
     conn.execute(
@@ -1713,10 +1731,10 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
                                      origin_operator,vantage,reader_version,body_sha256,
                                      active_incidents,max_incident_impact,incident_updated_at,
                                      active_maintenances,affected,affected_regional,failures,
-                                     scope_failures,scope_failed_at,scope_error)
+                                     scope_failures,scope_failed_at,scope_error,feed_platform)
            VALUES (%s,%s,%s,now(),NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,
                    CASE WHEN %s::text='failed' THEN 1 END, CASE WHEN %s::text='failed' THEN now() END,
-                   CASE WHEN %s::text='failed' THEN %s::text END)
+                   CASE WHEN %s::text='failed' THEN %s::text END, %s)
            ON CONFLICT (site_host) DO UPDATE SET
            indicator=EXCLUDED.indicator,source_updated_at=EXCLUDED.source_updated_at,
            fetched_at=EXCLUDED.fetched_at,last_error_at=NULL,last_error_detail=NULL,
@@ -1725,7 +1743,7 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
            active_incidents=EXCLUDED.active_incidents,max_incident_impact=EXCLUDED.max_incident_impact,
            incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
            affected=EXCLUDED.affected,affected_regional=EXCLUDED.affected_regional,failures=NULL,
-           feed_source=NULL,window_blind=NULL,
+           feed_source=NULL,window_blind=NULL,feed_platform=EXCLUDED.feed_platform,
            scope_failures=CASE %s::text WHEN 'ok' THEN NULL
                                WHEN 'failed' THEN LEAST(COALESCE(status_cache.scope_failures,0)+1,32767)
                                ELSE status_cache.scope_failures END,
@@ -1734,7 +1752,7 @@ def _store_read(conn, site_host: str, indicator: str, updated_at: datetime | Non
         (site_host, indicator, updated_at, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
          scope.get("active_incidents"), scope.get("max_incident_impact"), scope.get("incident_updated_at"),
          scope.get("active_maintenances"), scope.get("affected"), scope.get("affected_regional"),
-         outcome, outcome, outcome, error, outcome, outcome, outcome, error),
+         outcome, outcome, outcome, error, platform, outcome, outcome, outcome, error),
     )
     # Signal history (curated hosts only): one row when the indicator changed; never fails the refresh.
     from .signal_history import record_provider_status
@@ -1757,7 +1775,7 @@ def _store_history(conn, site_host: str, reading: "status_atom.AtomReading", dig
            body_sha256=EXCLUDED.body_sha256,active_incidents=EXCLUDED.active_incidents,max_incident_impact=NULL,
            incident_updated_at=EXCLUDED.incident_updated_at,active_maintenances=EXCLUDED.active_maintenances,
            affected=NULL,affected_regional=NULL,failures=NULL,scope_failures=NULL,scope_failed_at=NULL,scope_error=NULL,
-           feed_source='history_atom',window_blind=EXCLUDED.window_blind""",
+           feed_source='history_atom',window_blind=EXCLUDED.window_blind,feed_platform=NULL""",
         (site_host, operator_id(), Jsonb(vantage()), READER_VERSION, digest.get("body_sha256"),
          min(reading.open_incidents, 32_767), reading.incident_updated_at, reading.active_maintenances(), reading.window_blind),
     )
@@ -1777,8 +1795,27 @@ def _store_failure(conn, site_host: str, label: str) -> None:
     site_probe.record_feed_failure(conn, label)
 
 
+def _incidentio_allowed(gate, source: Source, decision, paused: bool, scope_allowed, slot):
+    """D100: the question _read_source asks before an incident.io page's summary.json request, in the order that spends the
+    least: the rest after failures (the lists' backoff), the cron's time budget, the host's robots.txt decision for that
+    path (the feed's own decision is asked for it again with the path added, so the file is read at most once more, and only
+    for a page of this shape), then the run's count limit, which is used up only by a request that will be made."""
+    def allowed() -> bool:
+        if paused or (scope_allowed is not None and not scope_allowed()):
+            return False
+        host, _ = feed_robots.host_and_path(source.api_url)
+        path = feed_robots.host_and_path(source.api_url[: -len("status.json")] + status_scope.SUMMARY_PATH)[1]
+        answer = gate.decide(host, feed_paths(source) + (path,))
+        if answer.read_now:
+            _sleep(SCOPE_GAP_SECONDS)  # at most one request per second to one status host: the summary follows the robots.txt read
+        if not answer.allows(path):
+            return False
+        return slot is None or slot()
+    return allowed
+
+
 def _read_and_store(settings: Settings, hosts: list[str], source: Source, client: httpx.Client | None, *,
-                    min_interval: int = 15, scope_allowed=None, gate=None) -> bool | None | _Blocked:
+                    min_interval: int = 15, scope_allowed=None, gate=None, incidentio_slot=None) -> bool | None | _Blocked:
     """Read one feed once and record the result for every host mapped to it (aliases share one feed).
 
     The read holds a database lock on the feed address (pg_try_advisory_xact_lock), so the cron and the web
@@ -1789,7 +1826,10 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
 
     The lock connection touches no table: the transaction stays open for the whole read (up to about 70 s), and
     a table it had read would keep an ACCESS SHARE lock on it that makes a later ALTER wait and, behind the
-    ALTER, every lookup. The earlier attempt is read on a short connection of its own, after the lock is held."""
+    ALTER, every lookup. The earlier attempt is read on a short connection of its own, after the lock is held.
+
+    incidentio_slot (D100): called once before each incident.io summary.json request; False = the run has made its share
+    (the cron's FEED_INCIDENTIO_LIST_MAX) and the list waits for a later run. None (a lookup's own read) = no limit."""
     own_client = client is None
     with connect(settings) as lock_conn:
         if not lock_conn.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS ok", (source.api_url,)).fetchone()["ok"]:
@@ -1807,7 +1847,8 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
         # The robots.txt decision for the feed's host, before the first request to it (at most one robots.txt read per
         # host per day; the answer lasts until then). A path the file disallows is never requested.
         paths = feed_paths(source)
-        decision = (gate or make_gate(settings)).decide(feed_robots.host_and_path(source.api_url)[0], paths)
+        gate = gate or make_gate(settings)
+        decision = gate.decide(feed_robots.host_and_path(source.api_url)[0], paths)
         # D52: a Statuspage page whose robots.txt disallows the API but allows /history.atom is read through that Atom
         # feed instead, for the open announcements it lists and nothing else.
         history = (not decision.allows(paths[0]) and feed_robots.history_path(source.api_url) is not None
@@ -1830,12 +1871,17 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
             # While the two scope lists rest after failures, or while the host's robots.txt disallows one of them,
             # read status.json only (scope None: no list request, and not a failure).
             lists_allowed = all(decision.allows(path) for path in paths[1:] if path != HISTORY_PATH)
-            scope: dict | None = None if status_scope.scope_paused(previous, now) or not lists_allowed else {}
+            paused = status_scope.scope_paused(previous, now)
+            scope: dict | None = None if paused or not lists_allowed else {}
+            incidentio = None
+            if (not history and getattr(settings, "d100_incidentio_incidents", True) and source.kind == "statuspage"
+                    and source.api_url.endswith(STATUS_JSON_SUFFIX)):
+                incidentio = {"allowed": _incidentio_allowed(gate, source, decision, paused, scope_allowed, incidentio_slot)}
             try:
                 if history:
                     reading, _ = _read_source(source, client, digest, history=True)
                 else:
-                    indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed)
+                    indicator, updated_at = _read_source(source, client, digest, scope, scope_allowed, incidentio=incidentio)
             except FeedNotAllowed:
                 return None  # not requested, so neither a read nor a failure
             except READ_ERRORS as exc:
@@ -1848,6 +1894,8 @@ def _read_and_store(settings: Settings, hosts: list[str], source: Source, client
                 for host in hosts:
                     if history:
                         _store_history(conn, host, reading, digest)
+                    elif incidentio and "platform" in incidentio:
+                        _store_read(conn, host, indicator, updated_at, digest, incidentio["scope"], incidentio["platform"])
                     else:
                         _store_read(conn, host, indicator, updated_at, digest, scope or {})
             return True
@@ -2018,6 +2066,16 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
     def within_budget() -> bool:
         return _clock() <= deadline
 
+    incidentio_reads = 0
+
+    def incidentio_slot() -> bool:
+        """D100: at most FEED_INCIDENTIO_LIST_MAX incident.io summary.json requests in one run."""
+        nonlocal incidentio_reads
+        if incidentio_reads >= FEED_INCIDENTIO_LIST_MAX:
+            return False
+        incidentio_reads += 1
+        return True
+
     now = now or datetime.now(timezone.utc)
     with connect(settings) as conn:
         ready, decisions = _due_groups(conn, now)
@@ -2046,7 +2104,7 @@ def refresh_batch(settings: Settings, *, client: httpx.Client | None = None, lim
             if source is None:
                 ok = refresh_one(settings, hosts[0], client=client, wait=True, scope_allowed=within_budget, report_blocked=True)
             else:
-                ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget)
+                ok = _read_and_store(settings, hosts, source, client, scope_allowed=within_budget, incidentio_slot=incidentio_slot)
                 if ok is None:
                     continue  # read elsewhere right now (or just now): it stays due for a later run
             if ok is BLOCKED:
