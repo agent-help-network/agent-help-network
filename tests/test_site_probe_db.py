@@ -130,9 +130,10 @@ def test_e2_a_refused_robots_txt_means_no_request(db, monkeypatch):
 
 
 def test_e2_an_unreadable_robots_txt_leaves_no_verdict_so_no_request(db, monkeypatch):
-    read_profile(db, monkeypatch, status="error")        # a failed read stores no home_gate: the check waits for a good read
+    read_profile(db, monkeypatch, status="error")        # a failed read stores no home_gate: no request (D103: a not_measured row)
     home = Home()
-    assert measure(db, home=home) is None and home.calls == []
+    stored = measure(db, home=home)
+    assert home.calls == [] and stored["not_measured_reason"] == "robots_unreadable"
 
 
 def test_e2_an_absent_robots_txt_allows_the_check(db, monkeypatch):

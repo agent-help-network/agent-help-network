@@ -443,6 +443,11 @@ def _confirm_on() -> bool:
     return os.environ.get("AHN_REFUSAL_CONFIRM", "1").strip() != "0"
 
 
+def _d103_on() -> bool:
+    """AHN_D103_FAILED_PROFILE_NOT_PENDING (D103): "0" restores the earlier answer (wait for a profile read that keeps failing)."""
+    return os.environ.get("AHN_D103_FAILED_PROFILE_NOT_PENDING", "1").strip() != "0"
+
+
 def schedule(outcome: str, previous: dict | None, retry_after: int | None,
              http_status: int | None = None, redirect: dict | None = None,
              now: datetime | None = None) -> tuple[timedelta, int, int]:
@@ -578,10 +583,16 @@ def decide(conn, site_host: str, trigger: str, now: datetime) -> tuple[str, str 
     if not enabled():
         return "skip", "disabled", None
     profile = conn.execute(
-        "SELECT fetched_at,read_host,home_gate FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
+        "SELECT fetched_at,read_host,home_gate,last_error_at FROM host_access_profile WHERE site_host=%s",
+        (site_host,)).fetchone()
     gate = _fresh_gate(profile, now)
     if gate is None:
-        return "defer", "robots_stale", None
+        # D103: a profile whose last read failed (the same test as access_profile._failed_last) gets no newer gate until a
+        # read succeeds, so waiting for one is open-ended. Leave a not_measured row instead; a later good read replaces it.
+        if not (profile is not None and _d103_on() and profile["last_error_at"] is not None
+                and (profile["fetched_at"] is None or profile["last_error_at"] > profile["fetched_at"])):
+            return "defer", "robots_stale", None
+        gate = {"allowed": False, "reason": "robots_unreadable"}
     previous = conn.execute("SELECT * FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
     if not gate.get("allowed"):
         reason = gate.get("reason")
