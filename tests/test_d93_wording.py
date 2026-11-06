@@ -93,7 +93,7 @@ def test_the_four_sentences():
         text = ROWS[row][1].replace("{n}", str(response_guide.RETRY_MAX))
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text) and "{" not in text and "http" not in text, row
     # nothing else in the table moved
-    assert {k: v for k, v in ROWS.items() if k not in CHANGED_ROWS and k not in ("U7-O", "U9-O", "H3-R")} == {k: v for k, v in pre_rg.ROWS.items() if k not in CHANGED_ROWS}
+    assert {k: v for k, v in ROWS.items() if k not in CHANGED_ROWS and k not in ("U7-O", "U9-O", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k not in CHANGED_ROWS}
     assert CONSUMER_ROWS == pre_rg.CONSUMER_ROWS and response_guide.PROCEED_OFFICIAL_ROWS == pre_rg.PROCEED_OFFICIAL_ROWS
 
 

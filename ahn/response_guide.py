@@ -320,7 +320,7 @@ HANDOFF_NO_RESPONSE_CUSTOMER = ("No response came (timeout or connection). The c
 HANDOFF_SERVICE_ERROR_CUSTOMER = f"{_NO_PATH_5XX}. If one more try fails, tell your user and hand them next_action.customer_url."
 ROWS.update({row: ("hand_off_to_human", HANDOFF_SERVICE_ERROR_ROWS.get(row, HANDOFF_SERVICE_ERROR_CUSTOMER)) for row in HANDOFF_ROWS})
 # D101: the H3 sentence when the home-page check it rests on is over a day old (ahn_check.freshness == "stale"): said so, the hand-off is unchanged.
-H3_STALE = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools to retry; "
+H3_STALE = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools or user agents to retry; "
             "tell your user, who can open the page themselves.")
 H3_STALE_CONSUMER = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools to retry; "
                      "hand your user the step and next_action.customer_url.")
@@ -662,6 +662,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         no_response = failure_stage == "before_target_response"
         if customer:
             sentence = HANDOFF_NO_RESPONSE_CUSTOMER if no_response else HANDOFF_SERVICE_ERROR_CUSTOMER
+            if "official_path_available" in (recommendation.get("reasons") or ()):
+                sentence += _HANDOFF_API  # a developer path stays named for API work, as on U7-O-H and U9-O-H
         else:
             sentence = (HANDOFF_NO_RESPONSE_ROWS if no_response else HANDOFF_SERVICE_ERROR_ROWS).get(row, sentence)
     if edge_stale and row == "H3":

@@ -300,7 +300,7 @@ def test_t38_the_switch_reads_the_environment_and_reaches_the_guide(monkeypatch)
 
 def test_t27_t27b_every_sentence_fits_and_names_no_host():
     tables = [{k: v[1] for k, v in ROWS.items()}, PROCEED_OFFICIAL_ROWS, PROCEED_CONSUMER_ROWS, CONSUMER_ROWS]
-    assert len(ROWS) == 38  # H3 came with D85; U7-O and U9-O with D95; H3-R with D98
+    assert len(ROWS) == 44  # H3 came with D85; U7-O and U9-O with D95; H3-R with D98; six hand-off rows with D101
     for table in tables:
         for row, text in table.items():
             text = text.replace("{n}", "3600")
@@ -355,7 +355,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D85 (before D85: 73bf6c3db40b2403b49ce99e3ceb050a50ecb65dd7b25f70909a4c9479d6265d), which only adds the `edge_refusal_confirmed` value to the next_checks code enum and the D85 exception to the `ahn_check` description.
     # and for D94 (before D94: dc9d2ff0832237967489aae0b60534f2bb7d08297ef10f1f29f3b32623a800b0), which adds only the optional `robots.rules_uniform` object and its RulesUniform definition.
     # and for D98 (before D98: 5144768f7346c1efa1aea9e883ea4be3a33f295e91be163ea82a0e52608ee9f7), which only adds the `edge_refusal_robots` value to the next_checks code enum.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "e8936b6b78bb00b0881bf00bc608db4f038311869957af3893069a1103a52354"
+    # and for D101 (before D101: e8936b6b78bb00b0881bf00bc608db4f038311869957af3893069a1103a52354), which only adds the `no_path_after_failure` value to the next_checks code enum.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "480aa7a0ad7808c6157b8f2adccb5090c703a2ebba8e1e8a6292ff0445e954c2"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():
