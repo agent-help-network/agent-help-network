@@ -1,9 +1,12 @@
-"""D103 against the ahn_test database: a host whose profile read keeps failing leaves a not_measured robots_unreadable row
-instead of deferring for a robots.txt verdict that no read is going to produce. Every request goes through a stub."""
+"""D103 against the ahn_test database: a lookup of a host with no stored check whose profile read keeps failing (no robots.txt
+verdict newer than 24 hours) shows ahn_check not_measured / robots_unreadable instead of an open-ended pending. The view is
+built in memory: nothing is stored, the profile re-read stays queued, a stored check is never replaced. Every request goes
+through a stub."""
 
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -26,71 +29,95 @@ def succeeded_then_failing(db, monkeypatch):
     read_profile(db, monkeypatch, status="error")
 
 
-def test_a_read_that_succeeded_once_and_fails_since_records_robots_unreadable(db, monkeypatch):
+def lookup(db, **kw):
+    # D99 off, so only D103 can turn the pending view into not_measured
+    return service.check(replace(db, d99_unreadable_not_pending=False), HOST, **kw)
+
+
+def test_a_read_that_succeeded_once_and_fails_since_is_not_pending(db, monkeypatch):
     succeeded_then_failing(db, monkeypatch)
-    home = Home()
-    stored = measure(db, home=home)
-    assert home.calls == []
-    assert stored["outcome"] == "not_measured" and stored["not_measured_reason"] == "robots_unreadable"
-    assert [r["not_measured_reason"] for r in rows(db, "SELECT not_measured_reason FROM site_probe")] == ["robots_unreadable"]
+    shown = lookup(db)["ahn_check"]
+    assert shown["status"] == "not_measured" and shown["not_measured_reason"] == "robots_unreadable"
+    assert "retry_after_seconds" not in shown
 
 
-def test_a_host_never_read_successfully_records_robots_unreadable(db, monkeypatch):
+def test_a_host_never_read_successfully_is_not_pending(db, monkeypatch):
     read_profile(db, monkeypatch, status="error")
-    profile, = rows(db, "SELECT fetched_at,home_gate,last_error_at FROM host_access_profile")
-    assert profile["fetched_at"] is None and profile["home_gate"] is None and profile["last_error_at"] is not None
-    home = Home()
-    stored = measure(db, home=home)
-    assert home.calls == [] and stored["not_measured_reason"] == "robots_unreadable"
+    shown = lookup(db)["ahn_check"]
+    assert shown["status"] == "not_measured" and shown["not_measured_reason"] == "robots_unreadable"
 
 
-def test_a_profile_that_is_only_old_still_defers(db, monkeypatch):
-    read_profile(db, monkeypatch, now=now_utc() - timedelta(hours=25))   # no failure: the next read will refresh it
-    home = Home()
-    assert measure(db, home=home) is None and home.calls == []
-    assert rows(db, "SELECT * FROM site_probe") == []
+def test_a_profile_that_is_only_old_stays_pending(db, monkeypatch):
+    read_profile(db, monkeypatch, now=now_utc() - timedelta(hours=25))   # no failure: the next read refreshes it
+    assert lookup(db)["ahn_check"]["status"] == "pending"
 
 
-def test_a_host_without_a_profile_row_still_defers(db, monkeypatch):
-    assert measure(db, home=Home()) is None
-    assert rows(db, "SELECT * FROM site_probe") == []
+def test_a_host_without_a_profile_row_stays_pending(db, monkeypatch):
+    assert lookup(db)["ahn_check"]["status"] == "pending"
 
 
-def test_the_same_reason_under_its_backoff_is_skipped(db, monkeypatch):
-    succeeded_then_failing(db, monkeypatch)
-    first = measure(db)
-    assert first is not None
+def test_a_failed_read_behind_a_fresh_gate_stays_pending(db, monkeypatch):
+    read_profile(db, monkeypatch)                                         # fresh gate
     with connect(db) as conn:
-        verdict, why, _ctx = site_probe.decide(conn, HOST, "lookup", now_utc())
-    assert (verdict, why) == ("skip", "backoff")
-    assert measure(db) is None
-    again, = rows(db, "SELECT probed_at FROM site_probe")
-    assert again["probed_at"] == first["probed_at"]
+        conn.execute("UPDATE host_access_profile SET last_error_at=now()")
+    assert lookup(db)["ahn_check"]["status"] == "pending"
 
 
-def test_switch_off_restores_the_deferral(db, monkeypatch):
+def test_nothing_is_stored_and_the_profile_reread_stays_queued(db, monkeypatch):
+    succeeded_then_failing(db, monkeypatch)
+    lookup(db)
+    assert rows(db, "SELECT * FROM site_probe") == []
+    assert ("site_probe", HOST) in {(r["kind"], r["site_host"]) for r in rows(db, "SELECT kind,site_host FROM background_reads")}
+
+
+def test_switch_off_restores_pending(db, monkeypatch):
     monkeypatch.setenv("AHN_D103_FAILED_PROFILE_NOT_PENDING", "0")
     succeeded_then_failing(db, monkeypatch)
-    home = Home()
-    assert measure(db, home=home) is None and home.calls == []
-    assert rows(db, "SELECT * FROM site_probe") == []
+    shown = lookup(db)["ahn_check"]
+    assert shown["status"] == "pending" and shown["retry_after_seconds"] == 60
+
+
+def seed_confirmed_refusal(db, probed_at):
+    """A stored bot_challenge (DataDome, two refusals) whose backoff has run out."""
     with connect(db) as conn:
-        assert site_probe.decide(conn, HOST, "lookup", now_utc())[:2] == ("defer", "robots_stale")
+        conn.execute(
+            """INSERT INTO site_probe (site_host,read_host,probed_at,outcome,http_status,bot_vendor,bot_signal,bot_confidence,
+                   edge_vendors,redirect,login_signal,response_ms,bytes_read,not_measured_reason,fingerprint_version,next_due_at,
+                   consecutive_refusals,consecutive_failures,trigger_kind,origin_operator,vantage,user_agent,refusal_counted_at)
+               VALUES (%s,%s,%s,'bot_challenge',403,'datadome','cookie','high','{}',NULL,NULL,90,100,NULL,%s,%s,2,0,'set_C',
+                       'op','{"kind":"datacenter","region":"x"}','ua',%s)""",
+            (HOST, HOST, probed_at, site_probe.FINGERPRINT_VERSION, now_utc() - timedelta(minutes=5), probed_at))
 
 
-def test_a_later_good_read_measures_again(db, monkeypatch):
+def test_a_stored_check_is_never_replaced_and_the_judgement_is_unchanged(db, monkeypatch):
     succeeded_then_failing(db, monkeypatch)
-    assert measure(db)["not_measured_reason"] == "robots_unreadable"
+    seed_confirmed_refusal(db, now_utc() - timedelta(days=7, hours=2))
+    before = rows(db, "SELECT * FROM site_probe")
+    on = lookup(db, error_class="site_access")
+    assert rows(db, "SELECT * FROM site_probe") == before                 # row kept: vendor and refusal count intact
+    assert on["ahn_check"]["status"] == "measured" and on["ahn_check"]["outcome"] == "bot_challenge"
+    monkeypatch.setenv("AHN_D103_FAILED_PROFILE_NOT_PENDING", "0")
+    off = lookup(db, error_class="site_access")
+    drop = ("generated_at", "lookup_activity", "feedback_token")
+    assert {k: v for k, v in on.items() if k not in drop} == {k: v for k, v in off.items() if k not in drop}
+
+
+def test_the_cron_check_keeps_the_profile_reread_queued(db, monkeypatch):
+    read_profile(db, monkeypatch, now=now_utc() - timedelta(hours=27))
+    read_profile(db, monkeypatch, status="error", now=now_utc() - timedelta(hours=2))
+    with connect(db) as conn:
+        conn.execute("DELETE FROM background_reads")
+    assert measure(db, trigger="set_C") is None                           # defers, as before D103
+    assert "access_profile" in {r["kind"] for r in rows(db, "SELECT kind FROM background_reads")}
+    assert rows(db, "SELECT * FROM site_probe") == []
+
+
+def test_a_recovered_profile_is_measured_at_once(db, monkeypatch):
+    succeeded_then_failing(db, monkeypatch)
+    assert lookup(db)["ahn_check"]["status"] == "not_measured"
     later = now_utc() + timedelta(hours=2)                                # past the retry window after a failed read
     read_profile(db, monkeypatch, now=later)
     home = Home()
     stored = measure(db, home=home, now=later)
     assert home.calls == [HOST] and stored["outcome"] == "reachable"
-
-
-def test_the_lookup_answer_shows_not_measured_not_pending(db, monkeypatch):
-    succeeded_then_failing(db, monkeypatch)
-    assert measure(db)["not_measured_reason"] == "robots_unreadable"
-    shown = service.check(db, HOST)["ahn_check"]
-    assert shown["status"] == "not_measured" and shown["not_measured_reason"] == "robots_unreadable"
-    assert "retry_after_seconds" not in shown
+    assert lookup(db)["ahn_check"]["status"] == "measured"

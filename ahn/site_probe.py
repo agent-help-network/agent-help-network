@@ -444,7 +444,7 @@ def _confirm_on() -> bool:
 
 
 def _d103_on() -> bool:
-    """AHN_D103_FAILED_PROFILE_NOT_PENDING (D103): "0" restores the earlier answer (wait for a profile read that keeps failing)."""
+    """AHN_D103_FAILED_PROFILE_NOT_PENDING (D103): "0" restores the earlier answer (pending for a profile read that keeps failing)."""
     return os.environ.get("AHN_D103_FAILED_PROFILE_NOT_PENDING", "1").strip() != "0"
 
 
@@ -583,16 +583,10 @@ def decide(conn, site_host: str, trigger: str, now: datetime) -> tuple[str, str 
     if not enabled():
         return "skip", "disabled", None
     profile = conn.execute(
-        "SELECT fetched_at,read_host,home_gate,last_error_at FROM host_access_profile WHERE site_host=%s",
-        (site_host,)).fetchone()
+        "SELECT fetched_at,read_host,home_gate FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
     gate = _fresh_gate(profile, now)
     if gate is None:
-        # D103: a profile whose last read failed (the same test as access_profile._failed_last) gets no newer gate until a
-        # read succeeds, so waiting for one is open-ended. Leave a not_measured row instead; a later good read replaces it.
-        if not (profile is not None and _d103_on() and profile["last_error_at"] is not None
-                and (profile["fetched_at"] is None or profile["last_error_at"] > profile["fetched_at"])):
-            return "defer", "robots_stale", None
-        gate = {"allowed": False, "reason": "robots_unreadable"}
+        return "defer", "robots_stale", None
     previous = conn.execute("SELECT * FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
     if not gate.get("allowed"):
         reason = gate.get("reason")
@@ -979,6 +973,10 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
             if why == "joined":
                 return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
         _queue(conn, site_host)
+        if row is None and _d103_on() and _profile_read_keeps_failing(conn, site_host, now):
+            # D103: no stored check, and the profile's last read failed with no fresh robots.txt verdict behind it, so the
+            # check cannot start until a read succeeds. Say so (nothing stored; the profile re-read stays queued).
+            return _valid(not_measured_view("robots_unreadable"))
         if row is None and getattr(settings, "d99_unreadable_not_pending", True) and _robots_unreadable_idle(access_profile):
             # D99: the profile's robots.txt read failed and none is queued, so no home check will happen soon: say so
             # instead of a wait that no later lookup would end.
@@ -991,6 +989,19 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
         except Exception:
             pass
         return None
+
+
+def _profile_read_keeps_failing(conn, site_host: str, now: datetime) -> bool:
+    """D103: the profile row's last read failed (the test of access_profile._failed_last) and no robots.txt verdict
+    newer than FRESH_HOURS is stored, so no home check can start until a read succeeds."""
+    profile = conn.execute(
+        "SELECT fetched_at,home_gate,last_error_at FROM host_access_profile WHERE site_host=%s", (site_host,)).fetchone()
+    conn.commit()
+    if profile is None or profile["last_error_at"] is None:
+        return False
+    if profile["fetched_at"] is not None and profile["last_error_at"] <= profile["fetched_at"]:
+        return False
+    return _fresh_gate(profile, now) is None
 
 
 def _robots_unreadable_idle(access_profile: dict | None) -> bool:

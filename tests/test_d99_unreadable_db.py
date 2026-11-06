@@ -42,6 +42,7 @@ def test_unreadable_host_not_measured_and_rest_of_answer_unchanged(db, monkeypat
     with connect(db) as conn:
         conn.execute("DELETE FROM background_reads")
         conn.execute("DELETE FROM site_probe")
+    monkeypatch.setenv("AHN_D103_FAILED_PROFILE_NOT_PENDING", "0")   # D103 also covers this host; off for the earlier answer
     off = lookup(db, False)
     assert off["ahn_check"]["status"] == "pending" and off["ahn_check"]["retry_after_seconds"] == 60
     drop = ("generated_at", "ahn_check", "lookup_activity", "feedback_token")
