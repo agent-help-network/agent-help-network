@@ -16,6 +16,12 @@ from ahn.db import connect  # noqa: E402
 from test_site_probe_db import HOST, Profiles, db  # noqa: E402,F401
 
 
+@pytest.fixture(autouse=True)
+def d103_off(monkeypatch):
+    """D103 covers this host too; off here so both halves test D99 alone."""
+    monkeypatch.setenv("AHN_D103_FAILED_PROFILE_NOT_PENDING", "0")
+
+
 def failed_read_host(db, monkeypatch):
     """First lookup queues the read; the read fails (error); returns the settings."""
     monkeypatch.setattr(background_reads, "read_profile_file", Profiles(status="error"))
@@ -42,7 +48,6 @@ def test_unreadable_host_not_measured_and_rest_of_answer_unchanged(db, monkeypat
     with connect(db) as conn:
         conn.execute("DELETE FROM background_reads")
         conn.execute("DELETE FROM site_probe")
-    monkeypatch.setenv("AHN_D103_FAILED_PROFILE_NOT_PENDING", "0")   # D103 also covers this host; off for the earlier answer
     off = lookup(db, False)
     assert off["ahn_check"]["status"] == "pending" and off["ahn_check"]["retry_after_seconds"] == 60
     drop = ("generated_at", "ahn_check", "lookup_activity", "feedback_token")

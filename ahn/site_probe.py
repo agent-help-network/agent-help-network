@@ -973,8 +973,10 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
             if why == "joined":
                 return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
         _queue(conn, site_host)
-        if row is None and _d103_on() and _profile_read_keeps_failing(conn, site_host, now):
-            # D103: no stored check, and the profile's last read failed with no fresh robots.txt verdict behind it, so the
+        if row is None and _d103_on() and "retry_after_seconds" not in (access_profile or {}) \
+                and _profile_read_keeps_failing(conn, site_host, now):
+            # D103 (as in D99, a profile re-read already queued keeps pending): no stored check, and the profile's
+            # last read failed with no fresh robots.txt verdict behind it, so the
             # check cannot start until a read succeeds. Say so (nothing stored; the profile re-read stays queued).
             return _valid(not_measured_view("robots_unreadable"))
         if row is None and getattr(settings, "d99_unreadable_not_pending", True) and _robots_unreadable_idle(access_profile):
