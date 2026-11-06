@@ -1,13 +1,13 @@
 """D104: a Better Stack feed's update time is that of its reports, not the page's own ``updated_at`` (pure tests; no database, no network).
 
-The page-level ``data.attributes.updated_at`` moves whenever the page's settings change, whatever the status, so a page sorted on it
-sat at the top of the public board for no reason (the live shape of 2026-11-05: ``aggregate_state`` downtime with one open report
+The page-level ``data.attributes.updated_at`` moves independently of the reports (observed to be refreshed periodically), so a page
+sorted on it sat at the top of the public board for no reason (the live shape of 2026-11-05: ``aggregate_state`` downtime with one open report
 whose latest update was a day older than the page's ``updated_at``, and 42 reports of which 41 read ``resolved`` with ``ends_at`` null).
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -80,11 +80,124 @@ def test_without_an_open_report_the_last_posted_update_of_any_report_is_used():
     assert parse_betterstack(body("operational", reports)) == ("none", at("2026-10-20T09:30:00Z"))
 
 
-def test_an_open_report_with_no_readable_update_uses_its_start_and_never_the_page_time():
+def test_an_open_report_with_no_readable_update_uses_its_start():
     open_no_updates = [("1", "downtime", [], {"starts": "2026-11-02T03:00:00.000Z"})]
     assert parse_betterstack(body("downtime", open_no_updates)) == ("major", at("2026-11-02T03:00:00Z"))
-    unreadable = [("1", "downtime", [("u1", "soon")], {"starts": "nonsense"})]
-    assert parse_betterstack(body("downtime", unreadable)) == ("major", None)
+
+
+@pytest.mark.parametrize("state,indicator", [("downtime", "major"), ("degraded", "minor"), ("maintenance", "maintenance")])
+def test_a_page_that_is_not_operational_keeps_its_page_time_when_no_open_report_gives_a_usable_time(state, indicator):
+    page = at(PAGE_TIME)
+    future = "2999-01-01T00:00:00.000Z"
+    cases = {
+        "no report": [],
+        "only a resolved report": [("1", "resolved", [("u1", "2026-10-01T00:00:00.000Z")])],
+        "open report, unreadable update and start": [("1", state, [("u1", "soon")], {"starts": "nonsense"})],
+        "open report, future update and start": [("1", state, [("u1", future)], {"starts": future})],
+        "open report without updates or start": [("1", state, [], {"starts": None})],
+    }
+    for name, reports in cases.items():
+        assert parse_betterstack(body(state, reports)) == (indicator, page), name
+    # An operational page does not borrow it.
+    assert parse_betterstack(body("operational", cases["open report, future update and start"])) == ("none", None)
+    # No page time either: still no time (as before D104).
+    assert parse_betterstack(body(state, [], page_time=None)) == (indicator, None)
+
+
+def test_a_future_update_is_not_used_for_a_quiet_page():
+    reports = [("1", "resolved", [("u1", "2999-01-01T00:00:00.000Z"), ("u2", "2026-10-01T00:00:00.000Z")])]
+    assert parse_betterstack(body("operational", reports)) == ("none", at("2026-10-01T00:00:00Z"))
+
+
+def test_an_item_without_an_id_matches_nothing():
+    payload = body("downtime", [("1", "downtime", [("u1", "2026-11-04T13:00:00.000Z")])])
+    for item in payload["included"]:
+        if item["type"] == "status_update":
+            del item["id"]
+        if item["type"] == "status_report":
+            item["relationships"]["status_updates"]["data"] = [{"type": "status_update"}, {"id": None}, {"id": True}, {"id": ""}]
+    # No update matched, so the open report's start (2026-11-01 in the helper) is the time, never a mismatched "None" key.
+    assert betterstack_event_time(payload) == at("2026-11-01T00:00:00Z")
+    for item in payload["included"]:
+        if item["type"] == "status_report":
+            item["attributes"]["starts_at"] = None
+    assert betterstack_event_time(payload) is None
+    assert parse_betterstack(payload) == ("major", at(PAGE_TIME))
+
+
+def _mutations():
+    def base():
+        return body("downtime", [("1", "downtime", [("u1", "2026-11-04T13:00:00.000Z")])], [resource("1", "eclip.se", "downtime")])
+
+    junk = ["text", ["x"], 5, True, 1.5, None, [], {}]
+    out = []
+
+    def make(label, change):
+        payload = base()
+        change(payload)
+        out.append(pytest.param(payload, id=label))
+
+    def each(payload, kind, key, value):
+        for item in payload["included"]:
+            if isinstance(item, dict) and item.get("type") == kind:
+                item["attributes"][key] = value
+
+    reports = lambda p: [i for i in p["included"] if isinstance(i, dict) and i.get("type") == "status_report"]  # noqa: E731
+    for n, value in enumerate(junk):
+        make(f"relationships-{n}", lambda p, v=value: [r.__setitem__("relationships", v) for r in reports(p)])
+        make(f"status_updates-{n}", lambda p, v=value: [r["relationships"].__setitem__("status_updates", v) for r in reports(p)])
+        make(f"status_updates.data-{n}", lambda p, v=value: [r["relationships"]["status_updates"].__setitem__("data", v) for r in reports(p)])
+        make(f"ref-{n}", lambda p, v=value: [r["relationships"]["status_updates"].__setitem__("data", [v]) for r in reports(p)])
+        make(f"item-{n}", lambda p, v=value: p["included"].append(v))
+        make(f"attributes-{n}", lambda p, v=value: [i.__setitem__("attributes", v) for i in p["included"]])
+        make(f"report-state-{n}", lambda p, v=value: each(p, "status_report", "aggregate_state", v))
+        make(f"report-starts-{n}", lambda p, v=value: each(p, "status_report", "starts_at", v))
+        make(f"resource-status-{n}", lambda p, v=value: each(p, "status_page_resource", "status", v))
+        make(f"resource-name-{n}", lambda p, v=value: each(p, "status_page_resource", "public_name", v))
+        make(f"resource-kind-{n}", lambda p, v=value: each(p, "status_page_resource", "resource_type", v))
+        make(f"published-{n}", lambda p, v=value: each(p, "status_update", "published_at", v))
+        make(f"id-{n}", lambda p, v=value: [i.__setitem__("id", v) for i in p["included"]])
+        make(f"type-{n}", lambda p, v=value: [i.__setitem__("type", v) for i in p["included"]])
+        make(f"included-{n}", lambda p, v=value: p.__setitem__("included", v))
+    return out
+
+
+@pytest.mark.parametrize("payload", _mutations())
+def test_a_malformed_part_of_the_body_never_raises(payload):
+    # Anything but the page's own aggregate_state is optional detail: it may leave a value out, never fail the read.
+    parse_betterstack(payload)
+    betterstack_event_time(payload)
+    betterstack_affected(payload)
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=payload)))
+    status_refresh._read_source(BETTERSTACK, client, None, {})
+
+
+@pytest.mark.parametrize("state,indicator", [("downtime", "major"), ("degraded", "minor"), ("maintenance", "maintenance")])
+def test_the_board_keeps_a_page_that_is_down_now_even_when_it_has_no_report_time(state, indicator):
+    now = at(PAGE_TIME) + timedelta(hours=1)
+    for reports in ([], [("1", "resolved", [("u1", "2020-01-01T00:00:00.000Z")])], [("1", state, [("u1", "soon")], {"starts": "x"})]):
+        _indicator, updated = parse_betterstack(body(state, reports))
+        status = {"indicator": indicator, "source_updated_at": updated, "fetched_at": now, "freshness": "fresh"}
+        assert signal_history.board_provider(status, now) is None, reports
+    # The one board change: a page whose open report itself was last updated more than a week ago leaves the board as stale,
+    # as every provider's incident time does; before D104 the page's own time kept it on.
+    _indicator, updated = parse_betterstack(body(state, [("1", state, [("u1", "2026-10-01T00:00:00.000Z")])]))
+    status = {"indicator": indicator, "source_updated_at": updated, "fetched_at": now, "freshness": "fresh"}
+    assert signal_history.board_provider(status, now) == "stale_update"
+
+
+def test_affected_is_not_stored_for_a_page_that_reads_operational():
+    payload = body("operational", resources=[resource("1", "API", "downtime")])  # a leftover resource status under an operational page
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=payload)))
+    scope: dict = {}
+    assert status_refresh._read_source(BETTERSTACK, client, None, scope)[0] == "none"
+    assert scope == {}
+
+
+def test_the_future_slack_matches_the_one_the_board_uses():
+    from ahn import triage
+
+    assert status_refresh.BETTERSTACK_FUTURE_SLACK == triage.FUTURE_SLACK
 
 
 @pytest.mark.parametrize("included", [None, "x", [], [None, 3, {}], [{"type": "status_report"}], [{"type": "status_update", "attributes": 1}]])

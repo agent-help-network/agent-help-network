@@ -130,9 +130,11 @@ def _betterstack(state, updated_at="2026-10-19T21:18:50.858Z", **extra):
 
 @pytest.mark.parametrize("state,indicator", [("operational", "none"), ("degraded", "minor"), ("downtime", "major"), ("maintenance", "maintenance")])
 def test_betterstack_states_map_to_indicators(state, indicator):
-    # D104: the page's own updated_at is not the update time; this body lists no report, so there is none (tests/test_d104_betterstack_time.py).
-    assert parse_betterstack(_betterstack(state)) == (indicator, None)
-    assert _read(BETTERSTACK, lambda _r: httpx.Response(200, json=_betterstack(state))) == (indicator, None)
+    # D104: this body lists no report. An operational page then has no update time (the page's own updated_at is not one); a page that
+    # is not operational keeps the page's updated_at as before (tests/test_d104_betterstack_time.py).
+    expected_time = None if state == "operational" else datetime(2026, 10, 19, 21, 18, 50, 858000, tzinfo=timezone.utc)
+    assert parse_betterstack(_betterstack(state)) == (indicator, expected_time)
+    assert _read(BETTERSTACK, lambda _r: httpx.Response(200, json=_betterstack(state))) == (indicator, expected_time)
     # The reading from before D104 (switch AHN_D104_BETTERSTACK_UPDATED_AT=0) still takes the page's updated_at.
     assert parse_betterstack(_betterstack(state), events=False) == (
         indicator, datetime(2026, 10, 19, 21, 18, 50, 858000, tzinfo=timezone.utc))
