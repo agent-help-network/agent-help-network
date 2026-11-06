@@ -2186,6 +2186,7 @@
         "access_denial_observed",
         "edge_refusal_confirmed",
         "edge_refusal_robots",
+        "no_path_after_failure",
         "provider_scope",
         "provider_components_only",
         "provider_incident_stale",

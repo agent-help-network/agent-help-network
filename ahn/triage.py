@@ -21,6 +21,7 @@ CHECKS = {
     "access_denial_observed": "An access denial was observed. Follow the site's stated policy and do not bypass its controls; this does not establish an outage.",
     "edge_refusal_confirmed": "The site refused you and AHN's own home-page check too (ahn_check), so the refusal is the site's edge, not only your tool. Do not switch tools or user agents; hand the step to your user.",
     "edge_refusal_robots": "The site refused you and AHN's own plain robots.txt read too, so the refusal is the site's edge, not only your tool. Do not switch tools or user agents; hand the step to your user.",
+    "no_path_after_failure": "No response or a 5xx came, and AHN lists no page of this site you can try instead. Check your tool once; if one more try fails, tell your user.",
     "provider_scope": "The provider reports an active issue. Compare its affected services and update time with your blocked step before deciding whether to wait or retry.",
     "provider_components_only": "The provider's page-level status shows an issue, but the provider has announced no incident or maintenance (provider_status.basis is components_only). Some components are marked down or under maintenance; check on the provider's status page whether a component you use is one of them. A minor or maintenance page is not treated as a reason to wait; a major or critical one still is, because an outage can show on components before an incident is posted.",
     "provider_incident_stale": f"The provider's active incidents have had no update for more than {STALE_INCIDENT_DAYS} days (provider_status.incident_updated_at is the latest one) and no maintenance is in progress. An incident left open without updates is not treated as a reason to wait: if provider_status.affected names a service you use, wait for the provider; otherwise continue. A major or critical page above the worst incident's impact is still a reason to wait, because components can show a new outage before an incident is posted.",
@@ -61,6 +62,7 @@ CHECKS_KO = {
     "access_denial_observed": "접근 거부를 확인했습니다. 사이트가 밝힌 정책을 따르고 제한을 우회하지 마세요. 장애의 증거는 아닙니다.",
     "edge_refusal_confirmed": "사이트가 당신과 AHN 자체 홈 페이지 확인(ahn_check)을 모두 거절했습니다. 당신 도구만의 문제가 아니라 사이트 가장자리의 거절입니다. 도구나 사용자 에이전트를 바꿔 재시도하지 말고 사용자에게 넘기세요.",
     "edge_refusal_robots": "사이트가 당신과 AHN 자체의 일반 robots.txt 읽기를 모두 거절했습니다. 당신 도구만의 문제가 아니라 사이트 가장자리의 거절입니다. 도구나 사용자 에이전트를 바꿔 재시도하지 말고 사용자에게 넘기세요.",
+    "no_path_after_failure": "응답이 없거나 5xx 가 왔고, AHN 에는 이 사이트에서 대신 시도할 페이지가 없습니다. 도구를 한 번 확인하고 한 번 더 시도해 실패하면 사용자에게 알리세요.",
     "provider_scope": "업체가 활성 문제를 발표했습니다. 대기·재시도를 정하기 전에 영향받는 서비스와 발표 시각을 현재 작업과 비교하세요.",
     "provider_components_only": "업체 페이지 전체 표시는 문제를 가리키지만, 업체가 발표한 사건이나 점검은 없습니다(provider_status.basis 가 components_only). 일부 컴포넌트만 장애·점검으로 표시돼 있으니, 업체 상태 페이지에서 사용하는 컴포넌트가 거기 있는지 확인하세요. minor·maintenance 표시는 기다릴 이유로 보지 않지만, major·critical 표시는 사건이 게시되기 전에 컴포넌트에 먼저 장애가 보일 수 있어 계속 기다릴 이유로 봅니다.",
     "provider_incident_stale": f"업체의 활성 사건이 {STALE_INCIDENT_DAYS}일 넘게 업데이트되지 않았고(가장 최근 업데이트는 provider_status.incident_updated_at) 진행 중인 점검도 없습니다. 업데이트 없이 열려 있는 사건은 기다릴 이유로 보지 않습니다. provider_status.affected 에 사용하는 서비스가 있으면 업체를 기다리고, 없으면 진행하세요. 다만 페이지 전체 표시가 가장 심한 사건보다 높은 major·critical 이면 새 장애가 사건 게시 전에 컴포넌트에 먼저 보일 수 있어 계속 기다릴 이유로 봅니다.",
@@ -450,6 +452,27 @@ EDGE_CODE = "edge_refusal_confirmed"
 EDGE_FAILURE_STAGES = (None, "access_denial_observed")
 # D98: the same hand-off where AHN's own plain robots.txt read was refused (access_profile.robots_status == "refused") and no developer path is listed.
 EDGE_ROBOTS_CODE = "edge_refusal_robots"
+# D101: a service_error lookup (a 5xx or no response) whose first line would send the caller to no path outside AHN is handed to the user.
+NO_PATH_CODE = "no_path_after_failure"
+# The reasons of the answers that list no developer or customer path (rows U6, U7, U9) or only a developer path that D95 made reference
+# (U7-O, U9-O); an empty list is U9 as well.
+_NO_PATH_REASONS = (["robots_fetch_refused"], ["robots_unknown"], ["profile_not_read"], [],
+                    ["robots_unknown", "official_path_available"], ["profile_not_read", "official_path_available"])
+
+
+def _no_path_handoff(result: dict, official: dict | None, failure_stage: str | None, customer_same_site: bool, apex_lookup: bool) -> bool:
+    """D101: whether this service_error answer becomes hand_off_to_human. The answer is unknown with one of the no-path reasons and the
+    host lists no customer page, or (any customer page) it is unknown or an O7 use_official_path answer, no response came (before_target_response)
+    and the customer page is on the same site as the host that did not answer. A subdomain that is sent to its root domain (apex_lookup)
+    is not handed off here."""
+    customer = customer_url(official) is not None
+    reasons = result["reasons"]
+    if result["action"] == "unknown" and reasons in _NO_PATH_REASONS:
+        if apex_lookup and "profile_not_read" in reasons:
+            return False
+        return not customer or (customer_same_site and failure_stage == "before_target_response")
+    return (result["action"] == "use_official_path" and customer and customer_same_site and failure_stage == "before_target_response"
+            and "official_path_available" in reasons and set(reasons) <= {"official_path_available", "robots_blocks_not_your_agent"})
 
 
 def recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
@@ -457,7 +480,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
                    now: datetime | None = None, agent_vendor: str | None = None, vendor_aware: bool = True,
                    failure_stage: str | None = None, proceed_without_failure: bool = True,
                    assume_failure: bool = False, edge_refusal: bool = False,
-                   service_error_reference_only: bool = False, robots_refusal_handoff: bool = False) -> dict:
+                   service_error_reference_only: bool = False, robots_refusal_handoff: bool = False,
+                   no_path_handoff: bool = False, customer_same_site: bool = False, apex_lookup: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
@@ -479,7 +503,11 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     robots_refusal_handoff: D98 (AHN_D98_ROBOTS_REFUSAL_HANDOFF; the service passes the setting and withholds it for a status_check answer, the
     default here is the answer before D98). A site_access lookup (no failure_stage or access_denial_observed) whose answer is unknown with
     exactly the reason robots_fetch_refused (AHN's own plain robots.txt read was refused and no developer path is listed) becomes
-    hand_off_to_human with the reasons edge_refusal_robots, robots_fetch_refused. Every other answer stays as it was."""
+    hand_off_to_human with the reasons edge_refusal_robots, robots_fetch_refused. Every other answer stays as it was.
+    no_path_handoff: D101 (AHN_D101_NO_PATH_HANDOFF; the service passes the setting, with the D63 and D87 switches on, and withholds it for a
+    status_check or plain-view answer; the default here is the answer before D101). A service_error lookup whose answer is _no_path_handoff()
+    (customer_same_site: the curated customer page is on the same site as the host; apex_lookup: the guide sends the host to its root domain)
+    becomes hand_off_to_human, confidence low, with the earlier reasons followed by no_path_after_failure. Every other answer stays as it was."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                              provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
@@ -493,6 +521,9 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     if (robots_refusal_handoff and result["action"] == "unknown" and result["reasons"] == ["robots_fetch_refused"]
             and error_class == "site_access" and failure_stage in EDGE_FAILURE_STAGES):
         result = {"action": "hand_off_to_human", "confidence": "medium", "reasons": [EDGE_ROBOTS_CODE, "robots_fetch_refused"]}
+    if (no_path_handoff and error_class == "service_error" and proceed_without_failure
+            and _no_path_handoff(result, official, failure_stage, customer_same_site, apex_lookup)):
+        result = {"action": "hand_off_to_human", "confidence": "low", "reasons": [*result["reasons"], NO_PATH_CODE]}
     if vendor is not None:
         result["agent_vendor"] = vendor
     return result
@@ -595,13 +626,14 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 now: datetime | None = None, agent_vendor: str | None = None,
                 vendor_aware: bool = True, proceed_without_failure: bool = True,
                 assume_failure: bool = False, edge_refusal: bool = False, robots_refusal: bool = False,
-                unresolved_listed: bool = False) -> list[dict[str, str]]:
+                unresolved_listed: bool = False, no_path: bool = False) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
     agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63;
     edge_refusal: D85, True only when recommendation() returned the edge_refusal_confirmed reason; the code follows the failure stage.
     robots_refusal: D98, True only when recommendation() returned the edge_refusal_robots reason; same place as the D85 code.
     unresolved_listed: D100 (AHN_D100_INCIDENTIO_INCIDENTS), a fresh reading with the indicator none that lists an unresolved incident
-    gets provider_scope in place of provider_clear. Information only: recommendation() reads neither."""
+    gets provider_scope in place of provider_clear. Information only: recommendation() reads neither.
+    no_path: D101, True only when recommendation() returned the no_path_after_failure reason; same place again."""
     codes: list[str] = []
     handoff = error_class in {"human_verification", "login_auth"}
     failed = (failure_observed(error_class, failure_stage) or assume_failure) if proceed_without_failure else True
@@ -613,6 +645,8 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
         codes.append(EDGE_CODE)
     if robots_refusal and error_class == "site_access" and failure_stage in EDGE_FAILURE_STAGES:
         codes.append(EDGE_ROBOTS_CODE)
+    if no_path and error_class == "service_error":
+        codes.append(NO_PATH_CODE)
     if error_class == "human_verification":
         codes.append("human_handoff")
     elif error_class == "login_auth":
