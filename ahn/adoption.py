@@ -161,7 +161,8 @@ def summary(conn, days: int = 7, today: date | None = None) -> dict:
         if r["client_category"] == "ahn_client" and r["adapter"] != traffic.ADAPTER_NONE:
             by_adapter[r["adapter"]] = by_adapter.get(r["adapter"], 0) + n
         if r["client_category"] == "mcp_host":
-            by_mcp_host[r["mcp_host"]] = by_mcp_host.get(r["mcp_host"], 0) + n
+            host = traffic.reported_mcp_host(r["mcp_host"])
+            by_mcp_host[host] = by_mcp_host.get(host, 0) + n
         by_action[r["action"]] = by_action.get(r["action"], 0) + n
         by_state[r["profile_state"]] = by_state.get(r["profile_state"], 0) + n
         slot = daily[r["day"].isoformat()]

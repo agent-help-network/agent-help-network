@@ -101,25 +101,25 @@ def hop_headers(**extra):
 
 def test_mcp_hop_counts_as_mcp_host_with_the_forwarded_family(db):
     client = hop_client(db)
-    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": CALLER_IP, "X-AHN-Origin-Client": "claude"}))
+    lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": CALLER_IP, "X-AHN-Origin-Client": "claude_code"}))
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "cursor"}))
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP}))                                  # no label: unknown_mcp
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "made up"}))  # not on the list: unknown_mcp
     lookup(client, ip=None, headers=hop_headers(**{"X-AHN-Origin-IP": OTHER_IP, "X-AHN-Origin-Client": "other_mcp"}))  # a host the list does not name
     assert {(r["client_category"], r["mcp_host"]): r["lookups"] for r in stored(db)} == {
-        ("mcp_host", "claude"): 1, ("mcp_host", "cursor"): 1, ("mcp_host", "unknown_mcp"): 2, ("mcp_host", "other_mcp"): 1}
+        ("mcp_host", "claude_code"): 1, ("mcp_host", "cursor"): 1, ("mcp_host", "unknown_mcp"): 2, ("mcp_host", "other_mcp"): 1}
 
 
 def test_a_caller_cannot_choose_its_own_mcp_host_label(db, client):
     # Outside the authenticated hop the header is not read at all: a plain request stays what its User-Agent says.
-    lookup(client, headers={"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude"})
+    lookup(client, headers={"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude_code"})
     assert [(r["client_category"], r["mcp_host"]) for r in stored(db)] == [("browser", "none")]
 
 
 def test_a_valid_hop_token_from_a_non_loopback_address_cannot_set_the_label(db):
     # The token is right but the request is not the adapter's loopback hop: Origin-Client and Origin-IP are both ignored.
     client = TestClient(create_app(db), client=("198.51.100.99", 50000))
-    lookup(client, headers=hop_headers(**{"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude", "X-AHN-Origin-IP": OTHER_IP}))
+    lookup(client, headers=hop_headers(**{"User-Agent": "Mozilla/5.0", "X-AHN-Origin-Client": "claude_code", "X-AHN-Origin-IP": OTHER_IP}))
     # (the token still marks the call as an MCP one for the category, but the label it asks for is not taken)
     assert [(r["client_category"], r["mcp_host"]) for r in stored(db)] == [("mcp_host", "unknown_mcp")]
 
