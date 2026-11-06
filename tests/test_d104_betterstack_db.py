@@ -90,21 +90,44 @@ def test_an_open_report_is_stored_with_its_time_and_the_down_resource_and_the_ju
 def test_a_degraded_page_with_a_resolved_report_keeps_its_judgement(monkeypatch, clients):
     payload = body("degraded", [("1", "resolved", [("u1", "2026-10-30T08:00:00.000Z")])], [resource("1", "API", "degraded")], page_time=PAGE_TIME)
     (new, new_row), (old, _old_row) = both(monkeypatch, clients, payload)
-    assert new_row["source_updated_at"].isoformat().startswith("2026-10-30T08:00:00")
+    assert new_row["source_updated_at"].isoformat().startswith("2026-11-06T02:20:00")  # no open report: the page time, as before D104
     assert new["provider_status"]["affected"] == ["API"]
     assert judgement(new) == judgement(old)
 
 
-def test_the_one_judgement_change_is_a_minor_page_whose_feed_lists_no_report_at_all(monkeypatch, clients):
-    # Before D104 the page's updated_at stood in as the time; now there is none, so the existing "update time unknown" rule applies:
-    # the wait stays (action unchanged) with low confidence and the provider_update_time_unknown reason.
-    payload = body("degraded", [], [resource("1", "API", "degraded")], page_time=PAGE_TIME)
-    (new, new_row), (old, _old_row) = both(monkeypatch, clients, payload)
-    assert new_row["source_updated_at"] is None
-    new_judgement, old_judgement = judgement(new)[0], judgement(old)[0]
-    assert new_judgement["action"] == old_judgement["action"] == "wait_provider_incident"
-    assert new_judgement["confidence"] == "low" and "provider_update_time_unknown" in new_judgement["reasons"]
-    assert old_judgement["confidence"] != "low" and "provider_update_time_unknown" not in old_judgement["reasons"]
+@pytest.mark.parametrize("state", ["degraded", "downtime", "maintenance"])
+def test_a_page_that_is_not_operational_with_no_report_time_is_stored_and_judged_exactly_as_before(monkeypatch, clients, state):
+    # No usable report time: the page's updated_at stands in as before D104, so the stored time and the answer do not change.
+    payload = body(state, [], [resource("1", "API", "degraded" if state == "degraded" else "downtime")], page_time=PAGE_TIME)
+    (new, new_row), (old, old_row) = both(monkeypatch, clients, payload)
+    assert new_row["source_updated_at"] == old_row["source_updated_at"]
+    assert new_row["source_updated_at"].isoformat().startswith("2026-11-06T02:20:00")
+    assert judgement(new) == judgement(old)
+    assert "provider_update_time_unknown" not in new["recommendation"].get("reasons", [])
+
+
+def test_a_malformed_report_part_leaves_the_read_and_the_cron_run_going(monkeypatch, clients):
+    from ahn.status_refresh import refresh_batch, sync_curated_sources
+
+    (on, _client), _off = clients
+    broken = body("downtime", [("1", "downtime", [("u1", REPORT_TIME)])], [resource("1", "eclip.se", "downtime")])
+    for item in broken["included"]:
+        if item["type"] == "status_report":
+            item["relationships"] = "oops"       # a truthy value that is not an object
+    healthy = body("downtime", [("2", "downtime", [("u2", REPORT_TIME)])], [resource("2", "Other", "downtime")])
+    pages = {ON_PAGE: broken, OFF_PAGE: healthy}
+    remote = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=pages[request.url.host]) if request.url.host in pages and request.url.path == "/index.json"
+        else httpx.Response(404, text="")))
+    monkeypatch.setattr(status_refresh, "SOURCES", {host: status_refresh.SOURCES[host] for host in (ON_HOST, OFF_HOST)})
+    monkeypatch.setattr(background_reads, "_pace", lambda: None)
+    sync_curated_sources(on)
+    result = refresh_batch(on, client=remote)
+    assert result["checked"] == 2 and result["updated"] == 2 and result["failed"] == 0
+    with connect(on) as conn:
+        rows = {r["site_host"]: r for r in conn.execute("SELECT site_host,fetched_at,failures,affected FROM status_cache").fetchall()}
+    assert rows[ON_HOST]["fetched_at"] is not None and rows[OFF_HOST]["fetched_at"] is not None and rows[ON_HOST]["failures"] is None
+    assert rows[OFF_HOST]["affected"] == ["Other"]
 
 
 def test_a_healthy_page_with_no_report_has_no_time_and_names_nobody(monkeypatch, clients):
