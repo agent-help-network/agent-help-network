@@ -328,3 +328,10 @@ def test_counts_past_the_hour_cap_fold_into_an_overflow_row(db, monkeypatch):
         for host in ("one-site.io", "two-site.io"):
             feedback.record(conn, db.key_pepper, feedback.issue(db.key_pepper, host, "proceed", "mcp", True, now), "succeeded", "unknown", now, count=True)
     assert sorted(r["site_host"] for r in counts(db)) == ["(overflow)", "one-site.io"]
+
+
+def test_a_query_marked_lookup_gets_a_token_whose_feedback_is_accepted_not_counted(db, client):
+    token = lookup(client, error_class="site_access", ahn_test="1").json()["feedback_token"]["token"]
+    assert feedback.verify(db.key_pepper, token, datetime.now(timezone.utc)).counted is False
+    assert send(client, token).status_code == 200
+    assert counts(db) == []

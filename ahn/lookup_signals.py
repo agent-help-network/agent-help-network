@@ -69,6 +69,16 @@ def is_reserved_example(host: str) -> bool:
 # Name of the header that marks a test lookup, and of the one the MCP adapter uses to pass the caller's address
 # on its loopback hop (honoured only on an authenticated hop, see ahn/main.py).
 TEST_HEADER = "x-ahn-test"
+# D106: the same mark can also come as the query parameter ``ahn_test=1`` (REST) or the ``test`` argument of the MCP
+# tool, for callers that cannot set a header. Every route reads the mark through test_marked, so they cannot drift apart.
+TEST_QUERY = "ahn_test"
+
+
+def test_marked(header_value, query_value=None) -> bool:
+    """Whether a lookup is marked as a test: the header ``X-AHN-Test: 1`` or the query ``ahn_test=1``. Only the exact
+    value ``1`` counts (spaces around it are ignored); any other value is the same as no mark, never an error. The mark
+    only keeps the lookup out of the anonymous counts; it never changes the answer."""
+    return any(isinstance(value, str) and value.strip() == "1" for value in (header_value, query_value))
 ORIGIN_HEADER = "x-ahn-origin-ip"
 # The MCP adapter also passes the caller's MCP host family (a fixed label from ahn/traffic.py, never the User-Agent), on the same hop.
 ORIGIN_CLIENT_HEADER = "x-ahn-origin-client"

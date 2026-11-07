@@ -18,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
 from .check_text import VENDOR_NAMES, age_text, unfollowed_www_redirect
-from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, lenient_codes
+from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, TEST_QUERY, lenient_codes, test_marked
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
 from .triage import accepted_vendor
@@ -99,6 +99,7 @@ def _enum_schema(enum) -> dict:
 
 
 HTTP_STATUS_SCHEMA = {"type": "integer", "description": "HTTP status the site returned: 401, 402, 403, 407, 408, 429, 451 or 500-599. Leave out if unknown."}
+TEST_SCHEMA = {"type": "boolean", "description": "Set true to mark this lookup as a test (like the header X-AHN-Test: 1): it is kept out of the anonymous counts and the answer is the same. Leave it out for a real lookup; any other value is ignored."}
 FAILED_AT_SCHEMA = {"type": "string", "maxLength": 40, "description": "When the step failed, as an ISO 8601 time such as 2026-11-01T07:10:00Z (UTC if no offset). Leave it out for a failure that just happened. Only used to choose the cause shown in the answer; not stored."}
 
 
@@ -118,7 +119,7 @@ def outer_request_headers(ctx: Context | None) -> dict:
     address = headers.get("cf-connecting-ip", "").strip()
     if address:
         forwarded[ORIGIN_HEADER] = address
-    if headers.get(TEST_HEADER, "").strip() == "1":
+    if test_marked(headers.get(TEST_HEADER)):
         forwarded[TEST_HEADER] = "1"
     from .lookup_signals import ORIGIN_CLIENT_HEADER
     from .traffic import MCP_HOST_UNKNOWN, mcp_host_kind
@@ -140,6 +141,7 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
                          via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
                          agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor))] = None,
                          failed_at: Annotated[Any, WithJsonSchema(FAILED_AT_SCHEMA)] = None,
+                         test: Annotated[Any, WithJsonSchema(TEST_SCHEMA)] = None,
                          ctx: Context | None = None) -> Annotated[CallToolResult, CheckResponse]:
     try:
         valid_host(site_host)
@@ -168,6 +170,9 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     # D73: passed on as sent (text); the API decides whether it can be used. Not text means not sent.
     if isinstance(failed_at, str) and failed_at.strip():
         params["failed_at"] = failed_at.strip()[:64]
+    # D106: only the JSON value true marks a test (like the exact header value 1); anything else is dropped, never refused.
+    if test is True:
+        params[TEST_QUERY] = "1"
     response = CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
     return check_result(response)
 

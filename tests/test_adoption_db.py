@@ -520,3 +520,10 @@ def test_owner_json_days_window_applies_to_the_hourly_view(db):
     headers = {"CF-Connecting-IP": OPERATOR_IP}
     assert client.get("/owner/adoption.json?days=2", headers=headers).json()["signals_by_hour"]["rows"] == []
     assert len(client.get("/owner/adoption.json?days=7", headers=headers).json()["signals_by_hour"]["rows"]) == 1
+
+
+def test_the_query_mark_is_left_out_of_adoption_like_the_header(db, client):
+    assert lookup(client, ahn_test="1").status_code == 200
+    assert stored(db) == []
+    lookup(client, ahn_test="2")          # only the exact mark counts as a test; anything else is ignored
+    assert by_category(db) == {"unknown": 1}

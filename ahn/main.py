@@ -552,14 +552,14 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
     def lookup_signal(request: Request, *, kind: str | None = None, http_status: str | None = None,
                       challenge: str | None = None, retry_after: str | None = None,
-                      via: str | None = None) -> lookup_signals.LookupSignal | None:
+                      via: str | None = None, ahn_test: str | None = None) -> lookup_signals.LookupSignal | None:
         """The counted-lookup record for this request, or None when it must not be counted (D47).
 
-        Left out: a request marked X-AHN-Test: 1, and one from the operator's allowed network. For a call that
+        Left out: a request marked X-AHN-Test: 1 or ahn_test=1 (D106), and one from the operator's allowed network. For a call that
         came through the MCP adapter the address is the one the adapter passed on its authenticated loopback hop;
         a request that is not such a hop cannot use that header.
         """
-        if request.headers.get(lookup_signals.TEST_HEADER, "").strip() == "1":
+        if lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test):
             return None
         hop = internal_mcp_hop(request)
         address = lookup_signals.clean_address(request.headers.get(lookup_signals.ORIGIN_HEADER if hop else "cf-connecting-ip", ""))
@@ -585,6 +585,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                        retry_after: str | None = Query(None, description="Optional signal code: none, lt_60, 60_3600 or gt_3600. A value outside the list is ignored."),
                        via: str | None = Query(None, description="Optional signal code: http_fetch, browser or unknown. A value outside the list is ignored."),
                        failed_at: str | None = Query(None, description="Optional: when the step failed, an ISO 8601 time such as 2026-11-01T07:10:00Z (UTC if no offset). Used once to choose the optional `cause` of a failure lookup; not stored. A value that cannot be used, or is more than 5 minutes in the future, gives no `cause`. Older than 14 days: only the provider's status history is read."),
+                       ahn_test: str | None = Query(None, description="Optional: `1` marks this lookup as a test, exactly like the header `X-AHN-Test: 1`, for callers that cannot set a header. It is kept out of the anonymous counts and never changes the answer. Any other value is ignored."),
                        agent_vendor: str | None = Query(None, description="Optional: the vendor whose documented robots.txt token your own web requests send (openai, anthropic, google, perplexity, meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other). The recommendation then reads that vendor's tokens. Leave it out when unsure. A value outside the list is ignored. Not stored."),
                        mcp_call: str | None = Header(default=None, alias="X-AHN-MCP-Call", include_in_schema=False)):
         site_host = normalize_host_input(site_host)
@@ -596,7 +597,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             raise ServiceError("invalid_task_step", 400)
         result = check(settings, site_host, error_class.value if error_class else None, task_step, window_hours,
                        failure_stage.value if failure_stage else None,
-                       lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via),
+                       lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via, ahn_test=ahn_test),
                        agent_vendor=accepted_vendor(agent_vendor), issue_feedback=True,  # the one counted lookup route (D58)
                        failed_at=failed_at)
         if is_mcp_metric_request(mcp_call, settings.key_pepper):

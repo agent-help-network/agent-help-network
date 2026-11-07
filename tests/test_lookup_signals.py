@@ -150,7 +150,7 @@ def test_mcp_tool_accepts_the_new_codes_and_hides_the_context():
     assert done.returncode == 0, done.stderr
     tools = json.loads(done.stdout.strip().splitlines()[-1])
     props, annotations = tools["check_incident"]
-    assert props == ["agent_vendor", "challenge", "error_class", "failed_at", "failure_stage", "http_status", "retry_after", "site_host", "task_step", "via"]
+    assert props == ["agent_vendor", "challenge", "error_class", "failed_at", "failure_stage", "http_status", "retry_after", "site_host", "task_step", "test", "via"]
     assert annotations["read_only_hint"] is True
     # A report only adds a record, so it is not marked destructive.
     assert tools["report_observation"][1]["destructive_hint"] is False and tools["report_observation"][1]["read_only_hint"] is False
@@ -281,3 +281,23 @@ def test_mcp_schema_shows_the_allowed_values_while_validation_stays_loose():
 def test_non_ascii_digit_content_length_is_refused_not_a_server_error(client, length):
     response = client.post("/v1/observations", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": length.encode("latin-1")})
     assert response.status_code < 500
+
+
+def test_test_marked_accepts_only_the_exact_value_one_from_either_place():
+    from ahn.lookup_signals import test_marked
+    assert test_marked("1") and test_marked(None, "1") and test_marked(" 1 ") and test_marked("0", "1")
+    for header, query in ((None, None), ("0", None), (None, "2"), ("true", "yes"), ("", ""), (None, 1), (None, True)):
+        assert not test_marked(header, query)
+
+
+def test_mcp_test_argument_marks_the_api_call_only_when_it_is_true(monkeypatch):
+    seen = {}
+
+    async def fake(method, path, *, params=None, extra_headers=None, **_):
+        seen["params"] = params
+        return ANSWER
+    monkeypatch.setattr(mcp_adapter, "call_api", fake)
+    for value, marked in ((True, True), (False, False), (None, False), ("yes", False), ("1", False), (1, False), ("true", False)):
+        result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "demo-site.io", "test": value}))
+        assert result.structured_content["site_host"] == "demo-site.io"  # a wrong value is ignored, never refused
+        assert seen["params"] == ({"site_host": "demo-site.io", "ahn_test": "1"} if marked else {"site_host": "demo-site.io"}), value
