@@ -101,8 +101,8 @@
     <section class="panel"><h2>자동 검토 보류 사유</h2><div class="scroll"><table><thead><tr><th>사유</th><th>건수</th></tr></thead><tbody>
       {% for row in held_reasons %}<tr><td>{{ row.review_reason }}</td><td>{{ row.reports }}</td></tr>{% else %}<tr><td colspan="2">보류 기록이 없습니다.</td></tr>{% endfor %}
     </tbody></table></div></section>
-    <section class="panel wide"><h2>최근 보류 제보 20건</h2><div class="scroll"><table><thead><tr><th>ID</th><th>호스트</th><th>유형</th><th>사유</th><th>접수</th></tr></thead><tbody>
-      {% for row in held_reports %}<tr><td>{{ row.id }}</td><td>{{ row.site_host }}</td><td>{{ row.error_class }}</td><td>{{ row.review_reason }}</td><td>{{ row.received_at }}</td></tr>{% else %}<tr><td colspan="5">보류 제보가 없습니다.</td></tr>{% endfor %}
+    <section class="panel wide"><h2>최근 보류 제보 20건</h2><div class="scroll"><table><thead><tr><th>ID</th><th>호스트</th><th>유형</th><th>사유</th><th>제보한 에이전트가 말한 원인(검증 안 됨)</th><th>같은 호스트·같은 원인 7일 (이 제보 포함, same cause 7d incl. this)</th><th>접수</th></tr></thead><tbody>
+      {% for row in held_reports %}<tr><td>{{ row.id }}</td><td>{{ row.site_host }}</td><td>{{ row.error_class }}</td><td>{{ row.review_reason }}</td><td>{% if row.cause %}{{ row.cause }} / {{ row.cause_basis }}{% else %}-{% endif %}</td><td>{{ row.same_cause_7d if row.cause else "-" }}</td><td>{{ row.received_at }}</td></tr>{% else %}<tr><td colspan="7">보류 제보가 없습니다.</td></tr>{% endfor %}
     </tbody></table></div></section>
     <section class="panel"><h2>7일 운영 이벤트</h2><div class="scroll"><table><thead><tr><th>이벤트</th><th>건수</th></tr></thead><tbody>
       {% for row in events %}<tr><td>{{ row.event_type }}</td><td>{{ row.events }}</td></tr>{% else %}<tr><td colspan="2">이벤트가 없습니다.</td></tr>{% endfor %}

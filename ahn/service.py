@@ -172,11 +172,14 @@ def submit(settings: Settings, key: str, data: ObservationIn | OutcomeIn, parent
         row = conn.execute(
             """INSERT INTO observations
             (id,incident_id,reporter_id,observed_at,agent_family,attempt_actor,attempt_env,outcome,challenge_vendor,challenge_kind,synthetic,supersedes_id,
-             origin_operator,origin_observation_id,received_channel)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,review_state""",
+             origin_operator,origin_observation_id,received_channel,cause,cause_basis)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id,review_state""",
             (observation_id, incident_id, reporter_id, data.observed_at, data.agent_family.value, data.attempt_actor.value,
              data.attempt_env.value, data.outcome.value, data.challenge_vendor.value, data.challenge_kind.value,
-             data.synthetic, parent_id, operator_id(), observation_id, channel if channel in RECEIVED_CHANNELS else "rest"),
+             data.synthetic, parent_id, operator_id(), observation_id, channel if channel in RECEIVED_CHANNELS else "rest",
+             # D109: only a new observation carries a cause; an outcome update (OutcomeIn) has none.
+             data.cause.value if isinstance(data, ObservationIn) and data.cause else None,
+             data.cause_basis.value if isinstance(data, ObservationIn) and data.cause_basis else None),
         ).fetchone()
         conn.execute(
             "INSERT INTO report_submissions (reporter_id,idempotency_key,request_hash,observation_id) VALUES (%s,%s,%s,%s)",
@@ -543,7 +546,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         params.append(task_step)
     where.append("o.observed_at >= %s")
     params.append(datetime.now(timezone.utc) - timedelta(days=7))
-    sql = f"SELECT o.observed_at,o.attempt_actor,o.attempt_env,o.outcome,o.reporter_id,i.error_class,i.task_step FROM observations o JOIN incidents i ON i.id=o.incident_id WHERE {' AND '.join(where)} ORDER BY o.observed_at DESC LIMIT 500"
+    sql = f"SELECT o.observed_at,o.attempt_actor,o.attempt_env,o.outcome,o.reporter_id,o.cause,o.cause_basis,i.error_class,i.task_step FROM observations o JOIN incidents i ON i.id=o.incident_id WHERE {' AND '.join(where)} ORDER BY o.observed_at DESC LIMIT 500"
     # Reports are keyed by the exact host; every host-level layer below
     # (registry, provider status, lookup counts, declared policy, official paths)
     # answers for the site, so www.<apex> reads and counts as <apex>.
@@ -683,12 +686,17 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             observed_at = row["observed_at"]
             if not test_query:
                 observed_at = observed_at.replace(minute=0, second=0, microsecond=0)
-            observations.append({
+            item = {
                 "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
                 "attempt_actor": row["attempt_actor"], "attempt_env": row["attempt_env"],
                 "outcome": row["outcome"], "error_class": row["error_class"],
                 "task_step": row["task_step"], "synthetic": test_query,
-            })
+            }
+            if row["cause"] and row["cause_basis"]:
+                # D109: what the reporting agent said it established, as a published (reviewed) observation carries it. Shown as
+                # sent: nothing below reads it, so no verdict, count or cause hint depends on it.
+                item["cause"], item["cause_basis"] = row["cause"], row["cause_basis"]
+            observations.append(item)
         official_page = ((official_status_page_for(host) or robots_blocked_page)
                          if settings.public_mode and not test_query and provider_status is None else None)
         # D85: the caller reported site_access and AHN's own home-page check was refused too (both measured, neither guessed).

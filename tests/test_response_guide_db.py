@@ -63,7 +63,7 @@ def test_first_lookup_then_second_lookup_over_rest(monkeypatch):
         assert body["recommendation"]["action"] == "use_official_path" and body["recommendation"]["reasons"][0] == "profile_pending"
         assert body["next_action"] == {"do": "use_official_path", "url": OFFICIAL["api_docs"], "retry_after_seconds": retry}
         assert body["summary_line"] == ROWS["O1"][1].replace("{n}", str(retry))
-        assert set(body["links"]) == {"feedback", "changelog"}
+        assert set(body["links"]) == {"feedback", "changelog", "why"}  # D109: why only because this lookup sent a failure code
         CheckResponse(**body)
         # the keys sit at the top of the JSON, after the two that always came first
         assert list(body)[:5] == ["site_host", "generated_at", "summary_line", "next_action", "links"]

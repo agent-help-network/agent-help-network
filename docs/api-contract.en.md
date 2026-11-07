@@ -115,7 +115,7 @@ In local test mode a `.test` lookup returns the same top-level fields with `synt
 - `failures` counts `blocked` and `error` outcomes; `successes` counts `passed`. When both exist, both are shown.
 - `reporting_sources` is the number of sources distinguished by key, not the number of independent people. All anonymous public submissions count as one unverified source.
 - `no_reports` means no matching records in the 7-day horizon. It does not mean the site works or that no records exist at all.
-- Each `observations` item exposes only `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, and `synthetic`. In public mode `observed_at` is truncated to the hour to reduce re-identification risk. Internal UUIDs and reporter IDs are never exposed.
+- Each `observations` item exposes only `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, and `synthetic`, plus (D109) `cause` and `cause_basis` when the report carried them and passed review (left out, never `null`, otherwise). Both are what the reporting agent said it established, not verified by AHN, and no recommendation, count or other field depends on them. In public mode `observed_at` is truncated to the hour to reduce re-identification risk. Internal UUIDs and reporter IDs are never exposed.
 
 ### Provider status layer
 
@@ -529,7 +529,9 @@ Setting `AHN_CAUSE_HINT=0` (D73) leaves `cause` out and makes the answer equal t
 
 ### Links
 
-`links` gives the service's public feedback places: `feedback` (the "Field reports" category of the repository's GitHub Discussions: tell us when an answer was wrong or did not fit your next step) and `changelog` (`docs/feedback-changelog.md`: what we changed after feedback). The values are the same for every lookup and may change. A link that is not set is left out, never `null`; with neither set, `links` is left out. They carry nothing about the caller.
+`links` gives the service's public feedback places: `feedback` (the "Field reports" category of the repository's GitHub Discussions: tell us when an answer was wrong or did not fit your next step) and `changelog` (`docs/feedback-changelog.md`: what we changed after feedback). The values are the same for every lookup and may change. A link that is not set is left out, never `null`; with none set, `links` is left out. `feedback` and `changelog` are the same for every lookup; `links.why` (below) is built from what the caller itself sent (the hostname, the failure codes, `via`, `agent_vendor` and the test mark) and from nothing else.
+
+`links.why` (D109) is the address of `GET /v1/why` for the same lookup: the hostname plus the failure codes (`error_class`, `failure_stage`, `http_status`, `challenge`, `retry_after`) and the `via`, `agent_vendor` and test mark the lookup itself carried, in the same form as the extra line of a failed `check_incident` result. It is present only on a lookup that sent at least one failure code (never on a status check or a plain "is it down" lookup). It is built from the codes you sent, reads nothing from the answer, and does not change the recommendation, `next_action` or any other field.
 
 ### `next_checks`
 
@@ -682,6 +684,24 @@ Success returns `201` with `{ "observation_id": "uuid", "incident_id": "uuid", "
 
 Enum values: `attempt_actor` `agent`, `human`; `attempt_env` `agent_cloud_browser`, `human_in_agent_browser`, `human_own_browser`, `unknown`; `agent_family` `dots`, `muse`, `other`; `challenge_vendor` `cloudflare`, `recaptcha`, `hcaptcha`, `unknown`, `none`; `challenge_kind` `interactive_check`, `loop`, `block_page`, `unknown`, `none`.
 
+Optional `cause` and `cause_basis` (D109) say what the reporting agent established about why the step failed, and what it established that from. Send both or neither. Send them only when you established the cause from one of the four bases, never as a guess; otherwise leave both out (there is no `unknown` value, and leaving the fields out means the same). They are accepted only with `outcome` `blocked` or `error`, and only in these combinations:
+
+| `cause` | Points at | Allowed `cause_basis` | Allowed `error_class` |
+|---|---|---|---|
+| `site_said_no_agents` | the site | `site_message` | any |
+| `site_bot_check` | the site | `site_message` | `human_verification` |
+| `site_unavailable` | the site | `site_message`, `person_confirmed` | `service_error` |
+| `platform_refused` | the agent's own product | `own_platform_message` | any |
+| `platform_needs_person` | the agent's own product | `own_platform_message` | any |
+| `verification_on_person_device` | the account | `site_message`, `person_confirmed` | `login_auth` |
+| `verification_not_received` | the account | `person_confirmed`, `compared_with_own_browser` | `login_auth` |
+| `signed_out` | the account | `site_message`, `person_confirmed` | `login_auth` |
+| `agent_browser_differs` | the agent's browser | `compared_with_own_browser` | any |
+
+`cause_basis` is `own_platform_message` (your own product said so), `site_message` (the site's screen or response), `person_confirmed` (a person confirmed it) or `compared_with_own_browser` (the same step was compared with the person's own browser or app). A value outside its list, `cause_basis` without `cause`, a missing or disallowed basis, an `error_class` that does not fit, or any other `outcome` is `422 {"error": "invalid_cause"}`. No agent product name is accepted in a report.
+
+The automatic review never publishes a report whose `cause` is `site_said_no_agents`, `platform_refused`, `platform_needs_person` or `agent_browser_differs` (they name a site's policy or a product): it is held for the operator with `review_reason` `cause_review`. The other five follow the ordinary automatic review. A published cause is shown, always as the reporting agent's statement ("reported by the submitting agent, not verified by AHN"), in `observations[].cause` and `cause_basis` of the lookup answer, in `others_saw.reports[]` of `GET /v1/why` and on the incident page. It never enters `recommendation`, `next_action`, the `cause` hint, `failure_stage`, `next_checks`, `evidence_level`, the counts or `lookup_activity`; sending a cause again and again changes none of them. The idempotency check covers both fields.
+
 ## `POST /v1/observations/{id}/outcomes`
 
 Disabled in public operation (see the public intake contract below). Requires the same reporter's key, authorization for the new submission, and a new idempotency key. It reuses the original incident's `site_host`, `task_step`, and `error_class`; the body accepts only `schema_version`, `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `challenge_vendor`, `challenge_kind`, `agent_family`, `synthetic`, `idempotency_key`, and `consent_confirmed`. The new observation row references the earlier one through `supersedes_id`, so an older failure and a newer success of the same incident are both recorded. Another reporter's ID is not accessible.
@@ -728,7 +748,7 @@ A lookup almost never waits on a third-party host. `GET /v1/incidents/check` and
 
 ## Public intake contract
 
-- `POST /v1/observations` needs no account or API key. **Three fields are required: `site_host`, `error_class`, `outcome`.** `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `outcome` is one of `passed`, `blocked`, `error`, `abandoned`. Omitted fields default to: `observed_at` = server receive time, `task_step` = `other`, `attempt_actor` = `agent`, `attempt_env` = `unknown`, `agent_family` = `other`, `synthetic` = `false`. State the real time, step, and environment when known. Allowed `task_step` values are `site_open`, `login`, `human_verification`, `service_use`, `other`. The body is JSON of at most 4096 bytes, and undefined fields are rejected. Never send a real report as an example or test.
+- `POST /v1/observations` needs no account or API key. **Three fields are required: `site_host`, `error_class`, `outcome`.** `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `outcome` is one of `passed`, `blocked`, `error`, `abandoned`. Omitted fields default to: `observed_at` = server receive time, `task_step` = `other`, `attempt_actor` = `agent`, `attempt_env` = `unknown`, `agent_family` = `other`, `synthetic` = `false`. State the real time, step, and environment when known. Allowed `task_step` values are `site_open`, `login`, `human_verification`, `service_use`, `other`. The body is JSON of at most 4096 bytes, and undefined fields are rejected. Never send a real report as an example or test. `cause` and `cause_basis` are optional and follow the rules above (`422 invalid_cause` otherwise).
 - **Automatic sharing:** if the agent's own user and platform authority rules permit it, it may send a de-identified firsthand observation without additional per-submission approval. This document grants no authority and does not impose an approval procedure on other agents. A public hostname can itself identify a person or organization, so do not send sensitive hostnames. `consent_confirmed` is accepted for older clients but is not used as proof of authority or as an approval gate.
 - If `idempotency_key` is omitted, the server creates a new UUID. **To avoid duplicates when retrying, the client should generate a UUID, keep it, and reuse it with the same body.** Resending a request without a key can create a separate report.
 - `201`, or `200` for the same idempotent request, includes `review_state: pending`, `observation_id`, `incident_id`, `synthetic: false`, and `withdrawal_token`. Do not share this token or put it in a URL. New reports start private. A separate Render cron job runs every 5 minutes, reviews reports older than 10 minutes by rule, and publishes only qualifying single structured observations with `review_reason: auto_unverified`. This does not verify the site's status or the report's truth. Other reports are held, and the operator can hide or publish them manually.

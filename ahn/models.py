@@ -146,6 +146,48 @@ class ChallengeKind(str, Enum):
     none = "none"
 
 
+class ObservationCause(str, Enum):
+    """D109: the cause the reporting agent says it established, by the layer it points at. There is no "unknown" value: a
+    report that did not establish a cause leaves the field out."""
+    site_said_no_agents = "site_said_no_agents"
+    site_bot_check = "site_bot_check"
+    site_unavailable = "site_unavailable"
+    platform_refused = "platform_refused"
+    platform_needs_person = "platform_needs_person"
+    verification_on_person_device = "verification_on_person_device"
+    verification_not_received = "verification_not_received"
+    signed_out = "signed_out"
+    agent_browser_differs = "agent_browser_differs"
+
+
+class CauseBasis(str, Enum):
+    """D109: what the reporting agent established the cause from."""
+    own_platform_message = "own_platform_message"
+    site_message = "site_message"
+    person_confirmed = "person_confirmed"
+    compared_with_own_browser = "compared_with_own_browser"
+
+
+# D109: for each cause, the bases it may come with and the error classes it may be reported under (None = any).
+CAUSE_RULES: dict[ObservationCause, tuple[frozenset[CauseBasis], frozenset[ErrorClass] | None]] = {
+    ObservationCause.site_said_no_agents: (frozenset({CauseBasis.site_message}), None),
+    ObservationCause.site_bot_check: (frozenset({CauseBasis.site_message}), frozenset({ErrorClass.human_verification})),
+    ObservationCause.site_unavailable: (frozenset({CauseBasis.site_message, CauseBasis.person_confirmed}), frozenset({ErrorClass.service_error})),
+    ObservationCause.platform_refused: (frozenset({CauseBasis.own_platform_message}), None),
+    ObservationCause.platform_needs_person: (frozenset({CauseBasis.own_platform_message}), None),
+    ObservationCause.verification_on_person_device: (frozenset({CauseBasis.site_message, CauseBasis.person_confirmed}), frozenset({ErrorClass.login_auth})),
+    ObservationCause.verification_not_received: (frozenset({CauseBasis.person_confirmed, CauseBasis.compared_with_own_browser}), frozenset({ErrorClass.login_auth})),
+    ObservationCause.signed_out: (frozenset({CauseBasis.site_message, CauseBasis.person_confirmed}), frozenset({ErrorClass.login_auth})),
+    ObservationCause.agent_browser_differs: (frozenset({CauseBasis.compared_with_own_browser}), None),
+}
+# D109: the causes that point at a site's policy or at a particular product. A report carrying one is never published by the
+# automatic review; an operator looks at it first.
+CAUSE_NAMING_SITE_OR_PLATFORM = frozenset({
+    ObservationCause.site_said_no_agents, ObservationCause.platform_refused, ObservationCause.platform_needs_person,
+    ObservationCause.agent_browser_differs,
+})
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
@@ -194,6 +236,10 @@ class ObservationIn(AttemptFields):
     site_host: str
     task_step: str = "other"
     error_class: ErrorClass
+    # D109: both or neither. Only for a blocked or failed attempt, and only from the fixed combinations of CAUSE_RULES. A cause
+    # is sent only when it was established from the stated basis, never as a guess; otherwise the fields are left out.
+    cause: ObservationCause | None = Field(default=None, description="Optional, with cause_basis, for outcome blocked or error: the cause you established. Leave out if not established.")
+    cause_basis: CauseBasis | None = Field(default=None, description="Required with cause: what you established it from.")
 
     @field_validator("site_host")
     @classmethod
@@ -206,6 +252,21 @@ class ObservationIn(AttemptFields):
         if not STEP.fullmatch(value):
             raise ValueError("invalid task step")
         return value
+
+    @model_validator(mode="after")
+    def cause_combination(self):
+        if self.cause is None:
+            if self.cause_basis is not None:
+                raise ValueError("invalid_cause: cause_basis needs cause")
+            return self
+        bases, classes = CAUSE_RULES[self.cause]
+        if self.cause_basis is None or self.cause_basis not in bases:
+            raise ValueError("invalid_cause: cause_basis is missing or not allowed for this cause")
+        if classes is not None and self.error_class not in classes:
+            raise ValueError("invalid_cause: error_class does not fit this cause")
+        if self.outcome not in {Outcome.blocked, Outcome.error}:
+            raise ValueError("invalid_cause: a cause goes with a blocked or error outcome")
+        return self
 
 
 class OutcomeIn(AttemptFields):
@@ -220,6 +281,10 @@ class CheckObservation(StrictModel):
     error_class: ErrorClass
     task_step: str
     synthetic: bool
+    # D109: what the reporting agent said it established. Present only when the report carried it and passed review; left out
+    # (never null) otherwise. Not verified by AHN, and it takes no part in the recommendation or any count.
+    cause: ObservationCause | None = Field(default=None, exclude_if=lambda value: value is None)
+    cause_basis: CauseBasis | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 def _omit_none(value) -> bool:
@@ -654,6 +719,8 @@ class NextAction(StrictModel):
 class Links(StrictModel):
     feedback: str | None = Field(default=None, exclude_if=_omit_none)
     changelog: str | None = Field(default=None, exclude_if=_omit_none)
+    # D109: GET /v1/why for the same failed lookup (same hostname and codes). Present only on a lookup that sent a failure code.
+    why: str | None = Field(default=None, max_length=600, exclude_if=_omit_none)
 
 
 class FeedbackOutcome(str, Enum):

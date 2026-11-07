@@ -12,12 +12,16 @@ if (reportForm) {
       sending: "Sending this report for private review…",
       failed: "The report was not accepted. Check the fields and try again.",
       limited: "Reporting is temporarily limited. Please try again later.",
+      causePair: "Choose both the cause and what you established it from, or neither.",
+      badCause: "That cause does not fit this issue type, result or basis. Change it or choose none.",
       consent: "Review the fields and authorize this submission first.",
     },
     ko: {
       sending: "비공개 검토용 제보를 전송 중입니다…",
       failed: "제보가 접수되지 않았습니다. 필드를 확인하고 다시 시도하세요.",
       limited: "제보 접수가 일시 제한됐습니다. 나중에 다시 시도하세요.",
+      causePair: "원인과 그 근거를 둘 다 고르거나 둘 다 비워 두세요.",
+      badCause: "고른 원인이 문제 유형·결과·근거와 맞지 않습니다. 바꾸거나 비워 두세요.",
       consent: "필드를 확인하고 이번 제출을 허락해 주세요.",
     },
   }[lang];
@@ -30,6 +34,12 @@ if (reportForm) {
     }
     const values = new FormData(reportForm);
     const source = values.get("attempt_source");
+    const cause = values.get("cause");
+    const causeBasis = values.get("cause_basis");
+    if (!pendingPayload && Boolean(cause) !== Boolean(causeBasis)) {
+      status.textContent = copy.causePair;
+      return;
+    }
     const payload = pendingPayload || {
       schema_version: 1,
       site_host: String(values.get("site_host")).trim().toLowerCase(),
@@ -42,6 +52,7 @@ if (reportForm) {
       outcome: values.get("outcome"),
       challenge_vendor: "unknown",
       challenge_kind: "unknown",
+      ...(cause && causeBasis ? { cause, cause_basis: causeBasis } : {}),
       synthetic: false,
       idempotency_key: crypto.randomUUID(),
       consent_confirmed: true,
@@ -58,7 +69,7 @@ if (reportForm) {
       });
       const result = await response.json();
       if (!response.ok) {
-        status.textContent = response.status === 429 ? copy.limited : result.error === "consent_required" ? copy.consent : copy.failed;
+        status.textContent = response.status === 429 ? copy.limited : result.error === "invalid_cause" ? copy.badCause : result.error === "consent_required" ? copy.consent : copy.failed;
         submit.disabled = false;
         return;
       }

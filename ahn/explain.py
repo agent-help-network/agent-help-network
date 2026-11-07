@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from . import explain_text as X
+from .models import CauseBasis
 from .why_models import CHECK_TEXT_MAX, HANDOFF_TEXT_MAX, LAYER_TEXT_MAX, SCHEMA, SHORT_TEXT_MAX
 
 LOG = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ HOME_NORMAL = ("reachable", "redirected_same_host")
 ROW_LIMIT = 10
 CHECK_LIMIT = 6
 OTHERS_LIMIT = 5
+CAUSE_BASES = frozenset(item.value for item in CauseBasis)
 
 
 @dataclass(frozen=True)
@@ -894,12 +896,21 @@ def _others(ctx: _Ctx) -> dict:
         day, outcome = _day(item.get("observed_at")), item.get("outcome")
         env = item.get("attempt_env")
         env_words = _words(X.ENV_WORDS, env, lang)
+        # D109: the cause code a reporting agent sent, only when both codes are on their lists (a published row always is). It is
+        # shown as the reporting agent's statement, never as AHN's, and nothing in the verdict above reads it.
+        cause, basis = item.get("cause"), item.get("cause_basis")
+        cause_words = _words(X.CAUSE_WORDS, cause, lang) if basis in CAUSE_BASES else None
         text = _fill("S-O-ROW", lang, SHORT_TEXT_MAX, date=day, outcome_words=_words(X.OUTCOME_WORDS, outcome, lang),
                      step_words=_words(X.STEP_WORDS, item.get("task_step"), lang) or X.STEP_WORDS["other"][lang],
-                     env_words=f" ({env_words})" if env_words else "")
+                     env_words=f" ({env_words})" if env_words else "",
+                     cause_part=X.CAUSE_LEAD[lang] + cause_words if cause_words else "")
         if text and item.get("error_class") and item.get("task_step") and env:
-            reports.append({"observed_at": day, "outcome": outcome, "error_class": item["error_class"], "task_step": item["task_step"],
-                            "attempt_env": env, "text": text, "verified": False})
+            report = {"observed_at": day, "outcome": outcome, "error_class": item["error_class"], "task_step": item["task_step"],
+                      "attempt_env": env}
+            if cause_words:
+                report.update(cause=cause, cause_basis=basis)
+            report.update(text=text, verified=False)
+            reports.append(report)
     if reports:
         head = _fill("S-O-SOME", lang, SHORT_TEXT_MAX, n=len(reports))
     else:

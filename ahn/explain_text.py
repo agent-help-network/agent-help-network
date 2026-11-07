@@ -15,7 +15,7 @@ BLANKS = frozenset({
     "host", "date", "date2", "time", "time2", "platform", "platform_cap", "platform2", "vendor", "url", "quote", "quote2",
     "provider", "indicator", "token_scope", "state", "auth", "mechanism", "layer_words", "reason_words", "cause_line",
     "outcome_words", "vendor_part", "field_words", "from_words", "to_words", "n", "step_words", "env_words", "stop_words",
-    "since", "person_line", "reason_short", "admin_mark", "unread_reason", "token_words",
+    "since", "person_line", "reason_short", "admin_mark", "unread_reason", "token_words", "cause_part",
 })
 
 TEMPLATES: dict[str, dict[str, str]] = {}
@@ -188,8 +188,8 @@ _t("S-O-SOME",
    "{n} report(s) from other agents in the last 7 days, not verified by AHN:",
    "지난 7일 동안 다른 에이전트가 올린 제보 {n}건이에요. AHN 이 검증한 것은 아니에요:")
 _t("S-O-ROW",
-   "{date}: {outcome_words} at {step_words}{env_words}",
-   "{date}: {step_words}에서 {outcome_words}{env_words}")
+   "{date}: {outcome_words} at {step_words}{env_words}{cause_part}",
+   "{date}: {step_words}에서 {outcome_words}{env_words}{cause_part}")
 _t("S-W-FIRST",
    "Look first at the {layer_words} layer: {reason_words}. AHN has not confirmed this is the cause.",
    "먼저 {layer_words} 쪽을 보세요: {reason_words}. 이것이 원인이라고 AHN 이 확인한 것은 아니에요.")
@@ -376,6 +376,21 @@ ENV_WORDS = {
     "human_in_agent_browser": {"en": "a person in the agent's browser", "ko": "에이전트 브라우저 안의 사람"},
     "human_own_browser": {"en": "a person's own browser", "ko": "사람의 자기 브라우저"},
 }
+# D109: what a reporting agent said it established (observations.cause), in fixed words. It always follows CAUSE_LEAD, so the
+# row reads "...; the reporting agent found: ...", and the row's head says the reports are not verified by AHN. No sentence here
+# names a product or says what the site does for anyone else.
+CAUSE_LEAD = {"en": "; the reporting agent found: ", "ko": "; 올린 에이전트가 찾은 원인: "}
+CAUSE_WORDS = {
+    "site_said_no_agents": {"en": "the site said it does not take agents or automation", "ko": "사이트가 에이전트나 자동화를 받지 않는다고 했어요"},
+    "site_bot_check": {"en": "a human-verification or bot-defense screen", "ko": "사람 확인이나 봇 방어 화면이 떴어요"},
+    "site_unavailable": {"en": "the site was down or under maintenance", "ko": "사이트가 장애이거나 점검 중이었어요"},
+    "platform_refused": {"en": "the agent's own product refused that site or action", "ko": "에이전트 자신의 제품이 그 사이트나 행동을 거절했어요"},
+    "platform_needs_person": {"en": "the agent's own product rules say a person does the step", "ko": "에이전트 자신의 제품 규칙상 사람이 하는 단계였어요"},
+    "verification_on_person_device": {"en": "the site asked for a code or app approval on the person's device", "ko": "사이트가 사람 기기로 코드나 앱 승인을 요구했어요"},
+    "verification_not_received": {"en": "the approval request did not reach the person's device", "ko": "승인 요청이 사람 기기에 오지 않았어요"},
+    "signed_out": {"en": "the session had expired or was signed out", "ko": "세션이 만료됐거나 로그아웃된 상태였어요"},
+    "agent_browser_differs": {"en": "the same step works in the person's own browser or app but not in the agent's browser", "ko": "같은 단계가 사람의 자기 브라우저나 앱에서는 되고 에이전트 브라우저에서는 안 됐어요"},
+}
 LAYER_WORDS = {
     "site": {"en": "site", "ko": "사이트"},
     "platform": {"en": "agent product", "ko": "에이전트 제품"},
@@ -491,7 +506,7 @@ def fixed_phrases() -> list[tuple[str, str, str]]:
                         ("UNREAD_REASON", UNREAD_REASON), ("INDICATOR", INDICATOR), ("HOME_OUTCOME", HOME_OUTCOME),
                         ("VENDOR_PART", VENDOR_PART), ("AUTH_WORDS", AUTH_WORDS), ("MECHANISM", MECHANISM),
                         ("SINCE_WORDS", SINCE_WORDS), ("STEP_WORDS", STEP_WORDS), ("OUTCOME_WORDS", OUTCOME_WORDS),
-                        ("ENV_WORDS", ENV_WORDS), ("LAYER_WORDS", LAYER_WORDS), ("REASON_SHORT", REASON_SHORT),
+                        ("ENV_WORDS", ENV_WORDS), ("CAUSE_LEAD", CAUSE_LEAD), ("CAUSE_WORDS", CAUSE_WORDS), ("LAYER_WORDS", LAYER_WORDS), ("REASON_SHORT", REASON_SHORT),
                         ("FIELD_WORDS", FIELD_WORDS), ("CODE_WORDS", CODE_WORDS), ("ROBOTS_VERDICT_FIELD", ROBOTS_VERDICT_FIELD),
                         ("OUR_TOKEN_WORDS", OUR_TOKEN_WORDS)):
         add(name, table)

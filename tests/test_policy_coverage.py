@@ -182,6 +182,11 @@ REPORT_FIELDS = {
     "outcome": Phrase("outcome", "결과"),
     "challenge_vendor": Phrase("challenge vendor and kind codes", "사람 확인 업체·종류 코드"),
     "challenge_kind": Phrase("challenge vendor and kind codes", "사람 확인 업체·종류 코드"),
+    # D109: an optional cause code and the basis the reporting agent used, both from fixed lists.
+    "cause": Phrase("an optional cause code and the basis the reporting agent used, both from fixed lists",
+                    "선택으로 원인 코드와 제보한 에이전트가 쓴 근거(둘 다 정해진 목록의 값)"),
+    "cause_basis": Phrase("an optional cause code and the basis the reporting agent used, both from fixed lists",
+                          "선택으로 원인 코드와 제보한 에이전트가 쓴 근거(둘 다 정해진 목록의 값)"),
     "synthetic": Phrase("synthetic flag", "가상 여부"),
     "idempotency_key": Phrase("idempotency key", "중복 방지 키"),  # stored in report_submissions for de-duplication
     "schema_version": Exempt("always 1; a protocol constant, not data about anyone"),
@@ -299,7 +304,7 @@ CHECK_RESPONSE_FIELDS = {
     "next_checks": Exempt("advice computed from the data above"),
     "summary_line": Exempt("advice computed from the data above"),
     "next_action": Exempt("advice computed from the data above"),
-    "links": Exempt("constant links to the service's public feedback pages"),
+    "links": Exempt("links to the service's public feedback pages, and (D109) the GET /v1/why address built from the codes the caller itself sent"),
     # D58: a signed one-time token; described in sections 02 and 03.
     "feedback_token": Phrase("one-time feedback token", "일회용 결과 토큰"),
 }
@@ -860,6 +865,10 @@ COLUMNS = {
     "observations.origin_operator": _RECEIVED_BY,
     "observations.origin_observation_id": _RECEIVED_BY,
     "observations.received_channel": Phrase("which interface it arrived through", "제보마다 들어온 경로"),
+    "observations.cause": Phrase("an optional cause code and the basis the reporting agent used, both from fixed lists",
+                                 "선택으로 원인 코드와 제보한 에이전트가 쓴 근거(둘 다 정해진 목록의 값)"),
+    "observations.cause_basis": Phrase("an optional cause code and the basis the reporting agent used, both from fixed lists",
+                                       "선택으로 원인 코드와 제보한 에이전트가 쓴 근거(둘 다 정해진 목록의 값)"),
     "robots_read_events.source": Phrase("a mark that it was a home-page check", "홈 페이지 확인이라는 표시"),
     "robots_read_events.rt_band": Phrase(
         "its response-time range (under 1 second, 1 to 3 seconds, or 3 seconds or more; no exact time is kept here)",

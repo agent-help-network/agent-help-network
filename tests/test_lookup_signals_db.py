@@ -64,6 +64,16 @@ def lookup(client, ip=CALLER_IP, host=HOST, headers=None, **params):
     return client.get("/v1/incidents/check", params={"site_host": host, **params}, headers={**sent, **(headers or {})})
 
 
+def drop_why(body):
+    """D109: links.why is the address built from the codes this very lookup sent, so it differs with the codes by design; it is
+    not read from the answer and no other field depends on it."""
+    links = body.get("links")
+    if links:
+        links.pop("why", None)
+        if not links:
+            body.pop("links")
+
+
 def comparable(response):
     body = response.json()
     body.pop("generated_at")
@@ -71,6 +81,7 @@ def comparable(response):
     # moves as this test sends lookups. Everything else must stay equal.
     body.pop("lookup_activity", None)
     body.pop("feedback_token", None)  # a fresh one-time token per answer (D58); it never changes the rest
+    drop_why(body)
     return body
 
 
@@ -274,6 +285,7 @@ def test_the_answer_is_identical_with_and_without_the_codes(db, client, case):
             assert body.pop("site_host") == host
             body.pop("generated_at")
             body.pop("feedback_token", None)  # a fresh one-time token per answer, naming its own host (D58)
+            drop_why(body)
         assert with_codes == without, (case, codes, step)
     assert with_codes["lookup_activity"]["volume_band"] == "10-49"  # the volume really moved through the bands
     assert rows(db)

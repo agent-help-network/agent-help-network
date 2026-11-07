@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
-from . import adoption, explain, feedback, lookup_signals, platform_policies
+from . import adoption, explain, explain_text, feedback, lookup_signals, platform_policies
 from . import server_card
 from .adoption import parse_days as parse_adoption_days
 from .models import CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome, FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
@@ -300,6 +300,12 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                 loc = tuple(issue.get("loc", ()))
                 if len(loc) == 2 and loc[0] == "body" and loc[1] in FEEDBACK_CODE_FIELDS:
                     return invalid_code(loc[1], FEEDBACK_CODE_FIELDS)
+        if request.method == "POST" and request.url.path == "/v1/observations":
+            # D109: a cause or cause_basis outside its list, or a combination CAUSE_RULES does not allow. Only the code is answered.
+            for issue in exc.errors():
+                loc = tuple(issue.get("loc", ()))
+                if (len(loc) == 2 and loc[0] == "body" and loc[1] in {"cause", "cause_basis"}) or "invalid_cause" in str(issue.get("msg", "")):
+                    return JSONResponse({"error": "invalid_cause"}, status_code=422)
         return JSONResponse({"error": "invalid_request"}, status_code=400)
 
     @app.exception_handler(psycopg.Error)
@@ -602,6 +608,16 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                        lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via, ahn_test=ahn_test),
                        agent_vendor=accepted_vendor(agent_vendor), issue_feedback=True,  # the one counted lookup route (D58)
                        failed_at=failed_at)
+        # D109: for a lookup that reports a failure, the GET /v1/why address for the same lookup (same hostname and codes). Added after the
+        # answer is final: it reads nothing from it and changes nothing in it.
+        why = lookup_signals.why_url({
+            "site_host": site_host, "error_class": error_class.value if error_class else None,
+            "failure_stage": failure_stage.value if failure_stage else None,
+            **lookup_signals.lenient_codes(http_status, challenge, retry_after, via),
+            "agent_vendor": accepted_vendor(agent_vendor),
+            lookup_signals.TEST_QUERY: "1" if lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test) else None})
+        if why:
+            result["links"] = {**(result.get("links") or {}), "why": why}
         if is_mcp_metric_request(mcp_call, settings.key_pepper):
             try:
                 with connect(settings) as conn:
@@ -798,7 +814,10 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
             incident = public_incident(settings, incident_id)
         except ServiceError:
             return render(request, lang, "not-found", status_code=404)
-        return render(request, lang, "detail", incident=incident)
+        # D109: what reporting agents said they found (published reports only), in fixed words, one line each.
+        cause_rows = [{"day": str(item["observed_at"])[:10], "words": explain_text.CAUSE_WORDS[item["cause"]][lang]}
+                      for item in incident.get("observations", []) if item.get("cause") in explain_text.CAUSE_WORDS and item.get("cause_basis")]
+        return render(request, lang, "detail", incident=incident, cause_rows=cause_rows)
 
     @app.get("/{lang}/connect", include_in_schema=False)
     def connect_page(request: Request, lang: str):

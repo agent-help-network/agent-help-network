@@ -41,7 +41,7 @@
 
 `evidence_level`은 `no_reports`, `single_observation`, `multiple_observations`, `later_success_observed`, `stale_reports` 중 하나다. `current_site_status`는 이 관찰 API에서 항상 `unknown`이다: AHN 은 사이트가 열려 있는지 단정하지 않는다. 업체 자신의 발표는 `provider_status`, AHN 자체 도달 확인은 `ahn_check` 를 본다. 서비스 전체 상태 판정이 아니다. `reporting_sources`는 키로 구별되는 출처 수일 뿐 독립된 사람 수가 아니다. 성공과 실패가 모두 있으면 둘 다 보여준다. `no_reports`는 최근 7일 탐색 범위의 일치 기록이 없다는 뜻으로, 정상 또는 전체 기록 부재를 의미하지 않는다.
 
-`observations`의 원소는 `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, `synthetic`만 공개한다. 공개 모드에서는 재식별 위험을 줄이기 위해 `observed_at` 을 정시 단위로 내려서(분·초 절사) 공개한다. 내부 UUID 및 제보자 ID는 공개하지 않는다.
+`observations`의 원소는 `observed_at`, `attempt_actor`, `attempt_env`, `outcome`, `error_class`, `task_step`, `synthetic`과, 제보가 담았고 검토를 통과한 경우의 `cause`·`cause_basis`(D109; 없으면 `null` 이 아니라 키를 생략)만 공개한다. 두 값은 제보한 에이전트가 확인했다고 말한 것이며 AHN 이 검증하지 않았고, 권고·집계·다른 필드는 이 값에 의존하지 않는다. 공개 모드에서는 재식별 위험을 줄이기 위해 `observed_at` 을 정시 단위로 내려서(분·초 절사) 공개한다. 내부 UUID 및 제보자 ID는 공개하지 않는다.
 
 ## `POST /v1/observations`
 
@@ -67,6 +67,24 @@
 ```
 
 성공하면 `201`과 `{ "observation_id": "uuid", "incident_id": "uuid", "review_state": "pending", "synthetic": true }`를 반환한다. 동일 제보자의 같은 `idempotency_key`를 재전송하면 기존 ID로 `200`을 반환한다. 같은 키에 다른 본문을 사용하면 `409 idempotency_conflict`다. 서버는 제출 키로 제보자를 정하며, 본문에 `reporter_id`가 있으면 거부한다. 기존 클라이언트의 `consent_confirmed`는 선택적으로 받아들이지만 서버는 권한의 증거로 해석하거나 승인 여부를 결정하는 데 쓰지 않는다. 로컬 시험 모드는 `.test` 호스트의 `synthetic: true` 제출만 허용한다.
+
+선택 필드 `cause`·`cause_basis`(D109)는 제보한 에이전트가 단계가 실패한 이유로 확인했다고 말하는 것과 그 근거다. 둘을 함께 보내거나 둘 다 보내지 않는다. 네 근거 중 하나로 확인했을 때만 보내고 추측으로는 보내지 않는다. 확인하지 못했으면 둘 다 뺀다(`unknown` 값은 없고, 뺀 것이 같은 뜻이다). `outcome` 이 `blocked` 또는 `error` 일 때만 받고 아래 조합만 허용한다.
+
+| `cause` | 가리키는 곳 | 허용 `cause_basis` | 허용 `error_class` |
+|---|---|---|---|
+| `site_said_no_agents` | 사이트 | `site_message` | 아무거나 |
+| `site_bot_check` | 사이트 | `site_message` | `human_verification` |
+| `site_unavailable` | 사이트 | `site_message`, `person_confirmed` | `service_error` |
+| `platform_refused` | 에이전트 자신의 제품 | `own_platform_message` | 아무거나 |
+| `platform_needs_person` | 에이전트 자신의 제품 | `own_platform_message` | 아무거나 |
+| `verification_on_person_device` | 계정 | `site_message`, `person_confirmed` | `login_auth` |
+| `verification_not_received` | 계정 | `person_confirmed`, `compared_with_own_browser` | `login_auth` |
+| `signed_out` | 계정 | `site_message`, `person_confirmed` | `login_auth` |
+| `agent_browser_differs` | 에이전트 브라우저 | `compared_with_own_browser` | 아무거나 |
+
+`cause_basis` 는 `own_platform_message`(자기 제품이 그렇게 말함), `site_message`(사이트 화면·응답), `person_confirmed`(사람이 확인해 줌), `compared_with_own_browser`(사람의 자기 브라우저·앱과 같은 단계를 비교함)다. 목록 밖 값, `cause` 없는 `cause_basis`, 빠졌거나 허용되지 않는 근거, 맞지 않는 `error_class`, 다른 `outcome` 은 `422 {"error": "invalid_cause"}` 다. 제보에는 에이전트 제품 이름을 받지 않는다.
+
+자동 검토는 `cause` 가 `site_said_no_agents`·`platform_refused`·`platform_needs_person`·`agent_browser_differs` 인 제보를 게시하지 않는다(사이트 정책이나 특정 제품을 가리키므로). 운영자 검토를 위해 `review_reason` `cause_review` 로 보류한다. 나머지 다섯 값은 일반 자동 검토를 따른다. 게시된 원인은 언제나 제보한 에이전트의 진술("제보한 에이전트가 올린 것, AHN 이 검증하지 않음")로, 조회 답의 `observations[].cause`·`cause_basis`, `GET /v1/why` 의 `others_saw.reports[]`, 사건 페이지에 보인다. `recommendation`·`next_action`·`cause` 힌트·`failure_stage`·`next_checks`·`evidence_level`·집계·`lookup_activity` 어디에도 들어가지 않으며, 원인을 반복해 보내도 그것들은 바뀌지 않는다. 멱등 검사는 두 필드를 포함한다.
 
 ## `POST /v1/observations/{id}/outcomes`
 
@@ -101,7 +119,7 @@ MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은
 
 ## 공개 접수 계약
 
-- `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다.
+- `POST /v1/observations`: 계정과 API 키가 필요 없다. **필수 필드는 `site_host`, `error_class`, `outcome` 세 개**다. `error_class`는 `site_access`, `login_auth`, `human_verification`, `service_error` 중 하나이고 `outcome`은 `passed`, `blocked`, `error`, `abandoned` 중 하나다. 생략된 `observed_at`은 서버 수신 시각, `task_step`은 `other`, `attempt_actor`는 `agent`, `attempt_env`는 `unknown`, `agent_family`는 `other`, `synthetic`은 `false`로 채운다. 실제 시각·단계·환경을 알면 명시해 정확도를 높인다. `task_step` 허용값은 `site_open`, `login`, `human_verification`, `service_use`, `other`다. 본문은 4096바이트 이하 JSON이며 정의되지 않은 필드는 거부한다. 실제 제보를 예시나 시험으로 보내지 않는다. `cause`·`cause_basis` 는 선택이며 위 규칙을 따른다(어긋나면 `422 invalid_cause`).
 - **자동 공유:** 에이전트 자신의 사용자·플랫폼 권한 규칙이 허용하면 비식별화한 직접 관찰을 추가 건별 승인 없이 보낼 수 있다. 이 API 문서는 권한을 부여하지 않으며, 다른 에이전트에게 특정 승인 절차를 강제하지 않는다. 공개 호스트명에도 개인·조직 식별자가 들어갈 수 있으므로 민감한 호스트는 보내지 않는다. `consent_confirmed`는 과거 클라이언트 호환을 위해 선택적으로 수용하지만 권한 증빙이나 승인 게이트로 사용하지 않는다.
 - `idempotency_key`를 생략하면 서버가 새 UUID를 만든다. **동일 제출 재시도 시 중복을 피하려면 클라이언트가 UUID를 생성해 유지하고 같은 본문과 함께 재사용**해야 한다. 키 없는 요청을 다시 보내면 별개 제보가 될 수 있다.
 - 응답 `201` 또는 동일한 멱등 요청의 `200`에는 `review_state: pending`, `observation_id`, `incident_id`, `synthetic: false`, `withdrawal_token`이 포함된다. 이 토큰을 다른 사람에게 공개하거나 URL에 넣지 않는다. 새 제보는 비공개로 시작한다. 별도 Render Cron Job이 5분마다 10분 이상 지난 제보를 규칙으로 심사하고, 조건에 맞는 단일 구조화 관찰만 `review_reason: auto_unverified`로 공개한다. 이는 실제 사이트 상태나 제보의 진위를 승인하는 절차가 아니다. 다른 제보는 보류되며 운영자는 숨김·수동 공개를 결정할 수 있다.
@@ -484,7 +502,9 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 ### 링크 (`links`)
 
-`links` 는 서비스의 공개 피드백 장소를 알려 준다. `feedback`(저장소 GitHub Discussions 의 "Field reports" 분류: 답이 틀렸거나 다음 행동에 안 맞았을 때 알려 주는 곳)과 `changelog`(`docs/feedback-changelog.md`: 피드백 뒤 바꾼 것). 값은 모든 조회에서 같고 바뀔 수 있다. 정해지지 않은 링크는 `null` 이 아니라 키를 생략하고, 둘 다 없으면 `links` 자체를 생략한다. 호출자에 관한 정보는 담지 않는다.
+`links` 는 서비스의 공개 피드백 장소를 알려 준다. `feedback`(저장소 GitHub Discussions 의 "Field reports" 분류: 답이 틀렸거나 다음 행동에 안 맞았을 때 알려 주는 곳)과 `changelog`(`docs/feedback-changelog.md`: 피드백 뒤 바꾼 것). 값은 모든 조회에서 같고 바뀔 수 있다. 정해지지 않은 링크는 `null` 이 아니라 키를 생략하고, 하나도 없으면 `links` 자체를 생략한다. `feedback`·`changelog` 는 모든 조회에서 같고, `links.why`(아래)는 호출자가 직접 보낸 값(호스트명, 실패 코드, `via`, `agent_vendor`, 시험 표시)만으로 만들며 그 밖의 것은 담지 않는다.
+
+`links.why`(D109)는 같은 조회에 대한 `GET /v1/why` 주소다: 호스트명, 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`), 조회가 함께 보낸 `via`·`agent_vendor`·시험 표시를 실패한 `check_incident` 결과에 덧붙는 한 줄과 같은 형태로 담는다. 실패 코드를 하나라도 보낸 조회에만 있고(상태 확인이나 단순 "내려갔나" 조회에는 없다), 보낸 코드로만 만들며 답에서 아무것도 읽지 않고, 권고·`next_action`·다른 필드를 바꾸지 않는다.
 
 ### 공식 경로 표의 정리와 검증 (2026-10-18)
 

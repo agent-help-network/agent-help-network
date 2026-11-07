@@ -67,14 +67,18 @@ def main():
             parser.error("--limit must be 1-100")
         with connect(settings) as conn:
             rows = conn.execute(
-                """SELECT o.id,i.site_host,i.task_step,i.error_class,o.outcome,o.attempt_actor,o.attempt_env,o.agent_family,o.observed_at,o.received_at,o.review_reason
+                """SELECT o.id,i.site_host,i.task_step,i.error_class,o.outcome,o.attempt_actor,o.attempt_env,o.agent_family,o.observed_at,o.received_at,o.review_reason,o.cause,o.cause_basis,
+                       CASE WHEN o.cause IS NULL THEN NULL ELSE (SELECT count(*)::bigint FROM observations o2 JOIN incidents i2 ON i2.id=o2.incident_id
+                        WHERE o2.cause=o.cause AND i2.site_host=i.site_host AND o2.synthetic=false AND o2.withdrawn_at IS NULL
+                          AND o2.received_at >= now() - interval '7 days') END AS same_cause_7d
                 FROM observations o JOIN incidents i ON i.id=o.incident_id
                 WHERE o.review_state='pending' AND o.synthetic=false AND o.withdrawn_at IS NULL
                 ORDER BY o.received_at LIMIT %s""",
                 (args.limit,),
             ).fetchall()
+        print("# columns: id | site_host | task_step | error_class | outcome | attempt_actor | attempt_env | agent_family | observed_at | received_at | review_reason | cause (reporter's word, unverified) | cause_basis | same cause 7d (same host, incl. this one)")
         for row in rows:
-            print(" | ".join(str(row[field]) for field in ("id", "site_host", "task_step", "error_class", "outcome", "attempt_actor", "attempt_env", "agent_family", "observed_at", "received_at", "review_reason")))
+            print(" | ".join(str(row[field]) for field in ("id", "site_host", "task_step", "error_class", "outcome", "attempt_actor", "attempt_env", "agent_family", "observed_at", "received_at", "review_reason", "cause", "cause_basis", "same_cause_7d")))
         print(f"pending_shown={len(rows)}")
     elif args.command == "publish-observation":
         with connect(settings) as conn:
