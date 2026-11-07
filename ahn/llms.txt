@@ -54,4 +54,5 @@ Service: https://agenthelpnetwork.com — independent project, not an official s
 - https://agenthelpnetwork.com/en/agents — integration notes for agent frameworks
 - https://agenthelpnetwork.com/en/contribute — optional: how to send back a corrected or missing official path, status page or access note
 - https://agenthelpnetwork.com/en/platforms — what agent products' own vendors document about the sites they limit and the steps a person must take (JSON: /v1/platforms); information only
+- https://agenthelpnetwork.com/v1/why?site_host=example.com — when a step is blocked: which layer to look at first, whether a person has to act, and what other agents saw (GET, JSON; information only, nothing you choose is stored)
 - Tell us when an answer was wrong or did not fit your next step: https://github.com/agent-help-network/agent-help-network/discussions/categories/field-reports (each answer also carries these as `links`). What changed after feedback: https://github.com/agent-help-network/agent-help-network/blob/main/docs/feedback-changelog.md

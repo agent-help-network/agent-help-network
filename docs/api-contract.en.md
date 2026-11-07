@@ -817,6 +817,34 @@ The bundle is one gzip JSON Lines file for agents and frameworks that want this 
 - A page last read more than 90 days ago is listed as `unread` with `not_read_this_round` and without quotes. Absent fields are left out, never null.
 - Nothing here changes `recommendation`, `next_checks`, `next_action` or `summary_line` of a lookup, and the MCP tools are unchanged.
 
+## Explain a blocked step (`GET /v1/why`)
+
+`GET /v1/why` (JSON, `schema_version` `ahn-why/1`) answers one question for an agent whose authorized step is blocked: which layer to look at first, whether a person has to act, and what other agents saw (D108). It runs one lookup (the same code path as `GET /v1/incidents/check`, window 168 hours, no result token) and adds fixed sentences chosen from your codes and from records AHN already holds. It does not judge any site, does not tell anyone how to get past a block, and makes no outside request while it answers. `HEAD` is not answered, as for the lookup.
+
+Parameters. Only `site_host` can make a request fail (400 `invalid_site_host`); a pasted address is cut to its host (`host_normalized` `path_dropped`), a subdomain is answered from its registered domain (`apex`). Every other value that is not on its list is ignored and never repeated.
+
+- `site_host`, `lang` (`en`, `ko`; anything else reads as `en`).
+- The lookup's own codes, as for the lookup: `error_class`, `failure_stage`, `http_status`, `challenge`, `retry_after`, `via`, `agent_vendor`, `ahn_test`. A code you measured wins over the one chosen from `stop_point`.
+- What happened, chosen from fixed lists (none of it is counted or stored): `agent_platform` (`claude_desktop_browser`, `claude_in_chrome`, `claude_code`, `chatgpt_agent`, `meta_muse`, `gemini`, `perplexity_comet`, `other`), `agent_env` (`cloud_browser`, `on_device_browser`, `not_sure`), `external_browser` (`yes_same_account`, `no`, `not_tried`), `stop_point` (`before_visit`, `page_blank_or_blocked`, `human_verification`, `company_login`, `site_login`, `after_login_action_fails`, `tools_off_page_visible`, `timeout_or_5xx`, `extra_verification`, `not_sure`), `screen_message` (11 kinds, e.g. `access_denied`, `human_check`, `sign_in_required`, `approval_on_other_device`), `since_kind` (`today_first`, `worked_before`, `not_sure`), `since_date` (with `worked_before` only, `YYYY-MM-DD`, at most 90 days back; it only chooses the period of recorded changes shown), `task_context` (`my_account_consumer`, `my_account_work`, `public_read`, `other`).
+
+Answer. Absent fields are left out, never null (the exception is `server`, which is the lookup's own answer copied as it is).
+
+- `input_echo`: the accepted codes only.
+- `where_to_look`: `first` (`site`, `platform`, `account`, `agent_env`, `task` or `unknown`), `layers` (the state of each: `evidence`, `your_answer`, `background`, `not_seen`, `not_reviewed`, `no_doc`, `unread`) and one fixed sentence. `first` is the first layer in the final order whose state is `evidence` or `your_answer`. Order only says where to look first; it is not a finding.
+- `person`: `needed` (`yes`, `not_indicated`), `reasons[]` with `code` (`sign_in_is_the_account_holders`, `verification_on_person_device`, `approval_is_the_persons_decision`, `company_it_decides`, `platform_admin_decides`, `platform_refused_step`, `server_hand_off`) and `who[]` (`user`, `it_admin`, `platform_admin`, `site_support`). `not_indicated` means AHN's records do not show that a person is needed; it is not a statement that none is.
+- `others_saw`: reports from the last 7 days that match the host (at most 5, each with `verified: false`), a coarse `lookup_band`, and one sentence. Absence of reports proves nothing.
+- `server`: `summary_line`, `recommendation`, `next_action`, `cause`, `failure_stage`, `next_checks` exactly as `GET /v1/incidents/check` gives them for the same codes, and `position` (`first`, or `after_checks` when the lookup says to continue and the explanation's checks come first).
+- `what_happened`: `layers[]` (at most 10 rows: `layer` `L1`, `L1a`-`L1e`, `L2`, `L3a`, `L3b`, `L4`; `state`; `template_id`; `text`; optional `source` with `kind`, `url`, `checked_at`) and `unknowns[]` (what AHN cannot see).
+- `do_now.checks[]` (1 to 6): `id`, `who` (`person`, `agent`, `it_admin`, `platform_admin`), `text`, optional `url`.
+- `timeline`: `window_from`, `window_to`, `items[]` (recorded changes of the host's declared policy, of AHN's own home-page read, and of a platform's public documentation; `at`, `layer`, `kind`, `text`, optional `source_url`) and `limits_text`.
+- `handoff[]` (1 or 2): a ready sentence for the person who can decide (`to`: `it_admin`, `platform_admin`, `platform_vendor`, `site_support`, `user`).
+- `rules_applied`, `render_order`, `basis_text`, `links.self` (the request again with the accepted codes only).
+
+Fixed sentences. Every text is chosen from a fixed English or Korean template; blanks are filled only from AHN's records or fixed phrase tables. A text that would not fit its limit is left out, never cut. The templates avoid asserting a cause, advising a workaround, or saying that a site falls under a category.
+
+- Reads: one lookup, then one short transaction (lock timeout 200 ms, one savepoint per read) over `host_access_changes` and `platform_doc_events`. If a read fails, that section is empty.
+- Counts like one lookup; the choices above are not counted, stored or logged; no `feedback_token` is issued. Nothing here changes `recommendation`, `next_checks`, `next_action` or `summary_line` of a lookup (tests compare the two answers byte for byte), and the MCP tools are unchanged.
+
 ## Next contract: questions and experience network
 
 Questions without a site host, voluntary experience sharing, and answers, corrections, and search are not part of the v1 report contract. A separate `/v2/knowledge/*` contract and schema are only proposed and not implemented. Do not describe them as an available API or MCP tool.

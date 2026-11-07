@@ -214,6 +214,43 @@ def test_lookup_inputs_are_all_covered_by_the_policy():
         assert_phrases("lookup inputs", sentences, {n: p for n, p in LOOKUP_FIELDS.items() if isinstance(p, Phrase)})
 
 
+# GET /v1/why (D108): the lookup's own codes are the ones above; these are the added ones. They choose fixed sentences only and are
+# described in the sentence of policy section 02 that names GET /v1/why.
+WHY_FIELDS = {
+    "site_host": Exempt("the public hostname of the lookup, described with the lookup"),
+    "lang": Phrase("a language (lang)", "언어(lang)"),
+    "agent_platform": Phrase("agent_platform", "agent_platform"),
+    "agent_env": Phrase("agent_env", "agent_env"),
+    "external_browser": Phrase("external_browser", "external_browser"),
+    "stop_point": Phrase("stop_point", "stop_point"),
+    "screen_message": Phrase("screen_message", "screen_message"),
+    "since_kind": Phrase("since_kind", "since_kind"),
+    "since_date": Phrase("since_date", "since_date"),
+    "task_context": Phrase("task_context", "task_context"),
+    "error_class": Exempt("a lookup code, described with the lookup"),
+    "failure_stage": Exempt("a lookup code, described with the lookup"),
+    "http_status": Exempt("a lookup code, described with the lookup"),
+    "challenge": Exempt("a lookup code, described with the lookup"),
+    "retry_after": Exempt("a lookup code, described with the lookup"),
+    "via": Exempt("a lookup code, described with the lookup"),
+    "agent_vendor": Exempt("a lookup code, described with the lookup"),
+    "ahn_test": Exempt("REST only: the value 1 marks a test lookup, like the X-AHN-Test header; it is not data about anyone and is not stored"),
+}
+
+
+def test_why_inputs_are_all_covered_by_the_policy():
+    schema = create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True)).openapi()
+    accepted = {p["name"] for p in schema["paths"]["/v1/why"]["get"]["parameters"]}
+    unmapped = accepted - set(WHY_FIELDS)
+    assert not unmapped, (f"GET /v1/why now accepts {sorted(unmapped)}. Say so in policy section 02 "
+                          "(English and Korean), then add the field to WHY_FIELDS.")
+    sentences = {lang: sentence_with(section(lang, "02"), "/v1/why") for lang in LANGS}
+    assert_phrases("why inputs", sentences, {n: p for n, p in WHY_FIELDS.items() if isinstance(p, Phrase)})
+    for lang, words in (("en", ("not counted, not stored", "never repeated")), ("ko", ("집계하지도 보관하지도", "다시 적지 않습니다"))):
+        text = section(lang, "02")
+        assert all(w in text for w in words), (lang, words)
+
+
 def test_report_inputs_are_all_covered_by_the_policy():
     tool_inputs = registered_tools(True)["report_observation"]
     assert tool_inputs == ["observation"], f"report_observation takes {tool_inputs}; map each new input to the policy"
@@ -922,7 +959,7 @@ BUNDLE_EXCLUDES = {
 }
 
 
-BUNDLE_SINCE = date(2026, 11, 4)  # later than the policy's own date, so the switch must move "Last updated"
+BUNDLE_SINCE = date(2026, 12, 1)  # later than the policy's own date, so the switch must move "Last updated"
 BUNDLE_SELECTION = Phrase("Many of those mapped hosts were found by scanning bands of the Tranco popularity ranking, but each "
                           "mapping was checked on that host's own status page, and no rank is included",
                           "매핑한 호스트 중 상당수는 Tranco 인기 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 "
@@ -985,7 +1022,7 @@ def test_policy_date_moves_with_the_bundle_switch():
 
     off = {"en": f"Last updated {POLICY_UPDATED:%B} {POLICY_UPDATED.day}, {POLICY_UPDATED.year}.",
            "ko": f"최종 수정: {POLICY_UPDATED.year}년 {POLICY_UPDATED.month}월 {POLICY_UPDATED.day}일."}
-    on = {"en": "Last updated November 4, 2026.", "ko": "최종 수정: 2026년 11월 4일."}
+    on = {"en": "Last updated December 1, 2026.", "ko": "최종 수정: 2026년 12월 1일."}
     for lang in LANGS:
         assert off[lang] in plain(bundle_policy_text(lang, False)), f"the {lang} policy date changed without the switch"
         assert on[lang] in plain(bundle_policy_text(lang, True)), f"the {lang} policy date does not follow AHN_PUBLIC_BUNDLE_SINCE"

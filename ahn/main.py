@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
-from . import adoption, feedback, lookup_signals, platform_policies
+from . import adoption, explain, feedback, lookup_signals, platform_policies
 from . import server_card
 from .adoption import parse_days as parse_adoption_days
 from .models import CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome, FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
@@ -34,6 +34,7 @@ from .settings import Settings
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
 from .triage import CHECK_TEXT_KO, CHECKS_KO, accepted_vendor
+from .why_models import WhyResponse
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
 
@@ -41,7 +42,7 @@ ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 11, 3)
+POLICY_UPDATED = date(2026, 11, 6)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -122,7 +123,7 @@ def invalid_code(field: str, fields: dict = CHECK_CODE_FIELDS) -> JSONResponse:
 # HEAD answers like GET (same status and headers) with no body, so a liveness probe that sends HEAD sees the same status.
 # The routes that run a lookup (and may count it) and the owner pages are never run by a HEAD request, so a link
 # checker or monitor cannot cause a lookup or skew the lookup counts; they keep answering 405 to HEAD.
-HEAD_EXCLUDED_PATHS = ("/v1/incidents/check", "/v1/incidents/{incident_id}", "/{lang}/search", "/{lang}/incidents/{incident_id}")
+HEAD_EXCLUDED_PATHS = ("/v1/incidents/check", "/v1/why", "/v1/incidents/{incident_id}", "/{lang}/search", "/{lang}/incidents/{incident_id}")
 HEAD_EXCLUDED_PREFIXES = ("/owner", "/mcp")
 
 
@@ -350,7 +351,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -617,6 +618,42 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if "feedback_token" in result:
             response.headers["Cache-Control"] = "no-store"  # a one-time token must never be served from a cache (D58)
         return result
+
+    @app.get("/v1/why", response_model=WhyResponse)
+    def why_it_fails(request: Request, site_host: str,
+                     lang: str | None = Query("en", description="en or ko. Anything else is read as en."),
+                     agent_platform: str | None = Query(None, description="Optional: the agent product that stopped (claude_desktop_browser, claude_in_chrome, claude_code, chatgpt_agent, meta_muse, gemini, perplexity_comet, other). A value outside the list is ignored. Not stored."),
+                     agent_env: str | None = Query(None, description="Optional: cloud_browser (the agent works in a remote browser), on_device_browser (in a browser on the person's device) or not_sure. A value outside the list is ignored. Not stored."),
+                     external_browser: str | None = Query(None, description="Optional: yes_same_account (the same step works in a usual browser with the same account), no or not_tried. A value outside the list is ignored. Not stored."),
+                     stop_point: str | None = Query(None, description="Optional: where the step stopped (before_visit, page_blank_or_blocked, human_verification, company_login, site_login, after_login_action_fails, tools_off_page_visible, timeout_or_5xx, extra_verification, not_sure). A value outside the list is ignored. Not stored."),
+                     screen_message: str | None = Query(None, description="Optional: the kind of message on screen (claude_org_policy_banner, claude_asks_each_action, claude_cannot_read_site, device_not_compliant, access_denied, human_check, sign_in_required, too_many_requests, page_not_loading, approval_on_other_device, none_other). A value outside the list is ignored. Not stored."),
+                     since_kind: str | None = Query(None, description="Optional: today_first, worked_before or not_sure. A value outside the list is ignored. Not stored."),
+                     since_date: str | None = Query(None, description="Optional with since_kind=worked_before: the last day it worked, YYYY-MM-DD. Used only to choose the period of recorded changes shown, at most 90 days back. A value that cannot be used is ignored. Not stored."),
+                     task_context: str | None = Query(None, description="Optional: my_account_consumer, my_account_work, public_read or other. A value outside the list is ignored. Not stored."),
+                     error_class: str | None = Query(None, description="Optional, as for GET /v1/incidents/check: a class you measured. It wins over the one chosen from stop_point. A value outside the list is ignored."),
+                     failure_stage: str | None = Query(None, description="Optional, as for GET /v1/incidents/check: a stage you measured. A value outside the list is ignored."),
+                     http_status: str | None = Query(None, description="Optional signal code, as for GET /v1/incidents/check. A value outside the list is ignored."),
+                     challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
+                     retry_after: str | None = Query(None, description="Optional signal code: none, lt_60, 60_3600 or gt_3600. A value outside the list is ignored."),
+                     via: str | None = Query(None, description="Optional signal code: http_fetch, browser or unknown. A value outside the list is ignored."),
+                     agent_vendor: str | None = Query(None, description="Optional, as for GET /v1/incidents/check. A value outside the list is ignored. Not stored."),
+                     ahn_test: str | None = Query(None, description="Optional: `1` marks this lookup as a test, exactly like the header `X-AHN-Test: 1`. Any other value is ignored.")):
+        """D108: for a blocked step, which layer to look at first, whether a person has to act, and what other agents saw.
+
+        The lookup answer is the one GET /v1/incidents/check gives for the same codes, copied into `server` unchanged. Everything
+        else is fixed sentences chosen from your codes and AHN's own records; none of your choices is stored. It counts as one
+        lookup, and no result token is issued.
+        """
+        try:
+            inputs = explain.parse_inputs(site_host, today=datetime.now(timezone.utc).date(), lang=lang, agent_platform=agent_platform,
+                                          agent_env=agent_env, external_browser=external_browser, stop_point=stop_point,
+                                          screen_message=screen_message, since_kind=since_kind, since_date=since_date,
+                                          task_context=task_context, error_class=error_class, failure_stage=failure_stage,
+                                          agent_vendor=accepted_vendor(agent_vendor))
+        except ValueError:
+            raise ServiceError("invalid_site_host", 400)
+        return explain.explain(settings, inputs, lookup_signal(request, http_status=http_status, challenge=challenge,
+                                                                 retry_after=retry_after, via=via, ahn_test=ahn_test))
 
     @app.post("/v1/feedback", response_model=FeedbackReceipt)
     def lookup_feedback(body: FeedbackIn, response: Response):

@@ -660,6 +660,34 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - 마지막으로 읽은 지 90일이 넘은 페이지는 인용 없이 `unread`·`not_read_this_round` 로 나와요. 없는 필드는 null 이 아니라 생략해요.
 - 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, MCP 도구도 바뀌지 않아요.
 
+## 막힌 단계 설명(`GET /v1/why`)
+
+`GET /v1/why`(JSON, `schema_version` `ahn-why/1`)는 허가받은 단계가 막힌 에이전트의 한 가지 질문에 답해요: 어느 층부터 볼지, 사람이 나서야 하는지, 다른 에이전트는 무엇을 봤는지(D108). 조회를 한 번 돌리고(`GET /v1/incidents/check` 와 같은 코드 경로, 창 168시간, 결과 토큰 없음), 보낸 코드와 AHN 이 이미 가진 기록에서 고른 고정 문장을 덧붙여요. 어떤 사이트도 판단하지 않고, 막힘을 피해 가는 방법을 알려 주지 않으며, 답하는 동안 바깥 요청을 하지 않아요. 조회와 마찬가지로 `HEAD` 는 받지 않아요.
+
+매개변수. 요청이 실패하는 것은 `site_host` 뿐이에요(400 `invalid_site_host`). 붙여 넣은 주소는 호스트까지만 남기고(`host_normalized` `path_dropped`), 하위 도메인은 등록 도메인으로 답해요(`apex`). 목록에 없는 나머지 값은 무시하고 다시 적지 않아요.
+
+- `site_host`, `lang`(`en`·`ko`, 그 밖은 `en`).
+- 조회와 같은 코드: `error_class`, `failure_stage`, `http_status`, `challenge`, `retry_after`, `via`, `agent_vendor`, `ahn_test`. 직접 잰 코드는 `stop_point` 로 고른 코드보다 우선해요.
+- 무슨 일이 있었는지(정해진 목록에서 고르며 집계도 저장도 안 해요): `agent_platform`(`claude_desktop_browser`·`claude_in_chrome`·`claude_code`·`chatgpt_agent`·`meta_muse`·`gemini`·`perplexity_comet`·`other`), `agent_env`(`cloud_browser`·`on_device_browser`·`not_sure`), `external_browser`(`yes_same_account`·`no`·`not_tried`), `stop_point`(`before_visit`·`page_blank_or_blocked`·`human_verification`·`company_login`·`site_login`·`after_login_action_fails`·`tools_off_page_visible`·`timeout_or_5xx`·`extra_verification`·`not_sure`), `screen_message`(11종, 예: `access_denied`·`human_check`·`sign_in_required`·`approval_on_other_device`), `since_kind`(`today_first`·`worked_before`·`not_sure`), `since_date`(`worked_before` 일 때만, `YYYY-MM-DD`, 최대 90일 전, 보여 줄 변경 기록의 기간을 고르는 데만 써요), `task_context`(`my_account_consumer`·`my_account_work`·`public_read`·`other`).
+
+답. 없는 필드는 null 이 아니라 생략해요(`server` 는 예외로, 조회의 답을 그대로 옮긴 것이에요).
+
+- `input_echo`: 받아들인 코드만.
+- `where_to_look`: `first`(`site`·`platform`·`account`·`agent_env`·`task`·`unknown`), 층별 `layers` 상태(`evidence`·`your_answer`·`background`·`not_seen`·`not_reviewed`·`no_doc`·`unread`), 고정 문장 하나. `first` 는 최종 순서에서 상태가 `evidence` 나 `your_answer` 인 첫 층이에요. 순서는 어디를 먼저 볼지만 말하며 판정이 아니에요.
+- `person`: `needed`(`yes`·`not_indicated`), `reasons[]`(`code`: `sign_in_is_the_account_holders`·`verification_on_person_device`·`approval_is_the_persons_decision`·`company_it_decides`·`platform_admin_decides`·`platform_refused_step`·`server_hand_off`), `who[]`(`user`·`it_admin`·`platform_admin`·`site_support`). `not_indicated` 는 AHN 기록에 사람이 필요하다는 근거가 없다는 뜻이며, 필요 없다는 단언이 아니에요.
+- `others_saw`: 최근 7일 안에 그 호스트와 맞는 제보(최대 5건, 각각 `verified: false`), 대략적인 `lookup_band`, 문장 하나. 제보가 없다는 것은 아무것도 증명하지 않아요.
+- `server`: `summary_line`·`recommendation`·`next_action`·`cause`·`failure_stage`·`next_checks` 는 같은 코드로 `GET /v1/incidents/check` 가 주는 것과 똑같고, `position`(`first`, 또는 조회가 계속하라고 하되 설명의 확인이 먼저인 `after_checks`)이 붙어요.
+- `what_happened`: `layers[]`(최대 10행: `layer` `L1`·`L1a`~`L1e`·`L2`·`L3a`·`L3b`·`L4`, `state`, `template_id`, `text`, 선택 `source`(`kind`·`url`·`checked_at`))와 `unknowns[]`(AHN 이 볼 수 없는 것).
+- `do_now.checks[]`(1~6개): `id`, `who`(`person`·`agent`·`it_admin`·`platform_admin`), `text`, 선택 `url`.
+- `timeline`: `window_from`, `window_to`, `items[]`(호스트가 선언한 정책, AHN 자신의 홈페이지 읽기, 플랫폼 공개 문서의 기록된 변경. `at`·`layer`·`kind`·`text`·선택 `source_url`), `limits_text`.
+- `handoff[]`(1~2개): 결정할 수 있는 사람에게 그대로 전할 문장(`to`: `it_admin`·`platform_admin`·`platform_vendor`·`site_support`·`user`).
+- `rules_applied`, `render_order`, `basis_text`, `links.self`(받아들인 코드만으로 다시 쓴 요청).
+
+고정 문장. 모든 문장은 영어·한국어 고정 틀에서 고르고, 빈칸은 AHN 기록이나 고정 어구표로만 채워요. 한도를 넘는 문장은 자르지 않고 뺍니다. 틀은 원인을 단정하거나, 우회법을 권하거나, 사이트가 어떤 분류에 든다고 말하지 않아요.
+
+- 읽기: 조회 한 번, 그다음 짧은 트랜잭션 하나(락 대기 200ms, 읽기마다 세이브포인트)로 `host_access_changes`·`platform_doc_events` 를 읽어요. 읽기가 실패하면 그 부분만 비어요.
+- 조회 한 번으로 세고, 위에서 고른 값은 집계·저장·로그 모두 하지 않으며, `feedback_token` 도 주지 않아요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 바뀌지 않고(테스트가 두 답을 바이트 단위로 견줘요), MCP 도구도 바뀌지 않아요.
+
 ## 다음 계약: 질문·경험 네트워크
 
 사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 제안만 했을 뿐 구현되지 않았다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.
