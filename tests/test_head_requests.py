@@ -118,7 +118,7 @@ HEAD_PATHS = {
     "/", "/.well-known/agentboard-verify/{handle}", "/.well-known/mcp-registry-auth", "/.well-known/mcp/server-card.json",
     "/.well-known/openai-apps-challenge", "/agent-instructions.txt", "/favicon.ico", "/health", "/llms.txt", "/robots.txt", "/sitemap.xml",
     "/v1/incidents", "/v1/platforms", "/{lang}/", "/{lang}/agents", "/{lang}/connect", "/{lang}/contribute", "/{lang}/disclaimer", "/{lang}/human",
-    "/{lang}/platforms", "/{lang}/policy", "/{lang}/report", "/{lang}/support", "/{lang}/terms",
+    "/{lang}/platforms", "/{lang}/policy", "/{lang}/report", "/{lang}/support", "/{lang}/terms", "/{lang}/why",
 }
 
 

@@ -105,7 +105,9 @@ def test_the_cause_line_is_the_only_text_that_may_hold_words_the_lint_forbids():
 
 def test_stop_words_cover_every_stop_point():
     assert set(X.STOP_WORDS) == set(E.STOP_POINTS)
-    assert X.STOP_WORDS["extra_verification"] == "an extra verification after the password"
+    assert X.STOP_WORDS["extra_verification"]["en"] == "an extra verification after the password"
+    assert X.STOP_WORDS["extra_verification"]["ko"] == "비밀번호 뒤 추가 인증"
+    assert all(set(v) == {"en", "ko"} for v in X.STOP_WORDS.values())
 
 
 def test_reason_phrases_cover_every_reason_the_code_can_give():

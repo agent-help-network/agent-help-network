@@ -29,7 +29,7 @@ from .owner_hosts import (OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, OWNER_
                           parse_order, parse_unmapped, recent_hosts)
 from .rate_limit import RequestLimiter
 from .request_log import RequestLog
-from .service import ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
+from .service import PUBLIC_AGGREGATE_TLDS, PUBLIC_SUFFIXES_2, ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
 from .settings import Settings
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
@@ -273,7 +273,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/sitemap.xml", include_in_schema=False)
         def sitemap():
-            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute", "/platforms") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
+            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute", "/platforms", "/why") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
             urls = "".join(
                 f"<url><loc>https://agenthelpnetwork.com/{lang}{page}</loc></url>"
                 for lang in ("en", "ko") for page in pages
@@ -351,7 +351,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/{lang}/why", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -846,6 +846,17 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
         return render(request, lang, "platforms", table=platform_policies.view(lang=lang), fixed_notes=platform_policies.NOTES, lang_code=lang)
+
+    @app.get("/{lang}/why", include_in_schema=False)
+    def why_page(request: Request, lang: str):
+        """D108: the form for GET /v1/why. Choices only; the page itself reads nothing and the lookup happens from the visitor's browser."""
+        if request.method == "HEAD" and lang == "v1":
+            # "/v1/why" is the lookup, not this page: HEAD is not answered there (405), as before this route existed.
+            return Response(status_code=405, headers={"Allow": "GET"})
+        if lang not in lang_text:
+            raise ServiceError("not_found", 404)
+        # The two public-suffix tables go to the page so that it cuts a subdomain to its registered domain exactly as the service does.
+        return render(request, lang, "why", host_rules={"suffixes2": sorted(PUBLIC_SUFFIXES_2), "tlds": sorted(PUBLIC_AGGREGATE_TLDS)})
 
     @app.get("/{lang}/support", include_in_schema=False)
     def support_page(request: Request, lang: str):

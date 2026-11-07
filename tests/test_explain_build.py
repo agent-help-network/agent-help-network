@@ -374,3 +374,13 @@ def test_a_253_character_host_keeps_the_person_line_in_the_fallback_handoff(lang
     assert body["person"]["needed"] == "yes"
     user = [h for h in body["handoff"] if h["to"] == "user"]
     assert user and user[0]["template_id"] == "H-USER-NOHOST" and word in user[0]["text"]
+
+
+@pytest.mark.parametrize("stop", sorted(E.STOP_POINTS))
+def test_korean_handoffs_never_carry_the_english_stop_phrase(stop):
+    body = run(lang="ko", stop_point=stop, task_context="my_account_consumer", agent_platform="claude_in_chrome")
+    texts = [h["text"] for h in body["handoff"]]
+    assert texts
+    for text in texts:
+        assert X.STOP_WORDS[stop]["en"] not in text
+    assert any(X.STOP_WORDS[stop]["ko"] in t for t in texts)
