@@ -183,6 +183,14 @@ def test_the_table_is_read_by_no_module_that_decides_an_answer():
         assert "platform_policies" not in (ROOT / "ahn" / name).read_text(encoding="utf-8"), name
 
 
+def test_no_module_that_decides_an_answer_imports_the_explanation():
+    # D108: GET /v1/why reads the lookup's answer; the lookup never reads the explanation back.
+    import re
+    pattern = re.compile(r"from \.(explain|explain_text|why_models)\b|from \. import [^\r\n]*\b(explain|explain_text|why_models)\b|import (explain|explain_text|why_models)\b")
+    for name in ("triage.py", "service.py", "response_guide.py", "mcp_adapter.py", "models.py", "platform_policies.py"):
+        assert not pattern.search((ROOT / "ahn" / name).read_text(encoding="utf-8")), name
+
+
 def test_the_contracts_and_the_decision_describe_the_endpoint():
     for name in ("docs/api-contract.en.md", "docs/api-contract.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
