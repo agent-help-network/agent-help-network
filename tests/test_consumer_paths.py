@@ -160,6 +160,12 @@ def test_a_good_entry_passes():
     assert problems(CONSUMER) == []
 
 
+def test_every_topic_value_passes_and_an_entry_without_one_still_does():
+    from ahn.official_paths import CONSUMER_TOPICS
+    for topic in CONSUMER_TOPICS:
+        assert problems(changed(topic=topic)) == [], topic
+
+
 @pytest.mark.parametrize("consumer, fragment", [
     (changed(kind="phone"), "unknown kind"),
     (changed(url="http://www.example.com/help"), "plain https"),
@@ -181,6 +187,9 @@ def test_a_good_entry_passes():
     ({**CONSUMER, "paths": [dict(CONSUMER["paths"][0], url=f"{HELP}/{n}") for n in range(CONSUMER_MAX_PATHS + 1)]}, "at most"),
     ({**CONSUMER, "phone": "x"}, "exactly"),
     (changed(label="Help"), "exactly"),
+    (changed(topic="refund"), "unknown topic"),
+    (changed(topic="Returns"), "unknown topic"),
+    (changed(topic=3), "unknown topic"),
 ])
 def test_bad_entries_are_refused(consumer, fragment):
     found = problems(consumer)

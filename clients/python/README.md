@@ -39,7 +39,7 @@ Since 0.6.0 the answer keeps what the service already says about what to do now 
 
 ```python
 answer.summary_line        # the service's one sentence, or None (an older service)
-answer.next_action         # NextAction(do, url, retry_after_seconds, stop_if_you_are, lookup_host, customer_url, status_url), or None
+answer.next_action         # NextAction(do, url, retry_after_seconds, stop_if_you_are, lookup_host, customer_url, status_url, status_url_covers), or None
 answer.links               # {"feedback": ..., "changelog": ...}, or None
 answer.remember            # one fixed sentence for the next task on this host, made from next_action alone, or None
 answer.wait_seconds(site_retry_after)   # max(site's Retry-After, service's wait), computed here, at most 3600

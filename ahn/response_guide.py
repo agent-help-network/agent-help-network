@@ -25,6 +25,10 @@ LOG = logging.getLogger(__name__)
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%+=&?#-]*)?$")
 URL_MAX = 200
 LINE_MAX = 200
+# D102: with two or more curated customer pages, the end of a sentence that hands over next_action.customer_url names the list (topic per
+# page). Left off a sentence it would push past LINE_MAX.
+CUSTOMER_REF = "next_action.customer_url"
+MORE_BY_TOPIC = " More by topic: official_paths.consumer."
 # D79: a status_check answer that rests on a robots block is the status sentence followed by the row's own robots sentence, so it
 # may be longer than one sentence. Each part stays within LINE_MAX, the pair within this.
 STATUS_LINE_MAX = 2 * LINE_MAX + 1
@@ -465,6 +469,11 @@ def feed_unreadable(provider_status: dict | None) -> bool:
     return bool(provider_status and provider_status.get("freshness") == "stale")
 
 
+def consumer_path_count(official: dict | None) -> int:
+    """D102: how many pages official_paths.consumer lists (0 when it is absent)."""
+    return len(((official or {}).get("consumer") or {}).get("paths") or [])
+
+
 def same_site(status_url: str, site_host: str) -> bool:
     """Whether the status page is served from the looked-up site's own registrable domain (www and other subdomains included)."""
     page = (urlparse(status_url).hostname or "").lower()
@@ -688,6 +697,9 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         action["customer_url"] = customer
     if (status_check or status_guide) and status_url:
         action["status_url"] = status_url
+        page = result.get("official_status_page") or {}
+        if page.get("covers") == "api" and page.get("source_url") and status_url == safe_url(page["source_url"]):
+            action["status_url_covers"] = "api"  # D102: status_url is the official page that covers only the provider's API (D80)
     if status_check:
         reserved = is_reserved_example(result["site_host"])  # D81
         covers_api = (result.get("official_status_page") or {}).get("covers") == "api"
@@ -736,6 +748,9 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             if customer is None:  # D81: the developer path is not a way to check status
                 sentence = (STATUS_AFTER_ROWS if on else STATUS_AFTER_ROWS_BEFORE).get(row, sentence)
             sentence = f"{STATUS_ROWS[lead]} {sentence}"
+    if (customer and CUSTOMER_REF in sentence and consumer_path_count(result.get("official_paths")) >= 2
+            and len(sentence) + len(MORE_BY_TOPIC) <= LINE_MAX):
+        sentence += MORE_BY_TOPIC  # D102: a customer sentence points at the one customer_url; with several pages it names the list
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:

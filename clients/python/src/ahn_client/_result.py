@@ -89,7 +89,9 @@ class NextAction:
     (empty tuple when the service did not send it). ``lookup_host`` is the site's main domain whose policy covers this host.
     ``customer_url`` (0.6.7) is the site's own customer page for a task in the user's own account, which a developer API may
     not reach: hand it to your user. ``status_url`` (0.6.7) is the provider's or the official status page for a
-    ``task_step=status_check`` lookup. Both are https URLs or None (an older service does not send them)."""
+    ``task_step=status_check`` lookup. Both are https URLs or None (an older service does not send them).
+    ``status_url_covers`` (D102) is ``"api"`` when ``status_url`` is a status page that covers only the provider's API or
+    developer services, not the whole site; None otherwise (also from an older service)."""
 
     do: str
     url: Optional[str] = None
@@ -98,6 +100,7 @@ class NextAction:
     lookup_host: Optional[str] = None
     customer_url: Optional[str] = None
     status_url: Optional[str] = None
+    status_url_covers: Optional[str] = None
 
     @classmethod
     def parse(cls, value: Any) -> Optional["NextAction"]:
@@ -114,6 +117,7 @@ class NextAction:
             lookup_host=lookup if isinstance(lookup, str) and HOSTNAME.fullmatch(lookup) else None,
             customer_url=_url(data.get("customer_url")),
             status_url=_url(data.get("status_url")),
+            status_url_covers="api" if data.get("status_url_covers") == "api" and _url(data.get("status_url")) else None,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -131,6 +135,8 @@ class NextAction:
             data["customer_url"] = self.customer_url
         if self.status_url:
             data["status_url"] = self.status_url
+        if self.status_url_covers:
+            data["status_url_covers"] = self.status_url_covers
         return data
 
 

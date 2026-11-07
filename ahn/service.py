@@ -48,6 +48,9 @@ PUBLIC_SUFFIXES_2 = {
 QUERIED_HOST_CAP = 10000
 ACCESS_PROFILE_NOTE = ("Declared crawler policy read from the host's own robots.txt and llms.txt. It is not an access guarantee: "
                        "user-directed agents may be treated differently by CDNs, and a permissive file does not prove a page is reachable.")
+# D102: what provider_status.freshness (D46) and source_updated_at (D43, D80) measure. Fixed text, added to the answer only.
+PROVIDER_STATUS_NOTE = ("freshness is the age of AHN's last read of the feed (fetched_at); source_updated_at is the provider's own page "
+                        "time and need not move with the status.")
 
 
 def aggregate_eligible_host(site_host: str) -> bool:
@@ -728,7 +731,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "current_site_status": "unknown", "evidence_level": level,
             "summary_code": code, "summary": summary, "failures": failures,
             "successes": successes, "reporting_sources": sources, "observations": observations,
-            "provider_status": provider_status,
+            "provider_status": {**provider_status, "note": PROVIDER_STATUS_NOTE} if provider_status else provider_status,
             "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
             "provider_discovery_attempted_at": provider_discovery_attempted_at,
             "official_status_page": official_page_view(official_page, host),

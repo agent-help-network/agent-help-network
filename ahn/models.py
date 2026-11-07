@@ -287,6 +287,8 @@ class ProviderStatus(StrictModel):
     # may be missing a recent or an older open incident.
     source_kind: Literal["history_atom"] | None = Field(default=None, exclude_if=_omit_none)
     window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
+    # D102: what freshness and source_updated_at measure (a fixed sentence, service.PROVIDER_STATUS_NOTE); freshness itself is D46's.
+    note: str | None = Field(default=None, exclude_if=_omit_none)
     # What source_updated_at is. "active_items" (D54): the latest update of the incidents and maintenances the feed lists
     # as active (Instatus, Google Gmail). "page" (D80): the page-wide time the provider last changed its status page, which
     # need not move with incidents. Left out when there is no source_updated_at (for example the Atom history).
@@ -533,6 +535,8 @@ class ConsumerPath(StrictModel):
     kind: Literal["customer_help", "official_app", "entry_link"]
     url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
     source_url: str = Field(pattern=r"^https://[^\s]+$", max_length=200)
+    # D102: what the page is for, when the table says; left out (never null) otherwise. customer_url does not use it.
+    topic: Literal["returns", "orders", "contact", "help", "account", "shipping"] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class ConsumerPaths(StrictModel):
@@ -643,6 +647,8 @@ class NextAction(StrictModel):
     customer_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
     # D69: the provider's or the official status page, for a task_step=status_check lookup. Present only when one is known.
     status_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
+    # D102: "api" when status_url is a status page that covers only the provider's API (official_status_page.covers); left out otherwise.
+    status_url_covers: Literal["api"] | None = Field(default=None, exclude_if=_omit_none)
 
 
 class Links(StrictModel):

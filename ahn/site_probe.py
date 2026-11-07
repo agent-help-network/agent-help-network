@@ -140,10 +140,14 @@ SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared b
                   "your agent's network and browser may get a different answer. Information only: it does not change "
                   "recommendation.")
 
+# D102: said beside a measured view's freshness (the age of measured_at); pending and not_measured views have no freshness.
+FRESHNESS_NOTE = " freshness is the age of measured_at."
+SHOW_VIEW_NOTE_MEASURED = SHOW_VIEW_NOTE + FRESHNESS_NOTE
+
 # D85: the note of an ahn_check that decided the answer (service.check swaps it in for this one answer only).
 SHOW_VIEW_NOTE_EDGE = ("Measured from AHN's server (a data-center address, declared bot user agent, no cookies or scripts); "
                        "your agent's network and browser may get a different answer. With the refusal you reported, it made "
-                       "recommendation hand_off_to_human (edge_refusal_confirmed).")
+                       "recommendation hand_off_to_human (edge_refusal_confirmed).") + FRESHNESS_NOTE
 # Outcomes in which the home page itself declined AHN's own request (a login wall, a rate limit and a 503 are not this).
 EDGE_REFUSAL_OUTCOMES = frozenset({"bot_challenge", "refused"})
 EDGE_REFUSALS_NEEDED = 2
@@ -1084,6 +1088,7 @@ def view(row: dict, now: datetime) -> dict | None:
     if row["outcome"] == "not_measured":
         out["not_measured_reason"] = row["not_measured_reason"]
         return out
+    out["note"] = SHOW_VIEW_NOTE_MEASURED
     out.update(measured_at=row["probed_at"], age_seconds=max(0, int(age.total_seconds())),
                freshness="fresh" if age <= timedelta(hours=FRESH_HOURS) else "stale", outcome=row["outcome"])
     if row["http_status"] is not None:

@@ -424,7 +424,7 @@ FORBIDDEN = ("proxy", "residential", "rotate", "headless", "stealth", "bypass", 
 
 
 def test_b2_no_word_that_reads_as_a_workaround_in_any_fixed_sentence():
-    lines = [site_probe.SHOW_VIEW_NOTE, site_probe.__doc__ or ""]
+    lines = [site_probe.SHOW_VIEW_NOTE, site_probe.SHOW_VIEW_NOTE_MEASURED, site_probe.SHOW_VIEW_NOTE_EDGE, site_probe.__doc__ or ""]
     for outcome in site_probe.OUTCOMES:
         shown = site_probe.view(row(outcome=outcome, http_status=403 if outcome != "unreachable" else None,
                                     bot_vendor="datadome" if outcome == "bot_challenge" else None), NOW)
