@@ -356,7 +356,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D94 (before D94: dc9d2ff0832237967489aae0b60534f2bb7d08297ef10f1f29f3b32623a800b0), which adds only the optional `robots.rules_uniform` object and its RulesUniform definition.
     # and for D98 (before D98: 5144768f7346c1efa1aea9e883ea4be3a33f295e91be163ea82a0e52608ee9f7), which only adds the `edge_refusal_robots` value to the next_checks code enum.
     # and for D101 (before D101: e8936b6b78bb00b0881bf00bc608db4f038311869957af3893069a1103a52354), which only adds the `no_path_after_failure` value to the next_checks code enum.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "480aa7a0ad7808c6157b8f2adccb5090c703a2ebba8e1e8a6292ff0445e954c2"
+    # and for D106 (before D106: 480aa7a0ad7808c6157b8f2adccb5090c703a2ebba8e1e8a6292ff0445e954c2), which adds only the optional `test` input of check_incident.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "eee7b95abbd6f03bbf739ef2c5079eefb85397214d5ef22cfa5a4b28200cae65"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():
