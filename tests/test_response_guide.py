@@ -611,6 +611,17 @@ def test_mcp_result_is_a_summary_block_then_the_same_json(monkeypatch):
     assert no_url.content[0].text == lines(90)["U1"] and len(no_url.content) == 2
 
 
+def test_mcp_failed_lookup_keeps_the_json_as_the_last_block(monkeypatch):
+    payload = rest_answer(True, official=OFFICIAL, access_profile=robots("User-agent: *\nAllow: /\n"), error_class="site_access")
+
+    async def fake(method, path, *, params=None, extra_headers=None, **_):
+        return payload
+    monkeypatch.setattr(mcp_adapter, "call_api", fake)
+    result = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "example.com", "http_status": "403"}))
+    assert len(result.content) == 2 and "/v1/why?" in result.content[0].text.splitlines()[-1]  # the link is a line of the first block
+    assert json.loads(result.content[-1].text) == result.structured_content
+
+
 def test_mcp_without_a_summary_is_the_single_block_it_was_before(monkeypatch):
     payload = rest_answer(False, official=OFFICIAL)
     result = call_tool(monkeypatch, payload)

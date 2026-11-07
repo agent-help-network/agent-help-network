@@ -369,13 +369,15 @@ function init() {
       stack.appendChild(answer);
       if (previous) {
         const details = el("details", "why-previous");
-        details.appendChild(el("summary", "", copy.previous + ": " + (previous.labels.join(" · ") || copy.none)));
+        details.appendChild(el("summary", "", copy.previous + " (" + previous.host + "): " + (previous.labels.join(" · ") || copy.none)));
         details.appendChild(previous.node);
         stack.appendChild(details);
       }
       result.textContent = "";
       result.appendChild(stack);
-      previous = { labels, node: answer.cloneNode(true) };
+      const kept = answer.cloneNode(true);
+      kept.querySelectorAll("button").forEach((node) => node.remove());  // a cloned copy button has no handler; the earlier answer is for reading
+      previous = { host: body.site_host, labels, node: kept };
     } catch {
       sent.appendChild(el("br"));
       sent.appendChild(document.createTextNode(copy.failed));

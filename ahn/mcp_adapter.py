@@ -221,7 +221,9 @@ def why_link(params: dict) -> str | None:
     (already checked against their lists above). It only builds a string: nothing is fetched and the answer is not read."""
     if not any(params[name] not in (None, "", "none") for name in WHY_FAILURE_CODES if name in params):
         return None
-    query = {name: params[name] for name in ("site_host", *WHY_FAILURE_CODES) if name in params and params[name] not in (None, "")}
+    # via, agent_vendor and the test mark are arguments GET /v1/why takes too, so its answer is computed for the same lookup.
+    # task_step and failed_at are not (it does not take them): the linked answer is calculated without those two values.
+    query = {name: params[name] for name in ("site_host", *WHY_FAILURE_CODES, "via", "agent_vendor", TEST_QUERY) if name in params and params[name] not in (None, "")}
     if not all(SAFE_CODE.fullmatch(str(value)) for value in query.values()):
         return None  # every value is a checked hostname or list code; anything else gets no link rather than an escaped one
     return f"{WHY_BASE}/v1/why?" + "&".join(f"{name}={value}" for name, value in query.items())
@@ -231,7 +233,7 @@ def check_result(response: CheckResponse, why_url: str | None = None):
     """D51: with a summary_line, two text blocks (the line, plus "URL: <next_action.url>" when there is one and, D61,
     "Customer path: <next_action.customer_url>" when there is one; then the answer as
     JSON, the same text the SDK builds for a model result) and structuredContent equal to the REST answer. The second block is
-    always pure JSON; D108 adds a third, one line with the GET /v1/why address, only for a lookup that sent a failure code. Without one (the switch is off on the API), the model itself, so the result is the one before D51."""
+    always pure JSON; D108 adds one line with the GET /v1/why address at the end of the first block, only for a lookup that sent a failure code. Without one (the switch is off on the API), the model itself, so the result is the one before D51."""
     if response.summary_line is None:
         return response
     lead = response.summary_line
@@ -247,11 +249,11 @@ def check_result(response: CheckResponse, why_url: str | None = None):
     check_line = ahn_check_line(response.ahn_check)
     if check_line:
         lead += "\n" + check_line  # D67: only when a measurement exists; information, not a verdict
+    if why_url:
+        # D108: one more line at the end of the first block, only for a failed lookup; the JSON block (still the last one) and structuredContent are unchanged byte for byte.
+        lead += "\n" + WHY_LEAD + why_url
     content = [TextContent(type="text", text=lead),
                TextContent(type="text", text=pydantic_core.to_json(response, indent=2).decode())]
-    if why_url:
-        # D108: a third block, only for a failed lookup; the two above and structuredContent are unchanged byte for byte.
-        content.append(TextContent(type="text", text=WHY_LEAD + why_url))
     return CallToolResult(content=content, structured_content=response.model_dump(mode="json", by_alias=True))
 
 
