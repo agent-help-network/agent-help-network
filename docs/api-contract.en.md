@@ -807,6 +807,16 @@ The bundle is one gzip JSON Lines file for agents and frameworks that want this 
 - `legend`, `note`: fixed text. A host missing from the list is not known to be working.
 - Never in this file: refused reads (401, 403, 429, 503), agent reports, lookup counts or who looked a host up.
 
+## Agent platform policies (`GET /v1/platforms`)
+
+`GET /v1/platforms` (JSON, `schema_version` `ahn-platforms/1`) and the pages `/en/platforms`, `/ko/platforms` show what each agent product's own vendor writes on its public help pages about the sites the product limits, the steps it asks a person to approve, and how it identifies itself (D107). It takes no parameters, reads nothing from the request, and makes no outside request.
+
+- `notice`: fixed text. These are the vendors' words; AHN does not judge whether a site falls under any description, does not know unpublished lists, and has not tested the products.
+- `platforms[]`: `platform` (`claude_in_chrome`, `claude_desktop_browser`, `chatgpt_agent`, `gemini`, `meta_muse`, `perplexity_comet`), `display_name`, `vendor`, `coverage` (`documented` when at least one page was read, else `unread`), `docs[]`, and `no_official_documentation_found[]` (topics the vendor has published nothing on, e.g. which sites Muse limits).
+- `docs[]`: `surface`, `url` (an https page on the vendor's own domain), `title`, `status`. `read`: `verified_at` (the day AHN read it) and `quotes[]` of `{tag, text}` (verbatim, at most 200 characters; tags `blocked_category`, `confirm_required`, `admin_policy`, `banner_text`, `remedy`, `identity`, `prohibited_action`, `change_note`). `unread`: `unread_reason` (`http_403`, `challenge_page`, `script_rendered`, `not_read_this_round`) and `last_attempt_at`, no quotes; AHN does not retry such a page another way. Optional: `conflict` with `conflict_peer_url` (two official pages of one product that differ; both are shown), `admin_deployment_doc` (written for managed deployments), `note_code` and `note`.
+- A page last read more than 90 days ago is listed as `unread` with `not_read_this_round` and without quotes. Absent fields are left out, never null.
+- Nothing here changes `recommendation`, `next_checks`, `next_action` or `summary_line` of a lookup, and the MCP tools are unchanged.
+
 ## Next contract: questions and experience network
 
 Questions without a site host, voluntary experience sharing, and answers, corrections, and search are not part of the v1 report contract. A separate `/v2/knowledge/*` contract and schema are only proposed and not implemented. Do not describe them as an available API or MCP tool.
