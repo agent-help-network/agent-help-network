@@ -1,0 +1,16 @@
+{
+  "name": "agent-help-network",
+  "displayName": "Agent Help Network",
+  "version": "0.1.0",
+  "description": "Remote MCP server for a blocked or failing web step (403, login wall, CAPTCHA, 5xx, timeout). Give it the public hostname and get the site's declared agent policy, its official developer path, provider status and one recommended next action. Read-only; sends only the hostname and fixed codes.",
+  "author": {
+    "name": "Agent Help Network",
+    "email": "support@agenthelpnetwork.com"
+  },
+  "homepage": "https://agenthelpnetwork.com/en/",
+  "repository": "https://github.com/agent-help-network/agent-help-network",
+  "license": "Apache-2.0",
+  "logo": "assets/logo.svg",
+  "keywords": ["blocked website", "access denied", "robots.txt", "llms.txt", "site down", "official api", "mcp"],
+  "mcpServers": "./mcp.json"
+}
