@@ -877,7 +877,7 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
         items.append(_hand("user", "H-USER", user_text))
     else:
         items.append(_hand("user", "H-USER-NOHOST", _fill("H-USER-NOHOST", lang, HANDOFF_TEXT_MAX, stop_words=stop_words,
-                                                          person_line=X.TEMPLATES["H-USER-NO"][lang], platform_cap=ctx.pname_cap)))
+                                                          person_line=line, platform_cap=ctx.pname_cap)))
     return [i for i in items if i][:2]
 
 
