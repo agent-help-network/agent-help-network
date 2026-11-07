@@ -62,9 +62,6 @@ _t("S-L1B-AHN-HOME",
 _t("S-L1C-API-AUTH",
    "The site's official developer documentation ({url}) describes {auth} sign-in for its API.",
    "사이트 공식 개발자 문서({url})는 API 인증 방식을 {auth} 로 적어요.")
-_t("S-L1C-NOSEE",
-   "AHN does not open sign-in pages, so it does not know how this site's web sign-in works.",
-   "AHN 은 로그인 페이지를 열지 않아서, 이 사이트의 웹 로그인 방식을 몰라요.")
 _t("S-L1D-ACTIVE",
    "{provider}'s status page has shown {indicator} since {time} (AHN read it at {time2}).",
    "{provider} 상태 페이지가 {time} 부터 {indicator} 를 표시하고 있어요(AHN 읽기 {time2}).")
@@ -95,8 +92,8 @@ _t("S-L2-SITE-SIDE",
    "{platform}'s official documentation ({url}, checked {date}) says some limits are set by websites: \"{quote}\"",
    "{platform} 공식 문서({url}, {date} 확인)는 일부 제한을 웹사이트가 정한다고 적어요: \"{quote}\"")
 _t("S-L2-PROHIBITED",
-   "{platform}'s documentation ({url}) lists this among actions it does not take: \"{quote}\"",
-   "{platform} 문서({url})는 이것을 하지 않는 행동으로 꼽아요: \"{quote}\"")
+   "{platform}'s documentation ({url}) lists actions it does not take, including: \"{quote}\"",
+   "{platform} 문서({url})는 하지 않는 행동 목록에 이런 문구를 적어요: \"{quote}\"")
 _t("S-L2-NOCLASS",
    "AHN does not judge whether this site falls under that description.",
    "이 사이트가 그 설명에 드는지는 AHN 이 판단하지 않아요.")
@@ -179,8 +176,8 @@ _t("S-G-WINDOW-LIMITS",
    "AHN reads a host's files about once a day to once a week and sees nothing between reads. It does not see bot defenses, accounts, or platforms' unpublished lists.",
    "AHN 은 호스트의 파일을 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요. 봇 방어·계정·플랫폼의 비공개 목록도 보지 못해요.")
 _t("S-G-APEX",
-   "You entered a company- or account-specific address; AHN looked up {host} only and did not send the rest.",
-   "회사·계정 전용 주소를 넣었어요. AHN 은 {host} 만 조회했고 나머지는 보내지 않았어요.")
+   "You entered an address with more than a registered domain; AHN looked up {host} only and did not send the rest.",
+   "등록 도메인보다 긴 주소를 넣었어요. AHN 은 등록 도메인 {host} 만 조회했고 나머지는 보내지 않았어요.")
 _t("S-G-PATH-DROPPED",
    "AHN kept only the hostname; the path and query were not sent.",
    "AHN 은 호스트명만 남겼고 경로·쿼리는 보내지 않았어요.")
@@ -219,7 +216,7 @@ _t("S-P-PLATFORM-ADMIN",
    "고른 메시지는 조직 정책이 적용된다는 뜻이에요. 그건 조직 관리자가 정해요.")
 _t("S-P-PLATFORM-REFUSED",
    "{platform}'s official documentation says it does not open some kinds of sites or asks first. AHN does not judge whether this site is one of them. When the agent stops here, the person decides this step.",
-   "{platform} 공식 문서는 이런 사이트·행동을 하지 않는다고 적어요. 이 사이트가 거기 드는지는 판단하지 않아요. 에이전트가 멈췄으면 그 단계는 사람이 정해요.")
+   "{platform} 공식 문서는 이런 사이트·행동을 하지 않거나 먼저 물어본다고 적어요. 이 사이트가 거기 드는지는 판단하지 않아요. 에이전트가 멈췄으면 그 단계는 사람이 정해요.")
 _t("S-P-SERVER-HAND-OFF",
    "AHN's next action for this lookup also hands this step to the person.",
    "서버의 다음 행동도 이 단계를 사람에게 넘기라고 해요.")
@@ -285,6 +282,9 @@ _t("H-SITE",
 _t("H-USER",
    "{platform_cap} could not finish this step on {host} (stopped at: {stop_words}). {person_line}",
    "{platform_cap} 이 {host} 의 이 단계를 끝내지 못했어요(\"{stop_words}\"). {person_line}")
+_t("H-USER-NOHOST",
+   "{platform_cap} could not finish this step (stopped at: {stop_words}). {person_line}",
+   "{platform_cap} 이 이 단계를 끝내지 못했어요(\"{stop_words}\"). {person_line}")
 _t("H-USER-YES",
    "You need to do this step yourself: {reason_short}.",
    "이 단계는 직접 하셔야 해요: {reason_short}.")

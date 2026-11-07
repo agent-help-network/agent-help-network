@@ -35,7 +35,7 @@ os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
 from ahn import background_reads, bundle, gov_registry, platform_metrics
-from ahn.main import create_app
+from ahn.main import POLICY_UPDATED, create_app
 from ahn.models import AttemptFields, CheckObservation, CheckResponse, ObservationIn, OutcomeIn, Receipt
 from ahn.settings import Settings
 
@@ -246,7 +246,8 @@ def test_why_inputs_are_all_covered_by_the_policy():
                           "(English and Korean), then add the field to WHY_FIELDS.")
     sentences = {lang: sentence_with(section(lang, "02"), "/v1/why") for lang in LANGS}
     assert_phrases("why inputs", sentences, {n: p for n, p in WHY_FIELDS.items() if isinstance(p, Phrase)})
-    for lang, words in (("en", ("not counted, not stored", "never repeated")), ("ko", ("집계하지도 보관하지도", "다시 적지 않습니다"))):
+    for lang, words in (("en", ("not counted, not stored", "never repeated", "the lookup codes your choices set for the lookup (error_class, task_step, failure_stage): they are counted like a lookup's")),
+                        ("ko", ("집계하지도 보관하지도", "다시 적지 않습니다", "이 선택으로 정한 조회 코드(error_class·task_step·failure_stage)는 조회처럼 집계됩니다"))):
         text = section(lang, "02")
         assert all(w in text for w in words), (lang, words)
 
@@ -959,7 +960,7 @@ BUNDLE_EXCLUDES = {
 }
 
 
-BUNDLE_SINCE = date(2026, 12, 1)  # later than the policy's own date, so the switch must move "Last updated"
+BUNDLE_SINCE = POLICY_UPDATED + timedelta(days=1)  # later than the policy's own date, so the switch must move "Last updated"
 BUNDLE_SELECTION = Phrase("Many of those mapped hosts were found by scanning bands of the Tranco popularity ranking, but each "
                           "mapping was checked on that host's own status page, and no rank is included",
                           "매핑한 호스트 중 상당수는 Tranco 인기 순위의 구간을 훑어 찾았지만, 매핑마다 그 호스트의 상태 페이지에서 "
@@ -1018,11 +1019,11 @@ def test_offline_bundle_row_retention_is_stated_while_it_is_served():
 
 
 def test_policy_date_moves_with_the_bundle_switch():
-    from ahn.main import POLICY_UPDATED
 
     off = {"en": f"Last updated {POLICY_UPDATED:%B} {POLICY_UPDATED.day}, {POLICY_UPDATED.year}.",
            "ko": f"최종 수정: {POLICY_UPDATED.year}년 {POLICY_UPDATED.month}월 {POLICY_UPDATED.day}일."}
-    on = {"en": "Last updated December 1, 2026.", "ko": "최종 수정: 2026년 12월 1일."}
+    since = BUNDLE_SINCE
+    on = {"en": f"Last updated {since:%B} {since.day}, {since.year}.", "ko": f"최종 수정: {since.year}년 {since.month}월 {since.day}일."}
     for lang in LANGS:
         assert off[lang] in plain(bundle_policy_text(lang, False)), f"the {lang} policy date changed without the switch"
         assert on[lang] in plain(bundle_policy_text(lang, True)), f"the {lang} policy date does not follow AHN_PUBLIC_BUNDLE_SINCE"
