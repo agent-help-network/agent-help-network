@@ -19,10 +19,11 @@ from starlette.concurrency import run_in_threadpool
 
 from .compression import TextGZipMiddleware
 from .db import connect
-from . import adoption, feedback, lookup_signals
+from . import adoption, feedback, lookup_signals, platform_policies
 from . import server_card
 from .adoption import parse_days as parse_adoption_days
 from .models import CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome, FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, STEP, normalize_host_input, valid_host
+from .platform_policies import PlatformsResponse
 from .owner_auth import OWNER_HEADERS, OWNER_PATHS, valid_owner_authorization, valid_owner_ip
 from .owner_hosts import (OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, OWNER_HOSTS_ORDERS, blocked_hosts, parse_days,
                           parse_order, parse_unmapped, recent_hosts)
@@ -271,7 +272,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/sitemap.xml", include_in_schema=False)
         def sitemap():
-            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
+            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute", "/platforms") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
             urls = "".join(
                 f"<url><loc>https://agenthelpnetwork.com/{lang}{page}</loc></url>"
                 for lang in ("en", "ko") for page in pages
@@ -349,7 +350,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"
@@ -797,6 +798,17 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
         return render(request, lang, "contribute")
+
+    @app.get("/v1/platforms", response_model=PlatformsResponse, response_model_exclude_none=True)
+    def platforms_api():
+        """D107: what agent products' own vendors document about site limits, approvals and self-identification (information only)."""
+        return platform_policies.view()
+
+    @app.get("/{lang}/platforms", include_in_schema=False)
+    def platforms_page(request: Request, lang: str):
+        if lang not in lang_text:
+            raise ServiceError("not_found", 404)
+        return render(request, lang, "platforms", table=platform_policies.view(lang=lang), fixed_notes=platform_policies.NOTES, lang_code=lang)
 
     @app.get("/{lang}/support", include_in_schema=False)
     def support_page(request: Request, lang: str):

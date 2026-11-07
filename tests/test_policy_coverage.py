@@ -438,6 +438,7 @@ TABLES = {
     "schema_migrations": Exempt("migration bookkeeping"),
     "reporters": Exempt("one shared 'public-unverified' row for all no-account reports; no per-person identity"),
     "service_flags": Exempt("operator on/off switches"),
+    "platform_doc_events": Exempt("vendor help-page change log: page address and two hashes, written by an operator script, no request data"),
     "bandwidth_guard_samples": Exempt("hosting bandwidth totals in gigabytes from the provider's API, not request data"),
     "bandwidth_guard_state": Exempt("state of the operator's bandwidth guard"),
     # The offline bundle's one row: the file and the day's served-byte total. Checked in section 6 below.

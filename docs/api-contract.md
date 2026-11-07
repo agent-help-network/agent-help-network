@@ -650,6 +650,16 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `legend`·`note`: 고정 문구. 목록에 없다고 사이트가 정상이라는 뜻은 아니다.
 - 이 파일에 절대 없는 것: 거절된 읽기(401·403·429·503), 에이전트 제보, 조회 수, 누가 호스트를 조회했는지.
 
+## 에이전트 플랫폼 공식 정책(`GET /v1/platforms`)
+
+`GET /v1/platforms`(JSON, `schema_version` `ahn-platforms/1`)와 `/en/platforms`·`/ko/platforms` 페이지는 에이전트 제품의 공급사가 자기 공개 도움말에 적은 것 — 제품이 제한하는 사이트, 사람에게 승인을 묻는 단계, 자기 식별 방식 — 을 보여 줘요(D107). 매개변수가 없고, 요청에서 아무것도 읽지 않고, 바깥 요청도 하지 않아요.
+
+- `notice`: 고정 문장. 공급사의 말을 옮긴 것이며, 어떤 사이트가 그 설명에 드는지는 AHN 이 판단하지 않고, 비공개 목록은 알지 못하며, 제품을 직접 시험하지도 않았어요.
+- `platforms[]`: `platform`(`claude_in_chrome`·`claude_desktop_browser`·`chatgpt_agent`·`gemini`·`meta_muse`·`perplexity_comet`), `display_name`, `vendor`, `coverage`(읽은 페이지가 하나라도 있으면 `documented`, 아니면 `unread`), `docs[]`, `no_official_documentation_found[]`(공급사가 아무것도 공개하지 않은 주제. 예: Muse 가 어떤 사이트를 제한하는지).
+- `docs[]`: `surface`, `url`(공급사 소유 도메인의 https 페이지), `title`, `status`. `read` 이면 `verified_at`(읽은 날)과 `quotes[]`(`{tag, text}`, 원문 그대로 200자 이하, 태그 `blocked_category`·`confirm_required`·`admin_policy`·`banner_text`·`remedy`·`identity`·`prohibited_action`·`change_note`). `unread` 이면 `unread_reason`(`http_403`·`challenge_page`·`script_rendered`·`not_read_this_round`)과 `last_attempt_at` 만 있고 인용은 없어요. AHN 은 그런 페이지를 다른 방법으로 다시 읽으려 하지 않아요. 선택 필드: `conflict` 와 `conflict_peer_url`(한 제품의 두 공식 문서가 다르게 적음, 둘 다 보여 줌), `admin_deployment_doc`(관리 배포용 문서), `note_code`·`note`.
+- 마지막으로 읽은 지 90일이 넘은 페이지는 인용 없이 `unread`·`not_read_this_round` 로 나와요. 없는 필드는 null 이 아니라 생략해요.
+- 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, MCP 도구도 바뀌지 않아요.
+
 ## 다음 계약: 질문·경험 네트워크
 
 사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 제안만 했을 뿐 구현되지 않았다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.

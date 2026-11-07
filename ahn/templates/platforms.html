@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set en = lang == 'en' %}
+{% set tag_names = {
+  'blocked_category': ('Blocked categories', '차단 범주'),
+  'confirm_required': ('Asks the person first', '사람에게 먼저 묻는 경우'),
+  'admin_policy': ('Administrator settings', '관리자 설정'),
+  'banner_text': ('Message on screen', '화면에 뜨는 문구'),
+  'remedy': ('What the vendor suggests', '공급사가 안내하는 것'),
+  'identity': ('How it identifies itself', '자기를 밝히는 방식'),
+  'prohibited_action': ('Actions it does not take', '하지 않는 행동'),
+  'change_note': ('Notes on change', '변경·제한 메모'),
+} %}
+{% set reasons = {
+  'http_403': ('The page refused AHN\'s read (HTTP 403).', '페이지가 AHN 의 읽기를 거절했어요(HTTP 403).'),
+  'challenge_page': ('The page answered with a verification screen; AHN did not try another way.', '페이지가 확인 화면으로 답했고, AHN 은 다른 방법을 시도하지 않았어요.'),
+  'script_rendered': ('The text is drawn by script, so AHN could not take a quotation.', '본문을 스크립트가 그려서 AHN 이 인용을 가져오지 못했어요.'),
+  'not_read_this_round': ('Not read in the latest pass.', '가장 최근 확인에서 읽지 못했어요.'),
+} %}
+{% block title %}{{ 'Agent platform policies' if en else '에이전트 플랫폼 공식 정책' }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container page-head">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ 'PLATFORMS' if en else '플랫폼' }}</p>
+  <h1>{{ 'What agent products say about the sites they limit.' if en else '에이전트 제품이 사이트 제한에 대해 공식으로 적은 것.' }}</h1>
+  <p class="lead small-lead">{{ table.notice }}</p>
+  <p class="lead small-lead">{{ 'An agent that stops at a site is not always blocked by the site: the product can have its own rule, or ask a person to take a step. Machine-readable copy: ' if en else '에이전트가 어떤 사이트에서 멈췄다고 늘 사이트가 막은 것은 아니에요. 제품 자체의 규칙이 있거나 사람이 직접 해야 하는 단계일 수 있어요. 기계가 읽는 같은 표: ' }}<a href="/v1/platforms"><code>GET /v1/platforms</code></a></p>
+</section>
+<section class="container section top-tight agent-content">
+  <div class="info-grid">
+  {% for p in table.platforms %}
+    <article class="info-card" id="{{ p.platform }}">
+      <span class="info-number">{{ loop.index }} / {{ p.vendor|upper }}</span>
+      <h2>{{ p.display_name }}</h2>
+      {% if p.no_official_documentation_found %}
+      <p>{{ 'AHN found no official documentation on: ' if en else 'AHN 이 공식 문서를 찾지 못한 주제: ' }}{{ p.no_official_documentation_found|join(' · ') }}.</p>
+      {% endif %}
+      {% for d in p.docs %}
+      <h3><a href="{{ d.url }}" rel="noopener">{{ d.title }}</a></h3>
+      <p><small>{{ d.surface }}{% if d.status == 'read' %} · {{ 'checked' if en else '확인' }} {{ d.verified_at }}{% else %} · {{ 'not read' if en else '읽지 못함' }}: {{ reasons[d.unread_reason][0 if en else 1] }} ({{ d.last_attempt_at }}){% endif %}</small></p>
+      {% if d.note %}<p><small>{{ d.note }}</small></p>{% endif %}
+      {% if d.conflict_peer_url %}<p><small><a href="{{ d.conflict_peer_url }}" rel="noopener">{{ 'The other page' if en else '다른 문서' }}</a></small></p>{% endif %}
+      {% if d.quotes %}
+      <ul>
+        {% for q in d.quotes %}<li><strong>{{ tag_names[q.tag][0 if en else 1] }}:</strong> &ldquo;{{ q.text }}&rdquo;</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% endfor %}
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}
