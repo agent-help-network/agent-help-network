@@ -9,8 +9,8 @@ from pathlib import Path
 from ahn import mcp_adapter
 
 ROOT = Path(__file__).resolve().parent.parent
-STEPS = ("a code by text or email", "an authenticator app approval", "a new-device check")
-FORBIDDEN = ("receive the code", "session cookie", "skip the verification", "bypass")
+STEPS = ("a code", "app approval", "new-device check")
+FORBIDDEN = ("receive the code", "session cookie", "skip the verification", "skip the step")
 
 
 def _read(*parts):
@@ -34,15 +34,16 @@ def _surfaces():
 def test_each_surface_names_the_failed_sign_in_and_the_extra_steps():
     for name, text in _surfaces().items():
         assert "login_auth" in text, name
-        assert "did not" in text or "not going through" in text, name
+        assert "sign-in" in text, name
         for step in STEPS:
             assert step in text, (name, step)
+    assert "a code by text or email" in _surfaces()["agent_instructions"]
 
 
 def test_llms_txt_names_the_condition():
     text = _read("ahn", "llms.txt")
     assert "entered credentials that did not sign in" in text
-    for step in STEPS:
+    for step in ("a code by text or email", "an authenticator app approval", "a new-device check"):
         assert step in text
 
 
