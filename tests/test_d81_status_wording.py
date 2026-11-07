@@ -105,7 +105,9 @@ def test_covers_changes_nothing_but_the_status_sentence():
         result = real(official_page=pg, official=OFFICIAL)
         with_covers = guide(copy.deepcopy(result), status_check=True)
         without = guide(copy.deepcopy({**result, "official_status_page": page(OTHER_PAGE)}), status_check=True)
-        assert with_covers["next_action"] == without["next_action"] and with_covers["links"] == without["links"]
+        strip = lambda action: {k: v for k, v in action.items() if k != "status_url_covers"}  # noqa: E731  (D102 names the scope there)
+        assert strip(with_covers["next_action"]) == strip(without["next_action"]) and with_covers["links"] == without["links"]
+        assert ("status_url_covers" in with_covers["next_action"]) == (covers == "api")
         assert guide(copy.deepcopy(result))["summary_line"] == guide(copy.deepcopy({**result, "official_status_page": page(OTHER_PAGE)}))["summary_line"]
 
 
@@ -190,7 +192,7 @@ def test_status_check_changes_only_the_summary_line_and_adds_status_url():
         for on, blocked_default in itertools.product((True, False), (False, True)):
             plain = guide(copy.deepcopy(result), on, blocked_default)
             out = guide(copy.deepcopy(result), on, blocked_default, True, True)
-            rest = {k: v for k, v in out["next_action"].items() if k not in ("status_url", "url")}
+            rest = {k: v for k, v in out["next_action"].items() if k not in ("status_url", "url", "status_url_covers")}
             base = {k: v for k, v in plain["next_action"].items() if k not in ("status_url", "url")}
             assert rest == base and out.get("links") == plain.get("links")
             assert len(out["summary_line"]) <= STATUS_LINE_MAX

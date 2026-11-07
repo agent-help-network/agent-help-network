@@ -169,7 +169,7 @@ def test_the_stored_measurement_decides_at_each_boundary_and_nothing_else_moves(
     assert same_but(on, off, "recommendation", "next_checks", "summary_line", "next_action", "ahn_check")
     assert {k: v for k, v in on["next_action"].items() if k != "do"} == {k: v for k, v in off["next_action"].items() if k != "do"}
     assert on["ahn_check"].pop("note") == site_probe.SHOW_VIEW_NOTE_EDGE
-    assert off["ahn_check"].pop("note") == site_probe.SHOW_VIEW_NOTE
+    assert off["ahn_check"].pop("note") == site_probe.SHOW_VIEW_NOTE_MEASURED
     assert abs(on["ahn_check"].pop("age_seconds") - off["ahn_check"].pop("age_seconds")) <= 5
     assert on["ahn_check"] == off["ahn_check"]
     assert on.get("cause") == off.get("cause")
@@ -218,7 +218,7 @@ def test_the_switch_off_is_the_answer_before_d85_and_the_default_is_on(db):
     assert Settings(TEST_URL, PEPPER).edge_refusal_handoff is True
     seed(db, HOSTS[34], "refused", 1 * HOUR, refusals=1, status=403)
     off = look(settings_with(edge=False), HOSTS[34], error_class="site_access")
-    assert off["recommendation"]["action"] == "proceed" and off["ahn_check"]["note"] == site_probe.SHOW_VIEW_NOTE
+    assert off["recommendation"]["action"] == "proceed" and off["ahn_check"]["note"] == site_probe.SHOW_VIEW_NOTE_MEASURED
     assert look(db, HOSTS[34], error_class="site_access")["recommendation"]["action"] == "hand_off_to_human"
 
 
@@ -266,7 +266,7 @@ def test_the_check_never_fails_a_lookup(db, monkeypatch):
     monkeypatch.setattr(site_probe, "refusal_corroborated", boom)
     answer = look(db, host, error_class="site_access")
     assert answer["recommendation"]["action"] == "proceed" and EDGE_CODE not in answer["recommendation"]["reasons"]
-    assert answer["ahn_check"]["note"] == site_probe.SHOW_VIEW_NOTE
+    assert answer["ahn_check"]["note"] == site_probe.SHOW_VIEW_NOTE_MEASURED
 
 
 def test_the_database_is_asked_only_by_a_lookup_that_can_change(db, monkeypatch):

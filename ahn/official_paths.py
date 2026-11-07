@@ -1863,14 +1863,19 @@ for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so",
 # linked from source_url. Store URLs keep only the listing identifier (no campaign parameters). Nothing here is guessed:
 # a page that refused the read, or a link not found on the site's own page, is left out. Procedure: scripts/README.md.
 CONSUMER_KINDS = ("customer_help", "official_app", "entry_link")
+# D102: an optional topic on a path says what the page is for, so a caller with several pages can pick one (returns, orders, ...).
+CONSUMER_TOPICS = ("returns", "orders", "contact", "help", "account", "shipping")
 CONSUMER_STORE_HOSTS = frozenset({"apps.apple.com", "play.google.com"})
 CONSUMER_MAX_PATHS = 6
 # A consumer entry older than this is left out of answers until it is verified again (same age as access bundles).
 CONSUMER_MAX_AGE_DAYS = 90
 
 
-def _help(url: str, source_url: str | None = None) -> dict:
-    return {"kind": "customer_help", "url": url, "source_url": source_url or url}
+def _help(url: str, source_url: str | None = None, topic: str | None = None) -> dict:
+    item = {"kind": "customer_help", "url": url, "source_url": source_url or url}
+    if topic is not None:
+        item["topic"] = topic
+    return item
 
 
 def _app(url: str, source_url: str) -> dict:
@@ -1883,9 +1888,9 @@ def _entry_link(url: str, source_url: str) -> dict:
 
 CONSUMER_PATHS: dict[str, dict] = {
     "bestbuy.com": {"paths": [
-        _help("https://www.bestbuy.com/contact-us", "https://www.bestbuy.com/"),
+        _help("https://www.bestbuy.com/contact-us", "https://www.bestbuy.com/", "contact"),
         _help("https://www.bestbuy.com/site/help-topics/return-exchange-policy/pcmcat260800050014.c?id=pcmcat260800050014",
-              "https://www.bestbuy.com/"),
+              "https://www.bestbuy.com/", "returns"),
     ], "verified_at": "2026-11-05"},
     "walgreens.com": {"paths": [
         _help("https://www.walgreens.com/topic/help/default.jsp", "https://www.walgreens.com/"),

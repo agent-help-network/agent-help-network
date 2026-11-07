@@ -34,8 +34,16 @@ from test_response_guide import OTHER_PAGE, fresh_none, page, signin_page  # noq
 import _d97_scope  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
-from ahn.response_guide import LINE_MAX, RETRY_ROWS, ROWS, STATUS_FAILED_ROW, STATUS_ROWS, guide, status_check_applies  # noqa: E402
+from ahn.response_guide import LINE_MAX, RETRY_ROWS, ROWS, STATUS_FAILED_ROW, STATUS_ROWS, status_check_applies  # noqa: E402
+from ahn.response_guide import guide as _guide  # noqa: E402
 from ahn.settings import Settings, parse_d96_switch  # noqa: E402
+
+
+def guide(*args, **kwargs):
+    """The guide without next_action.status_url_covers (D102 added it; the D96 comparisons are about the action and the sentence)."""
+    out = _guide(*args, **kwargs)
+    out["next_action"].pop("status_url_covers", None)
+    return out
 
 _spec = importlib.util.spec_from_file_location("pre_d96_response_guide", HERE / "_pre_d96_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)

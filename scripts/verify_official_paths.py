@@ -56,7 +56,7 @@ from urllib.robotparser import RobotFileParser  # noqa: E402
 
 from ahn.models import valid_host  # noqa: E402
 from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, CONSUMER_KINDS,  # noqa: E402
-                                CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
+                                CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, CONSUMER_TOPICS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
                                 access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
 
@@ -288,9 +288,9 @@ def _quote_problem(quote) -> str | None:
     return None
 
 
-def _object_problems(value, keys: set[str]) -> list[str]:
-    if not isinstance(value, dict) or set(value) != keys:
-        return [f"must be an object with exactly {sorted(keys)}"]
+def _object_problems(value, keys: set[str], optional: set[str] = frozenset()) -> list[str]:
+    if not isinstance(value, dict) or not keys <= set(value) <= keys | optional:
+        return [f"must be an object with exactly {sorted(keys)}" + (f" and optionally {sorted(optional)}" if optional else "")]
     return []
 
 
@@ -474,11 +474,13 @@ def consumer_problems(host: str, consumer, today: date | None = None) -> list[st
     seen: set[str] = set()
     site = registrable(host)
     for item in paths:
-        shape = _object_problems(item, {"kind", "url", "source_url"})
+        shape = _object_problems(item, {"kind", "url", "source_url"}, {"topic"})
         if shape:
             add("paths", shape[0])
             continue
         kind, url, source = item["kind"], item["url"], item["source_url"]
+        if "topic" in item and item["topic"] not in CONSUMER_TOPICS:
+            add("paths", f"unknown topic {item['topic']!r}; allowed: {', '.join(CONSUMER_TOPICS)}")
         if kind not in CONSUMER_KINDS:
             add("paths", f"unknown kind {kind!r}; allowed: {', '.join(CONSUMER_KINDS)}")
         for field, value in (("url", url), ("source_url", source)):

@@ -358,7 +358,8 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D101 (before D101: e8936b6b78bb00b0881bf00bc608db4f038311869957af3893069a1103a52354), which only adds the `no_path_after_failure` value to the next_checks code enum.
     # and for D106 (before D106: 480aa7a0ad7808c6157b8f2adccb5090c703a2ebba8e1e8a6292ff0445e954c2), which adds only the optional `test` input of check_incident.
     # and for the login/verification wording (before it: eee7b95abbd6f03bbf739ef2c5079eefb85397214d5ef22cfa5a4b28200cae65), which only changes the check_incident description text.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "0e7f3cb8d4a6117eb6fd90d6adcc323f30926035cabf2acef8553cd114df21e5"
+    # and for D102 (before D102: 0e7f3cb8d4a6117eb6fd90d6adcc323f30926035cabf2acef8553cd114df21e5), which adds only the optional `provider_status.note`, `next_action.status_url_covers` and `official_paths.consumer.paths[].topic`.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "d100f7c4a9ae41a7e01e060392666c1fdb7053da16b6d217dcb071e22c561844"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():
