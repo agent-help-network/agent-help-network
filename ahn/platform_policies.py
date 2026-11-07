@@ -22,14 +22,15 @@ from pydantic import BaseModel
 SCHEMA = "ahn-platforms/1"
 QUOTE_MAX = 200
 STALE_DAYS = 90  # a page not re-read for this long is listed without its quotations (same rule as the access bundles)
-TAGS = ("blocked_category", "confirm_required", "admin_policy", "banner_text", "remedy", "identity", "prohibited_action", "change_note")
+TAGS = ("blocked_category", "site_side", "confirm_required", "admin_policy", "banner_text", "remedy", "list_incomplete", "identity",
+        "prohibited_action", "capability_note", "change_note")
 UNREAD_REASONS = ("http_403", "challenge_page", "script_rendered", "not_read_this_round")
 
 # Vendor-owned hosts only. A page on any other host is refused by problems().
 VENDOR_HOSTS: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"support.claude.com", "claude.com"}),
     "openai": frozenset({"help.openai.com", "developers.openai.com"}),
-    "google": frozenset({"support.google.com"}),
+    "google": frozenset({"support.google.com", "developers.google.com"}),
     "meta": frozenset({"platform.muse.ai", "www.meta.com"}),
     "perplexity": frozenset({"www.perplexity.ai"}),
 }
@@ -94,7 +95,7 @@ PLATFORMS: list[dict[str, Any]] = [
             _q("blocked_category", "Adult content websites"),
             _q("blocked_category", "Known pirated content sites"),
             _q("confirm_required", "Claude asks for permission before accessing financial sites."),
-            _q("remedy", "It’s unlikely that we’ve captured all sites in these categories"),
+            _q("list_incomplete", "It’s unlikely that we’ve captured all sites in these categories"),
             _q("confirm_required", "Action confirmations for certain high-risk actions such as downloading a file or entering sensitive information."),
             _q("admin_policy", "Allowlists and blocklists to restrict which sites Claude can access"),
             _q("admin_policy", "If you have questions about which sites are permitted in your organization, contact your admin."),
@@ -152,7 +153,7 @@ PLATFORMS: list[dict[str, Any]] = [
             _q("admin_policy", "Site allowlists and blocklists you configure there apply to both the extension and the built-in browser."),
         ], _D),
     ]},
-    {"platform": "chatgpt_agent", "display_name": "ChatGPT agent and browser", "vendor": "openai", "not_found": ["blocked_site_list"], "docs": [
+    {"platform": "chatgpt_agent", "display_name": "ChatGPT agent and browser", "vendor": "openai", "not_found": [], "docs": [
         _read("cloud_browser", _O + "11845367-chatgpt-works-cloud-browser-allowlisting", "ChatGPT Work's Cloud browser allowlisting", [
             _q("identity", "ChatGPT Work's Cloud browser uses Web Bot Auth to sign outbound HTTP requests, allowing website operators to verify that requests genuinely originate from ChatGPT."),
             _q("identity", "Bot tag: chatgpt-agent"),
@@ -161,8 +162,8 @@ PLATFORMS: list[dict[str, Any]] = [
         _read("cloud_browser", _O + "20001280-using-cloud-browser-in-chatgpt", "Using cloud browser in ChatGPT", [
             _q("confirm_required", "By default, ChatGPT will ask for your permission before accessing a new website in the cloud browser."),
             _q("confirm_required", "ChatGPT is designed to request confirmation before actions that could be hard to reverse or create a financial, legal, account, or other real-world commitment"),
-            _q("blocked_category", "A website may block ChatGPT from accessing the site or completing your task, even if the same website works normally in your own browser."),
-            _q("blocked_category", "These restrictions are set by the website, not by ChatGPT."),
+            _q("site_side", "A website may block ChatGPT from accessing the site or completing your task, even if the same website works normally in your own browser."),
+            _q("site_side", "These restrictions are set by the website, not by ChatGPT."),
             _q("remedy", "If a website is blocked, try another website or open the page directly in your own browser."),
         ], _D),
         _unread("desktop_builtin_browser", _O + "20001277-using-the-built-in-browser-in-the-chatgpt-desktop-app", "Using the built-in browser in the ChatGPT desktop app", "http_403", _D),
@@ -175,7 +176,7 @@ PLATFORMS: list[dict[str, Any]] = [
             _q("identity", "ChatGPT-User is not used for crawling the web in an automatic fashion. Because these actions are initiated by a user, robots.txt rules may not apply."),
         ], _D, note_code="does_not_say_which_surface"),
     ]},
-    {"platform": "gemini", "display_name": "Gemini (Chrome auto browse, agent tasks)", "vendor": "google", "not_found": ["self_identification"], "docs": [
+    {"platform": "gemini", "display_name": "Gemini (Chrome auto browse, agent tasks)", "vendor": "google", "not_found": [], "docs": [
         _read("chrome_auto_browse", _G + "chrome/answer/16821166?hl=en", "Ask Gemini in Chrome to complete tasks for you with auto browse", [
             _q("confirm_required", "Gemini in Chrome aims to ask for your review and confirmation before certain actions, like:"),
             _q("confirm_required", "Accessing sites with highly sensitive financial or health data"),
@@ -189,10 +190,14 @@ PLATFORMS: list[dict[str, Any]] = [
             _q("remedy", "Do not enter sign-in info, payment details, or info you may find sensitive directly into the task thread."),
             _q("admin_policy", "For now, this feature isn’t available if you sign in with a work or school Google Account."),
         ], _D, note_code="no_self_identification_statement"),
+        _read("user_triggered_fetchers", "https://developers.google.com/crawling/docs/crawlers-fetchers/google-user-triggered-fetchers", "Google user-triggered fetchers", [
+            _q("identity", "Google-Agent is used by agents hosted on Google infrastructure to navigate the web and perform actions upon user request."),
+            _q("identity", "Google is also experimenting with the Web Bot Auth protocol, using the https://agent.bot.goog identity."),
+        ], _D, note_code="does_not_say_which_surface"),
     ]},
-    {"platform": "meta_muse", "display_name": "Meta Muse", "vendor": "meta", "not_found": ["site_restrictions", "self_identification"], "docs": [
+    {"platform": "meta_muse", "display_name": "Meta Muse", "vendor": "meta", "not_found": [], "docs": [
         _read("connector_platform", "https://platform.muse.ai/docs", "Muse Connector Platform", [
-            _q("change_note", "Muse can already browse websites."),
+            _q("capability_note", "Muse can already browse websites."),
         ], _D, note_code="connector_guidelines_only"),
         _unread("muse_agent_browser", _M + "help/superintelligence/2124746764949121/", "How your Muse agent browses the web", "script_rendered", "2026-10-31"),
         _unread("muse_agent_browser", _M + "en-gb/help/superintelligence/1385290430137537/", "How Muse works with your guidance and approval", "script_rendered", "2026-10-31"),
@@ -237,6 +242,8 @@ def problems(platforms: list[dict[str, Any]] | None = None, today: date | None =
         for topic in p.get("not_found", []):
             if topic not in NOT_FOUND_TOPICS:
                 out.append(f"{name}: unknown not_found topic {topic}")
+        if p.get("not_found") and any(d.get("status") != "read" for d in p.get("docs", [])):
+            out.append(f"{name}: not_found is set while a page of this platform was not read (no documentation is claimed only when every page was read)")
         for doc in p.get("docs", []):
             url = doc.get("url", "")
             parsed = urlparse(url)
@@ -281,13 +288,13 @@ def problems(platforms: list[dict[str, Any]] | None = None, today: date | None =
     return out
 
 
-def view(today: date | None = None, lang: str = "en") -> dict[str, Any]:
+def view(today: date | None = None, lang: str = "en", platforms: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """The public table. A page not read for more than STALE_DAYS keeps its link but loses its quotations."""
     today = today or date.today()
     lang = lang if lang in NOTICE else "en"
     limit = today - timedelta(days=STALE_DAYS)
-    platforms = []
-    for p in PLATFORMS:
+    shown = []
+    for p in PLATFORMS if platforms is None else platforms:
         docs = []
         for doc in p["docs"]:
             item = {k: v for k, v in doc.items() if k != "note_code"}
@@ -301,10 +308,10 @@ def view(today: date | None = None, lang: str = "en") -> dict[str, Any]:
             docs.append(item)
         entry: dict[str, Any] = {"platform": p["platform"], "display_name": p["display_name"], "vendor": p["vendor"],
                                  "coverage": "documented" if any(d["status"] == "read" for d in docs) else "unread", "docs": docs}
-        if p["not_found"]:
+        if p["not_found"] and all(d["status"] == "read" for d in docs):  # "found nothing" is claimed only while every page of the platform is read
             entry["no_official_documentation_found"] = [NOT_FOUND_TOPICS[t][lang] for t in p["not_found"]]
-        platforms.append(entry)
-    return {"schema_version": SCHEMA, "notice": NOTICE[lang], "platforms": platforms}
+        shown.append(entry)
+    return {"schema_version": SCHEMA, "notice": NOTICE[lang], "platforms": shown}
 
 
 class PlatformQuote(BaseModel):

@@ -102,3 +102,65 @@ def test_run_reports_changes_unread_pages_and_stopped_hosts():
     assert all(u.startswith("https://help.openai.com/") for u in report["unread"])
     again = cpd.run(fetcher(responses, [])[0], {e["url"]: e["new_hash"] for e in report["events"]})
     assert again["events"] == []
+
+
+def test_a_network_error_is_recorded_as_a_reason_and_the_run_goes_on():
+    import socket
+    import urllib.error
+    import urllib.request
+
+    outcomes = iter([urllib.error.URLError("no route"), socket.timeout("slow"), ConnectionResetError("reset")])
+
+    def boom(*a, **k):
+        raise next(outcomes)
+
+    real = urllib.request.urlopen
+    urllib.request.urlopen = boom
+    try:
+        results = [cpd.Fetcher._open("https://h.test/a") for _ in range(3)]
+    finally:
+        urllib.request.urlopen = real
+    assert all(r[0] == 0 and r[2] == b"" for r in results)
+    log = []
+    f, _ = fetcher({"https://h.test/robots.txt": 404, "https://h.test/a": 0, "https://h.test/b": 200}, log)
+    allowed = frozenset({"h.test"})
+    assert f.get("https://h.test/a", allowed) == ("network_error", None)
+    assert f.get("https://h.test/b", allowed)[0] == "ok"  # one page failing does not stop the host
+
+
+def test_robots_that_cannot_be_read_stops_the_host_as_a_complete_disallow():
+    for status in (500, 503, 0):
+        log = []
+        f, _ = fetcher({"https://h.test/robots.txt": status}, log)
+        assert f.get("https://h.test/a", frozenset({"h.test"})) == ("host_stopped", None)
+        assert f.get("https://h.test/b", frozenset({"h.test"})) == ("host_stopped", None)
+        assert log == ["https://h.test/robots.txt"] and "h.test" in f.stopped
+    log = []
+    f, _ = fetcher({"https://h.test/robots.txt": 410, "*": 200}, log)
+    assert f.get("https://h.test/a", frozenset({"h.test"}))[0] == "ok"  # 4xx other than a refusal: no robots.txt
+
+
+def test_robots_wildcards_and_end_anchors_are_read():
+    ua = cpd.USER_AGENT
+    r = cpd.RobotsRules("User-agent: *\nDisallow: /*/private/\nDisallow: /*.pdf$\nDisallow: /a*b\nAllow: /a*b/ok\n")
+    assert not r.can_fetch(ua, "https://h.test/x/private/y")
+    assert not r.can_fetch(ua, "https://h.test/doc.pdf")
+    assert r.can_fetch(ua, "https://h.test/doc.pdf.html")  # `$` anchors the end
+    assert r.can_fetch(ua, "https://h.test/public/page")
+    assert not r.can_fetch(ua, "https://h.test/aXXb/y")
+    assert r.can_fetch(ua, "https://h.test/aXXb/ok")  # the longer Allow wins
+    tie = cpd.RobotsRules("User-agent: *\nDisallow: /p\nAllow: /p\n")
+    assert tie.can_fetch(ua, "https://h.test/p")  # Allow wins a tie
+    query = cpd.RobotsRules("User-agent: *\nDisallow: /*?*authuser=\n")
+    assert query.can_fetch(ua, "https://h.test/a")
+    assert not query.can_fetch(ua, "https://h.test/a?x=1&authuser=2")
+    assert cpd.RobotsRules("User-agent: *\nDisallow:\n").can_fetch(ua, "https://h.test/anything")
+    assert not cpd.RobotsRules("User-agent: *\r\nDisallow: /\r\n").can_fetch(ua, "https://h.test/anything")
+
+
+def test_robots_group_selection_prefers_our_token_over_the_star_group():
+    ua = cpd.USER_AGENT
+    text = "User-agent: *\nDisallow: /\n\nUser-agent: OtherBot\nUser-agent: AgentHelpNetwork-curation\nAllow: /\n"
+    assert cpd.RobotsRules(text).can_fetch(ua, "https://h.test/page")
+    assert not cpd.RobotsRules("User-agent: OtherBot\nAllow: /\n\nUser-agent: *\nDisallow: /\n").can_fetch(ua, "https://h.test/page")
+    assert cpd.RobotsRules("User-agent: OtherBot\nDisallow: /\n").can_fetch(ua, "https://h.test/page")  # no group for us: allowed
