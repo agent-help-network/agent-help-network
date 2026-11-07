@@ -88,7 +88,7 @@
 
 `/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
-MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다. `next_action.do` 가 `proceed` 이면 첫 블록 끝에 자유 문장 한 줄이 더 붙는다. proceed 는 선언된 차단이 없다는 뜻이지 아무것도 막지 않았다는 뜻이 아니라는 문장이며, 스키마 밖이다.
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 둘째 블록을 읽는다. 호출에 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`)가 있었으면 셋째 블록이 붙는다. `Why it stopped and whether a person must act: https://agenthelpnetwork.com/v1/why?site_host=<host>&...` 한 줄이며, 호스트명과 호출자가 보낸 코드로만 만든다(D108, [막힌 단계 설명](#막힌-단계-설명get-v1why) 참고). `structuredContent`·도구 정의·앞의 두 블록은 바뀌지 않는다. `next_action.do` 가 `proceed` 이면 첫 블록 끝에 자유 문장 한 줄이 더 붙는다. proceed 는 선언된 차단이 없다는 뜻이지 아무것도 막지 않았다는 뜻이 아니라는 문장이며, 스키마 밖이다.
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
@@ -689,8 +689,9 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 고정 문장. 모든 문장은 영어·한국어 고정 틀에서 고르고, 빈칸은 AHN 기록이나 고정 어구표로만 채워요. 한도를 넘는 문장은 자르지 않고 뺍니다. 틀은 원인을 단정하거나, 우회법을 권하거나, 사이트가 어떤 분류에 든다고 말하지 않아요.
 
+- `/en/why`·`/ko/why` 페이지는 이 끝점의 입력 양식이에요. 호스트명 칸 하나와 정해진 목록뿐이고 자유 글은 없어요. 붙여 넣은 주소는 보내기 전에 브라우저가 호스트명만 남기고(계정·테넌트 하위 도메인은 서비스와 같은 표로 등록 도메인으로) 잘라 낸 뒤 `GET /v1/why` 를 부르고, 답의 문장을 그대로 보여 줘요. 조회의 `summary_line` 은 원문이라는 라벨을 붙여요. 다시 물으면 이전 답이 비교용으로 화면에 남고, 한 번 묻는 것이 조회 한 번이에요.
 - 읽기: 조회 한 번, 그다음 짧은 트랜잭션 하나(락 대기 200ms, 읽기마다 세이브포인트)로 `host_access_changes`·`platform_doc_events` 를 읽어요. 읽기가 실패하면 그 부분만 비어요.
-- 조회 한 번으로 세고, 위에서 고른 값은 집계·저장·로그 모두 하지 않으며, `feedback_token` 도 주지 않아요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 바뀌지 않고(테스트가 두 답을 바이트 단위로 견줘요), MCP 도구도 바뀌지 않아요.
+- 조회 한 번으로 세고, 위에서 고른 값은 집계·저장·로그 모두 하지 않으며, `feedback_token` 도 주지 않아요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 바뀌지 않고(테스트가 두 답을 바이트 단위로 견줘요), MCP 도구 정의도 바뀌지 않아요(실패 코드를 보낸 `check_incident` 호출의 결과에만 위의 텍스트 한 줄이 더 붙어요).
 
 ## 다음 계약: 질문·경험 네트워크
 

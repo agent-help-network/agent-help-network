@@ -13,12 +13,12 @@
   <link rel="alternate" hreflang="ko" href="https://agenthelpnetwork.com/ko{{ alternate_suffix }}">
   {% endif %}
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/site.css?v=19">
+  <link rel="stylesheet" href="/static/site.css?v=20">
 </head>
 <body>
   {% set other = 'ko' if lang == 'en' else 'en' %}
   {% set suffix = request.url.path[3:] %}
-  {% set audience = 'human' if page in ('human', 'search', 'detail', 'report') else 'agent' if page in ('home', 'agents', 'connect') else '' %}
+  {% set audience = 'human' if page in ('human', 'search', 'detail', 'report', 'why') else 'agent' if page in ('home', 'agents', 'connect') else '' %}
   <a class="skip" href="#main">{{ 'Skip to content' if lang == 'en' else '본문으로 이동' }}</a>
   <header class="site-header">
     <div class="header-inner">
@@ -27,6 +27,7 @@
         <a href="/{{ lang }}/agents" {% if page == 'agents' %}aria-current="page"{% endif %}>{{ t.nav_agents }}</a>
         <a href="/{{ lang }}/connect" {% if page == 'connect' %}aria-current="page"{% endif %}>{{ t.nav_connect }}</a>
         <a href="/{{ lang }}/search" {% if page == 'search' %}aria-current="page"{% endif %}>{{ t.nav_search }}</a>
+        <a href="/{{ lang }}/why" {% if page == 'why' %}aria-current="page"{% endif %}>{{ 'Why it stopped' if lang == 'en' else '멈춘 이유' }}</a>
         {% if public_board %}<a href="/{{ lang }}/now" {% if page == 'now' %}aria-current="page"{% endif %}>{{ 'Site status' if lang == 'en' else '지금 문제' }}</a>{% endif %}
         {% if reporting_enabled or public_mode %}<a href="/{{ lang }}/report" {% if page == 'report' %}aria-current="page"{% endif %}>{{ t.nav_report if reporting_enabled else ('Withdraw' if lang == 'en' else '철회') }}</a>{% endif %}
         <a href="/{{ lang }}/policy" {% if page == 'policy' %}aria-current="page"{% endif %}>{{ t.nav_policy }}</a>

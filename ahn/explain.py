@@ -855,7 +855,7 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
     else:
         since = X.SINCE_WORDS["recent"][lang]
     stop = ctx.stop or "not_sure"
-    stop_words = X.STOP_WORDS.get(stop, X.STOP_WORDS["not_sure"])
+    stop_words = X.STOP_WORDS.get(stop, X.STOP_WORDS["not_sure"])[lang]
     common = {"host": host, "since": since, "stop_words": stop_words, "platform": ctx.pname}
     admin_quote = bool(ctx.quotes("admin_policy"))
     items: list[dict | None] = []

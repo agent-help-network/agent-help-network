@@ -348,16 +348,16 @@ MECHANISM = {
     "admin_policy": {"en": "an administrator limits sites", "ko": "관리자가 사이트를 제한한다"},
 }
 STOP_WORDS = {
-    "before_visit": "the agent refused before opening the site",
-    "page_blank_or_blocked": "a blank, blocked or access-denied page",
-    "human_verification": "a human-verification check",
-    "company_login": "the company sign-in page",
-    "site_login": "the site's own sign-in",
-    "after_login_action_fails": "an action after signing in",
-    "tools_off_page_visible": "the page shows but the agent cannot act on it",
-    "timeout_or_5xx": "a timeout or server error",
-    "not_sure": "an unclear step",
-    "extra_verification": "an extra verification after the password",
+    "before_visit": {"en": "the agent refused before opening the site", "ko": "사이트를 열기 전에 에이전트가 거절한 곳"},
+    "page_blank_or_blocked": {"en": "a blank, blocked or access-denied page", "ko": "빈 화면이거나 막힌, 접근이 거부된 페이지"},
+    "human_verification": {"en": "a human-verification check", "ko": "사람 확인 단계"},
+    "company_login": {"en": "the company sign-in page", "ko": "회사 로그인 페이지"},
+    "site_login": {"en": "the site's own sign-in", "ko": "사이트 자체 로그인"},
+    "after_login_action_fails": {"en": "an action after signing in", "ko": "로그인 뒤의 동작"},
+    "tools_off_page_visible": {"en": "the page shows but the agent cannot act on it", "ko": "페이지는 보이는데 에이전트가 동작하지 못하는 곳"},
+    "timeout_or_5xx": {"en": "a timeout or server error", "ko": "시간 초과나 서버 오류"},
+    "not_sure": {"en": "an unclear step", "ko": "분명하지 않은 단계"},
+    "extra_verification": {"en": "an extra verification after the password", "ko": "비밀번호 뒤 추가 인증"},
 }
 SINCE_WORDS = {"today": {"en": "today", "ko": "오늘"}, "recent": {"en": "recently", "ko": "최근"}}
 STEP_WORDS = {
@@ -497,8 +497,7 @@ def fixed_phrases() -> list[tuple[str, str, str]]:
         add(name, table)
     for key, table in REASON_WORDS.items():
         add(f"REASON_WORDS.{key[0]}.{key[1]}", table)
-    for key, words in STOP_WORDS.items():
-        out.append((f"STOP_WORDS.{key}", "en", words))
+    add("STOP_WORDS", STOP_WORDS)
     for lang, (lower, cap) in DEFAULT_PLATFORM.items():
         out.append(("DEFAULT_PLATFORM", lang, lower))
         out.append(("DEFAULT_PLATFORM", lang, cap))

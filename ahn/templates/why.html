@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set en = lang == 'en' %}
+{# Choices only: every field is a fixed list except the hostname. The values are the codes GET /v1/why accepts (a test compares them). #}
+{% set fields = [
+  ('agent_platform', ('Which agent product stopped?', '어떤 에이전트 제품이 멈췄나요?'), [
+    ('claude_desktop_browser', 'Claude desktop app browser', 'Claude 데스크톱 앱 브라우저'),
+    ('claude_in_chrome', 'Claude in Chrome', 'Claude in Chrome'),
+    ('claude_code', 'Claude Code', 'Claude Code'),
+    ('chatgpt_agent', 'ChatGPT agent', 'ChatGPT 에이전트'),
+    ('meta_muse', 'Meta Muse', 'Meta Muse'),
+    ('gemini', 'Gemini', 'Gemini'),
+    ('perplexity_comet', 'Perplexity Comet', 'Perplexity Comet'),
+    ('other', 'Another agent product', '다른 에이전트 제품')]),
+  ('agent_env', ('Where does the agent work?', '에이전트는 어디서 일하나요?'), [
+    ('cloud_browser', 'In a remote (cloud) browser', '원격(클라우드) 브라우저에서'),
+    ('on_device_browser', "In a browser on the person's own device", '사람 기기의 브라우저에서'),
+    ('not_sure', 'Not sure', '잘 모르겠어요')]),
+  ('external_browser', ('Does the same step work in your usual browser?', '같은 단계가 평소 쓰는 브라우저에서는 되나요?'), [
+    ('yes_same_account', 'Yes, with the same account', '네, 같은 계정으로 돼요'),
+    ('no', 'No, it fails there too', '아니요, 거기서도 안 돼요'),
+    ('not_tried', 'I have not tried', '해 보지 않았어요')]),
+  ('stop_point', ('Where did the step stop?', '단계가 어디서 멈췄나요?'), [
+    ('before_visit', 'The agent refused before opening the site', '사이트를 열기 전에 에이전트가 거절했어요'),
+    ('page_blank_or_blocked', 'A blank, blocked or access-denied page', '빈 화면, 막힌 화면, 접근 거부 화면'),
+    ('human_verification', 'A human-verification check', '사람 확인 단계'),
+    ('company_login', 'The company sign-in page', '회사 로그인 페이지'),
+    ('site_login', "The site's own sign-in", '사이트 자체 로그인'),
+    ('extra_verification', 'An extra verification after the password (code, app approval, new-device check)', '비밀번호 뒤 추가 인증(코드, 앱 승인, 새 기기 확인)'),
+    ('after_login_action_fails', 'An action after signing in', '로그인 뒤의 동작'),
+    ('tools_off_page_visible', 'The page shows but the agent cannot act on it', '페이지는 보이는데 에이전트가 동작하지 못해요'),
+    ('timeout_or_5xx', 'A timeout or server error', '시간 초과나 서버 오류'),
+    ('not_sure', 'Not sure', '잘 모르겠어요')]),
+  ('screen_message', ('What kind of message was on screen?', '화면에 어떤 종류의 메시지가 떴나요?'), [
+    ('claude_org_policy_banner', 'A Claude message about an organization policy', '조직 정책에 관한 Claude 메시지'),
+    ('claude_asks_each_action', 'Claude asks permission for each action', 'Claude 가 동작마다 허락을 물어요'),
+    ('claude_cannot_read_site', 'Claude says it cannot read the site', 'Claude 가 사이트를 읽을 수 없다고 해요'),
+    ('device_not_compliant', 'A message that the device does not meet company rules', '기기가 회사 기준에 맞지 않는다는 메시지'),
+    ('access_denied', 'Access denied', '접근 거부'),
+    ('human_check', 'A human check', '사람 확인 화면'),
+    ('sign_in_required', 'Sign-in required', '로그인 필요'),
+    ('too_many_requests', 'Too many requests', '요청이 너무 많다는 메시지'),
+    ('page_not_loading', 'The page does not load', '페이지가 열리지 않아요'),
+    ('approval_on_other_device', 'Approve on another device or enter a sent code', '다른 기기에서 승인하거나 보낸 코드를 넣으라는 메시지'),
+    ('none_other', 'None of these', '해당 없음')]),
+  ('since_kind', ('Did it ever work?', '전에는 된 적이 있나요?'), [
+    ('today_first', 'It stopped the first time I tried', '처음 해 봤을 때부터 멈췄어요'),
+    ('worked_before', 'It worked before', '전에는 됐어요'),
+    ('not_sure', 'Not sure', '잘 모르겠어요')]),
+  ('task_context', ('What was the task for?', '무슨 용도의 작업이었나요?'), [
+    ('my_account_consumer', 'Something in my own personal account', '내 개인 계정에서 하는 일'),
+    ('my_account_work', 'Something in my work account', '내 업무 계정에서 하는 일'),
+    ('public_read', 'Reading a public page', '공개된 페이지 읽기'),
+    ('other', 'Something else', '그 밖의 일')]),
+] %}
+{% block title %}{{ 'Why did it stop?' if en else '왜 멈췄나요?' }} · {{ t.brand }}{% endblock %}
+{% block content %}
+<section class="container page-head">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ 'WHY IT STOPPED' if en else '멈춘 이유 살펴보기' }}</p>
+  <h1>{{ 'When an agent stops at a site: where to look, and who has to act.' if en else '에이전트가 사이트에서 멈췄을 때: 어디를 보고, 누가 나서야 하는지.' }}</h1>
+  <p class="lead small-lead">{{ 'Choose what you saw. AHN shows which layer to look at first, whether a person has to take the step, and what other agents reported. It is not a check of the site, and AHN has not confirmed a cause.' if en else '본 것을 골라 주세요. AHN 이 먼저 볼 층, 사람이 직접 해야 하는 단계인지, 다른 에이전트가 알린 것을 보여 줘요. 사이트를 확인한 결과가 아니며, 원인을 AHN 이 확인한 것도 아니에요.' }}</p>
+</section>
+<section class="container section top-tight report-section">
+  <form id="why-form" class="report-form" data-lang="{{ lang }}" data-rules='{{ host_rules|tojson }}' novalidate>
+    <div class="report-grid">
+      <div class="why-wide"><label for="why-host">{{ 'Public website hostname' if en else '공개 웹사이트 호스트명' }}</label><input id="why-host" name="site_host" required maxlength="2048" autocomplete="off" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.org"><small>{{ 'You can paste an address. Your browser keeps only the hostname before anything is sent; the path, query, sign-in details and port are cut off and never sent.' if en else '주소를 붙여 넣어도 돼요. 보내기 전에 브라우저가 호스트명만 남기고 경로·쿼리·로그인 정보·포트는 잘라 내며, 잘린 부분은 보내지 않아요.' }}</small></div>
+      {% for name, label, options in fields %}
+      <div><label for="why-{{ name }}">{{ label[0 if en else 1] }}</label><select id="why-{{ name }}" name="{{ name }}"><option value="" selected>{{ 'Not specified' if en else '선택하지 않음' }}</option>{% for value, en_label, ko_label in options %}<option value="{{ value }}">{{ en_label if en else ko_label }}</option>{% endfor %}</select></div>
+      {% endfor %}
+      <div id="why-since-date-row" hidden><label for="why-since_date">{{ 'The last day it worked (up to 90 days back)' if en else '마지막으로 됐던 날(최대 90일 전까지)' }}</label><input id="why-since_date" name="since_date" type="date"></div>
+    </div>
+    <p class="report-defaults">{{ 'Only the hostname and the choices above are sent, to GET /v1/why. Nothing you choose is stored. The answer counts as one lookup.' if en else '호스트명과 위에서 고른 값만 GET /v1/why 로 보내요. 고른 값은 저장하지 않아요. 답은 조회 한 번으로 셉니다.' }}</p>
+    <button class="report-submit" type="submit">{{ 'Show where to look' if en else '어디를 볼지 보기' }}</button>
+    <p id="why-sent" class="why-sent" role="status" aria-live="polite"></p>
+  </form>
+  <div id="why-result" class="why-result" aria-live="polite"></div>
+</section>
+<script defer src="/static/why.js?v=1"></script>
+{% endblock %}
