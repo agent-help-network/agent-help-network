@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.9
 
 - `NextAction` keeps the optional `status_url_covers` (`"api"` when `status_url` is a status page that covers only the provider's API, not the whole site; None otherwise, and from an older service). `provider_status.note` and `official_paths.consumer.paths[].topic` arrive in the raw dictionaries as the service sends them.
 

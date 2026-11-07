@@ -294,7 +294,7 @@ def test_summary_stays_within_700_with_long_values():
 
 
 def test_next_action_is_exported():
-    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.8"
+    assert ahn.NextAction is NextAction and ahn.__version__ == "0.6.9"
     assert _result.NextAction is NextAction
 
 
@@ -481,3 +481,23 @@ def test_customer_url_equal_to_url_is_not_repeated_and_bad_values_are_dropped():
     for bad in ("http://evil.example/x", "https://a.example/x y", 7, None, "https://" + "a" * 200 + ".example/"):
         body["next_action"]["customer_url"] = bad
         assert parse(body).next_action.customer_url is None
+
+
+# --- status_url_covers (D102; ahn-client 0.6.9) -------------------------------------------------------------------
+
+def test_status_url_covers_is_kept_only_as_api_next_to_a_status_url_and_round_trips():
+    body = answer("use_official_path")
+    assert parse(body).next_action.status_url_covers is None and "status_url_covers" not in parse(body).next_action.to_dict()
+    body["next_action"].update(status_url=STATUS_PAGE, status_url_covers="api")
+    action = parse(body).next_action
+    assert action.status_url_covers == "api" and action.to_dict()["status_url_covers"] == "api"
+    again = parse({**body, "next_action": {**body["next_action"], **action.to_dict()}}).next_action
+    assert again.status_url_covers == "api" and again.to_dict() == action.to_dict()
+    for odd in ("site", "API", "", None, 3, ["api"], {"x": 1}):
+        body["next_action"]["status_url_covers"] = odd
+        assert parse(body).next_action.status_url_covers is None, odd
+        assert "status_url_covers" not in parse(body).next_action.to_dict()
+    # without a status_url there is no page to describe
+    body["next_action"].pop("status_url")
+    body["next_action"]["status_url_covers"] = "api"
+    assert parse(body).next_action.status_url_covers is None
