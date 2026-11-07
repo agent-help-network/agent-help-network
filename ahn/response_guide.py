@@ -25,7 +25,7 @@ LOG = logging.getLogger(__name__)
 SAFE_URL = re.compile(r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/%+=&?#-]*)?$")
 URL_MAX = 200
 LINE_MAX = 200
-# D102: with two or more curated customer pages, the end of a sentence that hands over next_action.customer_url names the list (topic per
+# D102: with two or more curated customer pages, at least one of them tagged with a topic, the end of a sentence that hands over next_action.customer_url names the list (topic per
 # page). Left off a sentence it would push past LINE_MAX.
 CUSTOMER_REF = "next_action.customer_url"
 MORE_BY_TOPIC = " More by topic: official_paths.consumer."
@@ -469,9 +469,10 @@ def feed_unreadable(provider_status: dict | None) -> bool:
     return bool(provider_status and provider_status.get("freshness") == "stale")
 
 
-def consumer_path_count(official: dict | None) -> int:
-    """D102: how many pages official_paths.consumer lists (0 when it is absent)."""
-    return len(((official or {}).get("consumer") or {}).get("paths") or [])
+def consumer_topic_list(official: dict | None) -> bool:
+    """D102: whether official_paths.consumer lists two or more pages and at least one carries a topic (a list worth pointing at)."""
+    paths = ((official or {}).get("consumer") or {}).get("paths") or []
+    return len(paths) >= 2 and any(path.get("topic") for path in paths)
 
 
 def same_site(status_url: str, site_host: str) -> bool:
@@ -748,7 +749,7 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             if customer is None:  # D81: the developer path is not a way to check status
                 sentence = (STATUS_AFTER_ROWS if on else STATUS_AFTER_ROWS_BEFORE).get(row, sentence)
             sentence = f"{STATUS_ROWS[lead]} {sentence}"
-    if (customer and CUSTOMER_REF in sentence and consumer_path_count(result.get("official_paths")) >= 2
+    if (customer and CUSTOMER_REF in sentence and consumer_topic_list(result.get("official_paths"))
             and len(sentence) + len(MORE_BY_TOPIC) <= LINE_MAX):
         sentence += MORE_BY_TOPIC  # D102: a customer sentence points at the one customer_url; with several pages it names the list
     out = {"summary_line": sentence, "next_action": action}

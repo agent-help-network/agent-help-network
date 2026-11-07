@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from test_d85_edge_refusal import GUIDE_MODES, STAGES  # noqa: E402
+from test_d85_edge_refusal import ABSENT, ALLOWS, GUIDE_MODES, STAGES  # noqa: E402
 from test_response_guide import NOW, space  # noqa: E402
 from test_site_probe import row as probe_row  # noqa: E402
 
@@ -53,12 +53,13 @@ ONE = {"paths": [{"kind": "customer_help", "url": HELP, "source_url": "https://w
 TWO = {"paths": [{"kind": "customer_help", "url": HELP, "source_url": "https://www.example.com/", "topic": "contact"},
                  {"kind": "customer_help", "url": RETURNS, "source_url": "https://www.example.com/", "topic": "returns"}],
        "verified_at": "2026-10-31"}
+NOTOPIC = {"paths": [{k: v for k, v in p.items() if k != "topic"} for p in TWO["paths"]], "verified_at": "2026-10-31"}
 THREE = {"paths": [*TWO["paths"], {"kind": "official_app", "url": APP, "source_url": "https://www.example.com/app"}],
          "verified_at": "2026-10-31"}
 OFFICIAL = {"name": "Example", "api_docs": "https://developer.example.com/docs", "developer_portal": None, "note": None}
 API_PAGE = {"source_name": "DHL API Service Status", "source_url": "https://status.api.dhl.com/", "covers": "api"}
 PLAIN_PAGE = {"source_name": "Example Status", "source_url": "https://status.example.com/"}
-TAIL_FORMS = {"none": None, "one": ONE, "two": TWO, "three": THREE}
+TAIL_FORMS = {"none": None, "one": ONE, "two": TWO, "three": THREE, "two_no_topic": NOTOPIC}
 
 
 def with_consumer(official, consumer):
@@ -89,7 +90,7 @@ def grid(stride: int):
         if index % stride:
             continue
         yield case
-        for consumer in (ONE, TWO, THREE):
+        for consumer in (ONE, TWO, THREE, NOTOPIC):
             yield {**case, "official": with_consumer(case.get("official") or OFFICIAL, consumer)}
 
 
@@ -98,8 +99,7 @@ def expected(old_out, new_in, page):
     customer page when two or more are listed and it fits, and the status_url_covers key on an API-only official status page."""
     out = copy.deepcopy(old_out)
     action = out["next_action"]
-    paths = ((new_in.get("official_paths") or {}).get("consumer") or {}).get("paths") or []
-    if "customer_url" in action and CUSTOMER_REF in out["summary_line"] and len(paths) >= 2 \
+    if "customer_url" in action and CUSTOMER_REF in out["summary_line"] and response_guide.consumer_topic_list(new_in.get("official_paths")) \
             and len(out["summary_line"]) + len(MORE_BY_TOPIC) <= LINE_MAX:
         out["summary_line"] += MORE_BY_TOPIC
     if page and page.get("covers") == "api" and action.get("status_url") == page["source_url"]:
@@ -132,7 +132,7 @@ def compare(stride: int) -> dict:
                 if new_out["summary_line"] != old_out["summary_line"]:
                     counts["tail"] += 1
                     assert new_out["summary_line"] == old_out["summary_line"] + MORE_BY_TOPIC and len(new_out["summary_line"]) <= LINE_MAX
-                elif CUSTOMER_REF in old_out["summary_line"] and len(((case.get("official") or {}).get("consumer") or {}).get("paths") or []) >= 2:
+                elif CUSTOMER_REF in old_out["summary_line"] and response_guide.consumer_topic_list(case.get("official")):
                     counts["tail_omitted_long"] += 1
                     assert len(old_out["summary_line"]) + len(MORE_BY_TOPIC) > LINE_MAX
                 else:
@@ -288,6 +288,41 @@ def test_one_customer_page_leaves_every_sentence_byte_for_byte_and_two_or_more_a
                 assert line == one["summary_line"]
             assert len(line) <= LINE_MAX
             assert {k: v for k, v in many["next_action"].items()} == one["next_action"]  # do, url, customer_url: the same
+
+
+def test_two_pages_with_no_topic_get_no_tail_and_the_bestbuy_entry_gets_it():
+    for error_class, stage in itertools.product((None, "site_access", "login_auth"), STAGES):
+        bare, _ = customer_answer(NOTOPIC, error_class=error_class, stage=stage)
+        one, _ = customer_answer(ONE, error_class=error_class, stage=stage)
+        assert bare == one and MORE_BY_TOPIC not in bare["summary_line"], (error_class, stage)
+    # a single tagged page among untagged ones is enough
+    mixed = {**TWO, "paths": [TWO["paths"][0], {k: v for k, v in TWO["paths"][1].items() if k != "topic"}]}
+    assert response_guide.consumer_topic_list({"consumer": mixed}) and not response_guide.consumer_topic_list({"consumer": NOTOPIC})
+    assert not response_guide.consumer_topic_list({"consumer": ONE}) and not response_guide.consumer_topic_list(None)
+    # bestbuy.com: two tagged pages
+    best = {**OFFICIAL, "consumer": CONSUMER_PATHS["bestbuy.com"]}  # a developer API listed beside the two customer pages, as the tail rows need
+    assert response_guide.consumer_topic_list(best)
+    pending = {"robots_status": "pending", "robots": None, "freshness": "pending", "llms_txt_status": "pending", "retry_after_seconds": 120}
+    hits = tails = 0
+    for error_class, stage, profile in itertools.product((None, "site_access", "service_error"), STAGES, (None, pending, ABSENT, ALLOWS)):
+        case = dict(error_class=error_class, access_profile=profile, official=best)
+        rec = rec_of(triage, case, stage, True)
+        args = (True, True, False, True, error_class, stage, True, True)
+        line = guide(result_of(case, rec), *args)["summary_line"]
+        old = pre_rg.guide(result_of(case, rec_of(pre, case, stage, True)), *args)["summary_line"]
+        if CUSTOMER_REF in old:
+            hits += 1
+            fits = len(old) + len(MORE_BY_TOPIC) <= LINE_MAX
+            assert line == (old + MORE_BY_TOPIC if fits else old), (error_class, stage)
+            tails += fits
+        else:
+            assert line == old
+    assert hits and tails, (hits, tails)
+
+
+def test_hosts_that_get_the_tail_are_counted():
+    tagged = [host for host, entry in CONSUMER_PATHS.items() if response_guide.consumer_topic_list({"consumer": entry})]
+    assert tagged == ["bestbuy.com"]
 
 
 def test_every_customer_sentence_of_the_guide_is_checked_against_the_200_character_line():
