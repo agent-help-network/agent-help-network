@@ -81,6 +81,12 @@
      "title": "Task Step",
      "type": "string"
     },
+    "test": {
+     "default": null,
+     "description": "Set true to mark this lookup as a test (like the header X-AHN-Test: 1): it is kept out of the anonymous counts and the answer is the same. Leave it out for a real lookup; any other value is ignored.",
+     "title": "Test",
+     "type": "boolean"
+    },
     "via": {
      "default": null,
      "enum": [

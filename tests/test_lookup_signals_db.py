@@ -658,3 +658,29 @@ def test_the_cut_to_the_hour_is_utc_whatever_the_session_time_zone(db):
         with connect(db) as conn:
             conn.execute("ALTER DATABASE ahn_test RESET timezone")
     assert rows(db, "lookup_sources_daily")[0]["last_at"] == old.replace(minute=0)
+
+
+# --- D106: the test mark as a query parameter, same effect as the header ------------------------------------
+
+def test_the_query_mark_leaves_a_lookup_out_exactly_like_the_header(db, client):
+    assert lookup(client, error_class="site_access", ahn_test="1").status_code == 200
+    assert lookup(client, error_class="site_access", ahn_test=" 1 ").status_code == 200
+    assert lookup(client, error_class="site_access", headers={"X-AHN-Test": "1"}).status_code == 200
+    assert rows(db) == [] and rows(db, "lookup_sources_daily") == []
+    with connect(db) as conn:  # like the header: the old daily totals still count it
+        assert conn.execute("SELECT sum(checks) AS n FROM lookup_metrics WHERE site_host=%s", (HOST,)).fetchone()["n"] == 3
+
+
+@pytest.mark.parametrize("value", ["2", "0", "yes", "true", "", "11"])
+def test_any_other_query_value_is_ignored_not_refused_and_the_lookup_is_counted(db, client, value):
+    before = len(rows(db))
+    assert lookup(client, error_class="site_access", ahn_test=value).status_code == 200
+    assert len(rows(db)) == before + 1
+
+
+def test_the_test_mark_never_changes_the_answer(db, client):
+    params = {"error_class": "site_access", "http_status": 403}
+    plain = comparable(lookup(client, **params))
+    assert comparable(lookup(client, ahn_test="1", **params)) == plain
+    assert comparable(lookup(client, headers={"X-AHN-Test": "1"}, **params)) == plain
+    assert comparable(lookup(client, ahn_test="2", **params)) == plain
