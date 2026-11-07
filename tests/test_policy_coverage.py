@@ -163,6 +163,9 @@ LOOKUP_FIELDS = {
     "agent_vendor": Phrase("agent_vendor", "agent_vendor"),
     # D73: chooses which stored measurements the answer's cause is read from; neither counted nor stored (the policy sentence says so).
     "failed_at": Phrase("failed_at", "failed_at"),
+    # D106: a test mark (like the X-AHN-Test header); it only keeps the lookup out of the counts and stores nothing.
+    "ahn_test": Exempt("REST only: the value 1 marks a test lookup, like the X-AHN-Test header; it is not data about anyone and is not stored"),
+    "test": Exempt("the MCP form of ahn_test: true marks a test lookup; it is not data about anyone and is not stored"),
     "window_hours": Exempt("REST only: a whole number 1-168 that narrows the observation window, not data about anyone"),
 }
 
