@@ -359,7 +359,9 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D106 (before D106: 480aa7a0ad7808c6157b8f2adccb5090c703a2ebba8e1e8a6292ff0445e954c2), which adds only the optional `test` input of check_incident.
     # and for the login/verification wording (before it: eee7b95abbd6f03bbf739ef2c5079eefb85397214d5ef22cfa5a4b28200cae65), which only changes the check_incident description text.
     # and for D102 (before D102: 0e7f3cb8d4a6117eb6fd90d6adcc323f30926035cabf2acef8553cd114df21e5), which adds only the optional `provider_status.note`, `next_action.status_url_covers` and `official_paths.consumer.paths[].topic`.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "d100f7c4a9ae41a7e01e060392666c1fdb7053da16b6d217dcb071e22c561844"
+    # and for D109 (before D109: d100f7c4a9ae41a7e01e060392666c1fdb7053da16b6d217dcb071e22c561844), which adds only the optional `cause` and `cause_basis`
+    # to `observations[]` and to the `report_observation` input, the optional `links.why`, and one sentence of the `report_observation` description.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "fc6f909044a2638fa36db274e1315765f6d57b201708151a4966fed1e232b9c0"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

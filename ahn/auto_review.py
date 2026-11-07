@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg.rows import dict_row
 
 from .db import connect_url
+from .models import CAUSE_NAMING_SITE_OR_PLATFORM
 from .service import aggregate_eligible_host, policy_host
 
 
@@ -47,6 +48,10 @@ def _decision(conn, row: dict, now: datetime) -> str:
         return "old_observation"
     if row["observed_at"] > row["received_at"] + timedelta(minutes=5):
         return "future_observation"
+    if row.get("cause") in {item.value for item in CAUSE_NAMING_SITE_OR_PLATFORM}:
+        # D109: a cause that names a site's policy or the reporter's own product is claimed by one agent and checked by no one;
+        # an operator looks at it before it is shown. The other causes make a claim the error_class already makes.
+        return "cause_review"
     burst = conn.execute(
         """SELECT count(*) AS n FROM observations o JOIN incidents i ON i.id=o.incident_id
         WHERE i.site_host = ANY(%s) AND o.synthetic=false AND o.withdrawn_at IS NULL
@@ -91,7 +96,7 @@ def review_batch(database_url: str, *, now: datetime | None = None, limit: int =
         # publication over a withdrawal or manual hide in the same transaction.
         rows = conn.execute(
             """SELECT o.id,o.incident_id,o.observed_at,o.received_at,o.outcome,
-                      o.attempt_env,i.site_host,i.task_step
+                      o.attempt_env,o.cause,i.site_host,i.task_step
                FROM observations o JOIN incidents i ON i.id=o.incident_id
                WHERE o.review_state='pending' AND o.review_reason IS NULL
                  AND o.synthetic=false AND o.withdrawn_at IS NULL

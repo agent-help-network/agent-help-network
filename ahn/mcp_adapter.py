@@ -18,7 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 import pydantic_core
 from .check_text import VENDOR_NAMES, age_text, unfollowed_www_redirect
-from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, TEST_QUERY, lenient_codes, test_marked
+from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, TEST_QUERY, WHY_BASE, lenient_codes, test_marked, why_url
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
 from .triage import accepted_vendor
@@ -173,8 +173,10 @@ async def check_incident(site_host: str, error_class: str = "", task_step: str =
     # D106: only the JSON value true marks a test (like the exact header value 1); anything else is dropped, never refused.
     if test is True:
         params[TEST_QUERY] = "1"
-    response = CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer_request_headers(ctx)))
-    return check_result(response, why_url=why_link(params))
+    outer = outer_request_headers(ctx)
+    response = CheckResponse(**await call_api("GET", "/v1/incidents/check", params=params, extra_headers=outer))
+    # D109: the REST answer's links.why carries the test mark from the header too; the MCP line must be the same string.
+    return check_result(response, why_url=why_link({**params, TEST_QUERY: "1"} if test_marked(outer[TEST_HEADER] if TEST_HEADER in outer else None) else params))
 
 
 PROCEED_NOTE = ("Proceed means the site declares no block, not that nothing blocked you. If your step was refused, the refusal may have come from "
@@ -209,24 +211,14 @@ def ahn_check_line(check) -> str | None:
     return f"AHN server check {age_text(check.age_seconds)}: {what}. {_CHECK_CAVEAT}"
 
 
-WHY_BASE = "https://agenthelpnetwork.com"
-SAFE_CODE = re.compile(r"[A-Za-z0-9._-]{1,253}")
 WHY_LEAD = "Why it stopped and whether a person must act: "
-# The codes that say the caller's step failed. A lookup without one (a status check, a plain "is it down") gets no link.
-WHY_FAILURE_CODES = ("error_class", "failure_stage", "http_status", "challenge", "retry_after")
 
 
 def why_link(params: dict) -> str | None:
     """D108: the GET /v1/why address for the same failed lookup, built from the hostname and the codes the caller itself sent
-    (already checked against their lists above). It only builds a string: nothing is fetched and the answer is not read."""
-    if not any(params[name] not in (None, "", "none") for name in WHY_FAILURE_CODES if name in params):
-        return None
-    # via, agent_vendor and the test mark are arguments GET /v1/why takes too, so its answer is computed for the same lookup.
-    # task_step and failed_at are not (it does not take them): the linked answer is calculated without those two values.
-    query = {name: params[name] for name in ("site_host", *WHY_FAILURE_CODES, "via", "agent_vendor", TEST_QUERY) if name in params and params[name] not in (None, "")}
-    if not all(SAFE_CODE.fullmatch(str(value)) for value in query.values()):
-        return None  # every value is a checked hostname or list code; anything else gets no link rather than an escaped one
-    return f"{WHY_BASE}/v1/why?" + "&".join(f"{name}={value}" for name, value in query.items())
+    (already checked against their lists above). It only builds a string: nothing is fetched and the answer is not read.
+    D109 moved the builder to lookup_signals.why_url so that links.why of the REST answer is the same string."""
+    return why_url(params)
 
 
 def check_result(response: CheckResponse, why_url: str | None = None):
@@ -297,7 +289,7 @@ async def update_outcome(observation_id: str, outcome: OutcomeIn) -> Receipt:
 
 if os.environ.get("AHN_PUBLIC_MODE") != "1" or os.environ.get("AHN_REPORTING_ENABLED") == "1":
     mcp.tool(
-        description="Submit one de-identified firsthand observation under your own operating authority and platform rules. Public reports enter private review and are not site-status claims. Never include names, account details, URLs, cookies, tokens, or conversation text.",
+        description="Submit one de-identified firsthand observation under your own operating authority and platform rules. Public reports enter private review and are not site-status claims. Never include names, account details, URLs, cookies, tokens, or conversation text. Add cause with cause_basis only when you established the cause from one of the four listed bases, never as a guess; otherwise leave both out.",
         annotations=ToolAnnotations(title="Report an authorized observation", read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True),
         structured_output=True,
     )(report_observation)

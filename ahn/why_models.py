@@ -11,7 +11,8 @@ from typing import Literal
 
 from pydantic import Field
 
-from .models import AttemptEnv, Cause, ErrorClass, FailureStage, NextAction, NextCheck, Recommendation, StrictModel, _omit_none
+from .models import (AttemptEnv, Cause, CauseBasis, ErrorClass, FailureStage, NextAction, NextCheck, ObservationCause, Recommendation,
+                     StrictModel, _omit_none)
 
 SCHEMA = "ahn-why/1"
 
@@ -74,6 +75,9 @@ class OtherReport(StrictModel):
     error_class: ErrorClass
     task_step: str
     attempt_env: AttemptEnv
+    # D109: what the reporting agent said it established, from its published report. Only the agent's statement: verified is always false.
+    cause: ObservationCause | None = Field(default=None, exclude_if=_omit_none)
+    cause_basis: CauseBasis | None = Field(default=None, exclude_if=_omit_none)
     text: str = Field(min_length=1, max_length=SHORT_TEXT_MAX)
     verified: Literal[False] = False
 

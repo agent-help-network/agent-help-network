@@ -1121,6 +1121,17 @@
      "title": "Cause",
      "type": "object"
     },
+    "CauseBasis": {
+     "description": "D109: what the reporting agent established the cause from.",
+     "enum": [
+      "own_platform_message",
+      "site_message",
+      "person_confirmed",
+      "compared_with_own_browser"
+     ],
+     "title": "CauseBasis",
+     "type": "string"
+    },
     "CauseWindow": {
      "additionalProperties": true,
      "description": "D73: the period of the measurement the cause rests on (UTC). ``to`` is left out while it is still going on.",
@@ -1158,6 +1169,28 @@
       },
       "attempt_env": {
        "$ref": "#/$defs/AttemptEnv"
+      },
+      "cause": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ObservationCause"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
+      },
+      "cause_basis": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/CauseBasis"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null
       },
       "error_class": {
        "$ref": "#/$defs/ErrorClass"
@@ -1885,6 +1918,19 @@
        ],
        "default": null,
        "title": "Feedback"
+      },
+      "why": {
+       "anyOf": [
+        {
+         "maxLength": 600,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Why"
       }
      },
      "title": "Links",
@@ -2270,6 +2316,22 @@
      ],
      "title": "NextCheck",
      "type": "object"
+    },
+    "ObservationCause": {
+     "description": "D109: the cause the reporting agent says it established, by the layer it points at. There is no \"unknown\" value: a\nreport that did not establish a cause leaves the field out.",
+     "enum": [
+      "site_said_no_agents",
+      "site_bot_check",
+      "site_unavailable",
+      "platform_refused",
+      "platform_needs_person",
+      "verification_on_person_device",
+      "verification_not_received",
+      "signed_out",
+      "agent_browser_differs"
+     ],
+     "title": "ObservationCause",
+     "type": "string"
     },
     "OfficialAccess": {
      "additionalProperties": true,
@@ -3731,6 +3793,17 @@
      "title": "AttemptEnv",
      "type": "string"
     },
+    "CauseBasis": {
+     "description": "D109: what the reporting agent established the cause from.",
+     "enum": [
+      "own_platform_message",
+      "site_message",
+      "person_confirmed",
+      "compared_with_own_browser"
+     ],
+     "title": "CauseBasis",
+     "type": "string"
+    },
     "ChallengeKind": {
      "enum": [
       "interactive_check",
@@ -3763,6 +3836,22 @@
      "title": "ErrorClass",
      "type": "string"
     },
+    "ObservationCause": {
+     "description": "D109: the cause the reporting agent says it established, by the layer it points at. There is no \"unknown\" value: a\nreport that did not establish a cause leaves the field out.",
+     "enum": [
+      "site_said_no_agents",
+      "site_bot_check",
+      "site_unavailable",
+      "platform_refused",
+      "platform_needs_person",
+      "verification_on_person_device",
+      "verification_not_received",
+      "signed_out",
+      "agent_browser_differs"
+     ],
+     "title": "ObservationCause",
+     "type": "string"
+    },
     "ObservationIn": {
      "additionalProperties": false,
      "properties": {
@@ -3777,6 +3866,30 @@
       "attempt_env": {
        "$ref": "#/$defs/AttemptEnv",
        "default": "unknown"
+      },
+      "cause": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/ObservationCause"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Optional, with cause_basis, for outcome blocked or error: the cause you established. Leave out if not established."
+      },
+      "cause_basis": {
+       "anyOf": [
+        {
+         "$ref": "#/$defs/CauseBasis"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "Required with cause: what you established it from."
       },
       "challenge_kind": {
        "$ref": "#/$defs/ChallengeKind",

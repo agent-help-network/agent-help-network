@@ -189,7 +189,10 @@ def _snapshot(settings: Settings) -> dict:
                GROUP BY review_reason ORDER BY reports DESC,review_reason"""
         ).fetchall()
         held_reports = conn.execute(
-            """SELECT o.id,i.site_host,i.error_class,o.review_reason,o.received_at
+            """SELECT o.id,i.site_host,i.error_class,o.review_reason,o.received_at,o.cause,o.cause_basis,
+                      CASE WHEN o.cause IS NULL THEN NULL ELSE (SELECT count(*)::bigint FROM observations o2 JOIN incidents i2 ON i2.id=o2.incident_id
+                        WHERE o2.cause=o.cause AND i2.site_host=i.site_host AND o2.synthetic=false AND o2.withdrawn_at IS NULL
+                          AND o2.received_at >= now() - interval '7 days') END AS same_cause_7d
                FROM observations o JOIN incidents i ON i.id=o.incident_id
                WHERE o.review_state='pending' AND o.review_reason IS NOT NULL
                  AND o.synthetic=false AND o.withdrawn_at IS NULL
