@@ -1,6 +1,6 @@
 ---
 name: ahn-lookup
-description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing.
+description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing.
 ---
 
 # Agent Help Network lookup
@@ -20,7 +20,7 @@ Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service;
 Send the bare lowercase hostname and enum codes, nothing else:
 
 - `site_host`: `nytimes.com`, not `https://www.nytimes.com/section/world?x=1`. A leading `www.` can be dropped.
-- `error_class`: `site_access` (403, 402 payment required, forbidden, blocked, access denied), `login_auth` (login wall, 401, sign-in required), `human_verification` (CAPTCHA, "verify you are human", challenge page), `service_error` (5xx, 408, 429, timeout, connection reset). A 404, 410, 400 or 422 is a wrong address or request, not a block: fix the URL, send no `error_class` and do not call it `site_access`; the hook skips these.
+- `error_class`: `site_access` (403, 402 payment required, forbidden, blocked, access denied), `login_auth` (login wall, 401, sign-in required, credentials entered but sign-in did not go through, or an extra verification step: a code by text or email, an authenticator app approval, a new-device check), `human_verification` (CAPTCHA, "verify you are human", challenge page), `service_error` (5xx, 408, 429, timeout, connection reset). A 404, 410, 400 or 422 is a wrong address or request, not a block: fix the URL, send no `error_class` and do not call it `site_access`; the hook skips these.
 - `agent_vendor` (optional): `anthropic`, only when the blocked step was Claude Code's own `WebFetch`; otherwise leave it out.
 - `failure_stage` (optional): `before_target_response` when no response came back (DNS failure, connection refused, Claude Code refused the fetch), `response_observed` when an HTTP status came back, `access_denial_observed` when a denial page was clearly shown.
 
@@ -36,7 +36,7 @@ Start with `summary_line` (one fixed English sentence) and `next_action`: `do` r
 | :- | :- | :- |
 | `proceed` | robots.txt does not disallow the root for the tokens checked, or is absent: no block is declared, which does not mean nothing blocked you | Continue modestly. If a page refused you, that came from your tool, the site's edge or a login: tell your user; do not retry with another tool or user agent after a site or robots.txt refusal. Honor any Crawl-delay. |
 | `use_official_path` | an official API or portal is listed and a failure was reported (or none was sent and the lookup was not marked `status_check`), or robots.txt blocks agents | Prefer the documented API over page automation. It may need the user's own key; ask the user rather than inventing access. |
-| `hand_off_to_human` | the failure is a login wall or human verification | Stop and hand the step to the user through the normal handoff. Do not solve, bypass or route around CAPTCHAs or logins, and do not ask for passwords. |
+| `hand_off_to_human` | the failure is a login wall or human verification | Stop and hand the step to the user through the normal handoff. Do not solve, bypass or route around CAPTCHAs or logins, and do not ask for passwords. Tell the user which step stopped you and whether it needs them personally (for example a code sent to their phone), rather than only saying it failed. |
 | `wait_provider_incident` | the provider's fresh status feed gives a reason to wait (an incident updated within 7 days, maintenance, or a `major`/`critical` page; see the [contract](https://github.com/agent-help-network/agent-help-network/blob/main/docs/api-contract.en.md#recommendation)) | Compare the affected services with the blocked step; wait or retry later instead of hammering the site. |
 | `stop_declared_block` | robots.txt disallows agent user agents at the root and no official path is listed | Stop automated retries against that host's pages. Tell the user what the host declares and let them decide. |
 | `unknown` | there is not enough declared or official information | Keep the site's status unknown. Diagnose the specific attempt; do not conclude that the site is down or that it blocks you. |
