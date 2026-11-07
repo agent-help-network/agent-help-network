@@ -136,20 +136,43 @@ def check_response():
     return CheckResponse.model_validate({**d63.envelope(result), **d63.guide(result)})
 
 
-def test_a_failed_lookup_gets_a_third_block_with_only_the_codes_it_sent():
-    params = {"site_host": "login-fixture-host.com", "error_class": "login_auth", "task_step": "login", "http_status": "403", "agent_vendor": "openai", "failed_at": "2026-11-07T00:00:00Z"}
+def test_a_failed_lookup_gets_one_more_line_in_the_first_block_and_still_two_blocks():
+    params = {"site_host": "login-fixture-host.com", "error_class": "login_auth", "task_step": "login", "http_status": "403", "agent_vendor": "openai",
+              "via": "browser", "ahn_test": "1", "failed_at": "2026-11-07T00:00:00Z"}
     link = mcp_adapter.why_link(params)
     assert link.startswith("https://agenthelpnetwork.com/v1/why?")
-    assert parse_qs(urlparse(link).query) == {"site_host": ["login-fixture-host.com"], "error_class": ["login_auth"], "http_status": ["403"]}
+    # the codes /v1/why takes are all in the link; task_step and failed_at are not arguments of /v1/why, so they are left out
+    assert parse_qs(urlparse(link).query) == {"site_host": ["login-fixture-host.com"], "error_class": ["login_auth"], "http_status": ["403"],
+                                              "via": ["browser"], "agent_vendor": ["openai"], "ahn_test": ["1"]}
     response = check_response()
     plain = mcp_adapter.check_result(response)
     linked = mcp_adapter.check_result(response, why_url=link)
-    assert len(plain.content) == 2 and len(linked.content) == 3
-    assert linked.content[2].text == "Why it stopped and whether a person must act: " + link
-    # the first two blocks and the structured content are the same bytes with or without the line
-    assert [c.text for c in linked.content[:2]] == [c.text for c in plain.content]
+    assert len(plain.content) == 2 and len(linked.content) == 2
+    assert linked.content[0].text == plain.content[0].text + "\n" + "Why it stopped and whether a person must act: " + link
+    # the last block is the JSON, the same bytes with or without the line, and the structured content is unchanged
+    assert linked.content[-1].text == linked.content[1].text == plain.content[1].text
     assert linked.structured_content == plain.structured_content
-    assert json.loads(linked.content[1].text) == linked.structured_content
+    assert json.loads(linked.content[-1].text) == linked.structured_content
+    assert json.dumps(linked.structured_content, sort_keys=True) == json.dumps(plain.structured_content, sort_keys=True)
+
+
+def test_the_real_check_incident_path_puts_the_line_in_the_first_block(monkeypatch):
+    result = d63.answer(d63.WITH_CONSUMER, d63.ALLOWS)
+    payload = {**d63.envelope(result), **d63.guide(result)}
+
+    async def fake(method, path, *, params=None, extra_headers=None, **_):
+        return payload
+    monkeypatch.setattr(mcp_adapter, "call_api", fake)
+    args = {"site_host": "login-fixture-host.com", "http_status": "403", "via": "browser", "agent_vendor": "openai", "task_step": "login", "test": True}
+    failed = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", args))
+    plain = asyncio.run(mcp_adapter.mcp.call_tool("check_incident", {"site_host": "login-fixture-host.com"}))
+    assert len(failed.content) == 2 and len(plain.content) == 2
+    lines = failed.content[0].text.splitlines()
+    assert lines[-1].startswith(mcp_adapter.WHY_LEAD + "https://agenthelpnetwork.com/v1/why?")
+    query = parse_qs(urlparse(lines[-1].rsplit(" ", 1)[1]).query)
+    assert query == {"site_host": ["login-fixture-host.com"], "http_status": ["403"], "via": ["browser"], "agent_vendor": ["openai"], "ahn_test": ["1"]}
+    assert mcp_adapter.WHY_LEAD not in plain.content[0].text
+    assert failed.content[-1].text == plain.content[-1].text and json.loads(failed.content[-1].text) == failed.structured_content
 
 
 @pytest.mark.parametrize("params", [
@@ -168,7 +191,7 @@ def test_the_link_is_only_a_string_and_the_answer_is_not_read_for_it():
     assert "def why_link(params: dict)" in source
 
 
-def test_the_third_block_fits_the_text_a_tool_result_may_carry():
+def test_the_link_line_fits_the_text_a_tool_result_may_carry():
     longest = {"site_host": "a" * 63 + "." + "b" * 63 + "." + "c" * 63 + ".com", "error_class": "human_verification", "failure_stage": "access_denial_observed",
                "http_status": "403", "challenge": "header", "retry_after": "gt_3600"}
     assert len(mcp_adapter.WHY_LEAD + mcp_adapter.why_link(longest)) < 500

@@ -135,7 +135,7 @@ def clean_host(raw: str | None) -> tuple[str, bool]:
         text = text.rsplit("@", 1)[1]
         cut = True
     head, _, port = text.rpartition(":")
-    if head and port.isdigit():
+    if head and port.isascii() and port.isdigit():
         text = head
         cut = True
     host = normalize_host_input(text)
