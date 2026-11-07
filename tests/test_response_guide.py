@@ -623,7 +623,7 @@ def test_mcp_without_a_summary_is_the_single_block_it_was_before(monkeypatch):
 def test_mcp_tool_description_has_the_added_sentence_and_the_old_ones():
     tool = next(t for t in asyncio.run(mcp_adapter.mcp.list_tools()) if t.name == "check_incident")
     assert tool.description.endswith("The first text block is a one-line summary; next_action gives the step to take, and recommendation stays the verdict.")
-    assert "A no_reports result means no observations, not a healthy site." in tool.description
+    assert "no_reports is not a healthy site." in tool.description
     assert set(NEW_KEYS) <= set(tool.output_schema["properties"])
     assert not set(NEW_KEYS) & set(tool.output_schema.get("required", []))
 
