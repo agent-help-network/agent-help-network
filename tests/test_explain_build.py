@@ -363,3 +363,14 @@ def test_a_253_character_host_with_every_code_still_makes_a_valid_answer(lang, s
     parsed = WhyResponse.model_validate(body)
     assert parsed.handoff and any(h.to == "user" for h in parsed.handoff)
     assert len(body["links"]["self"]) <= 1000
+
+
+@pytest.mark.parametrize("lang,word", [("en", "yourself"), ("ko", "직접")])
+def test_a_253_character_host_keeps_the_person_line_in_the_fallback_handoff(lang, word, monkeypatch):
+    # The host is reduced to its registered domain, so force the sentence with the host over the cap to reach the fallback.
+    monkeypatch.setitem(X.TEMPLATES["H-USER"], lang, "x" * 400 + "{host}{stop_words}{person_line}{platform_cap}")
+    body = run(host=LONG_HOST, lang=lang, agent_env="cloud_browser", external_browser="not_tried", stop_point="extra_verification",
+               screen_message="approval_on_other_device", since_kind="today_first", task_context="my_account_consumer")
+    assert body["person"]["needed"] == "yes"
+    user = [h for h in body["handoff"] if h["to"] == "user"]
+    assert user and user[0]["template_id"] == "H-USER-NOHOST" and word in user[0]["text"]
