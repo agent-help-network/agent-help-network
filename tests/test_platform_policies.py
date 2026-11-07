@@ -54,10 +54,49 @@ def test_a_page_that_was_not_read_has_no_quotation_and_no_verified_date():
         assert d["quotes"] == [] and "verified_at" not in d and d["unread_reason"] in pp.UNREAD_REASONS
 
 
-def test_muse_has_no_site_restriction_quotation_and_says_so():
+def test_muse_has_no_site_restriction_quotation_and_is_not_called_undocumented_while_its_pages_are_unread():
     muse = next(p for p in pp.PLATFORMS if p["platform"] == "meta_muse")
-    assert "site_restrictions" in muse["not_found"]
-    assert not any(q["tag"] in ("blocked_category", "confirm_required") for d in muse["docs"] for q in d["quotes"])
+    assert muse["not_found"] == [] and any(d["status"] == "unread" for d in muse["docs"])
+    assert not any(q["tag"] in ("blocked_category", "confirm_required", "site_side") for d in muse["docs"] for q in d["quotes"])
+    entry = next(p for p in pp.view()["platforms"] if p["platform"] == "meta_muse")
+    assert "no_official_documentation_found" not in entry
+
+
+def test_no_documentation_is_claimed_while_any_page_of_the_platform_is_unread():
+    t = table()
+    muse = next(p for p in t if p["platform"] == "meta_muse")
+    muse["not_found"] = ["site_restrictions", "self_identification"]
+    assert any("meta_muse: not_found is set while a page" in line for line in pp.problems(t, today=date(2026, 11, 6)))
+    for p in pp.PLATFORMS:  # the shipped table keeps the rule
+        assert not p["not_found"] or all(d["status"] == "read" for d in p["docs"])
+    ok = table()
+    gem = next(p for p in ok if p["platform"] == "gemini")
+    gem["not_found"] = ["blocked_site_list"]  # every Gemini page is read, so the claim stands
+    assert pp.problems(ok, today=date(2026, 11, 6)) == []
+    assert "no_official_documentation_found" in next(p for p in pp.view(platforms=ok)["platforms"] if p["platform"] == "gemini")
+    # a page that has gone stale is unread in the view, so the claim is dropped there too
+    stale = pp.view(today=date(2027, 3, 1), platforms=ok)
+    assert "no_official_documentation_found" not in next(p for p in stale["platforms"] if p["platform"] == "gemini")
+
+
+def test_gemini_has_the_google_developer_page_with_verbatim_quotations_and_no_surface_claim():
+    gem = next(p for p in pp.PLATFORMS if p["platform"] == "gemini")
+    doc = next(d for d in gem["docs"] if d["url"].startswith("https://developers.google.com/"))
+    assert doc["status"] == "read" and doc["note_code"] == "does_not_say_which_surface"
+    assert "Google-Agent" in doc["quotes"][0]["text"] and "self_identification" not in gem["not_found"]
+
+
+def test_site_side_restrictions_are_not_filed_as_the_product_s_blocked_categories():
+    quotes = {q["text"]: q["tag"] for p in pp.PLATFORMS for d in p["docs"] for q in d["quotes"]}
+    assert quotes["These restrictions are set by the website, not by ChatGPT."] == "site_side"
+    assert quotes[next(t for t in quotes if t.startswith("A website may block ChatGPT"))] == "site_side"
+    assert quotes[next(t for t in quotes if t.startswith("It’s unlikely that we’ve captured"))] == "list_incomplete"
+    assert quotes["Muse can already browse websites."] == "capability_note"
+    html = (ROOT / "ahn/templates/platforms.html").read_text(encoding="utf-8")
+    assert all(f"'{tag}':" in html for tag in pp.TAGS)
+    for name in ("docs/api-contract.en.md", "docs/api-contract.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert all(f"`{tag}`" in text for tag in pp.TAGS), name
 
 
 def test_the_two_claude_in_chrome_pages_that_differ_are_both_shown_as_a_conflict():

@@ -4,7 +4,8 @@
 For each page the table lists as read, fetch it once (https, vendor host only, robots.txt respected, one request per
 second per host, 10 second timeout), normalise its text, take the SHA-256, and compare with the last stored hash.
 Only a changed hash (or a first reading) is recorded, in platform_doc_events: address and hashes, never the page.
-A refusal (401, 403, 429), a verification screen or a robots.txt disallow stops that host for the rest of the run;
+A refusal (401, 403, 429), a verification screen, a robots.txt disallow, or a robots.txt that cannot be read (5xx or a network
+error: RFC 9309 treats it as a complete disallow) stops that host for the rest of the run;
 there is no second try, no other user agent and no cached copy. The script never edits the table: a changed page
 needs a person to re-read the quotations.
 
@@ -21,11 +22,11 @@ import json
 import re
 import sys
 import time
+import http.client
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
+from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -68,10 +69,60 @@ def plan(stored: dict[str, str], seen: dict[str, str]) -> list[dict]:
     return out
 
 
+class RobotsRules:
+    """A small robots.txt matcher (RFC 9309): the group of our product token, else "*"; `*` and `$` in a rule; the longest
+    matching rule wins and Allow wins a tie. The standard-library parser does not read `*` or `$`, so this one does."""
+
+    def __init__(self, text: str) -> None:
+        self.groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
+        agents: list[str] = []
+        rules: list[tuple[bool, str]] = []
+        in_rules = False
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if ":" not in line:
+                continue
+            field, _, value = line.partition(":")
+            field, value = field.strip().lower(), value.strip()
+            if field == "user-agent":
+                if in_rules:
+                    self.groups.append((agents, rules))
+                    agents, rules, in_rules = [], [], False
+                agents.append(value.lower())
+            elif field in ("allow", "disallow") and agents:
+                in_rules = True
+                if value:  # an empty Disallow disallows nothing; an empty Allow adds nothing
+                    rules.append((field == "allow", value))
+        if agents:
+            self.groups.append((agents, rules))
+
+    @staticmethod
+    def _matches(pattern: str, path: str) -> bool:
+        anchored = pattern.endswith("$")
+        body = pattern[:-1] if anchored else pattern
+        regex = ".*".join(re.escape(part) for part in body.split("*"))
+        return re.match(regex + ("$" if anchored else ""), path) is not None
+
+    def can_fetch(self, agent: str, url: str) -> bool:
+        token = agent.split("/", 1)[0].strip().lower()
+        named = [r for names, r in self.groups if any(n != "*" and n in token for n in names)]
+        chosen = named or [r for names, r in self.groups if "*" in names]
+        rules = [rule for group in chosen for rule in group]
+        parts = urlparse(url)
+        path = unquote(parts.path or "/") + (("?" + parts.query) if parts.query else "")
+        best: tuple[int, bool] | None = None
+        for allow, pattern in rules:
+            if self._matches(unquote(pattern), path):
+                candidate = (len(pattern), allow)
+                if best is None or candidate[0] > best[0] or (candidate[0] == best[0] and allow):
+                    best = candidate
+        return best is None or best[1]
+
+
 class Fetcher:
     def __init__(self, opener=None, clock=time.monotonic, sleep=time.sleep) -> None:
         self.opener, self.clock, self.sleep = opener or self._open, clock, sleep
-        self.robots: dict[str, RobotFileParser | None] = {}
+        self.robots: dict[str, RobotsRules | None] = {}
         self.last: dict[str, float] = {}
         self.stopped: dict[str, str] = {}
 
@@ -83,6 +134,8 @@ class Fetcher:
                 return r.status, r.geturl(), r.read(BODY_CAP)
         except urllib.error.HTTPError as e:
             return e.code, url, b""
+        except (OSError, http.client.HTTPException, ValueError):  # URLError, timeout, reset, bad status line: status 0 = no answer
+            return 0, url, b""
 
     def _wait(self, host: str) -> None:
         gap = MIN_INTERVAL - (self.clock() - self.last.get(host, -1e9))
@@ -90,20 +143,20 @@ class Fetcher:
             self.sleep(gap)
         self.last[host] = self.clock()
 
-    def _robots(self, host: str) -> RobotFileParser | None:
+    def _robots(self, host: str) -> RobotsRules | None:
         if host not in self.robots:
             self._wait(host)
-            parser = RobotFileParser()
             status, _, body = self.opener(f"https://{host}/robots.txt")
             if status == 200:
-                parser.parse(body.decode("utf-8", "replace").splitlines())
-                self.robots[host] = parser
+                self.robots[host] = RobotsRules(body.decode("utf-8", "replace"))
             elif status in REFUSAL:
                 self.stopped[host] = f"robots.txt answered {status}"
                 self.robots[host] = None
-            else:  # 404 and other non-refusals: no robots.txt, nothing disallowed
-                parser.parse([])
-                self.robots[host] = parser
+            elif status == 0 or status >= 500:  # RFC 9309: unreachable robots.txt means complete disallow
+                self.stopped[host] = "robots.txt unreachable" if status == 0 else f"robots.txt answered {status}"
+                self.robots[host] = None
+            else:  # 404 and other 4xx: no robots.txt, nothing disallowed
+                self.robots[host] = RobotsRules("")
         return self.robots[host]
 
     def get(self, url: str, allowed_hosts: frozenset[str]) -> tuple[str, str | None]:
@@ -121,6 +174,8 @@ class Fetcher:
         if status in REFUSAL:
             self.stopped[host] = f"answered {status}"
             return f"http_{status}", None
+        if status == 0:
+            return "network_error", None
         if status != 200:
             return f"http_{status}", None
         if urlparse(final).hostname not in allowed_hosts:
