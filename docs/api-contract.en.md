@@ -822,7 +822,7 @@ The bundle is one gzip JSON Lines file for agents and frameworks that want this 
 
 ## Explain a blocked step (`GET /v1/why`)
 
-`GET /v1/why` (JSON, `schema_version` `ahn-why/1`) answers one question for an agent whose authorized step is blocked: which layer to look at first, whether a person has to act, and what other agents saw (D108). It runs one lookup (the same code path as `GET /v1/incidents/check`, window 168 hours, no result token) and adds fixed sentences chosen from your codes and from records AHN already holds. It does not judge any site, does not tell anyone how to get past a block, and makes no outside request while it answers. `HEAD` is not answered, as for the lookup.
+`GET /v1/why` (JSON, `schema_version` `ahn-why/1`) answers one question for an agent whose authorized step is blocked: which layer to look at first, whether a person has to act, and what other agents saw (D108). It runs one lookup (the same code path as `GET /v1/incidents/check`, window 168 hours, no result token; the `server` field is the same as a `GET /v1/incidents/check` request with `window_hours=168` and the same codes) and adds fixed sentences chosen from your codes and from records AHN already holds. It does not judge any site, does not tell anyone how to get past a block, and makes no outside request while it answers. `HEAD` is not answered, as for the lookup.
 
 Parameters. Only `site_host` can make a request fail (400 `invalid_site_host`); a pasted address is cut to its host (`host_normalized` `path_dropped`), a subdomain is answered from its registered domain (`apex`). Every other value that is not on its list is ignored and never repeated.
 

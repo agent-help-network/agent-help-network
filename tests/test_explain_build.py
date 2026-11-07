@@ -315,3 +315,51 @@ def test_korean_answer_uses_korean_fixed_sentences():
 def test_no_public_fixture_uses_a_real_personal_host():
     text = (pathlib.Path(__file__).parent / "test_explain_build.py").read_text(encoding="utf-8")
     assert "equate" + "plus" not in text and E.SINCE_MAX_DAYS == 90 and TODAY.year == 2026
+
+
+# --- the home-page check never turns a sign-in step into a site problem -----------------------------------------------------
+def _home(outcome, vendor=None):
+    home = {"status": "measured", "outcome": outcome, "measured_at": "2026-11-07T00:10:00Z"}
+    if vendor:
+        home["bot_defense"] = {"vendor": vendor}
+    return home
+
+
+@pytest.mark.parametrize("lang", ["en", "ko"])
+@pytest.mark.parametrize("outcome,vendor", [("login_wall", None), ("redirected_offsite", None), ("reachable", "cloudflare")])
+def test_a_home_page_answer_does_not_move_an_extra_verification_step_to_the_site(outcome, vendor, lang):
+    body = run(check=fake_check(ahn_check=_home(outcome, vendor)), stop_point="extra_verification",
+               screen_message="approval_on_other_device", agent_env="cloud_browser", lang=lang)
+    assert body["where_to_look"]["first"] == "account"
+    home = [r for r in body["what_happened"]["layers"] if r["template_id"] == "S-L1B-AHN-HOME"]
+    assert home and all(r["state"] == "background" for r in home)
+    text = body["where_to_look"]["text"].lower()
+    assert "home-page" not in text and "홈 페이지" not in text
+
+
+def test_a_home_page_that_is_not_normal_still_counts_when_the_step_is_not_a_sign_in():
+    body = run(check=fake_check(ahn_check=_home("refused")), stop_point="page_blank_or_blocked", screen_message="access_denied")
+    assert body["where_to_look"]["first"] == "site"
+    assert "other than a normal page" in body["where_to_look"]["text"]
+
+
+def test_a_normal_home_page_with_only_a_marker_is_never_site_evidence():
+    body = run(check=fake_check(ahn_check=_home("reachable", "cloudflare")), stop_point="page_blank_or_blocked", screen_message="access_denied")
+    assert body["where_to_look"]["first"] != "site"
+    assert all(r["state"] == "background" for r in body["what_happened"]["layers"] if r["layer"] == "L1b")
+
+
+# --- a host at the length limit ----------------------------------------------------------------------------------------------
+LONG_HOST = ".".join(["a" * 63] * 3 + ["a" * 57, "com"])
+
+
+@pytest.mark.parametrize("lang", ["en", "ko"])
+@pytest.mark.parametrize("stop", [None, "company_login", "before_visit"])
+def test_a_253_character_host_with_every_code_still_makes_a_valid_answer(lang, stop):
+    assert len(LONG_HOST) == 253
+    body = run(host=LONG_HOST, lang=lang, agent_platform="claude_desktop_browser", agent_env="cloud_browser", external_browser="no",
+               stop_point=stop, screen_message="none_other", since_kind="worked_before", since_date="2026-11-01", task_context="my_account_work",
+               error_class="login_auth", failure_stage="before_target_response")
+    parsed = WhyResponse.model_validate(body)
+    assert parsed.handoff and any(h.to == "user" for h in parsed.handoff)
+    assert len(body["links"]["self"]) <= 1000

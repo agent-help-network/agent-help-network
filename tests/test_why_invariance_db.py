@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -18,7 +19,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from ahn import site_probe  # noqa: E402
 from ahn.main import create_app  # noqa: E402
-from test_site_probe_db import db  # noqa: E402,F401
+from test_cause_db import hourly, observation, seed  # noqa: E402
+from test_site_probe_db import Home, db, measure, read_profile  # noqa: E402,F401
 
 HOST = "login-fixture-host.com"
 SAME = ("summary_line", "recommendation", "next_action", "cause", "failure_stage", "next_checks")
@@ -107,3 +109,46 @@ def test_what_a_person_adds_does_not_change_the_decision_of_the_same_codes(clien
         chosen = client.get("/v1/why", params={**base, **extra}).json()["server"]
         for key in ("summary_line", "recommendation", "next_action", "cause", "failure_stage"):
             assert canon(plain.get(key)) == canon(chosen.get(key)), (extra, key)
+
+
+# --- the same on a host that has records -----------------------------------------------------------------------------------
+# `server` is the lookup with window_hours=168, so a host with data older than a day (and the default 24-hour window) is the
+# case that tells the two apart.
+def _seed_everything(db, monkeypatch):
+    now = datetime.now(timezone.utc)
+    seed(db,
+         *observation(HOST, now - timedelta(hours=30), outcome="error", error_class="service_error"),   # outside 24 hours
+         *observation(HOST, now - timedelta(days=5), outcome="error", error_class="site_access"),
+         hourly(HOST, now - timedelta(hours=3), sources=3, error_class="service_error"),
+         ("INSERT INTO status_sources (site_host,source_name,status_page_url,api_url,evidence) VALUES (%s,'Fixture Status',"
+          "'https://status.fixture-host.test','https://status.fixture-host.test/api','curated_mapping')", (HOST,)),
+         ("INSERT INTO status_cache (site_host,indicator,fetched_at,active_incidents,max_incident_impact) VALUES (%s,'minor',now(),1,'minor')", (HOST,)))
+    read_profile(db, monkeypatch, host=HOST)
+    measure(db, host=HOST, home=Home(status=200))
+
+
+@pytest.fixture
+def seeded_client(db, monkeypatch):
+    _seed_everything(db, monkeypatch)
+    # The home page was measured above and a second check of a host waits 6 hours, so nothing is read from here on.
+
+    def no_network(*_a, **_k):
+        raise AssertionError("no host is read")
+
+    monkeypatch.setattr(site_probe, "fetch_home", no_network)
+    return TestClient(create_app(db))
+
+
+@pytest.mark.parametrize("params", FIXTURES)
+def test_server_equals_a_168_hour_lookup_on_a_host_with_records(seeded_client, params):
+    check = lookup(seeded_client, params)
+    why = seeded_client.get("/v1/why", params={"site_host": HOST, **params}).json()["server"]
+    for key in SAME:
+        assert canon(check.get(key)) == canon(why.get(key)), key
+    assert check["provider_status"]["indicator"] == "minor" and check["ahn_check"]["status"] == "measured"
+
+
+def test_the_records_are_older_than_the_default_window_so_the_comparison_has_power(seeded_client):
+    day = strip(seeded_client.get("/v1/incidents/check", params={"site_host": HOST}).json())
+    week = strip(lookup(seeded_client, {}))
+    assert canon(day) != canon(week)

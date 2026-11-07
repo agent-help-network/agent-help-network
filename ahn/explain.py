@@ -397,7 +397,10 @@ def _site_rows(ctx: _Ctx) -> list[dict]:
         vendor = _get(home, "bot_defense", "vendor")
         vendor_name = X.BOT_VENDOR.get(vendor) if vendor else None
         vendor_part = X.VENDOR_PART[lang].format(vendor=vendor_name) if vendor_name else ""
-        state = "background" if home["outcome"] in HOME_NORMAL and not vendor_name else "evidence"
+        # A normal home page with only a bot-defense marker is background. On a sign-in step, a sign-in page or an
+        # off-site redirect at the home page is what such a step looks like, so it is background there as well.
+        sign_in_home = ctx.sign_in_step and home["outcome"] in ("login_wall", "redirected_offsite")
+        state = "background" if home["outcome"] in HOME_NORMAL or sign_in_home else "evidence"
         rows.append(_row(ctx, "L1b", state, "S-L1B-AHN-HOME", _fill(
             "S-L1B-AHN-HOME", lang, LAYER_TEXT_MAX, host=host, date=_day(home["measured_at"]),
             outcome_words=_words(X.HOME_OUTCOME, home["outcome"], lang), vendor_part=vendor_part), _source("ahn_read", None, home["measured_at"])))
@@ -868,11 +871,14 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
         line = _fill("H-USER-YES", lang, 200, reason_short=X.REASON_SHORT[person["reasons"][0]["code"]][lang])
     else:
         line = X.TEMPLATES["H-USER-NO"][lang]
-    items.append(_hand("user", "H-USER", _fill("H-USER", lang, HANDOFF_TEXT_MAX, host=host, stop_words=stop_words, person_line=line,
-                                                platform_cap=ctx.pname_cap)))
-    out = [i for i in items if i][:2]
-    return out or [_hand("user", "H-USER", _fill("H-USER", lang, HANDOFF_TEXT_MAX, host=host, stop_words=stop_words,
-                                                  person_line=X.TEMPLATES["H-USER-NO"][lang], platform_cap=ctx.pname_cap))]
+    # A very long host can push the sentence over the cap; the fallback needs no host, so it always fits.
+    user_text = _fill("H-USER", lang, HANDOFF_TEXT_MAX, host=host, stop_words=stop_words, person_line=line, platform_cap=ctx.pname_cap)
+    if user_text is not None:
+        items.append(_hand("user", "H-USER", user_text))
+    else:
+        items.append(_hand("user", "H-USER-NOHOST", _fill("H-USER-NOHOST", lang, HANDOFF_TEXT_MAX, stop_words=stop_words,
+                                                          person_line=X.TEMPLATES["H-USER-NO"][lang], platform_cap=ctx.pname_cap)))
+    return [i for i in items if i][:2]
 
 
 def _hand(to: str, template_id: str, text: str | None) -> dict | None:

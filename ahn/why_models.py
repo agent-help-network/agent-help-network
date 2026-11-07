@@ -136,7 +136,7 @@ class DoNow(StrictModel):
 class TimelineItem(StrictModel):
     at: datetime
     layer: Literal["L1d", "L1e", "L2"]
-    kind: Literal["declared_policy_changed", "home_check_changed", "provider_incident_start", "platform_doc_changed"]
+    kind: Literal["declared_policy_changed", "home_check_changed", "platform_doc_changed"]
     template_id: str
     text: str = Field(min_length=1, max_length=300)
     source_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
@@ -157,7 +157,7 @@ class HandoffItem(StrictModel):
 
 class WhyLinks(StrictModel):
     # The request again with the accepted codes only (never the pasted address, never the codes that were refused).
-    self_link: str = Field(alias="self", max_length=400)
+    self_link: str = Field(alias="self", max_length=1000)
 
 
 class WhyResponse(StrictModel):
