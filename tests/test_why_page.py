@@ -114,7 +114,7 @@ def test_the_script_sends_only_the_hostname_the_choices_and_the_language():
 
 
 def test_the_lookups_own_sentence_is_shown_as_given_and_labelled():
-    assert 'server: "Server summary (as given)"' in JS and 'server: "서버 요약(원문)"' in JS
+    assert 'server: "Server summary (as given)"' in JS and 'server: "서버 요약(서버 원문, 영어)"' in JS
     assert "line.lang = \"en\"" in JS
 
 
@@ -141,9 +141,9 @@ def test_a_failed_lookup_gets_one_more_line_in_the_first_block_and_still_two_blo
               "via": "browser", "ahn_test": "1", "failed_at": "2026-11-07T00:00:00Z"}
     link = mcp_adapter.why_link(params)
     assert link.startswith("https://agenthelpnetwork.com/v1/why?")
-    # the codes /v1/why takes are all in the link; task_step and failed_at are not arguments of /v1/why, so they are left out
+    # the codes /v1/why takes are all in the link (task_step since D110); failed_at is not an argument of /v1/why and is left out
     assert parse_qs(urlparse(link).query) == {"site_host": ["login-fixture-host.com"], "error_class": ["login_auth"], "http_status": ["403"],
-                                              "via": ["browser"], "agent_vendor": ["openai"], "ahn_test": ["1"]}
+                                              "task_step": ["login"], "via": ["browser"], "agent_vendor": ["openai"], "ahn_test": ["1"]}
     response = check_response()
     plain = mcp_adapter.check_result(response)
     linked = mcp_adapter.check_result(response, why_url=link)
@@ -170,7 +170,8 @@ def test_the_real_check_incident_path_puts_the_line_in_the_first_block(monkeypat
     lines = failed.content[0].text.splitlines()
     assert lines[-1].startswith(mcp_adapter.WHY_LEAD + "https://agenthelpnetwork.com/v1/why?")
     query = parse_qs(urlparse(lines[-1].rsplit(" ", 1)[1]).query)
-    assert query == {"site_host": ["login-fixture-host.com"], "http_status": ["403"], "via": ["browser"], "agent_vendor": ["openai"], "ahn_test": ["1"]}
+    assert query == {"site_host": ["login-fixture-host.com"], "http_status": ["403"], "task_step": ["login"], "via": ["browser"],
+                     "agent_vendor": ["openai"], "ahn_test": ["1"]}
     assert mcp_adapter.WHY_LEAD not in plain.content[0].text
     assert failed.content[-1].text == plain.content[-1].text and json.loads(failed.content[-1].text) == failed.structured_content
 

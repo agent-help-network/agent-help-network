@@ -75,7 +75,9 @@ def test_t2_platform_banner_puts_the_platform_first_and_the_server_action_after_
     body = case("T2")
     assert body["rules_applied"] == ["R1", "R7", "R3"]
     assert layers(body)[0] == "L2" and ids(body)[:2] == ["CHK-MSG-MATCH", "CHK-ORG-ADMIN"]
-    assert [r["code"] for r in body["person"]["reasons"]] == ["platform_admin_decides"] and body["person"]["who"] == ["platform_admin"]
+    # D110: the page shows and the tools do not act, so the person can open it (who adds user)
+    assert [r["code"] for r in body["person"]["reasons"]] == ["platform_admin_decides", "page_visible_tools_off"]
+    assert body["person"]["who"] == ["user", "platform_admin"]
     assert body["server"]["position"] == "after_checks" and body["handoff"][0]["template_id"] == "H-ORG-ADMIN"
     found = {r["template_id"] for r in body["what_happened"]["layers"]}
     assert found >= {"S-L2-DOC", "S-L2-NOCLASS", "S-L1A-BACKGROUND-BROWSER", "S-L1A-BACKGROUND-ACCOUNT"}
@@ -102,12 +104,18 @@ def test_t5_public_read_site_first_puts_the_official_path_after_the_status_page(
     body = case("T5")
     assert body["rules_applied"] == ["R4"] and layers(body) == ["L1d", "L1a"]
     assert ids(body) == ["CHK-STATUS", "CHK-OFFICIAL-PATH", "CHK-SERVER-ACTION", "CHK-SITE-HELP"]
-    assert body["where_to_look"]["first"] == "unknown" and body["person"]["needed"] == "not_indicated"
+    # D110: the site's help channel is a check only a person can make, so a person is needed for that check (not the whole step)
+    assert body["where_to_look"]["first"] == "unknown" and body["person"]["needed"] == "yes"
+    assert [r["code"] for r in body["person"]["reasons"]] == ["check_needs_person"] and body["person"]["who"] == ["user"]
+    assert body["do_now"]["checks"][0]["who"] == "agent"  # a public status page is the agent's to read
 
 
-def test_t6_timeout_waits_instead_of_retrying():
+def test_t6_a_timeout_the_server_hands_over_does_not_also_say_wait():
     body = case("T6")
-    assert ids(body) == ["CHK-WAIT", "CHK-SERVER-ACTION", "CHK-SITE-HELP"] and body["handoff"][0]["template_id"] == "H-SITE"
+    # D110: CHK-WAIT ("wait and look up once more") is left out when the server's action hands the step to the person
+    assert ids(body) == ["CHK-SERVER-ACTION", "CHK-SITE-HELP"] and body["handoff"][0]["template_id"] == "H-SITE"
+    waiting = case("T6", check=fake_check("wait_provider_incident", "wait_for_provider"))
+    assert ids(waiting)[0] == "CHK-WAIT"
 
 
 def test_t7_human_verification_in_an_account_task_keeps_the_official_path_last():
@@ -190,22 +198,29 @@ def test_t14_a_platform_with_one_page_read_and_one_unread_is_not_called_undocume
     assert "describes sites it does not open" not in body["where_to_look"]["text"]
 
 
-def test_t15_a_platform_whose_pages_were_all_unreadable_is_unread_and_not_the_first_place():
+def test_t15_a_platform_whose_pages_were_all_unreadable_is_still_the_callers_answer():
     body = case("T15")
-    assert body["where_to_look"]["layers"]["platform"] == "unread" and body["where_to_look"]["first"] == "unknown"
+    # D110: the caller placed the stop at the agent product; unread pages keep their rows but the layer is the caller's answer
+    assert body["where_to_look"]["layers"]["platform"] == "your_answer" and body["where_to_look"]["first"] == "platform"
     assert [r["template_id"] for r in body["what_happened"]["layers"]].count("S-L2-UNREAD") == 2
 
 
-def test_t16_a_platform_the_table_has_no_row_for_is_not_reviewed():
+def test_t16_a_platform_the_table_has_no_row_for_is_not_reviewed_but_is_the_callers_answer():
     body = case("T16")
-    assert body["where_to_look"]["layers"]["platform"] == "not_reviewed"
+    assert body["where_to_look"]["layers"]["platform"] == "your_answer" and body["where_to_look"]["first"] == "platform"
     assert "Claude Code" in next(r["text"] for r in body["what_happened"]["layers"] if r["template_id"] == "S-L2-NOT-REVIEWED")
+    assert run(agent_platform="claude_code", stop_point="site_login")["where_to_look"]["layers"]["platform"] == "not_reviewed"
 
 
-def test_other_platform_and_no_platform_have_no_platform_row():
+@pytest.mark.parametrize("stop,key", [("before_visit", "stopped_unnamed"), ("tools_off_page_visible", "tools_off_unnamed")])
+def test_other_platform_and_no_platform_have_no_platform_row_but_the_stop_points_at_the_platform(stop, key):
     for platform in ("other", None):
-        body = run(agent_platform=platform, stop_point="before_visit")
-        assert "L2" not in layers(body) and body["where_to_look"]["layers"]["platform"] == "not_reviewed"
+        for lang in ("en", "ko"):
+            body = run(agent_platform=platform, stop_point=stop, lang=lang)
+            assert "L2" not in layers(body) and body["where_to_look"]["layers"]["platform"] == "your_answer"
+            assert body["where_to_look"]["first"] == "platform"
+            assert X.REASON_WORDS[("platform", key)][lang] in body["where_to_look"]["text"]
+    assert run(agent_platform=None, stop_point="site_login")["where_to_look"]["layers"]["platform"] == "not_reviewed"
 
 
 def test_server_is_a_copy_of_the_lookup_answer():
@@ -221,7 +236,8 @@ def test_server_is_a_copy_of_the_lookup_answer():
 
 
 def test_person_is_not_indicated_without_a_rule_and_never_says_no_person_is_needed():
-    body = run(check=fake_check("proceed", "proceed"))
+    body = run(check=fake_check("proceed", "proceed"), external_browser="yes_same_account")
+    assert all(c["who"] != "person" for c in body["do_now"]["checks"])
     assert body["person"] == {"needed": "not_indicated", "reasons": [], "text": X.TEMPLATES["S-P-NOT-INDICATED"]["en"]}
     assert "who" not in body["person"] and "no person" not in body["person"]["text"].lower()
 

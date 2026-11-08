@@ -106,7 +106,7 @@
 
 `/openapi.json`은 실행 모드의 REST 계약을 기술한다. 로컬 합성 시험에서는 `X-API-Key` 보안 스키마가 쓰기에 적용된다. 공개 베타의 제보 POST는 키가 필요 없으며, MCP에는 `check_incident`, `rate_last_lookup`([결과 회신](#결과-회신-feedback_token-post-v1feedback-mcp-rate_last_lookup-d58)), `report_observation`만 나타난다. `check_incident`는 제보를 만들지 않는 조회지만 호스트 등록·집계라는 서버 부수효과가 있다. MCP 주석은 UI 힌트일 뿐이며 에이전트가 어떤 권한으로 제출하는지 서버가 검증할 수는 없다. MCP에는 비밀값·원문 대화·대상 사이트 페이지 내용을 전달하지 않는다.
 
-MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다. 그것이 JSON 이다. 호출에 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`)가 있었으면 첫 블록 끝에 한 줄이 더 붙는다. `Why it stopped and whether a person must act: https://agenthelpnetwork.com/v1/why?site_host=<host>&...` 형태이며, 호스트명과 호출자가 보낸 코드로만 만들고 `via`·`agent_vendor`·테스트 표시가 있었으면 그것도 넣는다(D108, [막힌 단계 설명](#막힌-단계-설명get-v1why) 참고). `/v1/why` 는 `task_step`·`failed_at` 을 받지 않으므로 링크 쪽 답은 이 두 값 없이 계산된다. JSON 블록·`structuredContent` 는 바이트까지 바뀌지 않고 도구 정의도 같으며, 실패 코드가 있는 조회의 첫 블록에만 그 한 줄이 늘어난다. `next_action.do` 가 `proceed` 이면 첫 블록 끝에 자유 문장 한 줄이 더 붙는다. proceed 는 선언된 차단이 없다는 뜻이지 아무것도 막지 않았다는 뜻이 아니라는 문장이며, 스키마 밖이다.
+MCP `check_incident` 는 텍스트 블록 두 개를 돌려준다. 첫 블록은 `summary_line`(`next_action.url` 이 있으면 둘째 줄에 `URL: <url>`, `next_action.customer_url` 이 있고 `url` 과 다르면 그다음 줄에 `Customer path: <url>`, D61), 둘째 블록은 구조화 결과·REST 답과 같은 전체 답 JSON 이다. 텍스트를 파싱한다면 마지막 블록을 읽는다. 그것이 JSON 이다. 호출에 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`)가 있었으면 첫 블록 끝에 한 줄이 더 붙는다. `Why it stopped and whether a person must act: https://agenthelpnetwork.com/v1/why?site_host=<host>&...` 형태이며, 호스트명과 호출자가 보낸 코드로만 만들고 `task_step`·`via`·`agent_vendor`·테스트 표시가 있었으면 그것도 넣는다(D108·D110, [막힌 단계 설명](#막힌-단계-설명get-v1why) 참고). `/v1/why` 는 `failed_at` 을 받지 않으므로 링크 쪽 답은 그 값 없이 계산된다. JSON 블록·`structuredContent` 는 바이트까지 바뀌지 않고 도구 정의도 같으며, 실패 코드가 있는 조회의 첫 블록에만 그 한 줄이 늘어난다. `next_action.do` 가 `proceed` 이면 첫 블록 끝에 자유 문장 한 줄이 더 붙는다. proceed 는 선언된 차단이 없다는 뜻이지 아무것도 막지 않았다는 뜻이 아니라는 문장이며, 스키마 밖이다.
 
 `AHN_RESPONSE_GUIDE=0` 이면 `summary_line`·`next_action`·`links` 와 첫 MCP 블록이 빠져 D51 이전과 같은 답이 된다.
 
@@ -504,7 +504,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 `links` 는 서비스의 공개 피드백 장소를 알려 준다. `feedback`(저장소 GitHub Discussions 의 "Field reports" 분류: 답이 틀렸거나 다음 행동에 안 맞았을 때 알려 주는 곳)과 `changelog`(`docs/feedback-changelog.md`: 피드백 뒤 바꾼 것). 값은 모든 조회에서 같고 바뀔 수 있다. 정해지지 않은 링크는 `null` 이 아니라 키를 생략하고, 하나도 없으면 `links` 자체를 생략한다. `feedback`·`changelog` 는 모든 조회에서 같고, `links.why`(아래)는 호출자가 직접 보낸 값(호스트명, 실패 코드, `via`, `agent_vendor`, 시험 표시)만으로 만들며 그 밖의 것은 담지 않는다.
 
-`links.why`(D109)는 같은 조회에 대한 `GET /v1/why` 주소다: 호스트명, 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`), 조회가 함께 보낸 `via`·`agent_vendor`·시험 표시를 실패한 `check_incident` 결과에 덧붙는 한 줄과 같은 형태로 담는다. 실패 코드를 하나라도 보낸 조회에만 있고(상태 확인이나 단순 "내려갔나" 조회에는 없다), 보낸 코드로만 만들며 답에서 아무것도 읽지 않고, 권고·`next_action`·다른 필드를 바꾸지 않는다.
+`links.why`(D109)는 같은 조회에 대한 `GET /v1/why` 주소다: 호스트명, 실패 코드(`error_class`·`failure_stage`·`http_status`·`challenge`·`retry_after`), 조회가 함께 보낸 `task_step`(D110부터)·`via`·`agent_vendor`·시험 표시를 실패한 `check_incident` 결과에 덧붙는 한 줄과 같은 형태로 담는다. 실패 코드를 하나라도 보낸 조회에만 있고(실패 코드 없는 단순 "내려갔나" 조회에는 없다), 보낸 코드로만 만들며 답에서 아무것도 읽지 않고, 권고·`next_action`·다른 필드를 바꾸지 않는다.
 
 ### 공식 경로 표의 정리와 검증 (2026-10-18)
 
@@ -691,20 +691,20 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 매개변수. 요청이 실패하는 것은 `site_host` 뿐이에요(400 `invalid_site_host`). 붙여 넣은 주소는 호스트까지만 남기고(`host_normalized` `path_dropped`), 하위 도메인은 등록 도메인으로 답해요(`apex`). 목록에 없는 나머지 값은 무시하고 다시 적지 않아요.
 
 - `site_host`, `lang`(`en`·`ko`, 그 밖은 `en`).
-- 조회와 같은 코드: `error_class`, `failure_stage`, `http_status`, `challenge`, `retry_after`, `via`, `agent_vendor`, `ahn_test`. 직접 잰 코드는 `stop_point` 로 고른 코드보다 우선해요.
+- 조회와 같은 코드: `error_class`, `failure_stage`, `task_step`, `http_status`, `challenge`, `retry_after`, `via`, `agent_vendor`, `ahn_test`. 직접 잰 코드는 `stop_point` 로 고른 코드보다 우선해요. `task_step=status_check` 면 답도 상태 확인으로 남아요: `do_now` 는 상태 페이지 확인(없으면 서버 자신의 행동)이 먼저이고, `server` 는 같은 단계로 조회한 답이에요(D110).
 - 무슨 일이 있었는지(정해진 목록에서 고르며 집계도 저장도 안 해요): `agent_platform`(`claude_desktop_browser`·`claude_in_chrome`·`claude_code`·`chatgpt_agent`·`meta_muse`·`gemini`·`perplexity_comet`·`other`), `agent_env`(`cloud_browser`·`on_device_browser`·`not_sure`), `external_browser`(`yes_same_account`·`no`·`not_tried`), `stop_point`(`before_visit`·`page_blank_or_blocked`·`human_verification`·`company_login`·`site_login`·`after_login_action_fails`·`tools_off_page_visible`·`timeout_or_5xx`·`extra_verification`·`not_sure`), `screen_message`(11종, 예: `access_denied`·`human_check`·`sign_in_required`·`approval_on_other_device`), `since_kind`(`today_first`·`worked_before`·`not_sure`), `since_date`(`worked_before` 일 때만, `YYYY-MM-DD`, 최대 90일 전, 보여 줄 변경 기록의 기간을 고르는 데만 써요), `task_context`(`my_account_consumer`·`my_account_work`·`public_read`·`other`).
 
 답. 없는 필드는 null 이 아니라 생략해요(`server` 는 예외로, 조회의 답을 그대로 옮긴 것이에요).
 
-- `input_echo`: 받아들인 코드만.
-- `where_to_look`: `first`(`site`·`platform`·`account`·`agent_env`·`task`·`unknown`), 층별 `layers` 상태(`evidence`·`your_answer`·`background`·`not_seen`·`not_reviewed`·`no_doc`·`unread`), 고정 문장 하나. `first` 는 최종 순서에서 상태가 `evidence` 나 `your_answer` 인 첫 층이에요. 순서는 어디를 먼저 볼지만 말하며 판정이 아니에요.
-- `person`: `needed`(`yes`·`not_indicated`), `reasons[]`(`code`: `sign_in_is_the_account_holders`·`verification_on_person_device`·`approval_is_the_persons_decision`·`company_it_decides`·`platform_admin_decides`·`platform_refused_step`·`server_hand_off`), `who[]`(`user`·`it_admin`·`platform_admin`·`site_support`). `not_indicated` 는 AHN 기록에 사람이 필요하다는 근거가 없다는 뜻이며, 필요 없다는 단언이 아니에요.
+- `input_echo`: 받아들인 입력 전부(조회 코드와 고른 값), 그것만.
+- `where_to_look`: `first`(`site`·`platform`·`account`·`agent_env`·`task`·`unknown`), 층별 `layers` 상태(`evidence`·`your_answer`·`background`·`not_seen`·`not_reviewed`·`no_doc`·`unread`), 고정 문장 하나. `first` 는 최종 순서에서 상태가 `evidence` 나 `your_answer` 인 첫 층이에요. 순서는 어디를 먼저 볼지만 말하며 판정이 아니에요. 호출자가 고른 멈춘 지점이 앞서요(D110): `before_visit`·`tools_off_page_visible` 은 플랫폼 층을 `your_answer` 로 두고 사이트보다 앞세우며, `extra_verification`·`site_login`·`company_login`·`after_login_action_fails` 는 계정 층을 사이트보다 앞세워요. 사이트가 그런 멈춘 지점보다 앞서는 것은 직접 근거(저장된 원인, 에이전트 토큰의 robots.txt 거절, 업체 장애)가 있을 때뿐이고, AHN 자신의 홈 확인 변화만으로는 앞서지 않아요.
+- `person`: `needed`(`yes`·`not_indicated`), `reasons[]`(`code`: `sign_in_is_the_account_holders`·`verification_on_person_device`·`approval_is_the_persons_decision`·`company_it_decides`·`platform_admin_decides`·`platform_refused_step`·`server_hand_off`·`page_visible_tools_off`·`check_needs_person`), `who[]`(`user`·`it_admin`·`platform_admin`·`site_support`). `tools_off_page_visible` 이면 언제나 `needed` `yes`·`who` `user` 예요. `do_now` 에 사람만 할 수 있는 확인(`who` `person`)이 있으면 `needed` 는 `yes` 예요(다른 이유가 없으면 `check_needs_person`). `not_indicated` 는 AHN 기록에 사람이 필요하다는 근거가 없다는 뜻이며, 필요 없다는 단언이 아니에요.
 - `others_saw`: 최근 7일 안에 그 호스트와 맞는 제보(최대 5건, 각각 `verified: false`), 대략적인 `lookup_band`, 문장 하나. 제보가 없다는 것은 아무것도 증명하지 않아요.
-- `server`: `summary_line`·`recommendation`·`next_action`·`cause`·`failure_stage`·`next_checks` 는 같은 코드로 `GET /v1/incidents/check` 가 주는 것과 똑같고, `position`(`first`, 또는 조회가 계속하라고 하되 설명의 확인이 먼저인 `after_checks`)이 붙어요.
+- `server`: `summary_line`·`recommendation`·`next_action`·`cause`·`failure_stage`·`next_checks` 는 같은 코드로 `GET /v1/incidents/check` 가 주는 것과 똑같고, `position`(`first`, 또는 조회가 계속하라고 하되 설명의 확인이 먼저인 `after_checks`)이 붙어요. `lang=ko` 면 `server_note`(고정 한국어 문장)가 `server.summary_line` 이 조회의 영어 원문이라고 알려 줘요.
 - `what_happened`: `layers[]`(최대 10행: `layer` `L1`·`L1a`~`L1e`·`L2`·`L3a`·`L3b`·`L4`, `state`, `template_id`, `text`, 선택 `source`(`kind`·`url`·`checked_at`))와 `unknowns[]`(AHN 이 볼 수 없는 것).
 - `do_now.checks[]`(1~6개): `id`, `who`(`person`·`agent`·`it_admin`·`platform_admin`), `text`, 선택 `url`.
-- `timeline`: `window_from`, `window_to`, `items[]`(호스트가 선언한 정책, AHN 자신의 홈페이지 읽기, 플랫폼 공개 문서의 기록된 변경. `at`·`layer`·`kind`·`text`·선택 `source_url`), `limits_text`.
-- `handoff[]`(1~2개): 결정할 수 있는 사람에게 그대로 전할 문장(`to`: `it_admin`·`platform_admin`·`platform_vendor`·`site_support`·`user`).
+- `timeline`: `window_from`, `window_to`, `items[]`(호스트가 선언한 정책, AHN 자신의 홈페이지 읽기, 플랫폼 공개 문서의 기록된 변경. 홈 확인 변화는 사이트가 바꾼 것이 아니라 AHN 요청이 받은 것으로 말하고("AHN 의 홈 확인이 X 챌린지를 받기 시작했어요"), 같은 기간에 값이 오갔으면 AHN 확인 결과가 흔들렸다는 문장을 붙여요. `at`·`layer`·`kind`·`text`·선택 `source_url`), `limits_text`.
+- `handoff[]`(1~2개): 결정할 수 있는 사람에게 그대로 전할 문장(`to`: `it_admin`·`platform_admin`·`platform_vendor`·`site_support`·`user`). `stop_point` 가 없으면 문장 속 멈춘 지점은 `error_class`·`failure_stage`(`site_access`·`human_verification`·`service_error`·`before_target_response`·`login_auth`)에서 정하고, 둘 다 없을 때만 "분명하지 않은 단계"라고 해요.
 - `rules_applied`, `render_order`, `basis_text`, `links.self`(받아들인 코드만으로 다시 쓴 요청).
 
 고정 문장. 모든 문장은 영어·한국어 고정 틀에서 고르고, 빈칸은 AHN 기록이나 고정 어구표로만 채워요. 한도를 넘는 문장은 자르지 않고 뺍니다. 틀은 원인을 단정하거나, 우회법을 권하거나, 사이트가 어떤 분류에 든다고 말하지 않아요.

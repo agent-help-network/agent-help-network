@@ -234,6 +234,7 @@ WHY_FIELDS = {
     "task_context": Phrase("task_context", "task_context"),
     "error_class": Exempt("a lookup code, described with the lookup"),
     "failure_stage": Exempt("a lookup code, described with the lookup"),
+    "task_step": Exempt("a lookup code, described with the lookup (taken by /v1/why since D110)"),
     "http_status": Exempt("a lookup code, described with the lookup"),
     "challenge": Exempt("a lookup code, described with the lookup"),
     "retry_after": Exempt("a lookup code, described with the lookup"),

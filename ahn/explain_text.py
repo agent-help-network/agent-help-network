@@ -52,7 +52,7 @@ _t("S-L1A-STALE",
    "이 읽기는 {date} 기준이라 지금과 다를 수 있어요.")
 _t("S-L1A-TOKEN-UNDOC",
    "{vendor}'s official documentation does not say which robots.txt token, if any, {platform} sends, so AHN cannot say which rule group applies to it.",
-   "{vendor} 공식 문서에는 {platform} 이 어떤 robots.txt 토큰을 보내는지(보내기는 하는지) 적혀 있지 않아서, 어느 규칙 묶음이 적용되는지 AHN 이 말할 수 없어요.")
+   "{vendor} 공식 문서에는 어떤 robots.txt 토큰을 보내는지(보내기는 하는지) 적혀 있지 않아요(제품: {platform}). 그래서 어느 규칙 묶음이 적용되는지 AHN 이 말할 수 없어요.")
 _t("S-L1B-NOSEE",
    "AHN does not observe bot-defense systems on this site, so it cannot say whether one is in use or recently changed.",
    "AHN 은 이 사이트의 봇 방어 체계를 관측하지 않아요. 쓰는지, 최근 바뀌었는지 말할 수 없어요.")
@@ -64,19 +64,40 @@ _t("S-L1C-API-AUTH",
    "사이트 공식 개발자 문서({url})는 API 인증 방식을 {auth} 로 적어요.")
 _t("S-L1D-ACTIVE",
    "{provider}'s status page has shown {indicator} since {time} (AHN read it at {time2}).",
-   "{provider} 상태 페이지가 {time} 부터 {indicator} 를 표시하고 있어요(AHN 읽기 {time2}).")
+   "{provider} 상태 페이지 표시: {indicator}({time} 부터, AHN 읽기 {time2}).")
 _t("S-L1D-ACTIVE-NOTIME",
    "{provider}'s status page shows {indicator} (AHN read it at {time2}); it gives no start time AHN can use.",
-   "{provider} 상태 페이지가 {indicator} 를 표시하고 있어요(AHN 읽기 {time2}). 쓸 수 있는 시작 시각은 적혀 있지 않아요.")
+   "{provider} 상태 페이지 표시: {indicator}(AHN 읽기 {time2}). 쓸 수 있는 시작 시각은 적혀 있지 않아요.")
 _t("S-L1D-CLEAR",
    "{provider}'s status page showed no announced incident when AHN read it at {time}. That does not confirm the site works.",
    "AHN 이 {time} 에 읽은 {provider} 상태 페이지에는 발표된 장애가 없었어요. 사이트가 정상이라는 확인은 아니에요.")
+# D110: the overall indicator reads operational but the page lists an unresolved incident (the T6 reading of the lookup, D100).
+_t("S-L1D-UNRESOLVED",
+   "{provider}'s status page lists an unresolved incident, though its overall indicator reads operational (AHN read it at {time}). Check whether it touches your step.",
+   "{provider} 상태 페이지의 전체 표시는 정상이지만 미해결 사건이 올라 있어요(AHN 읽기 {time}). 당신의 단계에 닿는지 확인해 보세요.")
 _t("S-L1D-NONE",
    "AHN has no connected status feed for this site.",
    "AHN 에는 이 사이트의 상태 피드가 연결돼 있지 않아요.")
 _t("S-L1E-CHANGED",
    "On {date}, AHN recorded a change in {host}'s {field_words}: {from_words} to {to_words}.",
    "{date} 에 AHN 이 {host} 의 {field_words} 변화를 기록했어요: {from_words} 에서 {to_words} 로.")
+# D110: a change of AHN's own home-page check says what AHN's request got, never what the site set. A bot-defense marker is
+# recorded only when that request got a challenge, so "no marker" means no challenge that time, not that the site removed one.
+_t("S-L1E-HOME-CHALLENGE-ON",
+   "On {date}, AHN's home-page check of {host} started getting a {vendor} challenge. This is what AHN's own request got, not a site setting AHN read.",
+   "{date} 에 AHN 의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받기 시작했어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+_t("S-L1E-HOME-CHALLENGE-OFF",
+   "On {date}, AHN's home-page check of {host} stopped getting a {vendor} challenge. This is what AHN's own request got, not a site setting AHN read.",
+   "{date} 에 AHN 의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받지 않게 됐어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+_t("S-L1E-HOME-CHALLENGE-SWAP",
+   "On {date}, AHN's home-page check of {host} got a {to_words} challenge where it had got a {from_words} challenge. This is what AHN's own request got, not a site setting AHN read.",
+   "{date} 에 AHN 의 {host} 홈 페이지 확인이 받은 챌린지가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+_t("S-L1E-HOME-OUTCOME",
+   "On {date}, AHN's home-page check of {host} got {to_words} where it had got {from_words}. This is what AHN's own request got.",
+   "{date} 에 AHN 의 {host} 홈 페이지 확인 결과가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과예요.")
+_t("S-L1E-FLAP",
+   "AHN's own check results went back and forth in this period; this change alone does not show that the site changed.",
+   "이 기간에 AHN 확인 결과가 흔들렸어요. 이 변화만으로 사이트가 바뀌었다고 볼 수 없어요.")
 _t("S-L1E-UNCHANGED",
    "AHN recorded no change in {host}'s declared files or home-page check from {date} to {date2}. It reads them about once a day to once a week and sees nothing between reads.",
    "{date}~{date2} 에 AHN 이 기록한 {host} 의 선언 파일·홈 페이지 확인에는 변화가 없었어요. 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요.")
@@ -102,22 +123,22 @@ _t("S-L2-CONFLICT",
    "{platform} 공식 문서끼리 이 부분을 다르게 적어요(\"{quote}\" / \"{quote2}\"). AHN 은 어느 쪽인지 고르지 않아요.")
 _t("S-L2-NODOC",
    "AHN found no official documentation from {vendor} on which sites {platform} limits or how it handles sign-in (checked {date}). AHN cannot say whether a {platform} rule is involved.",
-   "{vendor} 가 {platform} 이 어떤 사이트를 제한하는지·로그인을 어떻게 다루는지 공식 문서를 내지 않았어요({date} 확인). {platform} 규칙이 관련됐는지 AHN 은 말할 수 없어요.")
+   "어떤 사이트를 제한하는지·로그인을 어떻게 다루는지 적은 공식 문서를 AHN 이 찾지 못했어요(회사: {vendor}, 제품: {platform}, {date} 확인). 제품({platform})의 규칙이 관련됐는지 AHN 은 말할 수 없어요.")
 _t("S-L2-UNREAD",
    "{vendor} publishes a help page on this ({url}), but AHN could not read it (checked {date}): {unread_reason}.",
-   "{vendor} 가 관련 도움말({url})을 내고 있지만 AHN 은 읽지 못했어요({date} 확인): {unread_reason}.")
+   "관련 도움말({url}, 발행: {vendor})이 있지만 AHN 은 읽지 못했어요({date} 확인): {unread_reason}.")
 _t("S-L2-NOT-REVIEWED",
    "AHN has not reviewed {platform}'s documentation yet.",
    "AHN 은 아직 {platform} 문서를 검토하지 않았어요.")
 _t("S-L2-NOLIST",
    "{platform} does not publish a full list of the sites it limits, and AHN does not try to rebuild one.",
-   "{platform} 은 제한하는 사이트의 전체 목록을 공개하지 않고, AHN 은 그것을 복원하려 하지 않아요.")
+   "제한하는 사이트의 전체 목록은 공개돼 있지 않고(제품: {platform}), AHN 은 그것을 복원하려 하지 않아요.")
 _t("S-L2-MSG-MATCH",
    "You chose the message {platform}'s documentation shows when {mechanism}. If your screen shows it, that documentation is the place to look next.",
    "고른 메시지는 {platform} 문서가 \"{mechanism}\" 때 뜬다고 적은 문구예요. 화면에 그 문구가 보이면 다음으로 볼 곳은 그 문서예요.")
 _t("S-L2-MSG-OTHER-PLATFORM",
    "That message is documented for {platform2}, not for {platform}. AHN does not use it for {platform}.",
-   "그 메시지는 {platform} 이 아니라 {platform2} 문서에 있는 문구예요. {platform} 판단에는 쓰지 않아요.")
+   "그 메시지는 {platform2} 문서에 있는 문구예요(고른 제품: {platform}). 제품({platform}) 판단에는 쓰지 않아요.")
 
 # --- L3 account and agent environment ---------------------------------------------------------------------------------
 _t("S-L3-SCOPE",
@@ -220,6 +241,16 @@ _t("S-P-PLATFORM-REFUSED",
 _t("S-P-SERVER-HAND-OFF",
    "AHN's next action for this lookup also hands this step to the person.",
    "서버의 다음 행동도 이 단계를 사람에게 넘기라고 해요.")
+# D110: the server hands a public read to the person only because AHN's own reads could not reach the page.
+_t("S-P-SERVER-HAND-OFF-OPEN",
+   "AHN's next action hands this step to the person: AHN's own reads could not reach the page, and the person can open it themselves to see whether it loads for them.",
+   "서버의 다음 행동이 이 단계를 사람에게 넘겨요. AHN 의 읽기가 페이지에 닿지 못했고, 사용자가 직접 열어 보면 열리는지 알 수 있어요.")
+_t("S-P-TOOLS-OFF",
+   "The page shows but the agent's tools could not act on it. The person can open the page and do the step themselves.",
+   "페이지는 보이는데 에이전트 도구가 동작하지 못했어요. 사람이 직접 페이지를 열어 그 단계를 할 수 있어요.")
+_t("S-P-CHECK-PERSON",
+   "A check listed below is one only the person can do (for example, trying the step in their own browser). It does not mean the whole step is theirs.",
+   "아래 확인 중에는 사람만 할 수 있는 것이 있어요(예: 자기 브라우저에서 같은 단계 해 보기). 단계 전체가 사람 몫이라는 뜻은 아니에요.")
 
 # --- things to check (CHK) and what to tell a person (H) --------------------------------------------------------------
 _t("CHK-BROWSER-COMPARE",
@@ -230,10 +261,10 @@ _t("CHK-MSG-MATCH",
    "화면 메시지를 {platform} 문서({url})가 적은 메시지와 비교해 보세요.")
 _t("CHK-ORG-ADMIN",
    "If {platform} comes through an organization plan, ask its administrator whether a site rule covers {host} ({url}).",
-   "{platform} 을 조직 플랜으로 쓰면 관리자에게 {host} 에 사이트 규칙이 걸려 있는지 물어보세요({url}).")
+   "조직 플랜으로 쓰는 제품이면(제품: {platform}) 관리자에게 {host} 에 사이트 규칙이 걸려 있는지 물어보세요({url}).")
 _t("CHK-SAFETY-CONFIRM",
    "If {platform} asks for approval at each action, its documentation describes that step ({url}). Approving is the person's own decision.",
-   "{platform} 이 행동마다 승인을 묻는다면 그 절차는 문서({url})에 있어요. 승인 여부는 사람이 정해요.")
+   "제품이 행동마다 승인을 묻는다면(제품: {platform}) 그 절차는 문서({url})에 있어요. 승인 여부는 사람이 정해요.")
 _t("CHK-IT-SSO",
    "Ask your IT team whether this app's company sign-in is allowed from {platform}'s separate browser profile. Use the handoff text below.",
    "회사 IT 에 이 앱의 회사 로그인이 {platform} 의 별도 브라우저 프로필에서 허용되는지 물어보세요. 아래 인계문을 쓰세요.")
@@ -244,7 +275,7 @@ _t("CHK-SIGNED-IN-TAIL", "", "")  # placeholder removed below; CHK-SIGNED-IN is 
 del TEMPLATES["CHK-SIGNED-IN-TAIL"]
 _t("CHK-PLATFORM-CHANGES",
    "AHN saw {platform}'s page {url} change on {date}. Check the app version and that page.",
-   "AHN 이 {date} 에 {platform} 의 페이지 {url} 가 바뀐 것을 봤어요. 앱 버전과 그 페이지를 확인해 보세요.")
+   "AHN 이 {date} 에 {platform} 의 페이지가 바뀐 것을 봤어요({url}). 앱 버전과 그 페이지를 확인해 보세요.")
 _t("CHK-PLATFORM-REMEDY",
    "{platform}'s documentation suggests: \"{quote}\" ({url})",
    "{platform} 문서가 제안하는 것: \"{quote}\" ({url})")
@@ -272,28 +303,38 @@ _t("H-IT",
    "{since} 부터 {platform} 내장 브라우저로 {host} 에 로그인하면 \"{stop_words}\" 에서 멈춰요. 같은 계정이 보통 브라우저에서는 돼요. 우리 접근 정책상 별도 브라우저 프로필에서 이 앱의 회사 로그인이 허용되나요?")
 _t("H-ORG-ADMIN",
    "Since {since}, {platform} stops on {host} at: {stop_words}. Does our organization's {platform} site policy cover {host}?",
-   "{since} 부터 {platform} 이 {host} 에서 \"{stop_words}\" 로 멈춰요. 우리 조직의 {platform} 사이트 정책이 {host} 에 걸려 있나요?")
+   "{since} 부터 {host} 에서 \"{stop_words}\" 로 멈춰요(도구: {platform}). 우리 조직의 {platform} 사이트 정책이 {host} 에 걸려 있나요?")
 _t("H-PLATFORM",
    "Since {since}, {platform} stops on {host} at: {stop_words}, while the same step works in a usual browser. App version: (fill in).",
-   "{since} 부터 {platform} 이 {host} 에서 \"{stop_words}\" 로 멈추고, 같은 단계는 보통 브라우저에서 돼요. 앱 버전: (직접 적기).")
+   "{since} 부터 {host} 에서 \"{stop_words}\" 로 멈추고(도구: {platform}), 같은 단계는 보통 브라우저에서 돼요. 앱 버전: (직접 적기).")
 _t("H-SITE",
    "Since {since}, a step on {host} stops at: {stop_words}, in every browser I tried.",
    "{since} 부터 {host} 의 단계가 제가 써 본 모든 브라우저에서 \"{stop_words}\" 로 멈춰요.")
 _t("H-USER",
    "{platform_cap} could not finish this step on {host} (stopped at: {stop_words}). {person_line}",
-   "{platform_cap} 이 {host} 의 이 단계를 끝내지 못했어요(\"{stop_words}\"). {person_line}")
+   "이 단계를 {host} 에서 끝내지 못했어요(\"{stop_words}\") — 도구: {platform_cap}. {person_line}")
 _t("H-USER-NOHOST",
    "{platform_cap} could not finish this step (stopped at: {stop_words}). {person_line}",
-   "{platform_cap} 이 이 단계를 끝내지 못했어요(\"{stop_words}\"). {person_line}")
+   "이 단계를 끝내지 못했어요(\"{stop_words}\") — 도구: {platform_cap}. {person_line}")
 _t("H-USER-YES",
    "You need to do this step yourself: {reason_short}.",
    "이 단계는 직접 하셔야 해요: {reason_short}.")
 _t("H-USER-NO",
    "AHN found no cause it can confirm; see the checks listed.",
    "AHN 이 확인한 범위에서는 짚이는 곳이 없었어요. 확인 목록을 따라가 보세요.")
+_t("H-USER-OPEN",
+   "You can open the page yourself to see whether it loads for you; AHN's own reads could not reach it.",
+   "직접 페이지를 열어 보면 열리는지 알 수 있어요. AHN 의 읽기는 페이지에 닿지 못했어요.")
+_t("H-USER-CHECK",
+   "One of the checks needs you; AHN does not say the whole step is yours.",
+   "확인 하나는 직접 하셔야 해요. 단계 전체가 당신 몫이라는 뜻은 아니에요.")
+# D110: in a Korean answer, server.summary_line is the lookup's own sentence and stays in English; this says so.
+_t("S-G-SERVER-EN",
+   "server.summary_line is the lookup's own sentence and is in English.",
+   "server.summary_line 은 조회 서버의 원문이에요(서버 원문, 영어). 한국어 안내는 이 답의 다른 문장에 있어요.")
 _t("TL-PLATFORM-DOC",
    "On {date}, AHN saw {platform}'s page {url} change.",
-   "{date} 에 AHN 이 {platform} 의 페이지 {url} 가 바뀐 것을 봤어요.")
+   "{date} 에 AHN 이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")
 
 # --- fixed phrases that fill blanks (the only values a sentence takes besides AHN's own data) -------------------------
 TOKEN_SCOPE = {"en": "all agents (*)", "ko": "모든 에이전트(*)"}
@@ -403,13 +444,15 @@ REASON_WORDS = {
     ("site", "robots_block"): {"en": "the site's robots.txt blocks the agents AHN checked", "ko": "사이트의 robots.txt 가 AHN 이 확인한 에이전트를 막아요"},
     ("site", "provider_incident"): {"en": "the provider's status page shows an announced incident", "ko": "공급사 상태 페이지에 발표된 장애가 있어요"},
     ("site", "home_check"): {"en": "AHN's own home-page check got an answer other than a normal page", "ko": "AHN 의 홈 페이지 확인이 정상 페이지가 아닌 답을 받았어요"},
-    ("site", "change_recorded"): {"en": "AHN recorded a change in the site's declared policy or home-page check", "ko": "AHN 이 사이트의 선언 정책이나 홈 페이지 확인에서 변화를 기록했어요"},
+    ("site", "change_recorded"): {"en": "AHN recorded a change in the site's declared policy or in what its own home-page check got", "ko": "AHN 이 사이트의 선언 정책이나 자신의 홈 페이지 확인 결과에서 변화를 기록했어요"},
     ("platform", "stopped_before_site"): {"en": "the agent product stopped before opening the site, and its own documentation describes sites it does not open", "ko": "에이전트 제품이 사이트를 열기 전에 멈췄고, 제품 공식 문서가 열지 않는 사이트를 설명해요"},
     ("platform", "stopped_plain"): {"en": "the agent product stopped before opening the site", "ko": "에이전트 제품이 사이트를 열기 전에 멈췄어요"},
     ("platform", "tools_off_plain"): {"en": "the page opened but the agent product's tools did not work on it", "ko": "페이지는 열렸지만 에이전트 제품의 도구가 거기서 작동하지 않았어요"},
     ("platform", "message_documented"): {"en": "the message you chose is one the product's documentation describes", "ko": "고른 메시지는 제품 문서가 설명하는 문구예요"},
     ("platform", "tools_off"): {"en": "the page opened but the agent product's tools did not work on it, and its documentation describes how a site can be limited", "ko": "페이지는 열렸지만 에이전트 제품의 도구가 거기서 작동하지 않았고, 제품 문서가 사이트 제한 방식을 설명해요"},
     ("platform", "differs_from_browser"): {"en": "the same step works in your usual browser but not in the agent product", "ko": "같은 단계가 보통 브라우저에서는 되는데 에이전트 제품에서는 안 돼요"},
+    ("platform", "stopped_unnamed"): {"en": "the step stopped before the site opened; if you do not know which tool stopped it, start with that tool's own policy and settings", "ko": "사이트가 열리기 전에 멈췄어요. 어느 도구인지 모르면 그 도구의 정책·설정부터 보세요"},
+    ("platform", "tools_off_unnamed"): {"en": "the page shows but the agent's tools could not act on it; if you do not know which tool, start with that tool's own policy and settings", "ko": "페이지는 보이는데 에이전트 도구가 동작하지 못했어요. 어느 도구인지 모르면 그 도구의 정책·설정부터 보세요"},
     ("account", "extra_verification"): {"en": "the step stopped at an approval or code that goes to the account holder's device", "ko": "비밀번호 뒤에 사람 기기로 가는 승인 단계에서 멈췄어요"},
     ("account", "company_login"): {"en": "the step stopped at a company sign-in or device check", "ko": "회사 로그인이나 기기 확인에서 멈췄어요"},
     ("account", "sign_in"): {"en": "the step stopped at sign-in", "ko": "로그인에서 멈췄어요"},
@@ -425,12 +468,14 @@ REASON_SHORT = {
     "platform_admin_decides": {"en": "only the organization's administrator can decide this", "ko": "이건 조직 관리자만 정할 수 있어요"},
     "platform_refused_step": {"en": "the agent product stopped here, so the person decides this step", "ko": "에이전트 제품이 여기서 멈췄으니 이 단계는 사람이 정해요"},
     "server_hand_off": {"en": "AHN's next action also hands this step to the person", "ko": "AHN 의 다음 행동도 이 단계를 사람에게 넘기라고 해요"},
+    "page_visible_tools_off": {"en": "the page shows but the agent's tools could not act on it, so you can open it and do the step yourself", "ko": "페이지는 보이는데 에이전트 도구가 동작하지 못해서, 직접 열어 그 단계를 하시면 돼요"},
+    "check_needs_person": {"en": "one of the checks is one only you can do", "ko": "확인 하나는 직접 하셔야 해요"},
 }
 PERSON_REASON_ID = {
     "verification_on_person_device": "S-P-VERIFY-DEVICE", "sign_in_is_the_account_holders": "S-P-SIGN-IN",
     "approval_is_the_persons_decision": "S-P-APPROVAL", "company_it_decides": "S-P-COMPANY-IT",
     "platform_admin_decides": "S-P-PLATFORM-ADMIN", "platform_refused_step": "S-P-PLATFORM-REFUSED",
-    "server_hand_off": "S-P-SERVER-HAND-OFF",
+    "server_hand_off": "S-P-SERVER-HAND-OFF", "page_visible_tools_off": "S-P-TOOLS-OFF", "check_needs_person": "S-P-CHECK-PERSON",
 }
 
 # --- host_access_changes (D75) codes as words. A code not in a table leaves its sentence out (never a database string). ----

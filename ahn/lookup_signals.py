@@ -97,12 +97,13 @@ def why_url(params: dict) -> str | None:
     """The GET /v1/why address for the same failed lookup, built from the hostname and the codes the caller itself sent (already
     checked against their lists by the caller). It only builds a string: nothing is fetched and no answer is read.
 
-    None when no failure code was sent. via, agent_vendor and the test mark are arguments GET /v1/why takes too, so its answer is
-    computed for the same lookup; task_step and failed_at are not (it does not take them) and are left out.
+    None when no failure code was sent. task_step (since D110, so that a status check stays one), via, agent_vendor and the test
+    mark are arguments GET /v1/why takes too, so its answer is computed for the same lookup; failed_at is not and is left out.
     """
     if not any(params[name] not in (None, "", "none") for name in WHY_FAILURE_CODES if name in params):
         return None
-    query = {name: params[name] for name in ("site_host", *WHY_FAILURE_CODES, "via", "agent_vendor", TEST_QUERY) if name in params and params[name] not in (None, "")}
+    names = ("site_host", *WHY_FAILURE_CODES, "task_step", "via", "agent_vendor", TEST_QUERY)
+    query = {name: params[name] for name in names if name in params and params[name] not in (None, "")}
     if not all(SAFE_CODE.fullmatch(str(value)) for value in query.values()):
         return None  # every value is a checked hostname or list code; anything else gets no link rather than an escaped one
     return f"{WHY_BASE}/v1/why?" + "&".join(f"{name}={value}" for name, value in query.items())
