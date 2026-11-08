@@ -25,6 +25,7 @@ from urllib.parse import urlencode
 
 from . import explain_text as X
 from .models import CauseBasis
+from .response_guide import unresolved_incidents
 from .why_models import CHECK_TEXT_MAX, HANDOFF_TEXT_MAX, LAYER_TEXT_MAX, SCHEMA, SHORT_TEXT_MAX
 
 LOG = logging.getLogger(__name__)
@@ -56,6 +57,17 @@ PLATFORM_NAMES = {"claude_code": "Claude Code"}  # a product the public table ha
 SIGN_IN_STOPS = ("site_login", "company_login", "extra_verification")
 SIGN_IN_MESSAGES = ("sign_in_required", "device_not_compliant", "approval_on_other_device")
 ACCOUNT_STOPS = ("site_login", "company_login", "after_login_action_fails", "extra_verification")
+# D110: a stop the caller chose is that layer's own answer, so it is the first place to look unless the site layer has direct
+# evidence (a stored cause, a robots.txt block, a provider incident). AHN's home-page check or a recorded change alone never
+# puts the site layer ahead of it.
+PLATFORM_STOPS = ("before_visit", "tools_off_page_visible")
+DIRECT_SITE_LAYERS = ("L1", "L1a", "L1d")
+# D110: without a stop_point, the handoff names the stop from the codes the caller measured (error_class first, then failure_stage).
+STOP_FROM_ERROR = {"site_access": "page_blank_or_blocked", "human_verification": "human_verification", "service_error": "timeout_or_5xx",
+                   "login_auth": "site_login"}
+STOP_FROM_STAGE = {"before_target_response": "timeout_or_5xx"}
+# D110: the stored changes that are AHN's own home-page check (what AHN's request got), not a file the site declared.
+HOME_FIELDS = ("home_outcome", "bot_vendor")
 
 # Symptom -> the codes the lookup already understands (rows 1-10 of the stop-point table; the 11th row is below).
 STOP_MAP: dict[str, tuple[str | None, str | None, str | None]] = {
@@ -112,6 +124,13 @@ class Inputs:
     error_class: str | None = None
     failure_stage: str | None = None
     agent_vendor: str | None = None
+    # D110: the other lookup codes, kept only to echo them and to rebuild links.self. They reach the lookup through its signal.
+    task_step: str | None = None
+    http_status: int | None = None
+    challenge: str | None = None
+    retry_after: str | None = None
+    via: str | None = None
+    ahn_test: bool = False
 
 
 def clean_host(raw: str | None) -> tuple[str, bool]:
@@ -152,9 +171,12 @@ def _pick(value: Any, allowed: tuple[str, ...]) -> str | None:
 def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_platform: Any = None, agent_env: Any = None,
                  external_browser: Any = None, stop_point: Any = None, screen_message: Any = None, since_kind: Any = None,
                  since_date: Any = None, task_context: Any = None, error_class: Any = None, failure_stage: Any = None,
-                 agent_vendor: str | None = None) -> Inputs:
+                 agent_vendor: str | None = None, task_step: Any = None, http_status: Any = None, challenge: Any = None,
+                 retry_after: Any = None, via: Any = None, ahn_test: bool = False) -> Inputs:
     """Make the request into ``Inputs``. A host that is not valid raises ValueError; every other value that is not on its
     list is ignored (the lookup still answers), exactly as the optional signal codes of the lookup are."""
+    from .lookup_signals import lenient_codes
+    from .models import STEP, Via
     from .response_guide import apex_host
     from .service import policy_host
 
@@ -175,7 +197,11 @@ def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_
             since = None
         elif since is not None and since < today - timedelta(days=SINCE_MAX_DAYS):
             since, clamped = today - timedelta(days=SINCE_MAX_DAYS), True
+    codes = lenient_codes(http_status, challenge, retry_after, via)
     return Inputs(
+        task_step=task_step if isinstance(task_step, str) and STEP.fullmatch(task_step) else None,
+        http_status=codes["http_status"], challenge=codes["challenge"], retry_after=codes["retry_after"],
+        via=via if isinstance(via, str) and via in Via._value2member_map_ else None, ahn_test=ahn_test is True,
         site_host=host, lang=lang if lang in LANGS else "en", host_normalized=normalized,
         agent_platform=_pick(agent_platform, PLATFORMS), agent_env=_pick(agent_env, AGENT_ENVS),
         external_browser=_pick(external_browser, EXTERNAL_BROWSER), stop_point=_pick(stop_point, STOP_POINTS),
@@ -199,7 +225,7 @@ def map_symptoms(inputs: Inputs) -> tuple[str | None, str | None, str | None]:
             error_class, failure_stage, task_step = NOT_SURE_MAP[message]
         if stop != "not_sure" and message == "approval_on_other_device" and error_class is None:
             error_class, task_step = "login_auth", "login"
-    return inputs.error_class or error_class, inputs.failure_stage or failure_stage, task_step
+    return inputs.error_class or error_class, inputs.failure_stage or failure_stage, inputs.task_step or task_step
 
 
 # --- small helpers ------------------------------------------------------------------------------------------------------
@@ -295,6 +321,12 @@ class _Ctx:
         self.sign_in_step = stop in SIGN_IN_STOPS or message in SIGN_IN_MESSAGES
         self.verify = stop == "extra_verification" or message == "approval_on_other_device"
         self.position = "after_checks" if (self.r3 and self.do in ("use_official_path", "proceed") and not self.sign_in_step) else "first"
+        # D110: the stop the handoff names. Without a chosen stop it comes from the codes the caller measured; only the handoff reads it.
+        self.stop_named = stop or STOP_FROM_ERROR.get(inputs.error_class or "") or STOP_FROM_STAGE.get(inputs.failure_stage or "")
+        self.status_check = inputs.task_step == "status_check"
+        # D110: the layer the caller's own stop points to (None when the stop names no layer).
+        self.stop_group = "platform" if stop in PLATFORM_STOPS else "account" if stop in ACCOUNT_STOPS else None
+        self.open_self = False  # set by _person: a public read handed to the person only because AHN's reads did not reach it
 
     def _in_window(self, value: Any) -> bool:
         when = _dt(value)
@@ -426,6 +458,10 @@ def _site_rows(ctx: _Ctx) -> list[dict]:
         rows.append(_row(ctx, "L1d", "evidence", "S-L1D-ACTIVE-NOTIME", _fill(
             "S-L1D-ACTIVE-NOTIME", lang, LAYER_TEXT_MAX, provider=name, indicator=_words(X.INDICATOR, indicator, lang), time2=read_at),
             _source("provider_status", provider.get("source_url"), provider.get("fetched_at"))))
+    elif name and read_at and unresolved_incidents(provider):
+        # D110 (D100 on this path): an operational indicator with an unresolved incident listed is never "no announced incident".
+        rows.append(_row(ctx, "L1d", "evidence", "S-L1D-UNRESOLVED", _fill("S-L1D-UNRESOLVED", lang, LAYER_TEXT_MAX, provider=name, time=read_at),
+                         _source("provider_status", provider.get("source_url"), provider.get("fetched_at"))))
     elif name and read_at and indicator == "none" and provider.get("freshness") == "fresh":
         rows.append(_row(ctx, "L1d", "background", "S-L1D-CLEAR", _fill("S-L1D-CLEAR", lang, LAYER_TEXT_MAX, provider=name, time=read_at),
                          _source("provider_status", provider.get("source_url"), provider.get("fetched_at"))))
@@ -437,7 +473,9 @@ def _site_rows(ctx: _Ctx) -> list[dict]:
     for change in sorted(ctx.changes, key=lambda c: _dt(c.get("at")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True):
         sentence = _change_sentence(ctx, change)
         if sentence and shown < 2:
-            rows.append(_row(ctx, "L1e", "evidence", "S-L1E-CHANGED", sentence[1], _source("ahn_read", None, change.get("at"))))
+            # D110: a home-page check field that wavered in the window is background: AHN's own results moved, not the site.
+            state = "background" if change.get("field") in HOME_FIELDS and _flapped(ctx, change.get("field")) else "evidence"
+            rows.append(_row(ctx, "L1e", state, sentence[0], sentence[1], _source("ahn_read", None, change.get("at"))))
             shown += 1
     if not shown and ctx.r6:
         rows.append(_row(ctx, "L1e", "background", "S-L1E-UNCHANGED", _fill(
@@ -466,17 +504,73 @@ def _change_words(change: dict, lang: str) -> tuple[str, str, str] | None:
     return (field_words, from_words, to_words) if field_words and from_words and to_words else None
 
 
-def _change_sentence(ctx: _Ctx, change: dict) -> tuple[str, str] | None:
-    words = _change_words(change, ctx.lang)
+def _flapped(ctx: _Ctx, field: Any) -> bool:
+    """D110: the values of one home-page check field went back to an earlier value within the window (for example a marker
+    appeared, went and came back). AHN's own check then wavered, so no single change of that field shows the site changed."""
+    seq = sorted((c for c in ctx.changes if c.get("field") == field), key=lambda c: _dt(c.get("at")) or datetime.min.replace(tzinfo=timezone.utc))
+    if len(seq) < 2:
+        return False
+    values = [seq[0].get("from_code")] + [c.get("to_code") for c in seq]
+    return len(set(values)) < len(values)
+
+
+def _home_change_text(ctx: _Ctx, change: dict, day: str, cap: int) -> tuple[str, str | None] | None:
+    """D110: a change of AHN's own home-page check, said as what AHN's request got, never as a setting of the site."""
+    field, before, after = change.get("field"), change.get("from_code"), change.get("to_code")
+    lang, host = ctx.lang, ctx.i.site_host
+    if field == "bot_vendor":
+        if not (isinstance(before, str) and isinstance(after, str)):
+            return None
+        old, new = X.BOT_VENDOR.get(before), X.BOT_VENDOR.get(after)
+        if before == "none" and new:
+            tid, text = "S-L1E-HOME-CHALLENGE-ON", _fill("S-L1E-HOME-CHALLENGE-ON", lang, cap, date=day, host=host, vendor=new)
+        elif after == "none" and old:
+            tid, text = "S-L1E-HOME-CHALLENGE-OFF", _fill("S-L1E-HOME-CHALLENGE-OFF", lang, cap, date=day, host=host, vendor=old)
+        elif old and new:
+            tid, text = "S-L1E-HOME-CHALLENGE-SWAP", _fill("S-L1E-HOME-CHALLENGE-SWAP", lang, cap, date=day, host=host, from_words=old, to_words=new)
+        else:
+            return None
+    else:
+        table = X.CODE_WORDS["home_outcome"]
+        from_words, to_words = _words(table, before, lang), _words(table, after, lang)
+        if not (from_words and to_words):
+            return None
+        tid, text = "S-L1E-HOME-OUTCOME", _fill("S-L1E-HOME-OUTCOME", lang, cap, date=day, host=host, from_words=from_words, to_words=to_words)
+    return (tid, text) if text else None
+
+
+def _change_sentence(ctx: _Ctx, change: dict, cap: int = LAYER_TEXT_MAX) -> tuple[str, str] | None:
     day = _day(change.get("at"))
-    if not words or not day:
+    if not day:
         return None
-    text = _fill("S-L1E-CHANGED", ctx.lang, LAYER_TEXT_MAX, host=ctx.i.site_host, date=day, field_words=words[0], from_words=words[1], to_words=words[2])
+    if change.get("field") in HOME_FIELDS:
+        found = _home_change_text(ctx, change, day, cap)
+        if not found:
+            return None
+        tid, text = found
+        if _flapped(ctx, change.get("field")):
+            flap = X.TEMPLATES["S-L1E-FLAP"][ctx.lang]
+            if len(text) + 1 + len(flap) <= cap:
+                text = f"{text} {flap}"
+        return tid, text
+    words = _change_words(change, ctx.lang)
+    if not words:
+        return None
+    text = _fill("S-L1E-CHANGED", ctx.lang, cap, host=ctx.i.site_host, date=day, field_words=words[0], from_words=words[1], to_words=words[2])
     return ("S-L1E-CHANGED", text) if text else None
 
 
 def _platform_rows(ctx: _Ctx) -> tuple[list[dict], str]:
     """(L2 rows, the platform layer's state)."""
+    rows, state = _platform_rows_by_docs(ctx)
+    # D110: a stop the caller placed at the agent product (it refused before the site, or the page shows and its tools do not
+    # work) is that layer's own answer, whether or not the product was named or its pages could be read.
+    if ctx.stop_group == "platform" and state not in ("evidence", "your_answer"):
+        state = "your_answer"
+    return rows, state
+
+
+def _platform_rows_by_docs(ctx: _Ctx) -> tuple[list[dict], str]:
     lang, host = ctx.lang, ctx.i.site_host
     if not ctx.platform_known:
         return [], "not_reviewed"
@@ -682,8 +776,12 @@ def _reason_key(ctx: _Ctx, group: str, rows: list[dict]) -> tuple[str, str]:
         return "site", "change_recorded"
     if group == "platform":
         if ctx.stop == "before_visit":
+            if not ctx.platform_known:
+                return "platform", "stopped_unnamed"
             return "platform", "stopped_before_site" if ctx.platform_relevant else "stopped_plain"
         if ctx.stop == "tools_off_page_visible":
+            if not ctx.platform_known:
+                return "platform", "tools_off_unnamed"
             return "platform", "tools_off" if ctx.platform_relevant else "tools_off_plain"
         if ctx.message_matches:
             return "platform", "message_documented"
@@ -707,7 +805,11 @@ def _where_to_look(ctx: _Ctx, order: list[str], rows: list[dict], states: dict[s
     for token in order:
         if LAYER_GROUP[token] not in sequence:
             sequence.append(LAYER_GROUP[token])
-    first = next((g for g in sequence if states[g] in ("evidence", "your_answer")), None)
+    # D110: with a stop that names a layer, the site layer goes ahead of it only on direct evidence (a stored cause, a robots.txt
+    # block, a provider incident); AHN's home-page check or a recorded change alone does not.
+    direct_site = any(r["layer"] in DIRECT_SITE_LAYERS and r["state"] == "evidence" for r in rows)
+    held = ctx.stop_group is not None and states[ctx.stop_group] in ("evidence", "your_answer") and not direct_site
+    first = next((g for g in sequence if states[g] in ("evidence", "your_answer") and not (held and g == "site")), None)
     text = None
     if first:
         key = _reason_key(ctx, first, rows)
@@ -718,10 +820,13 @@ def _where_to_look(ctx: _Ctx, order: list[str], rows: list[dict], states: dict[s
 
 
 # --- person -------------------------------------------------------------------------------------------------------------
-def _person(ctx: _Ctx) -> dict:
+def _person(ctx: _Ctx, rows: list[dict]) -> dict:
     lang = ctx.lang
     reasons: dict[str, None] = {}
     who: set[str] = set()
+    if ctx.stop == "tools_off_page_visible":  # D110: the page shows, the agent's tools do not act; the person can open it
+        reasons["page_visible_tools_off"] = None
+        who.add("user")
     if ctx.stop in SIGN_IN_STOPS:
         reasons["sign_in_is_the_account_holders"] = None
         who.add("user")
@@ -743,19 +848,24 @@ def _person(ctx: _Ctx) -> dict:
     if ctx.do == "hand_off_to_human":
         reasons["server_hand_off"] = None
         who.add("user")
+        # D110: a public read that timed out or failed with a server error, where nothing but AHN's own reads failing is on
+        # record (no stored cause, no provider incident): the reason says the person can open it, not that they must.
+        direct = any(r["layer"] in ("L1", "L1d") and r["state"] == "evidence" for r in rows)
+        ctx.open_self = ctx.i.task_context == "public_read" and ctx.stop_named == "timeout_or_5xx" and not direct
     if ctx.r7 and ctx.stop == "before_visit" and ctx.entry and ctx.quotes("blocked_category", "prohibited_action", "admin_policy"):
         reasons["platform_refused_step"] = None
         who.add("user")
         if admin:
             who.add("platform_admin")
     priority = ("verification_on_person_device", "platform_refused_step", "company_it_decides", "platform_admin_decides",
-                "approval_is_the_persons_decision", "sign_in_is_the_account_holders", "server_hand_off")
+                "page_visible_tools_off", "approval_is_the_persons_decision", "sign_in_is_the_account_holders", "server_hand_off")
     codes = [c for c in priority if c in reasons][:3]
     if not codes:
         return {"needed": "not_indicated", "reasons": [], "text": X.TEMPLATES["S-P-NOT-INDICATED"][lang]}
     items = []
     for code in codes:
-        text = _fill(X.PERSON_REASON_ID[code], lang, SHORT_TEXT_MAX, platform=ctx.pname)
+        template_id = "S-P-SERVER-HAND-OFF-OPEN" if code == "server_hand_off" and ctx.open_self else X.PERSON_REASON_ID[code]
+        text = _fill(template_id, lang, SHORT_TEXT_MAX, platform=ctx.pname)
         if text:
             items.append({"code": code, "text": text})
     order = [w for w in ("user", "it_admin", "platform_admin", "site_support") if w in who][:3]
@@ -806,11 +916,14 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     status_name = _safe_name(_get(ctx.check, "provider_status", "source_name")) or _safe_name(_get(ctx.check, "official_status_page", "source_name"))
     official = _official_url(ctx)
     if status_url and status_name:
-        out.append(_item("CHK-STATUS", "person", _fill("CHK-STATUS", lang, cap, provider=status_name, url=status_url), status_url))
+        # D110: a public status page is one the agent can read itself; it is not a step only a person can take.
+        out.append(_item("CHK-STATUS", "agent", _fill("CHK-STATUS", lang, cap, provider=status_name, url=status_url), status_url))
     public_read_site_first = ctx.base == "R4" and ctx.i.task_context == "public_read"
     if public_read_site_first and official:
         out.append(_item("CHK-OFFICIAL-PATH", "agent", _fill("CHK-OFFICIAL-PATH", lang, cap, url=official), official))
-    if ctx.stop == "timeout_or_5xx" or ctx.action == "wait_provider_incident":
+    # D110: "wait and look up once more" never sits next to a server action that hands the step over or stops it.
+    if (ctx.stop == "timeout_or_5xx" or ctx.action == "wait_provider_incident" or ctx.do == "wait_for_provider") \
+            and ctx.do not in ("hand_off_to_human", "stop_automation"):
         out.append(_item("CHK-WAIT", "agent", X.TEMPLATES["CHK-WAIT"][lang]))
     if ctx.doc_events:
         newest = max(ctx.doc_events, key=lambda e: _dt(e.get("changed_at")))
@@ -830,6 +943,11 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
             text = f"{text} {warning}" if len(text) + 1 + len(warning) <= cap else text
         out.append(_item("CHK-OFFICIAL-PATH", "person" if ctx.r3 else "agent", text, official))
     items = [c for c in out if c]
+    if ctx.status_check:
+        # D110: a status check stays a status check: the status page first, else the server's own action.
+        lead = next((c for c in items if c["id"] == "CHK-STATUS"), None) or next((c for c in items if c["id"] == "CHK-SERVER-ACTION"), None)
+        if lead:
+            items = [lead] + [c for c in items if c is not lead]
     if not items:
         items = [_item("CHK-BROWSER-COMPARE", "person", X.TEMPLATES["CHK-BROWSER-COMPARE"][lang])]
     while len(items) > CHECK_LIMIT:
@@ -856,7 +974,7 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
         since = ctx.i.since_date.isoformat()
     else:
         since = X.SINCE_WORDS["recent"][lang]
-    stop = ctx.stop or "not_sure"
+    stop = ctx.stop_named or "not_sure"  # D110: "an unclear step" only when neither a stop nor a measured code was sent
     stop_words = X.STOP_WORDS.get(stop, X.STOP_WORDS["not_sure"])[lang]
     common = {"host": host, "since": since, "stop_words": stop_words, "platform": ctx.pname}
     admin_quote = bool(ctx.quotes("admin_policy"))
@@ -869,8 +987,13 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
         items.append(_hand("platform_vendor", "H-PLATFORM", _fill("H-PLATFORM", lang, HANDOFF_TEXT_MAX, **common)))
     elif ctx.base == "R4":
         items.append(_hand("site_support", "H-SITE", _fill("H-SITE", lang, HANDOFF_TEXT_MAX, **common)))
-    if person["needed"] == "yes" and person["reasons"]:
-        line = _fill("H-USER-YES", lang, 200, reason_short=X.REASON_SHORT[person["reasons"][0]["code"]][lang])
+    first_code = person["reasons"][0]["code"] if person["needed"] == "yes" and person["reasons"] else None
+    if first_code == "server_hand_off" and ctx.open_self:
+        line = X.TEMPLATES["H-USER-OPEN"][lang]
+    elif first_code == "check_needs_person":
+        line = X.TEMPLATES["H-USER-CHECK"][lang]
+    elif first_code:
+        line = _fill("H-USER-YES", lang, 200, reason_short=X.REASON_SHORT[first_code][lang])
     else:
         line = X.TEMPLATES["H-USER-NO"][lang]
     # A very long host can push the sentence over the cap; the fallback needs no host, so it always fits.
@@ -929,7 +1052,7 @@ def _others(ctx: _Ctx) -> dict:
 def _timeline(ctx: _Ctx) -> dict:
     lang, items = ctx.lang, []
     for change in ctx.changes:
-        sentence = _change_sentence(ctx, change)
+        sentence = _change_sentence(ctx, change, 300)
         when = _dt(change.get("at"))
         if sentence and when:
             kind = "home_check_changed" if change.get("source") == "home_check" else "declared_policy_changed"
@@ -971,11 +1094,18 @@ def _server(ctx: _Ctx) -> dict:
     return server
 
 
+# D110: every accepted input, the lookup codes and the test mark included, in this order.
+ECHO_CODES = ("error_class", "failure_stage", "task_step", "http_status", "challenge", "retry_after", "via", "agent_vendor")
+ECHO_CHOICES = ("agent_platform", "agent_env", "external_browser", "stop_point", "screen_message", "since_kind", "task_context")
+
+
 def _echo(inputs: Inputs) -> dict:
     echo: dict[str, Any] = {}
-    for key in ("agent_platform", "agent_env", "external_browser", "stop_point", "screen_message", "since_kind", "task_context"):
+    for key in ECHO_CODES + ECHO_CHOICES:
         if getattr(inputs, key) is not None:
             echo[key] = getattr(inputs, key)
+    if inputs.ahn_test:
+        echo["ahn_test"] = True
     if inputs.since_date:
         echo["since_date"] = inputs.since_date
     if inputs.since_clamped:
@@ -985,13 +1115,24 @@ def _echo(inputs: Inputs) -> dict:
 
 def _self_link(inputs: Inputs) -> str:
     pairs = [("site_host", inputs.site_host)]
-    for key in ("agent_platform", "agent_env", "external_browser", "stop_point", "screen_message", "since_kind", "task_context"):
+    for key in ECHO_CODES + ECHO_CHOICES:
         if getattr(inputs, key) is not None:
             pairs.append((key, getattr(inputs, key)))
+    if inputs.ahn_test:
+        pairs.append(("ahn_test", "1"))
     if inputs.since_date:
         pairs.append(("since_date", inputs.since_date.isoformat()))
     pairs.append(("lang", inputs.lang))
     return "/v1/why?" + urlencode(pairs)
+
+
+def _person_matches_checks(ctx: _Ctx, person: dict, checks: list[dict]) -> dict:
+    """D110, the one place the invariant is kept: a check only a person can do (who=person) means a person is needed. When no
+    rule above said so, the reason is that check, and it does not say the whole step is the person's."""
+    if person["needed"] == "yes" or not any(c["who"] == "person" for c in checks):
+        return person
+    text = X.TEMPLATES["S-P-CHECK-PERSON"][ctx.lang]
+    return {"needed": "yes", "reasons": [{"code": "check_needs_person", "text": text}], "who": ["user"]}
 
 
 def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], doc_events: list[dict], today: date) -> dict:
@@ -1004,7 +1145,9 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     rows.sort(key=lambda r: order.index(r["layer"]))
     rows = _fit_rows(rows)
     states = _group_states(rows, platform_state)
-    person = _person(ctx)
+    person = _person(ctx, rows)
+    checks = _checks(ctx, person)
+    person = _person_matches_checks(ctx, person, checks)  # last word on person, before anything that reads it (the handoff)
 
     rules = [ctx.base] + [name for name, applies in (("R7", ctx.r7), ("R2", ctx.r2), ("R3", ctx.r3), ("R6", ctx.r6)) if applies]
     unknowns = [{"template_id": "S-L3-SCOPE", "text": X.TEMPLATES["S-L3-SCOPE"][lang]}]
@@ -1025,10 +1168,12 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
         "schema_version": SCHEMA, "site_host": inputs.site_host, "generated_at": generated, "lang": lang,
         "input_echo": _echo(inputs), "where_to_look": _where_to_look(ctx, order, rows, states), "person": person,
         "others_saw": _others(ctx), "rules_applied": rules, "render_order": render, "server": _server(ctx),
-        "what_happened": {"layers": rows, "unknowns": unknowns}, "do_now": {"checks": _checks(ctx, person)},
+        "what_happened": {"layers": rows, "unknowns": unknowns}, "do_now": {"checks": checks},
         "timeline": _timeline(ctx), "handoff": _handoff(ctx, person), "basis_text": X.TEMPLATES["S-G-BASIS"][lang],
         "links": {"self": _self_link(inputs)},
     }
+    if lang == "ko" and body["server"].get("summary_line"):
+        body["server_note"] = {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
     if inputs.host_normalized:
         body["host_normalized"] = inputs.host_normalized
     return body

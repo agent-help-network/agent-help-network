@@ -44,7 +44,7 @@ const WHY_COPY = {
     person_yes: "예",
     person_no: "표시 없음",
     who: "대상",
-    server: "서버 요약(원문)",
+    server: "서버 요약(서버 원문, 영어)",
     action: "다음 행동",
     happened: "AHN 기록과 고른 답이 보여 주는 것",
     unknowns: "AHN 이 볼 수 없는 것",
@@ -198,6 +198,8 @@ function renderServer(copy, body) {
     const line = el("p", "why-lead", s.summary_line);
     line.lang = "en";  // the lookup's own sentence, as given
     box.appendChild(line);
+    // D110: in a Korean answer, the fixed sentence that says this line is the lookup's own, in English.
+    if (body.server_note && body.server_note.text) box.appendChild(el("p", "why-small", body.server_note.text));
   }
   const parts = el("p", "why-small");
   parts.appendChild(document.createTextNode(copy.action + ": "));

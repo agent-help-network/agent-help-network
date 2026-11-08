@@ -613,6 +613,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         why = lookup_signals.why_url({
             "site_host": site_host, "error_class": error_class.value if error_class else None,
             "failure_stage": failure_stage.value if failure_stage else None,
+            "task_step": task_step,  # D110: kept so that a status check stays one on /v1/why
             **lookup_signals.lenient_codes(http_status, challenge, retry_after, via),
             "agent_vendor": accepted_vendor(agent_vendor),
             lookup_signals.TEST_QUERY: "1" if lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test) else None})
@@ -648,6 +649,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                      task_context: str | None = Query(None, description="Optional: my_account_consumer, my_account_work, public_read or other. A value outside the list is ignored. Not stored."),
                      error_class: str | None = Query(None, description="Optional, as for GET /v1/incidents/check: a class you measured. It wins over the one chosen from stop_point. A value outside the list is ignored."),
                      failure_stage: str | None = Query(None, description="Optional, as for GET /v1/incidents/check: a stage you measured. A value outside the list is ignored."),
+                     task_step: str | None = Query(None, description="Optional, as for GET /v1/incidents/check (for example status_check). It wins over the step chosen from stop_point. A value that is not a step code is ignored."),
                      http_status: str | None = Query(None, description="Optional signal code, as for GET /v1/incidents/check. A value outside the list is ignored."),
                      challenge: str | None = Query(None, description="Optional signal code: header or none. A value outside the list is ignored."),
                      retry_after: str | None = Query(None, description="Optional signal code: none, lt_60, 60_3600 or gt_3600. A value outside the list is ignored."),
@@ -665,7 +667,9 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                                           agent_env=agent_env, external_browser=external_browser, stop_point=stop_point,
                                           screen_message=screen_message, since_kind=since_kind, since_date=since_date,
                                           task_context=task_context, error_class=error_class, failure_stage=failure_stage,
-                                          agent_vendor=accepted_vendor(agent_vendor))
+                                          agent_vendor=accepted_vendor(agent_vendor), task_step=task_step, http_status=http_status,
+                                          challenge=challenge, retry_after=retry_after, via=via,
+                                          ahn_test=lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test))
         except ValueError:
             raise ServiceError("invalid_site_host", 400)
         return explain.explain(settings, inputs, lookup_signal(request, http_status=http_status, challenge=challenge,

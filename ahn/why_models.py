@@ -25,12 +25,23 @@ HANDOFF_TEXT_MAX = 400
 
 LayerState = Literal["evidence", "your_answer", "background", "not_seen", "not_reviewed", "no_doc", "unread"]
 PersonReasonCode = Literal["sign_in_is_the_account_holders", "verification_on_person_device", "approval_is_the_persons_decision",
-                           "company_it_decides", "platform_admin_decides", "platform_refused_step", "server_hand_off"]
+                           "company_it_decides", "platform_admin_decides", "platform_refused_step", "server_hand_off",
+                           "page_visible_tools_off", "check_needs_person"]  # the last two since D110
 Who = Literal["user", "it_admin", "platform_admin", "site_support"]
 
 
 class WhyInputEcho(StrictModel):
-    """The accepted codes only; a value outside its list is left out (never an echo of what was sent)."""
+    """The accepted codes only; a value outside its list is left out (never an echo of what was sent). Since D110 every accepted
+    input is echoed, including the lookup codes and the test mark."""
+    error_class: str | None = Field(default=None, exclude_if=_omit_none)
+    failure_stage: str | None = Field(default=None, exclude_if=_omit_none)
+    task_step: str | None = Field(default=None, exclude_if=_omit_none)
+    http_status: int | None = Field(default=None, exclude_if=_omit_none)
+    challenge: str | None = Field(default=None, exclude_if=_omit_none)
+    retry_after: str | None = Field(default=None, exclude_if=_omit_none)
+    via: str | None = Field(default=None, exclude_if=_omit_none)
+    agent_vendor: str | None = Field(default=None, exclude_if=_omit_none)
+    ahn_test: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
     agent_platform: str | None = Field(default=None, exclude_if=_omit_none)
     agent_env: str | None = Field(default=None, exclude_if=_omit_none)
     external_browser: str | None = Field(default=None, exclude_if=_omit_none)
@@ -177,6 +188,8 @@ class WhyResponse(StrictModel):
     rules_applied: list[str] = Field(max_length=7)
     render_order: list[str] = Field(max_length=8)
     server: WhyServer
+    # D110: in a Korean answer with a server.summary_line, the fixed sentence saying that line is the lookup's own, in English.
+    server_note: TextItem | None = Field(default=None, exclude_if=_omit_none)
     what_happened: WhatHappened
     do_now: DoNow
     timeline: Timeline
