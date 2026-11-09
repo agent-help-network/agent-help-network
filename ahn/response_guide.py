@@ -60,9 +60,9 @@ ROWS: dict[str, tuple[str, str]] = {
     "H1": ("hand_off_to_human", "This step needs human verification. Hand it to the user through your normal handoff; do not try to solve or bypass the check."),
     "H2": ("hand_off_to_human", "This step likely needs the user's sign-in or permission. Hand it to the user; never ask for, store or pass on credentials."),
     # D85: the caller reported site_access and AHN's own home-page check (ahn_check) was refused too. H3-C (with a curated customer page) is EDGE_CONSUMER_ROWS.
-    "H3": ("hand_off_to_human", "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves."),
+    "H3": ("hand_off_to_human", "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents; tell your user now, who can open the page themselves."),
     # D98: the caller reported site_access and AHN's own plain robots.txt read was refused too (no developer path). H3-R-C is EDGE_CONSUMER_ROWS.
-    "H3-R": ("hand_off_to_human", "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; tell your user, who can open the page themselves."),
+    "H3-R": ("hand_off_to_human", "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; tell your user now, who can open the page themselves."),
     "O1": ("use_official_path", "An official developer path is listed; for API work use it, not page automation; for a task in the user's own account, hand the step to your user. robots.txt is pending: look up once more in {n} s."),
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
     "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
@@ -185,8 +185,8 @@ CONSUMER_ROWS_BEFORE = {
     "O7": "An official developer API or portal is listed; prefer it over page automation." + CONSUMER_SEE_TAIL_BEFORE,
 }
 EDGE_CONSUMER_ROWS: dict[str, str] = {
-    "H3": "The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools to retry; hand your user the step and the site's customer page, next_action.customer_url.",
-    "H3-R": "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; hand your user the site's customer page, next_action.customer_url.",
+    "H3": "The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools; hand your user the step and the site's customer page, next_action.customer_url.",
+    "H3-R": "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; hand your user the site's customer page, next_action.customer_url.",
 }
 CONSUMER_HAND_TAIL = " The API may not reach the user's own account; hand the user next_action.customer_url."
 # D63: where robots.txt does not block pages (O1, O7) the customer page comes first and the developer API is the tail.
@@ -301,32 +301,33 @@ NO_PATH_CONSUMER_ROWS: dict[str, str] = {
     "U9": "No declared policy could be read for this host. " + _NO_PATH_CUSTOMER + " Follow your operator's rules and the site's terms.",
 }
 # D101: a service_error answer that sends the caller to no path outside AHN (the five rows above that list no path, and an O7 row whose customer
-# page is on the site that did not answer) is hand_off_to_human, so the first line and next_action.do say the same thing. The sentences are the
-# NO_PATH_* ones with "retry once later" replaced by "if one more try fails" (one more attempt at the page, not a repeat of the lookup).
+# page is on the site that did not answer) is hand_off_to_human, so the first line and next_action.do say the same thing.
+# D111: a hand_off_to_human sentence never offers another try (a retry and a hand-off in one answer pull the caller two ways): it tells the user
+# now and says the user can open the page; checking the caller's own tool is a next_checks item, not part of this line.
 # Row ids: the row it replaces plus "-H". ROWS holds the 5xx sentence; guide() picks the no-response or customer one.
 HANDOFF_ROWS = ("U6-H", "U7-H", "U9-H", "U7-O-H", "U9-O-H", "O7-H")
 _HANDOFF_BASE = {"U6-H": "U6", "U7-H": "U7", "U9-H": "U9", "U7-O-H": "U7", "U9-O-H": "U9"}
-_ONE_MORE = "if one more try fails, tell your user."
+_TELL_NOW = "Tell your user now; they can open the page themselves."
 _HANDOFF_API = " API work: official_paths."
 _HANDOFF_CAUSE_O = {"U7": "AHN could not read robots.txt", "U9": "AHN has no declared policy for this host"}
 HANDOFF_NO_RESPONSE_ROWS: dict[str, str] = {}
 HANDOFF_SERVICE_ERROR_ROWS: dict[str, str] = {}
 for _row, _base in _HANDOFF_BASE.items():
     if _row.endswith("-O-H"):
-        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_HANDOFF_CAUSE_O[_base]}. Check your tool; {_ONE_MORE}{_HANDOFF_API}"
-        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_ONE_MORE.capitalize()}{_HANDOFF_API}"
+        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_HANDOFF_CAUSE_O[_base]}. {_TELL_NOW}{_HANDOFF_API}"
+        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_TELL_NOW}{_HANDOFF_API}"
     else:
-        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[_base]}. Check your tool and path; {_ONE_MORE}"
-        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_ONE_MORE.capitalize()}"
+        HANDOFF_NO_RESPONSE_ROWS[_row] = f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[_base]}. {_TELL_NOW}"
+        HANDOFF_SERVICE_ERROR_ROWS[_row] = f"{_NO_PATH_5XX}{_NO_PATH_CAUSE_5XX[_base]}. {_TELL_NOW}"
 # With a curated customer page the user gets it (``url`` stays null). No response: the page is on the site that did not answer, so it is said.
 HANDOFF_NO_RESPONSE_CUSTOMER = ("No response came (timeout or connection). The customer page is on the same site and may not open either; "
-                                "if one more try fails, hand your user next_action.customer_url.")
-HANDOFF_SERVICE_ERROR_CUSTOMER = f"{_NO_PATH_5XX}. If one more try fails, tell your user and hand them next_action.customer_url."
+                                "tell your user now and hand them next_action.customer_url.")
+HANDOFF_SERVICE_ERROR_CUSTOMER = f"{_NO_PATH_5XX}. Tell your user now and hand them next_action.customer_url; they can open the page themselves."
 ROWS.update({row: ("hand_off_to_human", HANDOFF_SERVICE_ERROR_ROWS.get(row, HANDOFF_SERVICE_ERROR_CUSTOMER)) for row in HANDOFF_ROWS})
 # D101: the H3 sentence when the home-page check it rests on is over a day old (ahn_check.freshness == "stale"): said so, the hand-off is unchanged.
-H3_STALE = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools or user agents to retry; "
-            "tell your user, who can open the page themselves.")
-H3_STALE_CONSUMER = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools to retry; "
+H3_STALE = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools or user agents; "
+            "tell your user now, who can open the page themselves.")
+H3_STALE_CONSUMER = ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too. Do not switch tools; "
                      "hand your user the step and next_action.customer_url.")
 DEFAULT_ROW = {"wait_provider_incident": "W1", "hand_off_to_human": "H2", "use_official_path": "O7",
                "stop_declared_block": "S1", "proceed": "P1", "unknown": "U9"}
@@ -482,6 +483,16 @@ def same_site(status_url: str, site_host: str) -> bool:
     return bool(page) and (apex_host(page) or page) == (apex_host(site) or site)
 
 
+def status_self_reference(status_url: str | None, site_host: str, error_class: str | None, failure_stage: str | None) -> bool:
+    """D111: the lookup reports a failure and the status page is served from the looked-up host itself or from its root domain, so the
+    page that failed for the caller is the one a status_url would send it back to."""
+    if not status_url or not failure_observed(error_class, failure_stage):
+        return False
+    page = (urlparse(status_url).hostname or "").lower()
+    site = site_host.lower()
+    return bool(page) and page in {site, apex_host(site) or site}
+
+
 def unresolved_incidents(provider_status: dict | None) -> bool:
     """D100: a fresh reading whose overall indicator reads operational and that lists at least one unresolved incident (a whole
     number of 1 or more; a missing or other count is not one). Only an incident.io page can be this: a Statuspage page with the
@@ -526,6 +537,11 @@ def status_check_applies(task_step: str | None, status_guide: bool, one_action: 
     return one_action and error_class not in STATUS_HANDOFF_ERRORS
 
 
+def status_url_of(result: dict) -> str | None:
+    """The status page address guide() works from (the provider's, else the official one), before D111 leaves it out of next_action."""
+    return _status_url(result, result.get("provider_status"))
+
+
 def _status_url(result: dict, provider_status: dict | None) -> str | None:
     for candidate in ((provider_status or {}).get("source_url"), (result.get("official_status_page") or {}).get("source_url")):
         if candidate:
@@ -566,7 +582,7 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
           status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
           failure_kind_lines: bool = False, one_action: bool = False, d100: bool = False, incidentio_unread: bool = False,
-          *, edge_stale: bool = False) -> dict:
+          *, edge_stale: bool = False, feed_url: str | None = None) -> dict:
     """The three added keys for a finished answer: summary_line, next_action and (when any is set) links.
 
     proceed_without_failure is AHN_PROCEED_WITHOUT_FAILURE (D63). Off, the table, the row choice, ``url`` and
@@ -593,9 +609,12 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     D97 (failure_kind_lines, never for a status_check lookup): U6, U7 and U9 (no official path of any kind) take the NO_PATH_* sentences after
     a service_error (no response or 5xx), and, with a curated customer path, name next_action.customer_url (``url`` stays null; with no
     failure signal NO_PATH_CONSUMER_ROWS). Nothing but the sentence, and customer_url on those rows, changes.
-    D101: a recommendation carrying no_path_after_failure selects a HANDOFF_ROWS row (do hand_off_to_human, url null) whose sentence ends in
-    "if one more try fails, tell your user" (or hands the user next_action.customer_url). edge_stale (D101, only the H3 row): the home-page
-    check the hand-off rests on is over a day old, and the sentence says so."""
+    D101: a recommendation carrying no_path_after_failure selects a HANDOFF_ROWS row (do hand_off_to_human, url null) whose sentence tells the
+    user now (or hands the user next_action.customer_url); D111: no hand_off_to_human sentence offers another try. edge_stale (D101, only the H3 row): the home-page
+    check the hand-off rests on is over a day old, and the sentence says so.
+    feed_url (D111): the provider's known feed address. When the status page is served from the looked-up host (or its root domain) and the
+    lookup reports a failure, next_action.status_url is that feed address, or left out when none is known: the page that just failed is not
+    sent back to the caller."""
     recommendation = result.get("recommendation") or {}
     access_profile = result.get("access_profile")
     provider_status = result.get("provider_status")
@@ -697,10 +716,17 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     if customer:
         action["customer_url"] = customer
     if (status_check or status_guide) and status_url:
-        action["status_url"] = status_url
-        page = result.get("official_status_page") or {}
-        if page.get("covers") == "api" and page.get("source_url") and status_url == safe_url(page["source_url"]):
-            action["status_url_covers"] = "api"  # D102: status_url is the official page that covers only the provider's API (D80)
+        if status_self_reference(status_url, result["site_host"], error_class, failure_stage):
+            # D111: the status page is the host that failed for the caller. Not sent back to it; the provider's known feed address instead
+            # (never a guessed one), else no status_url.
+            found = safe_url(feed_url) if feed_url else None
+            if found:
+                action["status_url"] = found
+        else:
+            action["status_url"] = status_url
+            page = result.get("official_status_page") or {}
+            if page.get("covers") == "api" and page.get("source_url") and status_url == safe_url(page["source_url"]):
+                action["status_url_covers"] = "api"  # D102: status_url is the official page that covers only the provider's API (D80)
     if status_check:
         reserved = is_reserved_example(result["site_host"])  # D81
         covers_api = (result.get("official_status_page") or {}).get("covers") == "api"

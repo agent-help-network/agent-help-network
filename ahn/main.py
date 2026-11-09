@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import logging
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -607,7 +608,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                        failure_stage.value if failure_stage else None,
                        lookup_signal(request, http_status=http_status, challenge=challenge, retry_after=retry_after, via=via, ahn_test=ahn_test),
                        agent_vendor=accepted_vendor(agent_vendor), issue_feedback=True,  # the one counted lookup route (D58)
-                       failed_at=failed_at)
+                       failed_at=failed_at,
+                       test_marked=lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test))  # D111: only the mark is passed on
         # D109: for a lookup that reports a failure, the GET /v1/why address for the same lookup (same hostname and codes). Added after the
         # answer is final: it reads nothing from it and changes nothing in it.
         why = lookup_signals.why_url({
@@ -662,6 +664,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         else is fixed sentences chosen from your codes and AHN's own records; none of your choices is stored. It counts as one
         lookup, and no result token is issued.
         """
+        # D111: the names of the query parameters that were sent but are not among this route's own (their values are never read or kept).
+        declared = set(inspect.signature(why_it_fails).parameters) - {"request"}
         try:
             inputs = explain.parse_inputs(site_host, today=datetime.now(timezone.utc).date(), lang=lang, agent_platform=agent_platform,
                                           agent_env=agent_env, external_browser=external_browser, stop_point=stop_point,
@@ -669,7 +673,8 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                                           task_context=task_context, error_class=error_class, failure_stage=failure_stage,
                                           agent_vendor=accepted_vendor(agent_vendor), task_step=task_step, http_status=http_status,
                                           challenge=challenge, retry_after=retry_after, via=via,
-                                          ahn_test=lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test))
+                                          ahn_test=lookup_signals.test_marked(request.headers.get(lookup_signals.TEST_HEADER), ahn_test),
+                                          ignored_params=[name for name in request.query_params.keys() if name not in declared])
         except ValueError:
             raise ServiceError("invalid_site_host", 400)
         return explain.explain(settings, inputs, lookup_signal(request, http_status=http_status, challenge=challenge,

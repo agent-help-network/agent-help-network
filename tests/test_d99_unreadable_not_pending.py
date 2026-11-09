@@ -45,7 +45,7 @@ def probe(monkeypatch):
     queued = []
     monkeypatch.setenv("AHN_SITE_PROBE", "1")
     monkeypatch.setattr(site_probe, "_lookup_wanted", lambda *_a, **_k: True)
-    monkeypatch.setattr(site_probe, "_queue", lambda _conn, host: queued.append(host))
+    monkeypatch.setattr(site_probe, "_queue", lambda _conn, host, *_trigger: queued.append(host))
     return queued
 
 

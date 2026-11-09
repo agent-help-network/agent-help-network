@@ -361,7 +361,9 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # and for D102 (before D102: 0e7f3cb8d4a6117eb6fd90d6adcc323f30926035cabf2acef8553cd114df21e5), which adds only the optional `provider_status.note`, `next_action.status_url_covers` and `official_paths.consumer.paths[].topic`.
     # and for D109 (before D109: d100f7c4a9ae41a7e01e060392666c1fdb7053da16b6d217dcb071e22c561844), which adds only the optional `cause` and `cause_basis`
     # to `observations[]` and to the `report_observation` input, the optional `links.why`, and one sentence of the `report_observation` description.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "fc6f909044a2638fa36db274e1315765f6d57b201708151a4966fed1e232b9c0"
+    # and for D111 (before D111: fc6f909044a2638fa36db274e1315765f6d57b201708151a4966fed1e232b9c0), which adds only the optional
+    # `provider_status.source_age_days` and `provider_status.provider_page_stale`.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "ce3afde7495cd6a020cbc369335917cb9f17e8f21db1bd6aecf82dd0dcd9a57f"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

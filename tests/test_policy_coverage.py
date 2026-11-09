@@ -463,8 +463,8 @@ TABLES = {
     "audit_events": Kept(Phrase("audit-log entries (event type, report ID and time)", "감사 기록(이벤트 유형·제보 ID·시각)")),
     "public_intake_daily": Kept(Phrase("Daily report-intake totals", "일별 제보 접수 합계")),
     # Work items: a lookup's request for a background robots.txt/llms.txt or status read, deleted once handled.
-    "background_reads": Transient(Phrase("background-read request (the public hostname, the kind of read and when it was asked for)",
-                                         "뒤에서 읽기 요청(공개 호스트명, 읽기 종류, 요청 시각)")),
+    "background_reads": Transient(Phrase("background-read request (the public hostname, the kind of read, when it was asked for and, for a lookup marked as a test, that mark)",
+                                         "뒤에서 읽기 요청(공개 호스트명, 읽기 종류, 요청 시각, 시험으로 표시한 조회였다면 그 표시)")),
     # Public government domain lists: one current copy each, replaced when the publisher posts a new version.
     "gov_domain_registry": Replaced(
         Phrase("the current copy of each public government domain list we download", "내려받는 공개 정부 도메인 목록마다 현재 사본"),
@@ -849,6 +849,8 @@ COLUMNS = {
     "host_access_profile.content_use": Phrase(
         "content-use preferences it declares (Content-Signal and Content-Usage lines) as normalized yes, no or unset values",
         "콘텐츠 이용 선호(Content-Signal·Content-Usage 줄)를 yes·no·unset 으로 정규화한 값"),
+    "background_reads.trigger_kind": Phrase(
+        "for a lookup marked as a test, that mark", "시험으로 표시한 조회였다면 그 표시"),
     "site_probe.refusal_counted_at": Phrase(
         "the time of the latest refusal counted toward two in a row", "두 번 연속 세기에 센 가장 최근 거절의 시각"),
     "host_access_profile.home_gate": Phrase(

@@ -164,7 +164,7 @@ def test_the_stored_measurement_decides_at_each_boundary_and_nothing_else_moves(
     # D101: a check over a day old says so in its first line; the decision is the same
     stale = age > timedelta(hours=24)  # from the case's own age, not from the field under test
     assert on["ahn_check"]["freshness"] == ("stale" if stale else "fresh"), (outcome, age)
-    assert on["summary_line"] == (response_guide.H3_STALE if stale else "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents to retry; tell your user, who can open the page themselves.")
+    assert on["summary_line"] == (response_guide.H3_STALE if stale else "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents; tell your user now, who can open the page themselves.")
     # everything but the decision and the one note is the answer the switch off gives
     assert same_but(on, off, "recommendation", "next_checks", "summary_line", "next_action", "ahn_check")
     assert {k: v for k, v in on["next_action"].items() if k != "do"} == {k: v for k, v in off["next_action"].items() if k != "do"}

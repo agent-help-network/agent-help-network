@@ -83,7 +83,7 @@ CUSTOMER = {"name": "Example", "consumer": {"paths": [{"kind": "customer_help", 
 
 
 @pytest.mark.parametrize("page,status_url", [(None, None), (("Other status", "https://status.other-example.net/"), "https://status.other-example.net/"),
-                                             (("Own status", "https://" + HOST + "/status"), "https://" + HOST + "/status")])
+                                             (("Own status", "https://" + HOST + "/status"), None)])  # D111: the status page is the host that failed, so status_url is left out
 @pytest.mark.parametrize("stage", [None, "access_denial_observed"])
 def test_a_status_check_that_reports_the_failure_gets_the_hand_off_with_any_status_url(refused_host, monkeypatch, page, status_url, stage):
     monkeypatch.setattr(service, "official_status_page_for", lambda host: page)

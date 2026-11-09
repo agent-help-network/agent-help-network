@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import EDGE_STAGES, GUIDE_MODES, STAGES, variants  # noqa: E402
 from test_response_guide import NOW  # noqa: E402
+import _d111_compat as d111  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.models import NextCheck  # noqa: E402
@@ -44,9 +45,9 @@ DEV = {"name": "Example", "api_docs": "https://developer.example.com/docs", "dev
 NO_DEV = {"name": "Example", "api_docs": None, "developer_portal": None, "note": None}
 REFUSED = {"robots_status": "refused", "robots": None, "freshness": "fresh", "llms_txt_status": "absent"}
 ALLOWS = {"robots_status": "absent", "robots": None, "freshness": "fresh", "llms_txt_status": "absent"}
-SENTENCE = ("The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; "
-            "tell your user, who can open the page themselves.")
-SENTENCE_C = ("The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents to retry; "
+SENTENCE = ("The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; "
+            "tell your user now, who can open the page themselves.")
+SENTENCE_C = ("The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; "
               "hand your user the site's customer page, next_action.customer_url.")
 CHECK = ("The site refused you and AHN's own plain robots.txt read too, so the refusal is the site's edge, not only your tool. "
          "Do not switch tools or user agents; hand the step to your user.")
@@ -113,7 +114,7 @@ def compare(stride: int) -> dict:
                     new_out = guide(result_of(case, new_rec), *mode)
                     counts["guide_pairs"] += 1
                     if not inside:
-                        assert new_out == old_out, (case, stage, edge, mode)
+                        assert new_out == d111.answer(old_out, "example.com", None, None, None, False), (case, stage, edge, mode)
                         continue
                     counts["guide_changed"] += 1
                     action = new_out["next_action"]
@@ -253,16 +254,16 @@ def test_the_code_is_in_the_published_model_and_has_both_languages():
 
 def test_the_new_sentences_are_short_plain_and_carry_no_host_or_url():
     assert ROWS["H3-R"] == ("hand_off_to_human", SENTENCE) and EDGE_CONSUMER_ROWS["H3-R"] == SENTENCE_C
-    assert len(SENTENCE) == 160 and len(SENTENCE_C) == 177
+    assert len(SENTENCE) == 155 and len(SENTENCE_C) == 168
     for text in (SENTENCE, SENTENCE_C, CHECK):
         assert len(text) <= LINE_MAX and re.fullmatch(r"[\x20-\x7E]+", text) and "{" not in text and "http" not in text, text
         assert not any(word in text.lower() for word in FORBIDDEN), text
-    assert ROWS["H3"] == pre_rg.ROWS["H3"] and EDGE_CONSUMER_ROWS["H3"] == pre_rg.EDGE_CONSUMER_ROWS["H3"]
+    assert ROWS["H3"][0] == pre_rg.ROWS["H3"][0]  # the H3 sentence is D111's (test_d85_edge_refusal pins it)
 
 
 def test_no_other_row_or_table_changed():
-    assert {k: v for k, v in ROWS.items() if k != "H3-R" and k not in response_guide.HANDOFF_ROWS} == pre_rg.ROWS
-    assert {k: v for k, v in EDGE_CONSUMER_ROWS.items() if k != "H3-R"} == pre_rg.EDGE_CONSUMER_ROWS
+    assert {k: v for k, v in ROWS.items() if k not in ("H3", "H3-R") and k not in response_guide.HANDOFF_ROWS} == {k: v for k, v in pre_rg.ROWS.items() if k != "H3"}
+    assert {k: v for k, v in EDGE_CONSUMER_ROWS.items() if k not in ("H3", "H3-R")} == {k: v for k, v in pre_rg.EDGE_CONSUMER_ROWS.items() if k != "H3"}
     assert {k: v for k, v in response_guide.STATUS_ROWS.items() if k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
     assert response_guide.CONSUMER_ROWS == pre_rg.CONSUMER_ROWS
     assert response_guide.NO_PATH_NO_RESPONSE_ROWS == pre_rg.NO_PATH_NO_RESPONSE_ROWS

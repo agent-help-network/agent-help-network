@@ -23,6 +23,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import GUIDE_MODES, STAGES, variants  # noqa: E402,F401
 from test_response_guide import NOW  # noqa: E402
+import _d111_compat as d111  # noqa: E402
 
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.models import NextCheck  # noqa: E402
@@ -123,7 +124,9 @@ def compare(stride: int) -> dict:
             new_out = guide(result_of(case, new_rec), *guide_args(case, stage, pwf))
             counts["guide_pairs"] += 1
             if not inside:
-                assert new_out == old_out, (case, stage, pwf, same)
+                want = d111.answer(old_out, case.get("site_host", "example.com"), case.get("error_class"), stage,
+                                   response_guide.status_url_of(result_of(case, new_rec)))
+                assert new_out == want, (case, stage, pwf, same)
                 continue
             counts["guide_changed"] += 1
             # D100 only words a status check; with it on, an answer D101 hands off is the same answer
@@ -131,7 +134,7 @@ def compare(stride: int) -> dict:
             action = new_out["next_action"]
             assert action["do"] == "hand_off_to_human" and action["url"] is None and action["retry_after_seconds"] is None, (case, stage)
             assert len(new_out["summary_line"]) <= LINE_MAX and new_out["summary_line"] != old_out["summary_line"]
-            assert "if one more try fails" in new_out["summary_line"].lower() and "etry once later" not in new_out["summary_line"]
+            assert "tell your user now" in new_out["summary_line"].lower() and "etry once later" not in new_out["summary_line"]
             curated = customer_url(case.get("official")) is not None
             assert action.get("customer_url") == (HELP if curated else None), (case, stage)
             assert {k: v for k, v in action.items() if k not in ("do", "url", "customer_url")} == \
@@ -140,7 +143,7 @@ def compare(stride: int) -> dict:
             if curated:
                 assert "next_action.customer_url" in new_out["summary_line"]
             else:
-                assert new_out["summary_line"].endswith(("tell your user.", "official_paths."))
+                assert new_out["summary_line"].endswith(("themselves.", "official_paths."))
     return counts
 
 
@@ -164,7 +167,7 @@ def test_a_united_shaped_lookup_robots_unread_no_path_no_response_is_handed_to_t
     assert rec == {"action": "hand_off_to_human", "confidence": "low", "reasons": ["robots_unknown", NO_PATH_CODE]}
     assert out["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None}
     assert out["summary_line"] == ("No response came (timeout or connection), and AHN could not read the site's robots.txt either. "
-                                   "Check your tool and path; if one more try fails, tell your user.")
+                                   "Tell your user now; they can open the page themselves.")
 
 
 def test_a_dhl_shaped_lookup_a_developer_path_and_robots_unread_keeps_the_api_pointer():
@@ -172,7 +175,7 @@ def test_a_dhl_shaped_lookup_a_developer_path_and_robots_unread_keeps_the_api_po
     assert rec["action"] == "hand_off_to_human" and rec["reasons"] == ["robots_unknown", "official_path_available", NO_PATH_CODE]
     assert out["next_action"]["do"] == "hand_off_to_human" and out["next_action"]["url"] is None
     assert out["summary_line"] == ("No response came (timeout or connection), and AHN could not read robots.txt. "
-                                   "Check your tool; if one more try fails, tell your user. API work: official_paths.")
+                                   "Tell your user now; they can open the page themselves. API work: official_paths.")
 
 
 def test_a_bestbuy_shaped_lookup_a_customer_page_on_the_same_site_is_handed_over_with_it():
@@ -183,7 +186,7 @@ def test_a_bestbuy_shaped_lookup_a_customer_page_on_the_same_site_is_handed_over
     assert rec == {"action": "hand_off_to_human", "confidence": "low", "reasons": ["official_path_available", NO_PATH_CODE]}
     assert out["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None, "customer_url": HELP}
     assert out["summary_line"] == ("No response came (timeout or connection). The customer page is on the same site and may not open either; "
-                                   "if one more try fails, hand your user next_action.customer_url. API work: official_paths.")
+                                   "tell your user now and hand them next_action.customer_url. API work: official_paths.")
     # the pointer is only there while a developer path is listed
     rec, out = answer("service_error", BTR, profile=UNREAD, official={**NO_DEV, "consumer": CONSUMER}, same=True)
     assert out["summary_line"] == response_guide.HANDOFF_NO_RESPONSE_CUSTOMER
@@ -217,9 +220,9 @@ def test_a_customer_page_on_another_site_or_after_a_5xx_keeps_the_answer_from_be
 
 
 FIVE_XX = {
-    "U7-H": "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. If one more try fails, tell your user.",
-    "U6-H": "AHN cannot judge a single page's 5xx; the site also refused AHN's plain robots.txt read. If one more try fails, tell your user.",
-    "U9-H": "AHN cannot judge a single page's 5xx, and has no declared policy for this host. If one more try fails, tell your user.",
+    "U7-H": "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Tell your user now; they can open the page themselves.",
+    "U6-H": "AHN cannot judge a single page's 5xx; the site also refused AHN's plain robots.txt read. Tell your user now; they can open the page themselves.",
+    "U9-H": "AHN cannot judge a single page's 5xx, and has no declared policy for this host. Tell your user now; they can open the page themselves.",
 }
 FIVE_XX["U7-O-H"] = FIVE_XX["U7-H"] + " API work: official_paths."
 FIVE_XX["U9-O-H"] = FIVE_XX["U9-H"] + " API work: official_paths."
@@ -254,7 +257,7 @@ def test_other_failures_and_a_failure_free_lookup_are_not_handed_off():
 # --- the machine check: a sentence says what next_action.do is --------------------------------------------------------------
 
 RETRY_RE = re.compile(r"retry once later", re.I)
-ONE_MORE = "if one more try fails"
+ONE_MORE = "tell your user now"  # D111: the hand-off line that used to say "if one more try fails"
 # D101 leaves the sentences of a customer page on another site, and of a 5xx with a customer page on the same site, as they were (D97): the
 # agent is handed the page by next_action.customer_url while do stays no_clear_action. They are the only ones that still say "retry once later".
 KNOWN_RETRY_WITH_NO_CLEAR_ACTION = set(response_guide.NO_PATH_NO_RESPONSE_CONSUMER_ROWS.values()) | set(response_guide.NO_PATH_SERVICE_ERROR_CONSUMER_ROWS.values())
@@ -283,7 +286,7 @@ def test_every_sentence_the_guide_produces_agrees_with_its_do():
     # the static tables: the ROWS the table lists carry no "retry once later" on a row that does not retry
     for row, (do, sentence) in ROWS.items():
         machine_check(do, sentence.replace("{n}", "120"), False) if row not in ("U2",) else None
-    # the new rows exist for every hand-off the code can pick, and say "if one more try fails"
+    # the new rows exist for every hand-off the code can pick, and say "tell your user now"
     for table in (response_guide.HANDOFF_NO_RESPONSE_ROWS, response_guide.HANDOFF_SERVICE_ERROR_ROWS):
         assert set(table) == set(response_guide.HANDOFF_ROWS) - {"O7-H"}
         for sentence in table.values():
@@ -314,7 +317,7 @@ def test_the_h3_sentence_says_when_the_home_page_check_is_over_a_day_old_and_not
     fresh, stale = h3(None, False), h3(None, True)
     assert fresh["summary_line"] == ROWS["H3"][1]
     assert stale["summary_line"] == response_guide.H3_STALE and "over a day ago" in stale["summary_line"]
-    assert "Do not switch tools or user agents to retry" in stale["summary_line"] and "or user agents" in ROWS["H3"][1]
+    assert "Do not switch tools or user agents; " in stale["summary_line"] and "or user agents" in ROWS["H3"][1]
     assert stale["next_action"] == fresh["next_action"] and stale.get("links") == fresh.get("links")
     curated = {**NO_DEV, "consumer": CONSUMER}
     fresh_c, stale_c = h3(curated, False), h3(curated, True)

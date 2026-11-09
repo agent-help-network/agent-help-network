@@ -83,6 +83,12 @@ HOURLY_CAP = 60
 DAILY_CAP = 800
 LOOKUP_DAILY_CAP = 300
 LOOKUP_HOURLY_CAP = 40
+# What started a check (site_probe.trigger_kind). D111: a lookup marked as a test (X-AHN-Test: 1 or ahn_test=1) still gets the same answer, so it
+# runs or queues the same check, but the check is recorded as "test": the counts of what lookups started (the daily and hourly lookup caps,
+# the per-day trigger counts) leave it out. A test is held to the lookup caps by its own count.
+LOOKUP_TRIGGER = "lookup"
+TEST_TRIGGER = "test"
+LOOKUP_TRIGGERS = (LOOKUP_TRIGGER, TEST_TRIGGER)
 # A refusal (401, 403, 429 or any 503), a bot challenge, a rate limit or a login wall takes the host off
 # the check list for this long, flat: the host answered and declined, and asking again sooner adds load for no signal.
 REFUSED_EXCLUDE_DAYS = 7
@@ -141,7 +147,8 @@ SHOW_VIEW_NOTE = ("Measured from AHN's server (a data-center address, declared b
                   "recommendation.")
 
 # D102: said beside a measured view's freshness (the age of measured_at); pending and not_measured views have no freshness.
-FRESHNESS_NOTE = " freshness is the age of measured_at."
+# D111: says what fresh means (FRESH_HOURS), so a reader does not take "fresh" for "measured just now".
+FRESHNESS_NOTE = f" freshness is the age of measured_at; fresh means measured within the last {FRESH_HOURS} hours."
 SHOW_VIEW_NOTE_MEASURED = SHOW_VIEW_NOTE + FRESHNESS_NOTE
 
 # D85: the note of an ahn_check that decided the answer (service.check swaps it in for this one answer only).
@@ -558,16 +565,17 @@ def _breaker_stopped(conn) -> bool:
 def caps_ok(conn, trigger: str, now: datetime) -> str | None:
     """None when the limits allow another check, else 'budget'."""
     day = _utc_day(now)
+    kind = trigger if trigger in LOOKUP_TRIGGERS else LOOKUP_TRIGGER  # D111: a lookup and a test are each held to the cap by their own count
     counts = conn.execute(
         """SELECT COALESCE(sum(probes),0) AS total,
-                  COALESCE(sum(probes) FILTER (WHERE trigger_kind='lookup'),0) AS lookup
-           FROM site_probe_daily WHERE day=%s AND outcome<>'not_measured'""", (day,)).fetchone()
-    if counts["total"] >= daily_cap() or (trigger == "lookup" and counts["lookup"] >= LOOKUP_DAILY_CAP):
+                  COALESCE(sum(probes) FILTER (WHERE trigger_kind=%s),0) AS lookup
+           FROM site_probe_daily WHERE day=%s AND outcome<>'not_measured'""", (kind, day)).fetchone()
+    if counts["total"] >= daily_cap() or (trigger in LOOKUP_TRIGGERS and counts["lookup"] >= LOOKUP_DAILY_CAP):
         return "budget"
     hourly = conn.execute(
-        """SELECT count(*) AS total, count(*) FILTER (WHERE trigger_kind='lookup') AS lookup
-           FROM site_probe WHERE probed_at > %s AND outcome<>'not_measured'""", (now - timedelta(hours=1),)).fetchone()
-    if hourly["total"] >= HOURLY_CAP or (trigger == "lookup" and hourly["lookup"] >= LOOKUP_HOURLY_CAP):
+        """SELECT count(*) AS total, count(*) FILTER (WHERE trigger_kind=%s) AS lookup
+           FROM site_probe WHERE probed_at > %s AND outcome<>'not_measured'""", (kind, now - timedelta(hours=1))).fetchone()
+    if hourly["total"] >= HOURLY_CAP or (trigger in LOOKUP_TRIGGERS and hourly["lookup"] >= LOOKUP_HOURLY_CAP):
         return "budget"
     return None
 
@@ -869,7 +877,7 @@ def measure(settings, site_host: str, trigger: str, *, now: datetime | None = No
 def _wait_for_profile(conn, site_host: str, job: dict | None, trigger: str):
     """No robots.txt verdict for "/" yet (or it is over 24 hours old). The host's profile read is queued if nothing else
     did; a queued check waits for it (and is dropped after QUEUE_GIVE_UP), a list-driven one simply tries again on a later pass."""
-    if job is None and trigger == "lookup":
+    if job is None and trigger in LOOKUP_TRIGGERS:
         return None  # the lookup path queues the check itself
     if job is not None and job.get("requested_at") is not None and job["requested_at"] < datetime.now(timezone.utc) - QUEUE_GIVE_UP:
         return None
@@ -880,21 +888,31 @@ def _wait_for_profile(conn, site_host: str, job: dict | None, trigger: str):
 
 
 def run_queued(settings, site_host: str, job: dict) -> None:
-    """The background worker's entry (kind ``site_probe``): a check started by a lookup, with no delay."""
-    measure(settings, site_host, "lookup", job=job)
+    """The background worker's entry (kind ``site_probe``): a check started by a lookup, with no delay. D111: recorded as a test when
+    the lookup that queued it was marked as one (background_reads.trigger_kind); any trouble reading that leaves it a lookup's."""
+    trigger = LOOKUP_TRIGGER
+    try:
+        from .db import connect
+        with connect(settings) as conn:
+            row = conn.execute("SELECT trigger_kind FROM background_reads WHERE kind='site_probe' AND site_host=%s", (site_host,)).fetchone()
+        if row is not None and row["trigger_kind"] == TEST_TRIGGER:
+            trigger = TEST_TRIGGER
+    except Exception:
+        LOG.warning("site_probe_trigger_unavailable")
+    measure(settings, site_host, trigger, job=job)
 
 
 # --------------------------------------------------------------------------------------------------------------
 # The lookup path
 
 
-def start_sync(settings, site_host: str, *, now: datetime | None = None, reader=None):
+def start_sync(settings, site_host: str, *, now: datetime | None = None, reader=None, trigger: str = LOOKUP_TRIGGER):
     """The in-flight check of ``site_host`` (a Future of the stored row or None), started on a thread if there is none;
     None when this process already runs SYNC_CONCURRENCY checks. Lookups that arrive while a check runs share it."""
-    return _start(settings, site_host, now=now, reader=reader)[0]
+    return _start(settings, site_host, now=now, reader=reader, trigger=trigger)[0]
 
 
-def _start(settings, site_host: str, *, now: datetime | None = None, reader=None):
+def _start(settings, site_host: str, *, now: datetime | None = None, reader=None, trigger: str = LOOKUP_TRIGGER):
     """(future or None, started): ``started`` is False when the future was already running for another lookup."""
     with _INFLIGHT_LOCK:
         existing = _INFLIGHT.get(site_host)
@@ -909,7 +927,7 @@ def _start(settings, site_host: str, *, now: datetime | None = None, reader=None
 
     def work() -> None:
         try:
-            future.set_result(measure(settings, site_host, "lookup", now=now, reader=reader, paced=False, deadline=deadline))
+            future.set_result(measure(settings, site_host, trigger, now=now, reader=reader, paced=False, deadline=deadline))
         except BaseException as exc:  # the lookup that started it has moved on; nothing may escape this thread
             LOG.warning("site_probe_sync_failed error=%s", type(exc).__name__)
             future.set_result(None)
@@ -928,12 +946,13 @@ def _start(settings, site_host: str, *, now: datetime | None = None, reader=None
     return future, True
 
 
-def sync_measure(settings, site_host: str, *, wait: float | None = None, now: datetime | None = None, reader=None):
+def sync_measure(settings, site_host: str, *, wait: float | None = None, now: datetime | None = None, reader=None,
+                 trigger: str = LOOKUP_TRIGGER):
     """(row or None, why): waits at most ``wait`` seconds (SYNC_WAIT_SECONDS) for the check, only the lookup that started
     it; a lookup that finds the host's check already running does not wait. why: 'done', 'busy' (no free slot), 'joined'
     (another lookup's check is running) or 'timeout' (the check goes on in the background and stores its own result)."""
     wait = SYNC_WAIT_SECONDS if wait is None else wait
-    future, started = _start(settings, site_host, now=now, reader=reader)
+    future, started = _start(settings, site_host, now=now, reader=reader, trigger=trigger)
     if future is None:
         return None, "busy"
     if not started:
@@ -944,19 +963,22 @@ def sync_measure(settings, site_host: str, *, wait: float | None = None, now: da
         return None, "timeout"
 
 
-def _lookup_wanted(conn, site_host: str, now: datetime) -> bool:
+def _lookup_wanted(conn, site_host: str, now: datetime, trigger: str = LOOKUP_TRIGGER) -> bool:
     """Would a lookup of this host start a check now? The database part of the gate (the profile's robots.txt verdict is
     checked again where the check runs)."""
     row = conn.execute("SELECT outcome,next_due_at,probed_at FROM site_probe WHERE site_host=%s", (site_host,)).fetchone()
     if row and (row["next_due_at"] > now or (row["outcome"] != "not_measured" and row["probed_at"] > now - timedelta(hours=MIN_GAP_HOURS))):
         return False
-    return caps_ok(conn, "lookup", now) is None and _guard_ok(conn) and not _breaker_stopped(conn)
+    return caps_ok(conn, trigger, now) is None and _guard_ok(conn) and not _breaker_stopped(conn)
 
 
-def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile: dict | None) -> dict | None:
+def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile: dict | None, test: bool = False) -> dict | None:
     """The ``ahn_check`` view for a lookup of an eligible host, or None. Never raises. May start a check and wait for it
     up to SYNC_WAIT_SECONDS; if it is not done by then (or cannot start) the check is queued with no delay and the view
-    says ``pending``. The host's recommendation and next steps are decided before this and do not depend on it."""
+    says ``pending``. The host's recommendation and next steps are decided before this and do not depend on it.
+    ``test`` (D111): the lookup is marked as a test. The answer is the same and the check is still made or queued, but it is
+    recorded with trigger_kind "test", so the counts of what lookups started do not include it."""
+    trigger = TEST_TRIGGER if test else LOOKUP_TRIGGER
     if not enabled():
         return None
     try:
@@ -964,19 +986,19 @@ def for_lookup(settings, conn, site_host: str, now: datetime, *, access_profile:
         if row is not None and _fresh_or_waiting(row, now):
             conn.commit()
             return _valid(view(row, now))
-        wanted = _lookup_wanted(conn, site_host, now)
+        wanted = _lookup_wanted(conn, site_host, now, trigger)
         conn.commit()
         if not wanted:
             return _valid(view(row, now)) if row is not None else None
         profile_ready = bool(access_profile) and access_profile.get("freshness") == "fresh"
         if profile_ready:
             # The lookup's transaction is closed above: nothing of this connection is held while it waits.
-            done, why = sync_measure(settings, site_host, now=None)
+            done, why = sync_measure(settings, site_host, now=None, trigger=trigger)
             if done is not None:
                 return _valid(view(done, datetime.now(timezone.utc)))
             if why == "joined":
                 return _valid(view(row, now) if row is not None else pending_view(_profile_retry(access_profile)))
-        _queue(conn, site_host)
+        _queue(conn, site_host, trigger)
         if row is None and _d103_on() and "retry_after_seconds" not in (access_profile or {}) \
                 and _profile_read_keeps_failing(conn, site_host, now):
             # D103 (as in D99, a profile re-read already queued keeps pending): no stored check, and the profile's
@@ -1035,11 +1057,27 @@ def _fresh_or_waiting(row: dict, now: datetime) -> bool:
     return row["next_due_at"] > now
 
 
-def _queue(conn, site_host: str) -> None:
+def _queue(conn, site_host: str, trigger: str = LOOKUP_TRIGGER) -> None:
+    """Queue the home-page check of a host (no delay). D111: a check queued by a test lookup is marked trigger_kind "test" in the queue row,
+    unless a row was already waiting; a real lookup that finds a test-marked row takes it over (clears the mark), so a lookup is never
+    counted as a test. The mark is written apart from the queue insert: if it cannot be written, the check is still queued, as a lookup's."""
     from . import background_reads
     try:
         with conn.transaction():
+            waiting = trigger == TEST_TRIGGER and conn.execute(
+                "SELECT 1 FROM background_reads WHERE kind='site_probe' AND site_host=%s", (site_host,)).fetchone() is not None
             queued = background_reads.enqueue(conn, [("site_probe", site_host)])
+            try:
+                with conn.transaction():
+                    if trigger == TEST_TRIGGER:
+                        if queued and not waiting:
+                            conn.execute("UPDATE background_reads SET trigger_kind=%s WHERE kind='site_probe' AND site_host=%s",
+                                         (TEST_TRIGGER, site_host))
+                    else:
+                        conn.execute("UPDATE background_reads SET trigger_kind=NULL WHERE kind='site_probe' AND site_host=%s AND trigger_kind=%s",
+                                     (site_host, TEST_TRIGGER))
+            except Exception:
+                LOG.warning("site_probe_trigger_mark_unavailable")
         conn.commit()
         if queued:
             background_reads.wake()

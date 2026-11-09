@@ -354,6 +354,10 @@ class ProviderStatus(StrictModel):
     window_blind: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
     # D102: what freshness and source_updated_at measure (a fixed sentence, service.PROVIDER_STATUS_NOTE); freshness itself is D46's.
     note: str | None = Field(default=None, exclude_if=_omit_none)
+    # D111: whole days since source_updated_at (the provider's own update time); left out when that time is missing or unusable.
+    source_age_days: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+    # D111: true only when source_age_days is over 30; left out otherwise. Information only: freshness and the answer do not read it.
+    provider_page_stale: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
     # What source_updated_at is. "active_items" (D54): the latest update of the incidents and maintenances the feed lists
     # as active (Instatus, Google Gmail). "page" (D80): the page-wide time the provider last changed its status page, which
     # need not move with incidents. Left out when there is no source_updated_at (for example the Atom history).

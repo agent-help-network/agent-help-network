@@ -258,7 +258,7 @@ def test_the_new_sentences_are_short_plain_and_carry_no_host_or_url():
     assert ROWS["U7-O"][0] == ROWS["U9-O"][0] == "no_clear_action"
     assert "No official path is listed" not in ROWS["U7-O"][1] + ROWS["U9-O"][1] and "no official path is listed" not in ROWS["U9-O"][1]
     assert "5xx" not in U7_O_NO_RESPONSE and U7_O_NO_RESPONSE.startswith("No response came")
-    assert {row: value for row, value in ROWS.items() if row not in ("U7-O", "U9-O", "H3-R", *response_guide.HANDOFF_ROWS)} == pre_rg.ROWS  # every other row is as before
+    assert {row: value for row, value in ROWS.items() if row not in ("U7-O", "U9-O", "H3", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k != "H3"}  # every other row is as before
 
 
 def test_the_switch_parses_like_its_siblings(monkeypatch):
