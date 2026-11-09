@@ -2802,6 +2802,32 @@
        "default": null,
        "title": "Note"
       },
+      "provider_page_stale": {
+       "anyOf": [
+        {
+         "const": true,
+         "type": "boolean"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Provider Page Stale"
+      },
+      "source_age_days": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Source Age Days"
+      },
       "source_kind": {
        "anyOf": [
         {

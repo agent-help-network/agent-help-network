@@ -213,7 +213,7 @@ def test_the_provider_status_note_is_the_fixed_sentence_and_the_model_takes_it()
 
 
 def test_a_measured_ahn_check_note_ends_with_the_freshness_sentence_and_the_others_do_not():
-    tail = "freshness is the age of measured_at."
+    tail = f"freshness is the age of measured_at; fresh means measured within the last {site_probe.FRESH_HOURS} hours."  # D111
     assert site_probe.FRESHNESS_NOTE == " " + tail
     for outcome in site_probe.OUTCOMES:
         shown = site_probe.view(probe_row(outcome=outcome, http_status=403 if outcome != "unreachable" else None,
@@ -232,7 +232,7 @@ def test_the_two_notes_say_the_same_two_things_as_the_contract_and_llms_txt():
     contract = (ROOT / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
     korean = (ROOT / "docs" / "api-contract.md").read_text(encoding="utf-8")
     for doc in (contract, korean):
-        assert PROVIDER_STATUS_NOTE in doc and "freshness is the age of measured_at." in doc
+        assert PROVIDER_STATUS_NOTE in doc and f"freshness is the age of measured_at; fresh means measured within the last {site_probe.FRESH_HOURS} hours." in doc
     assert "provider_status.note" in text and "status_url_covers" in text and "More by topic: official_paths.consumer." in text
     assert "More by topic: official_paths.consumer." in contract and "status_url_covers" in contract and "`topic`" in contract
     assert "status_url_covers" in korean and "`topic`" in korean

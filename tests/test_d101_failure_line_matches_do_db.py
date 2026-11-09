@@ -89,7 +89,7 @@ def test_a_service_error_with_no_path_is_handed_to_the_user_at_every_stage_and_t
     assert on["recommendation"]["action"] == "hand_off_to_human" and on["recommendation"]["reasons"][-1] == NO_PATH_CODE
     assert on["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None}
     table = response_guide.HANDOFF_NO_RESPONSE_ROWS if stage == BTR else response_guide.HANDOFF_SERVICE_ERROR_ROWS
-    assert on["summary_line"] == table[row] and "if one more try fails" in on["summary_line"].lower()
+    assert on["summary_line"] == table[row] and "tell your user now" in on["summary_line"].lower()
     assert codes(on)[1] == NO_PATH_CODE
     assert off["recommendation"]["action"] == "unknown" and off["next_action"]["do"] == "no_clear_action"
     assert NO_PATH_CODE not in codes(off) and "etry once later" in off["summary_line"]

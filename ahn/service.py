@@ -18,7 +18,8 @@ from .provenance import operator_id
 from .settings import Settings
 from .status_refresh import ACTIVE_ITEM_TIME_FEEDS, SOURCES, dedicated_status_host, official_status_page_for, register_source, status_page_covers_api_only, status_page_requires_sign_in
 from . import response_guide
-from .triage import EDGE_CODE, EDGE_FAILURE_STAGES, EDGE_ROBOTS_CODE, LOOKUP_ONLY_STEPS, NO_PATH_CODE, failure_observed, next_checks, recommendation
+from .triage import (EDGE_CODE, EDGE_FAILURE_STAGES, EDGE_ROBOTS_CODE, LOOKUP_ONLY_STEPS, NO_PATH_CODE, failure_observed, next_checks,
+                     recommendation, usable_provider_time)
 
 
 LOG = logging.getLogger(__name__)
@@ -51,6 +52,26 @@ ACCESS_PROFILE_NOTE = ("Declared crawler policy read from the host's own robots.
 # D102: what provider_status.freshness (D46) and source_updated_at (D43, D80) measure. Fixed text, added to the answer only.
 PROVIDER_STATUS_NOTE = ("freshness is the age of AHN's last read of the feed (fetched_at); source_updated_at is the provider's own page "
                         "time and need not move with the status.")
+# D111: how long the provider's own update time may stand still before the answer says so. Information only: freshness (D46), the
+# indicator, the recommendation and the first line do not read it.
+PROVIDER_PAGE_STALE_DAYS = 30
+PROVIDER_PAGE_STALE_NOTE = (f"The provider's status data shows no update for over {PROVIDER_PAGE_STALE_DAYS} days (source_age_days); that is common "
+                            "for a quiet page, and freshness is when AHN last read it.")
+
+
+def provider_status_view(provider_status: dict, now: datetime) -> dict:
+    """The provider_status object of an answer: the stored reading, the fixed note (D102) and, when source_updated_at is a usable time,
+    source_age_days (whole days since the provider's own update time, 0 or more). Over PROVIDER_PAGE_STALE_DAYS it also carries
+    provider_page_stale: true and the PROVIDER_PAGE_STALE_NOTE sentence. A missing or unusable time leaves all of it out (unknown is not old)."""
+    out = {**provider_status, "note": PROVIDER_STATUS_NOTE}
+    updated = usable_provider_time(provider_status.get("source_updated_at"), now)
+    if updated is not None:
+        age = max(0, (now - updated).days)
+        out["source_age_days"] = age
+        if age > PROVIDER_PAGE_STALE_DAYS:
+            out["provider_page_stale"] = True
+            out["note"] = f"{PROVIDER_STATUS_NOTE} {PROVIDER_PAGE_STALE_NOTE}"
+    return out
 
 
 def aggregate_eligible_host(site_host: str) -> bool:
@@ -495,7 +516,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
-          failed_at: str | None = None, fold_rules: bool = True):
+          failed_at: str | None = None, fold_rules: bool = True, test_marked: bool = False):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -517,6 +538,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
 
     ``plain_view`` (D66): a person reading the search page, not an agent that was refused; with AHN_PROCEED_WITHOUT_FAILURE=d65 it
     is answered like a status_check lookup.
+
+    ``test_marked`` (D111) is the D106 mark (X-AHN-Test: 1, ahn_test=1, the MCP test argument) of the request. It is not ``test_query`` (a synthetic
+    ``.test`` host, which has no home-page check at all): the answer is the same, and the home-page check the lookup runs or queues is
+    recorded with trigger_kind "test", so the counts of what lookups started leave it out.
 
     ``failed_at`` (D73) is the caller's ISO 8601 time of the failure. It is read once, to choose the optional ``cause``;
     it is not stored, counted or echoed, and it never touches the recommendation. The caller's own codes never reach
@@ -555,6 +580,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     registered = mapped_source = False
     now = datetime.now(timezone.utc)
     provider_status = None
+    feed_api_url = None  # D111: the provider's own feed address, when the status page is the host that failed
     robots_blocked_page = None  # (name, url) of a status page whose feed its own robots.txt does not allow (D50)
     provider_partial = False
     provider_regional = False
@@ -591,6 +617,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             feed = feed_view(conn, host, now)
             provider_status, provider_partial, provider_regional = feed.provider_status, feed.partial, feed.regional
             robots_blocked_page = feed.blocked_page
+            feed_api_url = feed.row["api_url"] if feed.row and provider_status is not None else None
             incidentio_unread = bool(settings.d100_incidentio_incidents and feed.row and provider_status is not None
                                      and feed.row.get("feed_platform") == "incident_io"
                                      and provider_status.get("active_incidents") is None)
@@ -664,7 +691,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             # D67: AHN's own server check of the home page. A short synchronous attempt (waits at most 3 seconds, the one
             # place a lookup may wait on a third-party host), otherwise queued with no delay and shown as pending. Decided
             # after the recommendation inputs above and added below after the recommendation: it changes none of them.
-            ahn_check = site_probe.for_lookup(settings, conn, host, now, access_profile=access_profile)
+            ahn_check = site_probe.for_lookup(settings, conn, host, now, access_profile=access_profile, test=test_marked)
         recent = [row for row in rows if row["observed_at"] >= now - timedelta(hours=window_hours)]
         stale = bool(rows) and not recent
         selected = recent if recent else (rows[:20] if stale else [])
@@ -739,7 +766,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             "current_site_status": "unknown", "evidence_level": level,
             "summary_code": code, "summary": summary, "failures": failures,
             "successes": successes, "reporting_sources": sources, "observations": observations,
-            "provider_status": {**provider_status, "note": PROVIDER_STATUS_NOTE} if provider_status else provider_status,
+            "provider_status": provider_status_view(provider_status, now) if provider_status else provider_status,
             "provider_source_state": "feed_connected" if provider_status else "official_page_only" if official_page else "not_verified_by_current_methods",
             "provider_discovery_attempted_at": provider_discovery_attempted_at,
             "official_status_page": official_page_view(official_page, host),
@@ -785,9 +812,15 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                                    settings.status_check_guide, error_class, failure_stage,
                                                    settings.failure_kind_lines, settings.d96_status_check_one_action,
                                                    d100=settings.d100_incidentio_incidents, incidentio_unread=incidentio_unread,
+                                                   feed_url=feed_api_url,
                                                    edge_stale=bool(settings.d101_no_path_handoff and edge_decided and settings.proceed_without_failure
                                                                    and settings.failure_kind_lines and task_step != "status_check"
                                                                    and (ahn_check or {}).get("freshness") == "stale")))
+                if (settings.status_check_guide and result["next_action"]["do"] != "lookup_apex_host"
+                        and response_guide.status_self_reference(response_guide.status_url_of(result), site_host, error_class, failure_stage)):
+                    # D111: the status page is the host that failed and the answer's one action is not a look-up of its root domain, so
+                    # the next check that says to look up the root domain is left out: next_action and next_checks name one action.
+                    result["next_checks"] = [item for item in result["next_checks"] if item["code"] != "profile_not_read"]
             except Exception:
                 LOG.warning("response_guide_unavailable")
         if ahn_check is not None:

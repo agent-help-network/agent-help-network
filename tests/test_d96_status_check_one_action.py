@@ -36,6 +36,7 @@ import _d97_scope  # noqa: E402
 from ahn import response_guide, settings as settings_module, triage  # noqa: E402
 from ahn.response_guide import LINE_MAX, RETRY_ROWS, ROWS, STATUS_FAILED_ROW, STATUS_ROWS, status_check_applies  # noqa: E402
 from ahn.response_guide import guide as _guide  # noqa: E402
+import _d111_compat as d111  # noqa: E402
 from ahn.settings import Settings, parse_d96_switch  # noqa: E402
 
 
@@ -162,6 +163,9 @@ def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid()
                     row0, _ = response_guide.select_row(rec, result["access_profile"], result["provider_status"], result["site_host"],
                                                         result["official_paths"], variants=pwf)
                     old_plain = _d97_scope.adjust(old_plain, row0, pwf, False, ec, stage, kind, result.get("official_paths"))
+                    # D111: the hand-off wording, and no status_url that points back at the host that failed
+                    old_plain = d111.answer(old_plain, site_host, ec, stage, response_guide.status_url_of(result))
+                    old_sc = d111.answer(old_sc, site_host, ec, stage, response_guide.status_url_of(result))
                     old = old_sc if not failed else old_plain
                     # switch off: the answer before D96, for every pair
                     sc_off = status_check_applies("status_check", True, False, ec, stage)
@@ -227,7 +231,8 @@ def test_status_page_host_that_failed_after_a_response_goes_to_the_user_and_no_d
     old = pair("status.replit.com", **kw)[0]
     assert rec["action"] == "use_official_path"                                            # the recommendation is not changed
     assert old["next_action"]["do"] == "use_official_path" and old["next_action"]["url"] == "https://docs.replit.com/"
-    assert new["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None, "status_url": "https://status.replit.com/"}
+    # D111: the status page is the host that failed, so status_url does not send the caller back to it
+    assert new["next_action"] == {"do": "hand_off_to_human", "url": None, "retry_after_seconds": None}
     assert new["summary_line"] == STATUS_ROWS["T1-F"]
     assert "docs.replit.com" not in json.dumps({"next_action": new["next_action"], "summary_line": new["summary_line"]})
 
@@ -270,7 +275,7 @@ def test_the_status_page_itself_failed_one_sentence_for_each_reading(provider, s
         _, new = lookup("status.example.com", provider=provider, status_page=status_page, official=REPLIT, stage=stage, error_class="service_error")
         assert new["summary_line"] == STATUS_ROWS[row]
         assert new["next_action"]["do"] == "hand_off_to_human" and new["next_action"]["url"] is None
-        assert new["next_action"]["status_url"] == "https://status.example.com/"
+        assert "status_url" not in new["next_action"]  # D111: the status page is the host that failed
 
 
 def test_a_failure_elsewhere_than_the_status_page_is_not_a_status_page_failure():
@@ -377,7 +382,7 @@ def test_the_new_sentences_are_short_plain_and_carry_no_host_or_url():
     assert new["T1-F"] == ("The provider's status feed reports no active issue (provider_status, see its fetched_at). "
                            "That status page did not open for you; give your user this reading, not a guess.")
     assert {k: v for k, v in STATUS_ROWS.items() if k not in new and k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
-    assert {k: v for k, v in ROWS.items() if k != "H3-R" and k not in response_guide.HANDOFF_ROWS} == pre_rg.ROWS                                                          # no row of the main table moved
+    assert {k: v for k, v in ROWS.items() if k not in ("H3", "H3-R") and k not in response_guide.HANDOFF_ROWS} == {k: v for k, v in pre_rg.ROWS.items() if k != "H3"}                                                          # no row of the main table moved
 
 
 def test_the_switch_parses_like_its_siblings(monkeypatch):

@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 
 from test_d85_edge_refusal import CONSUMER, STAGES  # noqa: E402
 from test_response_guide import NOW, OTHER_PAGE, main_space, page  # noqa: E402
+import _d111_compat as d111  # noqa: E402
 
 from ahn import response_guide, triage  # noqa: E402
 from ahn.response_guide import LINE_MAX, ROWS, STATUS_FAILED_ROW, STATUS_ROWS, guide, status_check_applies, status_row  # noqa: E402
@@ -115,6 +116,7 @@ def test_the_pairs_that_change_are_exactly_the_d100_condition_in_the_grid():
                     assert rec == recommend(triage, base, stage, pwf)                       # and an incident count does not move it
                     result = build(case, rec, site_host, official_page)
                     old = pre_rg.guide(copy.deepcopy(result), pwf, blocked, applies, *tail[:1], ec, stage, True, True)
+                    old = d111.answer(old, site_host, ec, stage, response_guide.status_url_of(result))  # D111: wording and a failed status page
                     # the switch off, whatever the other two inputs say: the answer before D100
                     assert guide(copy.deepcopy(result), pwf, blocked, applies, True, ec, stage, True, True, False, unread) == old
                     # the options not passed: the same (the defaults are the old answer too)
@@ -222,7 +224,7 @@ def test_every_new_sentence_fits_before_every_row_sentence_that_can_follow_it():
 
 def test_no_table_other_than_the_status_rows_moved():
     assert {k: v for k, v in STATUS_ROWS.items() if k not in ("T6", "T1-U", "T6-F")} == pre_rg.STATUS_ROWS
-    assert {k: v for k, v in ROWS.items() if k not in response_guide.HANDOFF_ROWS} == pre_rg.ROWS and response_guide.STATUS_AFTER_ROWS == pre_rg.STATUS_AFTER_ROWS
+    assert {k: v for k, v in ROWS.items() if k not in ("H3", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k not in ("H3", "H3-R")} and response_guide.STATUS_AFTER_ROWS == pre_rg.STATUS_AFTER_ROWS
     assert response_guide.CONSUMER_ROWS == pre_rg.CONSUMER_ROWS and response_guide.PROCEED_CONSUMER_ROWS == pre_rg.PROCEED_CONSUMER_ROWS
     assert {k: v for k, v in STATUS_FAILED_ROW.items() if k not in ("T6", "T1-U")} == pre_rg.STATUS_FAILED_ROW
     assert {k: v for k, v in triage.CHECKS.items() if k != "no_path_after_failure"} == pre_t.CHECKS and {k: v for k, v in triage.CHECKS_KO.items() if k != "no_path_after_failure"} == pre_t.CHECKS_KO  # the D101 code is the only addition

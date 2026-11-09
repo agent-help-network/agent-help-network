@@ -131,6 +131,22 @@ class Inputs:
     retry_after: str | None = None
     via: str | None = None
     ahn_test: bool = False
+    # D111: names (never values) of the query parameters that were sent but are not among the route's own, sorted. See clean_ignored_params.
+    ignored_params: tuple[str, ...] = ()
+
+
+IGNORED_PARAM_NAME = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+IGNORED_PARAMS_MAX = 10
+
+
+def clean_ignored_params(names: Any) -> tuple[str, ...]:
+    """D111: the parameter names that were received but not accepted, as a sorted, de-duplicated tuple of at most IGNORED_PARAMS_MAX
+    names. A name that is not a short plain token (letters, digits, underscore, dot, hyphen; 1 to 40 characters) is left out, so
+    nothing but a plain name can come back in the answer. Values are never passed in."""
+    if not isinstance(names, (list, tuple, set, frozenset)):
+        return ()
+    found = {name for name in names if isinstance(name, str) and IGNORED_PARAM_NAME.fullmatch(name)}
+    return tuple(sorted(found))[:IGNORED_PARAMS_MAX]
 
 
 def clean_host(raw: str | None) -> tuple[str, bool]:
@@ -172,7 +188,7 @@ def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_
                  external_browser: Any = None, stop_point: Any = None, screen_message: Any = None, since_kind: Any = None,
                  since_date: Any = None, task_context: Any = None, error_class: Any = None, failure_stage: Any = None,
                  agent_vendor: str | None = None, task_step: Any = None, http_status: Any = None, challenge: Any = None,
-                 retry_after: Any = None, via: Any = None, ahn_test: bool = False) -> Inputs:
+                 retry_after: Any = None, via: Any = None, ahn_test: bool = False, ignored_params: Any = ()) -> Inputs:
     """Make the request into ``Inputs``. A host that is not valid raises ValueError; every other value that is not on its
     list is ignored (the lookup still answers), exactly as the optional signal codes of the lookup are."""
     from .lookup_signals import lenient_codes
@@ -202,7 +218,7 @@ def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_
         task_step=task_step if isinstance(task_step, str) and STEP.fullmatch(task_step) else None,
         http_status=codes["http_status"], challenge=codes["challenge"], retry_after=codes["retry_after"],
         via=via if isinstance(via, str) and via in Via._value2member_map_ else None, ahn_test=ahn_test is True,
-        site_host=host, lang=lang if lang in LANGS else "en", host_normalized=normalized,
+        ignored_params=clean_ignored_params(ignored_params), site_host=host, lang=lang if lang in LANGS else "en", host_normalized=normalized,
         agent_platform=_pick(agent_platform, PLATFORMS), agent_env=_pick(agent_env, AGENT_ENVS),
         external_browser=_pick(external_browser, EXTERNAL_BROWSER), stop_point=_pick(stop_point, STOP_POINTS),
         screen_message=_pick(screen_message, SCREEN_MESSAGES), since_kind=kind, since_date=since, since_clamped=clamped,
@@ -1106,6 +1122,8 @@ def _echo(inputs: Inputs) -> dict:
             echo[key] = getattr(inputs, key)
     if inputs.ahn_test:
         echo["ahn_test"] = True
+    if inputs.ignored_params:
+        echo["ignored_params"] = list(inputs.ignored_params)
     if inputs.since_date:
         echo["since_date"] = inputs.since_date
     if inputs.since_clamped:
@@ -1202,7 +1220,7 @@ def explain(settings, inputs: Inputs, signal, *, today: date | None = None, plat
     today = today or datetime.now(timezone.utc).date()
     error_class, failure_stage, task_step = map_symptoms(inputs)
     result = check(settings, inputs.site_host, error_class, task_step, 168, failure_stage, signal, agent_vendor=inputs.agent_vendor,
-                   issue_feedback=False, plain_view=False, fold_rules=True)
+                   issue_feedback=False, plain_view=False, fold_rules=True, test_marked=inputs.ahn_test)
     # The same serialization as GET /v1/incidents/check, so `server` carries the lookup's own bytes.
     result = CheckResponse.model_validate(result).model_dump(mode="json")
     view = platform_policies.view(today, inputs.lang, platforms)

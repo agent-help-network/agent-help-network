@@ -7,7 +7,7 @@ serializes them. Fields that do not apply are left out of the JSON, never null (
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -51,6 +51,9 @@ class WhyInputEcho(StrictModel):
     since_date: date | None = Field(default=None, exclude_if=_omit_none)
     since_clamped: Literal[True] | None = Field(default=None, exclude_if=_omit_none)
     task_context: str | None = Field(default=None, exclude_if=_omit_none)
+    # D111: names (never values) of the query parameters that were sent but are not among this route's own; sorted, at most 10.
+    ignored_params: list[Annotated[str, Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_.-]+$")]] | None = Field(
+        default=None, min_length=1, max_length=10, exclude_if=_omit_none)
 
 
 class LayerStates(StrictModel):
