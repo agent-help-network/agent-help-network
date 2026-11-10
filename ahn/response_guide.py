@@ -42,6 +42,11 @@ CHANGELOG_URL = "https://github.com/agent-help-network/agent-help-network/blob/m
 CHANGELOG_ANCHOR = "#wording-1031"
 
 WAIT_SECONDS = FEED_RETRY_MINUTES * 60
+
+# D112: a status_url that is a machine-readable feed on the looked-up site (the paths the status sources use) is marked, because the
+# site's human page may show a challenge while its feed address usually answers.
+FEED_JSON_PATH = re.compile(r"^/(?:api/v2/[A-Za-z0-9_.-]+\.json|summary\.json|index\.json)$")
+FEED_JSON_NOTE = "The page may show a challenge, but this feed address usually answers; fetch it once."
 _WAIT_IN = f"look up again in about {FEED_RETRY_MINUTES} minutes"
 
 # Template id -> (do, sentence). "{n}" is the only placeholder.
@@ -727,6 +732,11 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             page = result.get("official_status_page") or {}
             if page.get("covers") == "api" and page.get("source_url") and status_url == safe_url(page["source_url"]):
                 action["status_url_covers"] = "api"  # D102: status_url is the official page that covers only the provider's API (D80)
+        if (action.get("status_url") and same_site(action["status_url"], result["site_host"])
+                and FEED_JSON_PATH.match(urlparse(action["status_url"]).path or "")):
+            # D112: only these two keys are added; ``do`` and every other key are as before.
+            action["status_url_kind"] = "feed_json"
+            action["status_url_note"] = FEED_JSON_NOTE
     if status_check:
         reserved = is_reserved_example(result["site_host"])  # D81
         covers_api = (result.get("official_status_page") or {}).get("covers") == "api"

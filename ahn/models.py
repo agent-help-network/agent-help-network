@@ -718,6 +718,10 @@ class NextAction(StrictModel):
     status_url: str | None = Field(default=None, max_length=200, exclude_if=_omit_none)
     # D102: "api" when status_url is a status page that covers only the provider's API (official_status_page.covers); left out otherwise.
     status_url_covers: Literal["api"] | None = Field(default=None, exclude_if=_omit_none)
+    # D112: "feed_json" when status_url is a machine-readable feed address on the looked-up site (its page may show a challenge while the
+    # feed usually answers), with one fixed sentence saying so. Both left out otherwise.
+    status_url_kind: Literal["feed_json"] | None = Field(default=None, exclude_if=_omit_none)
+    status_url_note: str | None = Field(default=None, min_length=1, max_length=200, exclude_if=_omit_none)
 
 
 class Links(StrictModel):

@@ -365,7 +365,9 @@ def test_t33_the_mcp_tool_definitions_and_the_answer_schema_are_those_of_the_bas
     # `provider_status.source_age_days` and `provider_status.provider_page_stale`.
     # and for the input argument descriptions (before them: ce3afde7495cd6a020cbc369335917cb9f17e8f21db1bd6aecf82dd0dcd9a57f), which only add
     # `description` text to tool input arguments and observation fields; names, types, enums and required lists are unchanged.
-    assert hashlib.sha256(blob.encode()).hexdigest() == "5afc6f51ac0fe0217ba6d161059ecd55b21f2bc1943761b3b40cf26c0e43cdb5"
+    # and for D112 (before D112: 5afc6f51ac0fe0217ba6d161059ecd55b21f2bc1943761b3b40cf26c0e43cdb5), which adds only the optional
+    # `next_action.status_url_kind` and `next_action.status_url_note`.
+    assert hashlib.sha256(blob.encode()).hexdigest() == "e565b426be975398b0b8a6e005d8e6e67e2e1e9fa87af9312d78c0fa0964636e"
 
 
 def test_t39_the_customer_page_is_a_help_page_before_an_entry_link_before_an_app_store_page():

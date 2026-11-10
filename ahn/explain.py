@@ -343,6 +343,10 @@ class _Ctx:
         # D110: the layer the caller's own stop points to (None when the stop names no layer).
         self.stop_group = "platform" if stop in PLATFORM_STOPS else "account" if stop in ACCOUNT_STOPS else None
         self.open_self = False  # set by _person: a public read handed to the person only because AHN's reads did not reach it
+        # D112: set by build() once the first layer is known. True when the lookup's action is a developer path (use_official_path) but the
+        # explanation's own first layer is not the site, or the step is a public read: the checks then do not hand the caller to that path.
+        self.first_layer: str | None = None
+        self.subordinate = False
 
     def _in_window(self, value: Any) -> bool:
         when = _dt(value)
@@ -898,6 +902,13 @@ def _item(item_id: str, who: str, text: str | None, url: str | None = None) -> d
     return out
 
 
+def _compare_text(ctx: _Ctx) -> str:
+    """D112: the browser comparison is worded for the step: a public read is opened without signing in, and at the platform layer
+    the person opens the page (themselves or with another tool). The item id stays CHK-BROWSER-COMPARE."""
+    key = "CHK-BROWSER-COMPARE" + ("-OPEN" if ctx.stop in PLATFORM_STOPS else "") + ("-PUBLIC" if ctx.i.task_context == "public_read" else "")
+    return X.TEMPLATES[key][ctx.lang]
+
+
 def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     lang, name, host = ctx.lang, ctx.pname, ctx.i.site_host
     out: list[dict | None] = []
@@ -907,7 +918,7 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     if any(r["code"] == "verification_on_person_device" for r in person["reasons"]):
         out.append(_item("CHK-PERSON-VERIFY", "person", X.TEMPLATES["CHK-PERSON-VERIFY"][lang]))
     if ctx.base == "R5":
-        out.append(_item("CHK-BROWSER-COMPARE", "person", X.TEMPLATES["CHK-BROWSER-COMPARE"][lang]))
+        out.append(_item("CHK-BROWSER-COMPARE", "person", _compare_text(ctx)))
     if (ctx.r7 or ctx.base == "R1") and ctx.entry:
         match = _msg_match_doc(ctx)
         if match:
@@ -935,7 +946,11 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
         # D110: a public status page is one the agent can read itself; it is not a step only a person can take.
         out.append(_item("CHK-STATUS", "agent", _fill("CHK-STATUS", lang, cap, provider=status_name, url=status_url), status_url))
     public_read_site_first = ctx.base == "R4" and ctx.i.task_context == "public_read"
-    if public_read_site_first and official:
+    # D112: when the explanation's first layer is not the site, the lookup's developer path is not listed as a check for an agent (a person's
+    # account step keeps its own sentence, which says the developer path may not reach the account).
+    not_site_first = ctx.subordinate and ctx.first_layer not in ("site", "unknown")
+    no_agent_path = not_site_first and not ctx.r3
+    if public_read_site_first and official and not not_site_first:
         out.append(_item("CHK-OFFICIAL-PATH", "agent", _fill("CHK-OFFICIAL-PATH", lang, cap, url=official), official))
     # D110: "wait and look up once more" never sits next to a server action that hands the step over or stops it.
     if (ctx.stop == "timeout_or_5xx" or ctx.action == "wait_provider_incident" or ctx.do == "wait_for_provider") \
@@ -948,11 +963,17 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     customer = _url(ctx.next_action.get("customer_url"))
     if customer and ctx.i.task_context in ("my_account_consumer", "my_account_work"):
         out.append(_item("CHK-CUSTOMER-PATH", "person", _fill("CHK-CUSTOMER-PATH", lang, cap, url=customer), customer))
-    if ctx.next_action:
+    if ctx.next_action and not ctx.subordinate:
         out.append(_item("CHK-SERVER-ACTION", "agent", X.TEMPLATES["CHK-SERVER-ACTION"][lang]))
+    elif ctx.subordinate:
+        # D112: the check of the layer the answer looks at, in place of "follow server.next_action".
+        if ctx.first_layer == "platform":
+            out.append(_item("CHK-PLATFORM-LOOK", "agent", X.TEMPLATES["CHK-PLATFORM-LOOK"][lang]))
+        elif not any(c and c["id"] == "CHK-BROWSER-COMPARE" for c in out):
+            out.append(_item("CHK-BROWSER-COMPARE", "person", _compare_text(ctx)))
     if ctx.base == "R4":
         out.append(_item("CHK-SITE-HELP", "person", X.TEMPLATES["CHK-SITE-HELP"][lang]))
-    if official and not public_read_site_first and (ctx.r3 or ctx.base != "R4"):
+    if official and not public_read_site_first and (ctx.r3 or ctx.base != "R4") and not no_agent_path:
         text = _fill("CHK-OFFICIAL-PATH", lang, cap, url=official)
         if text and ctx.r3:
             warning = X.TEMPLATES["S-L4-OFFICIAL-PATH-ACCOUNT"][lang]
@@ -965,9 +986,9 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
         if lead:
             items = [lead] + [c for c in items if c is not lead]
     if not items:
-        items = [_item("CHK-BROWSER-COMPARE", "person", X.TEMPLATES["CHK-BROWSER-COMPARE"][lang])]
+        items = [_item("CHK-BROWSER-COMPARE", "person", _compare_text(ctx))]
     while len(items) > CHECK_LIMIT:
-        drop = next(i for i in range(len(items) - 1, -1, -1) if items[i]["id"] != "CHK-SERVER-ACTION")
+        drop = next(i for i in range(len(items) - 1, -1, -1) if items[i]["id"] not in ("CHK-SERVER-ACTION", "CHK-PLATFORM-LOOK"))
         del items[drop]
     return items
 
@@ -1103,10 +1124,20 @@ def _fit_rows(rows: list[dict]) -> list[dict]:
 def _server(ctx: _Ctx) -> dict:
     check = ctx.check
     server: dict[str, Any] = {"recommendation": check.get("recommendation") or {"action": "unknown", "confidence": "low", "reasons": []},
-                              "next_checks": check.get("next_checks") or [], "position": ctx.position}
+                              "next_checks": check.get("next_checks") or [],
+                              # D112: a server block that renders last (subordinate) is read after the explanation's checks.
+                              "position": "after_checks" if ctx.subordinate else ctx.position}
     for key in ("summary_line", "next_action", "cause", "failure_stage"):
         if check.get(key) is not None:
             server[key] = check[key]
+    if ctx.lang == "ko":
+        # D112: the Korean version of the lookup's own sentence, where one exists (else it stays English and the answer says so).
+        korean = X.summary_line_ko(server["summary_line"]) if server.get("summary_line") else None
+        if korean:
+            server["summary_line"] = korean
+        action = server.get("next_action")
+        if action and action.get("status_url_note") in X.STATUS_URL_NOTE_KO:
+            server["next_action"] = {**action, "status_url_note": X.STATUS_URL_NOTE_KO[action["status_url_note"]]}
     return server
 
 
@@ -1164,6 +1195,10 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     rows = _fit_rows(rows)
     states = _group_states(rows, platform_state)
     person = _person(ctx, rows)
+    where = _where_to_look(ctx, order, rows, states)
+    ctx.first_layer = where["first"]
+    ctx.subordinate = bool(ctx.do == "use_official_path" and not ctx.status_check
+                           and (where["first"] not in ("site", "unknown") or ctx.i.task_context == "public_read"))
     checks = _checks(ctx, person)
     person = _person_matches_checks(ctx, person, checks)  # last word on person, before anything that reads it (the handoff)
 
@@ -1180,18 +1215,22 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     render = ["where_to_look", "person", "what_happened", "do_now", "others_saw", "timeline", "handoff"]
     if ctx.r6:
         render = ["where_to_look", "person", "what_happened", "timeline", "do_now", "others_saw", "handoff"]
+    if ctx.subordinate:
+        render.append("server")  # D112: the lookup block is the plain lookup answer, so it comes last
 
     generated = _dt(check.get("generated_at")) or datetime.now(timezone.utc)
     body: dict[str, Any] = {
         "schema_version": SCHEMA, "site_host": inputs.site_host, "generated_at": generated, "lang": lang,
-        "input_echo": _echo(inputs), "where_to_look": _where_to_look(ctx, order, rows, states), "person": person,
+        "input_echo": _echo(inputs), "where_to_look": where, "person": person,
         "others_saw": _others(ctx), "rules_applied": rules, "render_order": render, "server": _server(ctx),
         "what_happened": {"layers": rows, "unknowns": unknowns}, "do_now": {"checks": checks},
         "timeline": _timeline(ctx), "handoff": _handoff(ctx, person), "basis_text": X.TEMPLATES["S-G-BASIS"][lang],
         "links": {"self": _self_link(inputs)},
     }
-    if lang == "ko" and body["server"].get("summary_line"):
+    if lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == check.get("summary_line"):
         body["server_note"] = {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
+    if ctx.subordinate:
+        body["server_context_note"] = {"template_id": "S-G-SERVER-CONTEXT", "text": X.TEMPLATES["S-G-SERVER-CONTEXT"][lang]}
     if inputs.host_normalized:
         body["host_normalized"] = inputs.host_normalized
     return body
