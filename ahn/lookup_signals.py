@@ -109,6 +109,22 @@ def why_url(params: dict) -> str | None:
     return f"{WHY_BASE}/v1/why?" + "&".join(f"{name}={value}" for name, value in query.items())
 
 
+# D113: the GET /v1/incidents/check address for the same lookup, the reverse of why_url: a /v1/why answer whose lookup block is shortened points to the
+# full lookup answer with it. Relative, like links.self.
+CHECK_PATH = "/v1/incidents/check"
+
+
+def check_url(params: dict) -> str | None:
+    """The GET /v1/incidents/check address for the lookup that /v1/why made: the hostname, the codes it sent to the lookup and the window it used.
+    Like why_url it only builds a string, from values already checked against their lists; None when one is not a plain token."""
+    names = ("site_host", "error_class", "failure_stage", "task_step", "window_hours", "http_status", "challenge", "retry_after", "via",
+             "agent_vendor", TEST_QUERY)
+    query = {name: params[name] for name in names if name in params and params[name] not in (None, "")}
+    if not all(SAFE_CODE.fullmatch(str(value)) for value in query.values()):
+        return None
+    return f"{CHECK_PATH}?" + "&".join(f"{name}={value}" for name, value in query.items())
+
+
 def valid_http_status(code: int) -> bool:
     return not isinstance(code, bool) and (code in HTTP_STATUS_VALUES or HTTP_STATUS_RANGE[0] <= code <= HTTP_STATUS_RANGE[1])
 

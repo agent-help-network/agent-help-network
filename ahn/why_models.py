@@ -103,16 +103,23 @@ class OthersSaw(StrictModel):
     text: str = Field(min_length=1, max_length=SHORT_TEXT_MAX)
 
 
+class WhyShortAction(StrictModel):
+    """D113: the lookup's action in the short lookup block: which action, nothing else (the rest is at links.check)."""
+    do: Literal["wait_for_provider", "hand_off_to_human", "use_official_path", "stop_automation", "proceed", "retry_lookup_once",
+                "stop_if_listed", "lookup_apex_host", "no_clear_action"]
+
+
 class WhyServer(StrictModel):
     """check()'s own words and decision, copied. Nothing here is computed by explain."""
     # Printable ASCII, the lookup's own English; a Korean answer (D112) may carry a Korean version of it (explain_text.SUMMARY_SENTENCES_KO):
     # Hangul syllables and a few Korean punctuation marks (no control character, no tab or newline).
     summary_line: str | None = Field(default=None, min_length=1, max_length=401, pattern="^[ -~가-힣·…—‘’“”]+$", exclude_if=_omit_none)
     recommendation: Recommendation
-    next_action: NextAction | None = Field(default=None, exclude_if=_omit_none)
+    # D113: in the short block of an answer that looks elsewhere first, next_action is only {"do": ...}, and cause, failure_stage and next_checks are left out.
+    next_action: WhyShortAction | NextAction | None = Field(default=None, exclude_if=_omit_none)
     cause: Cause | None = Field(default=None, exclude_if=_omit_none)
     failure_stage: FailureStage | None = Field(default=None, exclude_if=_omit_none)
-    next_checks: list[NextCheck] = Field(default_factory=list)
+    next_checks: list[NextCheck] | None = Field(default=None, exclude_if=_omit_none)
     position: Literal["first", "after_checks"]
 
 
@@ -178,6 +185,8 @@ class HandoffItem(StrictModel):
 class WhyLinks(StrictModel):
     # The request again with the accepted codes only (never the pasted address, never the codes that were refused).
     self_link: str = Field(alias="self", max_length=1000)
+    # D113: only in an answer whose lookup block is the short one (server_context_note present): the full lookup answer for the same input.
+    check: str | None = Field(default=None, max_length=1000, exclude_if=_omit_none)
 
 
 class WhyResponse(StrictModel):

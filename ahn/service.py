@@ -302,6 +302,25 @@ def _record_lookup(conn, settings: Settings, host: str, error_class: str | None,
     return registered, mapped_source, discovery_due
 
 
+def _lookup_state(conn, host: str) -> tuple[bool, bool]:
+    """(registered, mapped_source) of a host as _record_lookup would leave them, from stored rows only (D113: no write). Never raises."""
+    try:
+        with conn.transaction():
+            registered = bool(host in SOURCES or conn.execute("SELECT 1 AS n FROM queried_hosts WHERE site_host=%s", (host,)).fetchone()
+                              or conn.execute("SELECT count(*) AS n FROM queried_hosts").fetchone()["n"] < QUERIED_HOST_CAP)
+            if not registered:
+                return False, False
+            source = SOURCES.get(host)
+            row = conn.execute("SELECT status_page_url,api_url,enabled FROM status_sources WHERE site_host=%s", (host,)).fetchone()
+            if source is not None:
+                return True, bool(row and row["enabled"] and row["api_url"] == source.api_url)
+            page_url = f"https://status.{host}/"
+            return True, bool(row and row["enabled"] and row["status_page_url"] == page_url and row["api_url"] == page_url + "api/v2/status.json")
+    except Exception:
+        LOG.warning("lookup_state_unavailable")
+        return False, False
+
+
 def _record_signal(conn, settings: Settings, host: str, error_class: str | None, failure_stage: str | None,
                    signal: LookupSignal, action: str, *, public: bool, registered: bool, now: datetime,
                    result: dict | None = None) -> tuple | None:
@@ -516,7 +535,7 @@ def feed_view(conn, host: str, now: datetime) -> FeedView:
 def check(settings: Settings, site_host: str, error_class: str | None = None, task_step: str | None = None,
           window_hours: int = 24, failure_stage: str | None = None, signal: LookupSignal | None = None,
           agent_vendor: str | None = None, issue_feedback: bool = False, plain_view: bool = False,
-          failed_at: str | None = None, fold_rules: bool = True, test_marked: bool = False):
+          failed_at: str | None = None, fold_rules: bool = True, test_marked: bool = False, record: bool = True):
     """Answer a lookup from the database alone.
 
     ``issue_feedback`` is off unless the caller asks: only the counted lookup route (GET /v1/incidents/check, which the
@@ -542,6 +561,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     ``test_marked`` (D111) is the D106 mark (X-AHN-Test: 1, ahn_test=1, the MCP test argument) of the request. It is not ``test_query`` (a synthetic
     ``.test`` host, which has no home-page check at all): the answer is the same, and the home-page check the lookup runs or queues is
     recorded with trigger_kind "test", so the counts of what lookups started leave it out.
+
+    ``record`` (D113) is False for a second read inside one /v1/why answer (the host as sent, answered from its apex): the answer is built from stored
+    values the same way, but nothing is written or queued (no host registration, lookup count, signal or client-label count, no queued read, no home-page
+    check), so one /v1/why counts as one lookup. A read that a recorded lookup would have queued is then not queued, and says nothing about it.
 
     ``failed_at`` (D73) is the caller's ISO 8601 time of the failure. It is read once, to choose the optional ``cause``;
     it is not stored, counted or echoed, and it never touches the recommendation. The caller's own codes never reach
@@ -601,7 +624,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
     queued: list[tuple[str, str]] = []
     count_row = None
     with connect(settings) as conn:
-        if (public and (eligible or host in SOURCES)) or (not settings.public_mode and settings.collect_lookup_metrics and eligible):
+        if not record:
+            if public and (eligible or host in SOURCES):
+                registered, mapped_source = _lookup_state(conn, host)
+        elif (public and (eligible or host in SOURCES)) or (not settings.public_mode and settings.collect_lookup_metrics and eligible):
             registered, mapped_source, discovery_due = _record_lookup(conn, settings, host, error_class, public=public)
             conn.commit()
             if discovery_due:
@@ -669,7 +695,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
             else:
                 # Subdomain or tenant host: say so instead of leaving the layer silently empty.
                 profile_not_read = True
-        queued = _queue_reads(conn, jobs)
+        queued = _queue_reads(conn, jobs) if record else []
         if ("access_profile", host) in queued:
             retry_after = _retry_after(conn, host)
         conn.commit()  # the queued rows are visible before the worker is woken
@@ -687,7 +713,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
         if site_probe.enabled() and public and eligible and registered and not test_query and host in lookup_signals.EXAMPLE_HOSTS:
             # Documentation example hosts are never requested: an explicit in-memory view instead of a missing field.
             ahn_check = site_probe._valid(site_probe.not_measured_view("not_eligible"))
-        elif site_probe.enabled() and public and eligible and registered and not test_query:
+        elif record and site_probe.enabled() and public and eligible and registered and not test_query:
             # D67: AHN's own server check of the home page. A short synchronous attempt (waits at most 3 seconds, the one
             # place a lookup may wait on a third-party host), otherwise queued with no delay and shown as pending. Decided
             # after the recommendation inputs above and added below after the recommendation: it changes none of them.
@@ -782,7 +808,8 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                        proceed_without_failure=settings.proceed_without_failure,
                                        assume_failure=assume_failure, edge_refusal=edge_decided,
                                        robots_refusal=robots_edge_decided, no_path=no_path_decided,
-                                       unresolved_listed=settings.d100_incidentio_incidents),
+                                       unresolved_listed=settings.d100_incidentio_incidents,
+                                       list_unread=response_guide.incident_list_unread(provider_status, settings.d100_incidentio_incidents, incidentio_unread)),
         }
         if host_facts is not None:
             result["host_facts"] = host_facts
@@ -836,7 +863,7 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                                              signal is not None, now)
             except Exception:
                 LOG.warning("feedback_token_unavailable")
-        if signal is not None:
+        if signal is not None and record:
             count_row = _record_signal(conn, settings, host, error_class, failure_stage, signal,
                                           result["recommendation"]["action"], public=public, registered=registered,
                                           now=now, result=result)

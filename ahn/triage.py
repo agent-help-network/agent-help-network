@@ -114,6 +114,10 @@ LLMS_TOO_LARGE_CHECK_KO = "이 호스트는 llms.txt 를 게시하지만 이 서
 HISTORY_QUIET_CHECK = "The provider's public incident history was read (provider_status.source_kind is history_atom). That feed carries no page status, so indicator stays null, and nothing in it makes this answer wait. This is not a statement that the provider is healthy; check its status page if your step depends on it."
 HISTORY_QUIET_CHECK_KO = "업체의 공개 사건 이력 피드를 읽었습니다(provider_status.source_kind 가 history_atom). 그 피드에는 페이지 상태가 없어 indicator 는 null 이며, 이 답을 기다리게 할 내용은 없습니다. 업체가 정상이라는 뜻은 아닙니다. 작업이 업체에 달려 있으면 상태 페이지를 확인하세요."
 
+# D113: provider_clear when the page is incident.io-shaped and AHN did not read its incident list (response_guide.incident_list_unread):
+# "no active issue" would claim more than was read. The code is unchanged.
+CLEAR_UNREAD_CHECK = "The provider's overall indicator reads operational; AHN did not read its incident list, so this does not say that no issue is open. Continue diagnosing this specific attempt; it does not prove access from your environment."
+CLEAR_UNREAD_CHECK_KO = "업체의 전체 표시는 정상(operational)이지만 AHN 은 업체의 사건 목록을 읽지 않았으므로, 열린 문제가 없다는 뜻은 아닙니다. 이번 시도를 계속 진단하세요. 현재 환경에서 접속된다는 증거는 아닙니다."
 MAINTENANCE_CHECK = "The provider has announced scheduled maintenance. Compare its window and affected services with your blocked step; wait for the maintenance to end instead of retrying in a loop."
 MAINTENANCE_CHECK_KO = "업체가 예정된 점검을 발표했습니다. 점검 시간대와 영향받는 서비스를 현재 작업과 비교하고, 반복 재시도하지 말고 점검이 끝날 때까지 기다리세요."
 # Same code (provider_incident_stale), different text: a minor page with no incident list, from a feed whose update
@@ -130,6 +134,7 @@ CHECK_TEXT_KO = {
     ROBOTS_ABSENT_CHECK: ROBOTS_ABSENT_CHECK_KO,
     LLMS_TOO_LARGE_CHECK: LLMS_TOO_LARGE_CHECK_KO,
     HISTORY_QUIET_CHECK: HISTORY_QUIET_CHECK_KO,
+    CLEAR_UNREAD_CHECK: CLEAR_UNREAD_CHECK_KO,
 }
 ACTIVE_INDICATORS = status_scope.ACTIVE_INDICATORS  # minor, major, critical, maintenance
 WAIT_DESPITE_COMPONENTS_ONLY = frozenset({"major", "critical"})
@@ -626,14 +631,16 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
                 now: datetime | None = None, agent_vendor: str | None = None,
                 vendor_aware: bool = True, proceed_without_failure: bool = True,
                 assume_failure: bool = False, edge_refusal: bool = False, robots_refusal: bool = False,
-                unresolved_listed: bool = False, no_path: bool = False) -> list[dict[str, str]]:
+                unresolved_listed: bool = False, no_path: bool = False, list_unread: bool = False) -> list[dict[str, str]]:
     """provider_partial: status_scope.scope_partial for the provider's stored scope; now: the lookup time (D45);
     agent_vendor, vendor_aware: as for recommendation() (D48); proceed_without_failure: D63;
     edge_refusal: D85, True only when recommendation() returned the edge_refusal_confirmed reason; the code follows the failure stage.
     robots_refusal: D98, True only when recommendation() returned the edge_refusal_robots reason; same place as the D85 code.
     unresolved_listed: D100 (AHN_D100_INCIDENTIO_INCIDENTS), a fresh reading with the indicator none that lists an unresolved incident
     gets provider_scope in place of provider_clear. Information only: recommendation() reads neither.
-    no_path: D101, True only when recommendation() returned the no_path_after_failure reason; same place again."""
+    no_path: D101, True only when recommendation() returned the no_path_after_failure reason; same place again.
+    list_unread: D113, True when response_guide.incident_list_unread() holds (the condition of status row T1-U): the code stays
+    provider_clear, its sentence says the incident list was not read."""
     codes: list[str] = []
     handoff = error_class in {"human_verification", "login_auth"}
     failed = (failure_observed(error_class, failure_stage) or assume_failure) if proceed_without_failure else True
@@ -712,6 +719,8 @@ def next_checks(error_class: str | None, provider_status: dict | None, evidence_
     texts = CHECKS if vendor_aware else {**CHECKS, **PREVIOUS_CHECKS}
     if page_stale(provider_status, now):
         texts = {**texts, "provider_incident_stale": PAGE_STALE_CHECK}
+    if list_unread and "provider_clear" in codes:
+        texts = {**texts, "provider_clear": CLEAR_UNREAD_CHECK}
     # D63: the same code with a different sentence. The absent sentence needs the switch: off, the code is robots_unknown.
     if proceed_without_failure and access_profile and access_profile.get("robots_status") == "absent":
         texts = {**texts, "robots_allows_agents": ROBOTS_ABSENT_CHECK}
