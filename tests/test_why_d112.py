@@ -41,14 +41,15 @@ def test_a_tools_off_public_read_has_no_developer_path_and_no_follow_the_server_
     assert "CHK-PLATFORM-LOOK" in ids(body)
     text = json.dumps(body["do_now"], ensure_ascii=False).lower()
     assert "server.next_action" not in text and "developer" not in text and "개발자" not in text
-    # the block itself is the lookup's own, unchanged; it comes last and says what it is
-    assert body["server"]["next_action"] == check["next_action"] and body["server"]["recommendation"] == check["recommendation"]
+    # the block is the short one (D113): the recommendation as given and the lookup's action only; it comes last and says what it is
+    assert body["server"]["next_action"] == {"do": check["next_action"]["do"]} and body["server"]["recommendation"] == check["recommendation"]
     assert body["render_order"][-1] == "server" and len(body["render_order"]) == 8
     assert body["server_context_note"] == {"template_id": "S-G-SERVER-CONTEXT", "text": X.TEMPLATES["S-G-SERVER-CONTEXT"][lang]}
 
 
 def test_the_context_sentence_in_both_languages():
-    assert X.TEMPLATES["S-G-SERVER-CONTEXT"]["en"] == "This block is the plain lookup answer, given without your step's context."
+    assert X.TEMPLATES["S-G-SERVER-CONTEXT"]["en"] == ("This block is a summary of the plain lookup answer, given without your step's context; "
+                                                       "its full text is at links.check.")
     assert HANGUL.search(X.TEMPLATES["S-G-SERVER-CONTEXT"]["ko"])
 
 
@@ -131,12 +132,17 @@ def test_the_comparison_is_worded_for_the_context_and_the_stop(lang, stop, conte
         return
     text = compare_text(body)
     platform = stop in ("tools_off_page_visible", "before_visit")
+    # D113: with no task_context (and no stop that implies an account) the account is not assumed
+    no_context = context is None and "site_login" not in (stop,) and body["rules_applied"].count("R3") == 0
+    account = context not in ("public_read",) and not no_context
     if lang == "en":
-        assert ("signed in to the same account" in text) == (context != "public_read")
+        assert ("signed in to the same account" in text) == account
         assert ("without signing in" in text) == (context == "public_read")
+        assert ("sign in only if the task needs the user's account" in text or "signing in only if the task needs their account" in text) == no_context
         assert text.startswith("The user opens the") == platform
     else:
-        assert ("같은 계정" in text) == (context != "public_read") and ("로그인 없이" in text) == (context == "public_read")
+        assert ("같은 계정" in text) == account and ("로그인 없이" in text) == (context == "public_read")
+        assert ("작업이 사용자 계정을 쓸 때만" in text) == no_context
         assert text.startswith("사용자가 직접") == platform
     assert body["do_now"]["checks"][[c["id"] for c in body["do_now"]["checks"]].index("CHK-BROWSER-COMPARE")]["who"] == "person"
 

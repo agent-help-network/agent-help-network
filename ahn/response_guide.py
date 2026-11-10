@@ -508,6 +508,13 @@ def unresolved_incidents(provider_status: dict | None) -> bool:
     return type(count) is int and count >= 1
 
 
+def incident_list_unread(provider_status: dict | None, d100: bool, incidentio_unread: bool) -> bool:
+    """D100/D113: a fresh reading whose overall indicator reads operational on an incident.io-shaped page whose incident list AHN
+    did not read (no count is stored). The one condition behind status row T1-U and the provider_clear next-check wording."""
+    return bool(d100 and incidentio_unread and provider_status and provider_status.get("freshness") == "fresh"
+                and provider_status.get("indicator") == "none" and provider_status.get("active_incidents") is None)
+
+
 def status_row(provider_status: dict | None, official_status_page: dict | None, status_url: str | None,
                d100: bool = False, incidentio_unread: bool = False) -> str:
     """D69: the STATUS_ROWS id for a status_check lookup. A row that points at status_url needs one; without it T4.
@@ -521,8 +528,7 @@ def status_row(provider_status: dict | None, official_status_page: dict | None, 
     if provider_status:
         if d100 and unresolved_incidents(provider_status):
             return "T6"
-        if (d100 and incidentio_unread and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "none"
-                and provider_status.get("active_incidents") is None):
+        if incident_list_unread(provider_status, d100, incidentio_unread):
             return "T1-U"
         return "T1" if provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "none" else "T2"
     if not official_status_page:

@@ -267,6 +267,13 @@ _t("CHK-BROWSER-COMPARE-OPEN",
 _t("CHK-BROWSER-COMPARE-OPEN-PUBLIC",
    "The user opens the same public page themselves or with another tool, once, without signing in. The result tells the site layer apart from the agent's tool. It is a check, not a way for the agent to continue.",
    "사용자가 직접, 또는 다른 도구로 로그인 없이 같은 공개 페이지를 한 번 열어 보세요. 결과가 사이트 층과 에이전트의 도구를 갈라 줘요. 확인용이지 에이전트가 계속하는 방법이 아니에요.")
+# D113: the same check when AHN was not told what the task is (no task_context): the account is not assumed.
+_t("CHK-BROWSER-COMPARE-NOCTX",
+   "A person can open the same page once in their usual browser; sign in only if the task needs the user's account. The result tells the site layer apart from the agent layer. It is a check, not a way for the agent to continue.",
+   "사람이 같은 페이지를 보통 브라우저에서 한 번 열어 보세요. 작업이 사용자 계정을 쓸 때만 로그인하세요. 결과가 사이트 층과 에이전트 층을 갈라 줘요. 확인용이지 에이전트가 계속하는 방법이 아니에요.")
+_t("CHK-BROWSER-COMPARE-OPEN-NOCTX",
+   "The user opens the same page themselves or with another tool, once; signing in only if the task needs their account. The result tells the site layer apart from the agent's tool. It is a check, not a way for the agent to continue.",
+   "사용자가 직접, 또는 다른 도구로 같은 페이지를 한 번 열어 보세요. 작업이 사용자 계정을 쓸 때만 로그인하세요. 결과가 사이트 층과 에이전트의 도구를 갈라 줘요. 확인용이지 에이전트가 계속하는 방법이 아니에요.")
 # D112: at the platform layer the check is the tool's own policy and settings, or the user opening the page; the lookup's developer path is not it.
 _t("CHK-PLATFORM-LOOK",
    "Check the tool's own policy and settings for this kind of page; the user can also open the page themselves.",
@@ -306,6 +313,10 @@ _t("CHK-CUSTOMER-PATH",
 _t("CHK-OFFICIAL-PATH",
    "The official developer path is {url}.",
    "공식 개발자 경로는 {url} 이에요.")
+# D113: the same item (id CHK-OFFICIAL-PATH) when the address is one of the site's customer pages (official_paths.consumer), not a developer path.
+_t("CHK-OFFICIAL-PATH-CUSTOMER",
+   "The site's own customer page is {url}.",
+   "사이트 자체 고객 페이지는 {url} 이에요.")
 _t("CHK-WAIT",
    "Wait instead of retrying; the server gives when to look up once more (server.next_action.retry_after_seconds).",
    "재시도 말고 기다리세요. 다시 조회할 때는 서버가 정해 줘요.")
@@ -350,8 +361,12 @@ _t("S-G-SERVER-EN",
 # D112: when the lookup's action is a developer path that the explanation's own first layer does not point to, the lookup block moves to the end
 # and says what it is.
 _t("S-G-SERVER-CONTEXT",
-   "This block is the plain lookup answer, given without your step's context.",
-   "이 블록은 단계 맥락 없이 낸 조회 답 그대로예요.")
+   "This block is a summary of the plain lookup answer, given without your step's context; its full text is at links.check.",
+   "이 블록은 단계 맥락 없이 낸 조회 답의 요약이고, 전문은 links.check 에 있어요.")
+# D113: AHN was not told the task (no task_context), so the account is not assumed.
+_t("S-G-NOCTX",
+   "AHN was not told what the task is; the lookup's sentences that start with 'For a task in the user's own account' apply only if it is.",
+   "AHN 은 무슨 작업인지 듣지 못했어요. 조회 문장 중 '사용자 본인 계정의 일에는'(For a task in the user's own account)으로 시작하는 것은 그런 작업일 때만 해당돼요.")
 _t("TL-PLATFORM-DOC",
    "On {date}, AHN saw {platform}'s page {url} change.",
    "{date} 에 AHN 이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")

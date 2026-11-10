@@ -230,7 +230,9 @@ def test_server_is_a_copy_of_the_lookup_answer():
     check = fake_check("use_official_path", "use_official_path", cause=cause, failure_stage="unknown",
                        next_checks=[{"code": "reports_unknown", "text": "t"}])
     check["next_action"]["url"] = "https://api.fixture-host.test/docs"
-    server = run(check=check, stop_point="before_visit")["server"]
+    body = run(check=check, stop_point="page_blank_or_blocked")
+    assert "server_context_note" not in body  # D113: the short block is only for an answer that looks elsewhere first
+    server = body["server"]
     for key in ("summary_line", "recommendation", "next_action", "cause", "failure_stage", "next_checks"):
         assert server[key] == check[key]
     assert set(server) == {"summary_line", "recommendation", "next_action", "cause", "failure_stage", "next_checks", "position"}

@@ -46,6 +46,8 @@ FAILURE_STAGES = ("before_target_response", "response_observed", "access_denial_
 LANGS = ("en", "ko")
 SINCE_MAX_DAYS = 90
 WINDOW_DAYS = 7
+STATUS_URL_KEYS = ("status_url", "status_url_kind", "status_url_note")
+LOOKUP_WINDOW_HOURS = 168  # the window explain() asks the lookup for
 CLAUDE_BROWSERS = ("claude_desktop_browser", "claude_in_chrome")
 # A screen message that only one family of products shows; a match needs the caller's platform to be one of them.
 MESSAGE_PLATFORMS = {
@@ -133,6 +135,8 @@ class Inputs:
     ahn_test: bool = False
     # D111: names (never values) of the query parameters that were sent but are not among the route's own, sorted. See clean_ignored_params.
     ignored_params: tuple[str, ...] = ()
+    # D113: the host as sent, when it was answered from its apex (host_normalized == "apex"); the lookup block of the answer is the lookup of this host.
+    lookup_host: str | None = None
 
 
 IGNORED_PARAM_NAME = re.compile(r"[A-Za-z0-9_.-]{1,40}")
@@ -199,8 +203,9 @@ def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_
     host, cut = clean_host(site_host)
     normalized = "path_dropped" if cut else None
     apex = apex_host(host)
+    sent_host = None
     if apex and apex != policy_host(host):  # a "www." alias is answered from its apex by the lookup itself, nothing to say
-        host, normalized = apex, "apex"
+        sent_host, host, normalized = host, apex, "apex"
     kind = _pick(since_kind, SINCE_KINDS)
     since: date | None = None
     clamped = False
@@ -218,7 +223,7 @@ def parse_inputs(site_host: str, *, today: date, lang: str | None = "en", agent_
         task_step=task_step if isinstance(task_step, str) and STEP.fullmatch(task_step) else None,
         http_status=codes["http_status"], challenge=codes["challenge"], retry_after=codes["retry_after"],
         via=via if isinstance(via, str) and via in Via._value2member_map_ else None, ahn_test=ahn_test is True,
-        ignored_params=clean_ignored_params(ignored_params), site_host=host, lang=lang if lang in LANGS else "en", host_normalized=normalized,
+        ignored_params=clean_ignored_params(ignored_params), lookup_host=sent_host, site_host=host, lang=lang if lang in LANGS else "en", host_normalized=normalized,
         agent_platform=_pick(agent_platform, PLATFORMS), agent_env=_pick(agent_env, AGENT_ENVS),
         external_browser=_pick(external_browser, EXTERNAL_BROWSER), stop_point=_pick(stop_point, STOP_POINTS),
         screen_message=_pick(screen_message, SCREEN_MESSAGES), since_kind=kind, since_date=since, since_clamped=clamped,
@@ -308,8 +313,13 @@ def _words(table: dict[str, dict[str, str]], key: Any, lang: str) -> str | None:
 
 # --- the context every part reads --------------------------------------------------------------------------------------
 class _Ctx:
-    def __init__(self, inputs: Inputs, check: dict, view: dict | None, changes: list, doc_events: list, today: date) -> None:
+    def __init__(self, inputs: Inputs, check: dict, view: dict | None, changes: list, doc_events: list, today: date,
+                 sent_check: dict | None = None) -> None:
         self.i, self.check, self.today, self.lang = inputs, check, today, inputs.lang
+        # The lookup block, the recommendation and the lookup's action are the root domain's (``check``), as before D113. ``sent_check`` (D113) is
+        # the lookup of the host as sent, given only when it was answered from its apex; only the status address of next_action is read from it.
+        self.server_check = check
+        self.sent_check = sent_check
         self.platform = inputs.agent_platform
         self.entry = None
         if view and self.platform:
@@ -322,9 +332,9 @@ class _Ctx:
         self.changes = [c for c in changes if self._in_window(c.get("at"))]
         urls = {d.get("url") for d in self.docs}
         self.doc_events = [e for e in doc_events if e.get("url") in urls and self._in_window(e.get("changed_at"))]
-        self.next_action = check.get("next_action") or {}
+        self.next_action = self.server_check.get("next_action") or {}
         self.do = self.next_action.get("do")
-        self.action = _get(check, "recommendation", "action")
+        self.action = _get(self.server_check, "recommendation", "action")
         stop, message = inputs.stop_point, inputs.screen_message
         self.stop, self.message = stop, message
         self.message_matches = bool(message in MESSAGE_PLATFORMS and self.platform in MESSAGE_PLATFORMS[message])
@@ -733,9 +743,21 @@ def _task_rows(ctx: _Ctx) -> list[dict]:
     if terms and ctx.r3 and _url(terms.get("url")) and isinstance(terms.get("quote"), str):
         rows.append(_row(ctx, "L4", "background", "S-L4-TERMS", _fill("S-L4-TERMS", lang, LAYER_TEXT_MAX, url=terms["url"], quote=terms["quote"]),
                          _source("site_terms", terms["url"])))
-    if ctx.r3 and _official_url(ctx):
+    if ctx.r3 and _official_url(ctx) and not _is_customer_path(ctx, _official_url(ctx)):
         rows.append(_row(ctx, "L4", "background", "S-L4-OFFICIAL-PATH-ACCOUNT", X.TEMPLATES["S-L4-OFFICIAL-PATH-ACCOUNT"][lang]))
     return [r for r in rows if r]
+
+
+def _is_customer_path(ctx: _Ctx, url: str | None) -> bool:
+    """D113: the address is one of the site's curated customer pages (official_paths.consumer) or the lookup's customer_url, not a developer path."""
+    if not url:
+        return False
+    paths = ((ctx.check.get("official_paths") or {}).get("consumer") or {}).get("paths") or []
+    return url == ctx.next_action.get("customer_url") or any(isinstance(p, dict) and p.get("url") == url for p in paths)
+
+
+def _official_id(ctx: _Ctx, url: str | None) -> str:
+    return "CHK-OFFICIAL-PATH-CUSTOMER" if _is_customer_path(ctx, url) else "CHK-OFFICIAL-PATH"
 
 
 def _official_url(ctx: _Ctx) -> str | None:
@@ -905,7 +927,9 @@ def _item(item_id: str, who: str, text: str | None, url: str | None = None) -> d
 def _compare_text(ctx: _Ctx) -> str:
     """D112: the browser comparison is worded for the step: a public read is opened without signing in, and at the platform layer
     the person opens the page (themselves or with another tool). The item id stays CHK-BROWSER-COMPARE."""
-    key = "CHK-BROWSER-COMPARE" + ("-OPEN" if ctx.stop in PLATFORM_STOPS else "") + ("-PUBLIC" if ctx.i.task_context == "public_read" else "")
+    # D113: with no task_context (and no account stop that implies one) the account is not assumed. A public read wins over that.
+    context = "-PUBLIC" if ctx.i.task_context == "public_read" else "-NOCTX" if ctx.i.task_context is None and not ctx.r3 else ""
+    key = "CHK-BROWSER-COMPARE" + ("-OPEN" if ctx.stop in PLATFORM_STOPS else "") + context
     return X.TEMPLATES[key][ctx.lang]
 
 
@@ -951,7 +975,7 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     not_site_first = ctx.subordinate and ctx.first_layer not in ("site", "unknown")
     no_agent_path = not_site_first and not ctx.r3
     if public_read_site_first and official and not not_site_first:
-        out.append(_item("CHK-OFFICIAL-PATH", "agent", _fill("CHK-OFFICIAL-PATH", lang, cap, url=official), official))
+        out.append(_item("CHK-OFFICIAL-PATH", "agent", _fill(_official_id(ctx, official), lang, cap, url=official), official))
     # D110: "wait and look up once more" never sits next to a server action that hands the step over or stops it.
     if (ctx.stop == "timeout_or_5xx" or ctx.action == "wait_provider_incident" or ctx.do == "wait_for_provider") \
             and ctx.do not in ("hand_off_to_human", "stop_automation"):
@@ -974,8 +998,8 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
     if ctx.base == "R4":
         out.append(_item("CHK-SITE-HELP", "person", X.TEMPLATES["CHK-SITE-HELP"][lang]))
     if official and not public_read_site_first and (ctx.r3 or ctx.base != "R4") and not no_agent_path:
-        text = _fill("CHK-OFFICIAL-PATH", lang, cap, url=official)
-        if text and ctx.r3:
+        text = _fill(_official_id(ctx, official), lang, cap, url=official)
+        if text and ctx.r3 and not _is_customer_path(ctx, official):
             warning = X.TEMPLATES["S-L4-OFFICIAL-PATH-ACCOUNT"][lang]
             text = f"{text} {warning}" if len(text) + 1 + len(warning) <= cap else text
         out.append(_item("CHK-OFFICIAL-PATH", "person" if ctx.r3 else "agent", text, official))
@@ -1086,6 +1110,40 @@ def _others(ctx: _Ctx) -> dict:
     return out
 
 
+def _merge_same_time(items: list[dict], lang: str, cap: int) -> list[dict]:
+    """D113: home-page check lines with the same ``at`` (layer L1e, kind home_check_changed; for example a check that started getting a challenge
+    and whose result changed at the same moment) are one item; no other item is merged: the first item's kind, template_id and source_url, and its sentence followed by the
+    later one's without the date it repeats and without a sentence the first already says. When the joined sentence would pass ``cap``
+    the later sentence is left out (it stays in what_happened); the item is never cut."""
+    merged: list[dict] = []
+    seen: dict[tuple[Any, str], dict] = {}
+    for item in items:
+        key = (item["at"], item["layer"])
+        # only the two lines of one home-page check (same moment, layer L1e, kind home_check_changed) are one item; a platform document
+        # change (L2) is never merged, so every address stays
+        first = seen.get(key) if item["layer"] == "L1e" and item["kind"] == "home_check_changed" else None
+        if first is not None and first["kind"] != "home_check_changed":
+            first = None
+        if first is None:
+            if item["layer"] == "L1e" and item["kind"] == "home_check_changed":
+                seen[key] = item
+            merged.append(item)
+            continue
+        day = _day(item["at"])
+        text = item["text"]
+        text = re.sub(rf"^On {day}, ", "", text) if lang == "en" else re.sub(rf"^{day} 에 ", "", text)
+        known = re.split(r"(?<=[.!?]) ", first["text"])
+        # a sentence the first already says, whole or as the start of a longer one (a shortened repeat), is not said again
+        rest = " ".join(s for s in re.split(r"(?<=[.!?]) ", text) if s not in known and s.rstrip(".!?") not in first["text"])
+        if not rest:
+            continue
+        lead = "Same time: " if lang == "en" else "같은 때: "
+        joined = f"{first['text']} {lead}{rest}"
+        if len(joined) <= cap:
+            first["text"] = joined
+    return merged
+
+
 def _timeline(ctx: _Ctx) -> dict:
     lang, items = ctx.lang, []
     for change in ctx.changes:
@@ -1103,7 +1161,7 @@ def _timeline(ctx: _Ctx) -> dict:
                 item["source_url"] = event["url"]
             items.append(item)
     items.sort(key=lambda i: i["at"])
-    items = items[-20:]
+    items = _merge_same_time(items, lang, 300)[-20:]
     limits = X.TEMPLATES["S-G-WINDOW-LIMITS" if items else "S-G-WINDOW-EMPTY"][lang]
     return {"window_from": ctx.window_from, "window_to": ctx.today, "items": items, "limits_text": limits}
 
@@ -1122,7 +1180,12 @@ def _fit_rows(rows: list[dict]) -> list[dict]:
 
 
 def _server(ctx: _Ctx) -> dict:
-    check = ctx.check
+    check = ctx.server_check
+    if ctx.subordinate:
+        # D113: the lookup block of an answer that looks elsewhere first is a short one: where it stands, the recommendation and the lookup's
+        # action. Everything else of the lookup answer is at links.check.
+        return {"recommendation": check.get("recommendation") or {"action": "unknown", "confidence": "low", "reasons": []},
+                "next_action": {"do": ctx.do}, "position": "after_checks"}
     server: dict[str, Any] = {"recommendation": check.get("recommendation") or {"action": "unknown", "confidence": "low", "reasons": []},
                               "next_checks": check.get("next_checks") or [],
                               # D112: a server block that renders last (subordinate) is read after the explanation's checks.
@@ -1130,6 +1193,12 @@ def _server(ctx: _Ctx) -> dict:
     for key in ("summary_line", "next_action", "cause", "failure_stage"):
         if check.get(key) is not None:
             server[key] = check[key]
+    sent_action = (ctx.sent_check or {}).get("next_action") or {}
+    if sent_action.get("status_url") and server.get("next_action"):
+        # D113: the status feed address of the host as sent (the root domain's lookup does not have it); nothing else of its action is read.
+        action = {key: value for key, value in server["next_action"].items() if key not in STATUS_URL_KEYS}
+        action.update({key: sent_action[key] for key in STATUS_URL_KEYS if sent_action.get(key) is not None})
+        server["next_action"] = action
     if ctx.lang == "ko":
         # D112: the Korean version of the lookup's own sentence, where one exists (else it stays English and the answer says so).
         korean = X.summary_line_ko(server["summary_line"]) if server.get("summary_line") else None
@@ -1184,9 +1253,25 @@ def _person_matches_checks(ctx: _Ctx, person: dict, checks: list[dict]) -> dict:
     return {"needed": "yes", "reasons": [{"code": "check_needs_person", "text": text}], "who": ["user"]}
 
 
-def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], doc_events: list[dict], today: date) -> dict:
-    """The body of GET /v1/why. Pure: the same arguments always give the same answer."""
-    ctx = _Ctx(inputs, check, view, changes, doc_events, today)
+def _check_link(inputs: Inputs) -> str | None:
+    """D113: the lookup this answer's lookup block comes from, as a GET /v1/incidents/check address (the codes map_symptoms gives the lookup)."""
+    from . import lookup_signals
+
+    error_class, failure_stage, task_step = map_symptoms(inputs)
+    return lookup_signals.check_url({
+        "site_host": inputs.site_host, "error_class": error_class, "failure_stage": failure_stage, "task_step": task_step,
+        "window_hours": LOOKUP_WINDOW_HOURS, "http_status": inputs.http_status, "challenge": inputs.challenge, "retry_after": inputs.retry_after,
+        "via": inputs.via, "agent_vendor": inputs.agent_vendor, lookup_signals.TEST_QUERY: "1" if inputs.ahn_test else None})
+
+
+def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], doc_events: list[dict], today: date,
+          sent_check: dict | None = None) -> dict:
+    """The body of GET /v1/why. Pure: the same arguments always give the same answer.
+
+    ``sent_check`` (D113) is the lookup answer for the host as sent, given only when it was answered from its apex (host_normalized == "apex");
+    only the status address of the lookup block's next_action (status_url, status_url_kind, status_url_note) is read from it. Every judgment
+    (recommendation, next_action.do, which block is subordinate, where_to_look) is the root domain's ``check``."""
+    ctx = _Ctx(inputs, check, view, changes, doc_events, today, sent_check)
     lang = ctx.lang
     platform_rows, platform_state = _platform_rows(ctx)
     rows = _site_rows(ctx) + platform_rows + _account_rows(ctx) + _env_rows(ctx) + _task_rows(ctx)
@@ -1206,6 +1291,8 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     unknowns = [{"template_id": "S-L3-SCOPE", "text": X.TEMPLATES["S-L3-SCOPE"][lang]}]
     if ctx.r7:
         unknowns.append({"template_id": "S-L4-NOJUDGE", "text": X.TEMPLATES["S-L4-NOJUDGE"][lang]})
+    if inputs.task_context is None and not ctx.r3:  # D113: the same condition as CHK-BROWSER-COMPARE-NOCTX (no account-implying stop)
+        unknowns.append({"template_id": "S-G-NOCTX", "text": X.TEMPLATES["S-G-NOCTX"][lang]})
     if inputs.host_normalized == "apex":
         unknowns.append({"template_id": "S-G-APEX", "text": _fill("S-G-APEX", lang, SHORT_TEXT_MAX, host=inputs.site_host)})
     if inputs.host_normalized == "path_dropped":
@@ -1227,10 +1314,13 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
         "timeline": _timeline(ctx), "handoff": _handoff(ctx, person), "basis_text": X.TEMPLATES["S-G-BASIS"][lang],
         "links": {"self": _self_link(inputs)},
     }
-    if lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == check.get("summary_line"):
+    if lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == ctx.server_check.get("summary_line"):
         body["server_note"] = {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
     if ctx.subordinate:
         body["server_context_note"] = {"template_id": "S-G-SERVER-CONTEXT", "text": X.TEMPLATES["S-G-SERVER-CONTEXT"][lang]}
+        link = _check_link(inputs)  # D113: the full lookup answer; only where the lookup block is the short one
+        if link:
+            body["links"]["check"] = link
     if inputs.host_normalized:
         body["host_normalized"] = inputs.host_normalized
     return body
@@ -1250,7 +1340,7 @@ def _read_doc_events(conn, platform: str, since: datetime) -> list[dict]:
 
 
 def explain(settings, inputs: Inputs, signal, *, today: date | None = None, platforms: list[dict] | None = None) -> dict:
-    """Answer GET /v1/why: one lookup (counted like a lookup, no result token), then two short reads of stored records."""
+    """Answer GET /v1/why: one lookup of the apex (counted as one lookup; a second read of the host as sent writes nothing, D113; no result token), then two short reads of stored records."""
     from . import platform_policies
     from .db import connect
     from .models import CheckResponse
@@ -1258,10 +1348,18 @@ def explain(settings, inputs: Inputs, signal, *, today: date | None = None, plat
 
     today = today or datetime.now(timezone.utc).date()
     error_class, failure_stage, task_step = map_symptoms(inputs)
-    result = check(settings, inputs.site_host, error_class, task_step, 168, failure_stage, signal, agent_vendor=inputs.agent_vendor,
+    result = check(settings, inputs.site_host, error_class, task_step, LOOKUP_WINDOW_HOURS, failure_stage, signal, agent_vendor=inputs.agent_vendor,
                    issue_feedback=False, plain_view=False, fold_rules=True, test_marked=inputs.ahn_test)
     # The same serialization as GET /v1/incidents/check, so `server` carries the lookup's own bytes.
     result = CheckResponse.model_validate(result).model_dump(mode="json")
+    sent = None
+    if inputs.lookup_host:
+        # D113: a subdomain was answered from its apex above for the layers; the lookup block and the lookup's action are those of the host as sent
+        # (its status feed address, for one), so they are not lost to the apex.
+        # record=False: the second read writes nothing, so this /v1/why counts as the one lookup (of the apex) it was.
+        sent = check(settings, inputs.lookup_host, error_class, task_step, LOOKUP_WINDOW_HOURS, failure_stage, None, agent_vendor=inputs.agent_vendor,
+                     issue_feedback=False, plain_view=False, fold_rules=True, test_marked=inputs.ahn_test, record=False)
+        sent = CheckResponse.model_validate(sent).model_dump(mode="json")
     view = platform_policies.view(today, inputs.lang, platforms)
     since = datetime.combine(inputs.since_date or (today - timedelta(days=WINDOW_DAYS)), datetime.min.time(), tzinfo=timezone.utc)
     changes: list[dict] = []
@@ -1283,4 +1381,4 @@ def explain(settings, inputs: Inputs, signal, *, today: date | None = None, plat
                         LOG.warning("why_item_dropped id=platform_doc_events error=%s", type(exc).__name__)
     except Exception as exc:
         LOG.warning("why_item_dropped id=reads error=%s", type(exc).__name__)
-    return build(inputs, result, view, changes, events, today)
+    return build(inputs, result, view, changes, events, today, sent)
