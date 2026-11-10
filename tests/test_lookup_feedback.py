@@ -422,6 +422,64 @@ def test_the_advertised_schemas_and_annotations_match_the_snapshot():
     assert current == snapshot
 
 
+def _undescribed_inputs(node, path: str, found: list) -> None:
+    """Every property of every object schema under node (nested objects, $defs, anyOf branches, array items) that has no
+    non-empty description of its own. A description on the $ref target does not count: the agent sees the property."""
+    if isinstance(node, dict):
+        for name, sub in (node.get("properties") or {}).items():
+            text = sub.get("description") if isinstance(sub, dict) else None
+            if not (isinstance(text, str) and text.strip()):
+                found.append(f"{path}.{name}")
+            _undescribed_inputs(sub, f"{path}.{name}", found)
+        for key, value in node.items():
+            if key != "properties":
+                _undescribed_inputs(value, f"{path}/{key}" if key == "$defs" else path, found)
+    elif isinstance(node, list):
+        for item in node:
+            _undescribed_inputs(item, path, found)
+
+
+@pytest.mark.parametrize("public,reporting", [("1", "0"), ("1", "1"), ("0", "0")])
+def test_every_tool_input_argument_is_described(public, reporting):
+    """An agent picks and fills arguments from their descriptions alone: no tool in any configuration may advertise an input
+    argument (nested ones included) without a description, and every tool states honest read-only / destructive hints."""
+    tools = tools_in(public, reporting)
+    assert {"check_incident", "rate_last_lookup"} <= set(tools)
+    found: list = []
+    for name, (schema, annotations, description, _) in tools.items():
+        _undescribed_inputs(schema, name, found)
+        assert isinstance(annotations["read_only_hint"], bool) and isinstance(annotations["destructive_hint"], bool), name
+        # Text a directory security scan flags: steering the model away from other tools, and oversized or hidden text.
+        texts = [description] + [v for v in _all_descriptions(schema)]
+        for text in texts:
+            assert len(text) <= 4000, name
+            assert not any(ord(ch) in (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF) or 0x202A <= ord(ch) <= 0x202E for ch in text), name
+            lowered = text.lower()
+            for phrase in ("instead of other tools", "instead of web search", "instead of a web search", "always call this tool first", "always use this tool first"):
+                assert phrase not in lowered, (name, phrase)
+    assert found == [], found
+
+
+def _all_descriptions(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "description" and isinstance(value, str):
+                yield value
+            else:
+                yield from _all_descriptions(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _all_descriptions(item)
+
+
+def test_the_argument_description_check_catches_a_missing_description():
+    found: list = []
+    _undescribed_inputs({"properties": {"a": {"type": "string", "description": "ok"}, "b": {"type": "string"}, "c": {"description": " "},
+                                        "d": {"type": "object", "description": "x", "properties": {"e": {"type": "integer"}}}},
+                         "$defs": {"X": {"properties": {"f": {"$ref": "#/$defs/Y"}}}}}, "t", found)
+    assert sorted(found) == ["t.b", "t.c", "t.d.e", "t/$defs.f"]
+
+
 def test_agent_instructions_list_exactly_the_allowed_check_codes():
     """The guidance names every accepted error_class / failure_stage value and no other, so an agent that reads only this
     text cannot send a value the check refuses (a new enum member fails here until the text names it)."""

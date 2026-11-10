@@ -10,7 +10,7 @@ from uuid import UUID
 from typing import Annotated, Any
 
 import httpx
-from pydantic import WithJsonSchema
+from pydantic import Field, WithJsonSchema
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver import Context
@@ -94,12 +94,27 @@ mcp = MCPServer(
 
 # The signal codes are advertised with their allowed values but accepted loosely (any JSON value): a wrong one is dropped
 # by lenient_codes, never refused. The schema is what the model sees; validation is deliberately wider than it.
-def _enum_schema(enum) -> dict:
-    return {"type": "string", "enum": [item.value for item in enum]}
+def _enum_schema(enum, description: str) -> dict:
+    return {"type": "string", "enum": [item.value for item in enum], "description": description}
 
 
 HTTP_STATUS_SCHEMA = {"type": "integer", "description": "HTTP status the site returned: 401, 402, 403, 407, 408, 429, 451 or 500-599. Leave out if unknown."}
 TEST_SCHEMA = {"type": "boolean", "description": "Set true to mark this lookup as a test (like the header X-AHN-Test: 1): it is kept out of the anonymous counts and the answer is the same. Leave it out for a real lookup; any other value is ignored."}
+SITE_HOST_DESCRIPTION = "The public hostname that is blocked or failing, lowercase, for example example.com. Only the host: no scheme, URL path, query, port or credentials."
+ERROR_CLASS_DESCRIPTION = ("What stopped you, only if you observed it: site_access (page or API refused or unreachable), login_auth (sign-in failed or an extra "
+                           "verification step appeared), human_verification (CAPTCHA or verify-you-are-human check), service_error (error response or timeout). Leave it out if unsure.")
+TASK_STEP_DESCRIPTION = ("What you were doing, as a short lowercase code of letters, digits and underscores starting with a letter. Use status_check when you only "
+                         "check whether the site is up (not blocked). Leave it out otherwise.")
+FAILURE_STAGE_DESCRIPTION = ("How far the request got, only if you observed it: before_target_response (no answer from the site, for example a timeout or connection "
+                             "failure), response_observed (the site answered with an error or unexpected page), access_denial_observed (the site explicitly refused "
+                             "access), unknown. Leave it out if unsure.")
+CHALLENGE_DESCRIPTION = "header if the site's response carried a bot-challenge header, none if you saw the response and it did not. Never guess from the page body; leave it out if unknown."
+RETRY_AFTER_DESCRIPTION = ("Size of the Retry-After value the site sent, in seconds: none (no header, or an HTTP-date), lt_60 (under 60), 60_3600 (60 to 3600), "
+                           "gt_3600 (over 3600). Leave it out if you saw no response.")
+VIA_DESCRIPTION = "What made the failed request: http_fetch (a plain HTTP fetch), browser (browser automation) or unknown. Leave it out if unsure."
+AGENT_VENDOR_DESCRIPTION = ("The vendor whose documented robots.txt token your requests send (not the model vendor): openai, anthropic (Claude-User), google, perplexity, "
+                            "meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other if none of them. Leave it out if you do not know, and for browser "
+                            "automation that sends a normal browser user agent.")
 FAILED_AT_SCHEMA = {"type": "string", "maxLength": 40, "description": "When the step failed, as an ISO 8601 time such as 2026-11-01T07:10:00Z (UTC if no offset). Leave it out for a failure that just happened. Only used to choose the cause shown in the answer; not stored."}
 
 
@@ -134,12 +149,15 @@ def outer_request_headers(ctx: Context | None) -> dict:
     annotations=ToolAnnotations(title="Check host access profile", read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True),
     structured_output=True,
 )
-async def check_incident(site_host: str, error_class: str = "", task_step: str = "", failure_stage: str = "",
+async def check_incident(site_host: Annotated[str, Field(description=SITE_HOST_DESCRIPTION)],
+                         error_class: Annotated[str, Field(description=ERROR_CLASS_DESCRIPTION)] = "",
+                         task_step: Annotated[str, Field(description=TASK_STEP_DESCRIPTION)] = "",
+                         failure_stage: Annotated[str, Field(description=FAILURE_STAGE_DESCRIPTION)] = "",
                          http_status: Annotated[Any, WithJsonSchema(HTTP_STATUS_SCHEMA)] = None,
-                         challenge: Annotated[Any, WithJsonSchema(_enum_schema(Challenge))] = None,
-                         retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter))] = None,
-                         via: Annotated[Any, WithJsonSchema(_enum_schema(Via))] = None,
-                         agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor))] = None,
+                         challenge: Annotated[Any, WithJsonSchema(_enum_schema(Challenge, CHALLENGE_DESCRIPTION))] = None,
+                         retry_after: Annotated[Any, WithJsonSchema(_enum_schema(RetryAfter, RETRY_AFTER_DESCRIPTION))] = None,
+                         via: Annotated[Any, WithJsonSchema(_enum_schema(Via, VIA_DESCRIPTION))] = None,
+                         agent_vendor: Annotated[Any, WithJsonSchema(_enum_schema(AgentVendor, AGENT_VENDOR_DESCRIPTION))] = None,
                          failed_at: Annotated[Any, WithJsonSchema(FAILED_AT_SCHEMA)] = None,
                          test: Annotated[Any, WithJsonSchema(TEST_SCHEMA)] = None,
                          ctx: Context | None = None) -> Annotated[CallToolResult, CheckResponse]:
@@ -254,9 +272,14 @@ FEEDBACK_TOKEN_SCHEMA = {"type": "string", "pattern": FEEDBACK_TOKEN.pattern, "m
                          "description": "The feedback_token.token value from the check_incident answer, unchanged."}
 
 
+FEEDBACK_OUTCOME_DESCRIPTION = "What happened on your next attempt: succeeded (it worked), still_blocked, handed_off (you handed the step to the user) or gave_up."
+FEEDBACK_PATH_DESCRIPTION = ("Which way that attempt went: official_path (you used the official path the answer pointed to), same_site (you retried the same site) "
+                             "or unknown (the default).")
+
+
 async def rate_last_lookup(token: Annotated[str, WithJsonSchema(FEEDBACK_TOKEN_SCHEMA)],
-                           outcome: Annotated[str, WithJsonSchema(_enum_schema(FeedbackOutcome))],
-                           path: Annotated[str, WithJsonSchema(_enum_schema(FeedbackPath))] = FeedbackPath.unknown.value) -> FeedbackReceipt:
+                           outcome: Annotated[str, WithJsonSchema(_enum_schema(FeedbackOutcome, FEEDBACK_OUTCOME_DESCRIPTION))],
+                           path: Annotated[str, WithJsonSchema(_enum_schema(FeedbackPath, FEEDBACK_PATH_DESCRIPTION))] = FeedbackPath.unknown.value) -> FeedbackReceipt:
     if not isinstance(token, str) or not FEEDBACK_TOKEN.fullmatch(token):
         raise ToolError("invalid_feedback_token")
     if outcome not in FeedbackOutcome._value2member_map_:
@@ -275,11 +298,12 @@ if os.getenv("AHN_LOOKUP_FEEDBACK", "").strip() != "0":  # read as in ahn/settin
     )(rate_last_lookup)
 
 
-async def report_observation(observation: ObservationIn) -> Receipt:
+async def report_observation(observation: Annotated[ObservationIn, Field(description="The observation to submit: site_host, error_class and outcome are required; the other fields are optional and described one by one. Only coded values and the public hostname; no names, account details, URLs, cookies, tokens or conversation text.")]) -> Receipt:
     return Receipt(**await call_api("POST", "/v1/observations", payload=observation.model_dump(mode="json", exclude_unset=True), write=True))
 
 
-async def update_outcome(observation_id: str, outcome: OutcomeIn) -> Receipt:
+async def update_outcome(observation_id: Annotated[str, Field(description="The observation_id (a UUID) that the earlier report_observation receipt returned, for your own earlier observation.")],
+                         outcome: Annotated[OutcomeIn, Field(description="The later result of that attempt: outcome is required; the other fields are optional and described one by one. The hostname, task step and error class are taken from the earlier observation.")]) -> Receipt:
     try:
         UUID(observation_id)
     except ValueError:
