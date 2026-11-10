@@ -193,18 +193,18 @@ class StrictModel(BaseModel):
 
 
 class AttemptFields(StrictModel):
-    schema_version: int = 1
-    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    agent_family: AgentFamily = AgentFamily.other
-    attempt_actor: AttemptActor = AttemptActor.agent
-    attempt_env: AttemptEnv = AttemptEnv.unknown
-    outcome: Outcome
-    challenge_vendor: ChallengeVendor = ChallengeVendor.none
-    challenge_kind: ChallengeKind = ChallengeKind.none
-    synthetic: StrictBool = False
-    idempotency_key: UUID = Field(default_factory=uuid4)
+    schema_version: int = Field(default=1, description="Report format version. Always 1; leave it out.")
+    observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the attempt happened, as an ISO 8601 time with a timezone offset, for example 2026-11-01T07:10:00Z. Leave it out for an attempt that just happened. Must be within the last 7 days and not in the future.")
+    agent_family: AgentFamily = Field(default=AgentFamily.other, description="Which agent family you are: dots, muse, or other (the default; use it if neither fits).")
+    attempt_actor: AttemptActor = Field(default=AttemptActor.agent, description="Who made the attempt: agent (you, the default) or human (the person did it themselves).")
+    attempt_env: AttemptEnv = Field(default=AttemptEnv.unknown, description="Where the attempt ran: agent_cloud_browser (a browser run by an agent in the cloud; needs attempt_actor agent), human_in_agent_browser or human_own_browser (a person at a browser; needs attempt_actor human), or unknown (the default).")
+    outcome: Outcome = Field(description="How the attempt ended: passed (it worked), blocked (the site or a check stopped it), error (it failed with an error), or abandoned (you or the person stopped before the end).")
+    challenge_vendor: ChallengeVendor = Field(default=ChallengeVendor.none, description="Which bot-check provider showed a challenge: cloudflare, recaptcha, hcaptcha, unknown (a challenge from another or unclear provider), or none (the default; no challenge).")
+    challenge_kind: ChallengeKind = Field(default=ChallengeKind.none, description="What the challenge looked like: interactive_check (a box or puzzle to complete), loop (the check kept repeating), block_page (a page that only says access is denied), unknown, or none (the default; no challenge).")
+    synthetic: StrictBool = Field(default=False, description="true only for a made-up test report. Leave it out (false) for a real attempt.")
+    idempotency_key: UUID = Field(default_factory=uuid4, description="A UUID that makes a resend safe: sending the same key with the same body again does not create a second record. Leave it out to get a new one.")
     # Legacy compatibility only. The submitting agent follows its own authority rules.
-    consent_confirmed: StrictBool | None = None
+    consent_confirmed: StrictBool | None = Field(default=None, description="Legacy field kept for older clients. It is not used to decide anything; leave it out.")
 
     @field_validator("schema_version")
     @classmethod
@@ -233,9 +233,9 @@ class AttemptFields(StrictModel):
 
 
 class ObservationIn(AttemptFields):
-    site_host: str
-    task_step: str = "other"
-    error_class: ErrorClass
+    site_host: str = Field(description="The public hostname the attempt was about, for example example.com. Only the host: no scheme, path, query, port or credentials.")
+    task_step: str = Field(default="other", description="What you were trying to do, as a short lowercase code of letters, digits and underscores that starts with a letter, for example login, checkout or status_check. Default other.")
+    error_class: ErrorClass = Field(description="What kind of stop it was: site_access (page or API refused or unreachable), login_auth (sign-in failed or an extra verification step appeared), human_verification (a CAPTCHA or a verify-you-are-human check), or service_error (the site returned an error or timed out).")
     # D109: both or neither. Only for a blocked or failed attempt, and only from the fixed combinations of CAUSE_RULES. A cause
     # is sent only when it was established from the stated basis, never as a guess; otherwise the fields are left out.
     cause: ObservationCause | None = Field(default=None, description="Optional, with cause_basis, for outcome blocked or error: the cause you established. Leave out if not established.")

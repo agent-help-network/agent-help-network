@@ -11,6 +11,7 @@
    "properties": {
     "agent_vendor": {
      "default": null,
+     "description": "The vendor whose documented robots.txt token your requests send (not the model vendor): openai, anthropic (Claude-User), google, perplexity, meta, mistral, amazon, microsoft, apple, duckduckgo, diffbot, exa, or other if none of them. Leave it out if you do not know, and for browser automation that sends a normal browser user agent.",
      "enum": [
       "openai",
       "anthropic",
@@ -31,6 +32,7 @@
     },
     "challenge": {
      "default": null,
+     "description": "header if the site's response carried a bot-challenge header, none if you saw the response and it did not. Never guess from the page body; leave it out if unknown.",
      "enum": [
       "header",
       "none"
@@ -40,6 +42,7 @@
     },
     "error_class": {
      "default": "",
+     "description": "What stopped you, only if you observed it: site_access (page or API refused or unreachable), login_auth (sign-in failed or an extra verification step appeared), human_verification (CAPTCHA or verify-you-are-human check), service_error (error response or timeout). Leave it out if unsure.",
      "title": "Error Class",
      "type": "string"
     },
@@ -52,6 +55,7 @@
     },
     "failure_stage": {
      "default": "",
+     "description": "How far the request got, only if you observed it: before_target_response (no answer from the site, for example a timeout or connection failure), response_observed (the site answered with an error or unexpected page), access_denial_observed (the site explicitly refused access), unknown. Leave it out if unsure.",
      "title": "Failure Stage",
      "type": "string"
     },
@@ -63,6 +67,7 @@
     },
     "retry_after": {
      "default": null,
+     "description": "Size of the Retry-After value the site sent, in seconds: none (no header, or an HTTP-date), lt_60 (under 60), 60_3600 (60 to 3600), gt_3600 (over 3600). Leave it out if you saw no response.",
      "enum": [
       "none",
       "lt_60",
@@ -73,11 +78,13 @@
      "type": "string"
     },
     "site_host": {
+     "description": "The public hostname that is blocked or failing, lowercase, for example example.com. Only the host: no scheme, URL path, query, port or credentials.",
      "title": "Site Host",
      "type": "string"
     },
     "task_step": {
      "default": "",
+     "description": "What you were doing, as a short lowercase code of letters, digits and underscores starting with a letter. Use status_check when you only check whether the site is up (not blocked). Leave it out otherwise.",
      "title": "Task Step",
      "type": "string"
     },
@@ -89,6 +96,7 @@
     },
     "via": {
      "default": null,
+     "description": "What made the failed request: http_fetch (a plain HTTP fetch), browser (browser automation) or unknown. Leave it out if unsure.",
      "enum": [
       "http_fetch",
       "browser",
@@ -3732,6 +3740,7 @@
   "input_schema": {
    "properties": {
     "outcome": {
+     "description": "What happened on your next attempt: succeeded (it worked), still_blocked, handed_off (you handed the step to the user) or gave_up.",
      "enum": [
       "succeeded",
       "still_blocked",
@@ -3743,6 +3752,7 @@
     },
     "path": {
      "default": "unknown",
+     "description": "Which way that attempt went: official_path (you used the official path the answer pointed to), same_site (you retried the same site) or unknown (the default).",
      "enum": [
       "official_path",
       "same_site",
@@ -3883,15 +3893,18 @@
      "properties": {
       "agent_family": {
        "$ref": "#/$defs/AgentFamily",
-       "default": "other"
+       "default": "other",
+       "description": "Which agent family you are: dots, muse, or other (the default; use it if neither fits)."
       },
       "attempt_actor": {
        "$ref": "#/$defs/AttemptActor",
-       "default": "agent"
+       "default": "agent",
+       "description": "Who made the attempt: agent (you, the default) or human (the person did it themselves)."
       },
       "attempt_env": {
        "$ref": "#/$defs/AttemptEnv",
-       "default": "unknown"
+       "default": "unknown",
+       "description": "Where the attempt ran: agent_cloud_browser (a browser run by an agent in the cloud; needs attempt_actor agent), human_in_agent_browser or human_own_browser (a person at a browser; needs attempt_actor human), or unknown (the default)."
       },
       "cause": {
        "anyOf": [
@@ -3919,11 +3932,13 @@
       },
       "challenge_kind": {
        "$ref": "#/$defs/ChallengeKind",
-       "default": "none"
+       "default": "none",
+       "description": "What the challenge looked like: interactive_check (a box or puzzle to complete), loop (the check kept repeating), block_page (a page that only says access is denied), unknown, or none (the default; no challenge)."
       },
       "challenge_vendor": {
        "$ref": "#/$defs/ChallengeVendor",
-       "default": "none"
+       "default": "none",
+       "description": "Which bot-check provider showed a challenge: cloudflare, recaptcha, hcaptcha, unknown (a challenge from another or unclear provider), or none (the default; no challenge)."
       },
       "consent_confirmed": {
        "anyOf": [
@@ -3935,40 +3950,49 @@
         }
        ],
        "default": null,
+       "description": "Legacy field kept for older clients. It is not used to decide anything; leave it out.",
        "title": "Consent Confirmed"
       },
       "error_class": {
-       "$ref": "#/$defs/ErrorClass"
+       "$ref": "#/$defs/ErrorClass",
+       "description": "What kind of stop it was: site_access (page or API refused or unreachable), login_auth (sign-in failed or an extra verification step appeared), human_verification (a CAPTCHA or a verify-you-are-human check), or service_error (the site returned an error or timed out)."
       },
       "idempotency_key": {
+       "description": "A UUID that makes a resend safe: sending the same key with the same body again does not create a second record. Leave it out to get a new one.",
        "format": "uuid",
        "title": "Idempotency Key",
        "type": "string"
       },
       "observed_at": {
+       "description": "When the attempt happened, as an ISO 8601 time with a timezone offset, for example 2026-11-01T07:10:00Z. Leave it out for an attempt that just happened. Must be within the last 7 days and not in the future.",
        "format": "date-time",
        "title": "Observed At",
        "type": "string"
       },
       "outcome": {
-       "$ref": "#/$defs/Outcome"
+       "$ref": "#/$defs/Outcome",
+       "description": "How the attempt ended: passed (it worked), blocked (the site or a check stopped it), error (it failed with an error), or abandoned (you or the person stopped before the end)."
       },
       "schema_version": {
        "default": 1,
+       "description": "Report format version. Always 1; leave it out.",
        "title": "Schema Version",
        "type": "integer"
       },
       "site_host": {
+       "description": "The public hostname the attempt was about, for example example.com. Only the host: no scheme, path, query, port or credentials.",
        "title": "Site Host",
        "type": "string"
       },
       "synthetic": {
        "default": false,
+       "description": "true only for a made-up test report. Leave it out (false) for a real attempt.",
        "title": "Synthetic",
        "type": "boolean"
       },
       "task_step": {
        "default": "other",
+       "description": "What you were trying to do, as a short lowercase code of letters, digits and underscores that starts with a letter, for example login, checkout or status_check. Default other.",
        "title": "Task Step",
        "type": "string"
       }
@@ -3994,7 +4018,8 @@
    },
    "properties": {
     "observation": {
-     "$ref": "#/$defs/ObservationIn"
+     "$ref": "#/$defs/ObservationIn",
+     "description": "The observation to submit: site_host, error_class and outcome are required; the other fields are optional and described one by one. Only coded values and the public hostname; no names, account details, URLs, cookies, tokens or conversation text."
     }
    },
    "required": [
