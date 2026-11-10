@@ -105,7 +105,9 @@ class OthersSaw(StrictModel):
 
 class WhyServer(StrictModel):
     """check()'s own words and decision, copied. Nothing here is computed by explain."""
-    summary_line: str | None = Field(default=None, min_length=1, max_length=401, pattern=r"^[ -~]+$", exclude_if=_omit_none)
+    # Printable ASCII, the lookup's own English; a Korean answer (D112) may carry a Korean version of it (explain_text.SUMMARY_SENTENCES_KO):
+    # Hangul syllables and a few Korean punctuation marks (no control character, no tab or newline).
+    summary_line: str | None = Field(default=None, min_length=1, max_length=401, pattern="^[ -~가-힣·…—‘’“”]+$", exclude_if=_omit_none)
     recommendation: Recommendation
     next_action: NextAction | None = Field(default=None, exclude_if=_omit_none)
     cause: Cause | None = Field(default=None, exclude_if=_omit_none)
@@ -193,6 +195,9 @@ class WhyResponse(StrictModel):
     server: WhyServer
     # D110: in a Korean answer with a server.summary_line, the fixed sentence saying that line is the lookup's own, in English.
     server_note: TextItem | None = Field(default=None, exclude_if=_omit_none)
+    # D112: when the lookup's action points away from the layer the explanation looks at first, the one fixed sentence saying the server block
+    # is the plain lookup answer; the block is then last in render_order.
+    server_context_note: TextItem | None = Field(default=None, exclude_if=_omit_none)
     what_happened: WhatHappened
     do_now: DoNow
     timeline: Timeline

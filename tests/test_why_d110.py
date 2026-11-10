@@ -144,6 +144,13 @@ def every_answer():
         yield make()
 
 
+def server_is_subordinate(body):
+    """D112: the lookup says use_official_path, and the answer's first layer is not the site or the step is a public read (not a status check)."""
+    echo = body["input_echo"]
+    return (body["server"]["next_action"]["do"] == "use_official_path" and echo.get("task_step") != "status_check"
+            and (body["where_to_look"]["first"] not in ("site", "unknown") or echo.get("task_context") == "public_read"))
+
+
 def test_every_answer_keeps_person_do_now_handoff_and_the_server_action_in_step():
     count = 0
     for body in every_answer():
@@ -163,7 +170,8 @@ def test_every_answer_keeps_person_do_now_handoff_and_the_server_action_in_step(
         # the user handoff line says what person says
         line = user_line(body)
         assert (X.TEMPLATES["H-USER-NO"][lang] in line) == (person["needed"] == "not_indicated")
-        assert "CHK-SERVER-ACTION" in ids(body)
+        # D112: "follow server.next_action" is a check only where the lookup's developer path is not subordinate to the answer's own first layer
+        assert ("CHK-SERVER-ACTION" in ids(body)) == (not server_is_subordinate(body))
         if person["needed"] == "not_indicated":
             assert "who" not in person and person["reasons"] == []
     assert count > 1000

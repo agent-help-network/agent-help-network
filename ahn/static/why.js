@@ -197,10 +197,13 @@ function renderServer(copy, body) {
   if (s.summary_line) {
     const line = el("p", "why-lead", s.summary_line);
     line.lang = "en";  // the lookup's own sentence, as given
+    if (!body.server_note && body.lang === "ko") line.lang = "ko";  // D112: a Korean answer whose sentence is the Korean version
     box.appendChild(line);
     // D110: in a Korean answer, the fixed sentence that says this line is the lookup's own, in English.
     if (body.server_note && body.server_note.text) box.appendChild(el("p", "why-small", body.server_note.text));
   }
+  // D112: the fixed sentence saying this block is the plain lookup answer, given without the step's context.
+  if (body.server_context_note && body.server_context_note.text) box.appendChild(el("p", "why-small", body.server_context_note.text));
   const parts = el("p", "why-small");
   parts.appendChild(document.createTextNode(copy.action + ": "));
   parts.appendChild(el("code", "", (s.next_action && s.next_action.do) || (s.recommendation && s.recommendation.action) || ""));
@@ -308,14 +311,16 @@ const SECTIONS = {
 function renderAnswer(copy, body) {
   const wrap = el("div", "why-answer");
   const order = Array.isArray(body.render_order) ? body.render_order.filter((name) => SECTIONS[name]) : Object.keys(SECTIONS);
-  const first = body.server && body.server.position === "first";
+  const last = Array.isArray(body.render_order) && body.render_order.includes("server");  // D112: the answer puts the lookup block last
+  const first = !last && body.server && body.server.position === "first";
   const parts = [];
   for (const name of order) {
     if (name === "person" && first) { parts.push(renderPerson(copy, body)); parts.push(renderServer(copy, body)); continue; }
     parts.push(SECTIONS[name](copy, body));
-    if (name === "do_now" && !first) parts.push(renderServer(copy, body));
+    if (name === "do_now" && !first && !last) parts.push(renderServer(copy, body));
   }
-  if (!order.includes("do_now") && !first) parts.push(renderServer(copy, body));
+  if (!order.includes("do_now") && !first && !last) parts.push(renderServer(copy, body));
+  if (last) parts.push(renderServer(copy, body));
   for (const part of parts) if (part) wrap.appendChild(part);
   if (body.basis_text) wrap.appendChild(el("p", "why-small why-basis", body.basis_text));
   return wrap;

@@ -2227,6 +2227,33 @@
        "default": null,
        "title": "Status Url Covers"
       },
+      "status_url_kind": {
+       "anyOf": [
+        {
+         "const": "feed_json",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Status Url Kind"
+      },
+      "status_url_note": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "minLength": 1,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Status Url Note"
+      },
       "stop_if_you_are": {
        "anyOf": [
         {

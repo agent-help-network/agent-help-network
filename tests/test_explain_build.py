@@ -94,7 +94,8 @@ def test_t3_unknown_browser_comparison_leaves_every_row_undetermined():
 def test_t4_site_never_opened_with_an_official_path_moves_the_server_action_after_the_checks():
     body = case("T4")
     assert body["rules_applied"] == ["R5", "R7", "R3"] and layers(body)[0] == "L2"
-    assert ids(body) == ["CHK-BROWSER-COMPARE", "CHK-SERVER-ACTION", "CHK-OFFICIAL-PATH"] and body["server"]["position"] == "after_checks"
+    # D112: the first layer is the platform, so the lookup's developer path is not "follow server.next_action"; the platform check stands in its place
+    assert ids(body) == ["CHK-BROWSER-COMPARE", "CHK-PLATFORM-LOOK", "CHK-OFFICIAL-PATH"] and body["server"]["position"] == "after_checks"
     assert "S-L4-OFFICIAL-PATH-ACCOUNT" in {r["template_id"] for r in body["what_happened"]["layers"]}
     last = body["do_now"]["checks"][-1]
     assert last["who"] == "person" and last["text"].endswith(X.TEMPLATES["S-L4-OFFICIAL-PATH-ACCOUNT"]["en"])
@@ -178,14 +179,15 @@ def test_t12_a_platform_that_stopped_before_the_site_is_the_first_place_and_the_
     assert [r["code"] for r in body["person"]["reasons"]] == ["platform_refused_step"] and body["person"]["who"] == ["user", "platform_admin"]
     rows = {r["template_id"]: r for r in body["what_happened"]["layers"]}
     assert {"S-L2-CONFLICT", "S-L2-NOCLASS", "S-L2-NOLIST"} <= set(rows) and rows["S-L2-CONFLICT"]["source"]["kind"] == "vendor_doc"
-    assert ids(body) == ["CHK-MSG-MATCH", "CHK-ORG-ADMIN", "CHK-PLATFORM-REMEDY", "CHK-SERVER-ACTION", "CHK-OFFICIAL-PATH"]
+    assert ids(body) == ["CHK-MSG-MATCH", "CHK-ORG-ADMIN", "CHK-PLATFORM-REMEDY", "CHK-PLATFORM-LOOK", "CHK-OFFICIAL-PATH"]  # D112
     assert [h["template_id"] for h in body["handoff"]] == ["H-ORG-ADMIN", "H-USER"] and body["server"]["position"] == "after_checks"
     assert X.forbidden_in(body["person"]["reasons"][0]["text"], "en") == [] and "is a financial" not in json.dumps(body, default=str).lower()
 
 
-def test_t13_a_sign_in_step_keeps_the_servers_action_first_even_when_it_is_not_a_hand_off():
+def test_t13_a_sign_in_step_is_not_a_hand_off_and_its_server_block_reads_after_the_checks():
     body = case("T13")
-    assert body["person"]["needed"] == "yes" and body["server"]["position"] == "first"
+    # D112: the server block renders last here, so its position says after_checks, as render_order does
+    assert body["person"]["needed"] == "yes" and body["server"]["position"] == "after_checks" and body["render_order"][-1] == "server"
     assert "server_hand_off" not in [r["code"] for r in body["person"]["reasons"]]
     assert body["server"]["next_action"] == {"do": "use_official_path"}
 
