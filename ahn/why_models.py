@@ -109,6 +109,13 @@ class WhyShortAction(StrictModel):
                 "stop_if_listed", "lookup_apex_host", "no_clear_action"]
 
 
+class WhyCause(Cause):
+    """D114: the lookup's cause object as a Korean answer carries it: ``line`` and ``note`` may be the Korean versions (explain_text.cause_line_ko,
+    CAUSE_NOTE_KO), so they take the same characters as WhyServer.summary_line. The lookup's own model (models.Cause) is unchanged."""
+    line: str = Field(min_length=1, max_length=400, pattern="^[ -~가-힣·…—‘’“”]+$")
+    note: str = Field(default="Information only; follow next_action.", min_length=1, max_length=120, pattern="^[ -~가-힣·…—‘’“”]+$")
+
+
 class WhyServer(StrictModel):
     """check()'s own words and decision, copied. Nothing here is computed by explain."""
     # Printable ASCII, the lookup's own English; a Korean answer (D112) may carry a Korean version of it (explain_text.SUMMARY_SENTENCES_KO):
@@ -117,7 +124,7 @@ class WhyServer(StrictModel):
     recommendation: Recommendation
     # D113: in the short block of an answer that looks elsewhere first, next_action is only {"do": ...}, and cause, failure_stage and next_checks are left out.
     next_action: WhyShortAction | NextAction | None = Field(default=None, exclude_if=_omit_none)
-    cause: Cause | None = Field(default=None, exclude_if=_omit_none)
+    cause: WhyCause | None = Field(default=None, exclude_if=_omit_none)
     failure_stage: FailureStage | None = Field(default=None, exclude_if=_omit_none)
     next_checks: list[NextCheck] | None = Field(default=None, exclude_if=_omit_none)
     position: Literal["first", "after_checks"]

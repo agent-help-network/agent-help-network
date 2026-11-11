@@ -75,6 +75,7 @@ NOTE = "Information only; follow next_action."   # on every cause, as ahn_check 
 PROBE_FRESH = timedelta(days=8)        # a first refusal is re-measured after 24 hours, later ones every 7 days (site_probe)
 OTHERS_MIN_SOURCES = 3                 # other clients seen with service errors in the failure hour: "several"
 OTHERS_MEDIUM_SOURCES = 10
+LONG_FAIL = timedelta(days=7)          # D114: an open period of AHN's own failed checks older than this is told as likely AHN's path
 PERSISTENT_DAYS = 3                    # separate UTC days of refused lookups
 PERSISTENT_MIN_SOURCES = OTHERS_MIN_SOURCES   # distinct clients in one hour of such a day (one client looping cannot make a day)
 
@@ -101,6 +102,7 @@ LINES: dict[str, str] = {
     "provider_maintenance": "Temporary: provider maintenance {win}. Retry after it ends.",
     "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
     "site_errors": "AHN's own checks have not reached the site {win}; that can be AHN's network path alone, so it does not tell whether your tool can reach the site.",
+    "site_errors_long": "AHN's own checks have not reached the site for over 7 days {win}; so long a failure is more likely AHN's network path and says nothing about the site or your tool's access.",
     "recovered_site": "AHN's own checks did not reach the site {win}; they answer again. That can be AHN's network path alone.",
     "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
@@ -274,11 +276,22 @@ def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
         return None
     confidence = "high" if row["confirmed_at"] is not None else "medium"
     ended = row["ended_at"] if row["ended_at"] is not None and row["ended_at"] <= now else None
-    if confidence == "high" and not _others_saw_errors(conn, host, row["first_fail_at"], ended or now):
-        confidence = "medium"   # only AHN's own measurement says so, and it may be AHN's path alone (D82)
+    others = None
+    if confidence == "high":
+        others = _others_saw_errors(conn, host, row["first_fail_at"], ended or now)
+        if not others:
+            confidence = "medium"   # only AHN's own measurement says so, and it may be AHN's path alone (D82)
     if ended is not None and row["ended_reason"] == "answered":
         return _cause("transient", "recovered", confidence, ["outage_episodes"], "recovered_site", start=row["first_fail_at"], end=ended)
-    return _cause("transient", "site_errors", confidence, ["outage_episodes"], "site_errors", start=row["first_fail_at"], end=ended)
+    key = "site_errors"
+    if row["ended_at"] is None and now - row["first_fail_at"] > LONG_FAIL:
+        # D114: only the sentence changes (hint, confidence, basis and window are those of site_errors). A period this long that nobody
+        # else saw is more likely AHN's own path than the site, and the sentence says so instead of reading as evidence about the site.
+        if others is None:
+            others = _others_saw_errors(conn, host, row["first_fail_at"], now)
+        if not others:
+            key = "site_errors_long"
+    return _cause("transient", "site_errors", confidence, ["outage_episodes"], key, start=row["first_fail_at"], end=ended)
 
 
 def _others_saw_errors(conn, host: str, start: datetime, end: datetime) -> bool:

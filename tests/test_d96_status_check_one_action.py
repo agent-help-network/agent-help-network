@@ -81,6 +81,38 @@ def surfaces(case):
     yield own, page(OTHER_PAGE)
     yield own, signin_page(OTHER_PAGE)
     yield own, {**page(OTHER_PAGE), "covers": "api"}
+    # D114: the status page's own host, asked about with a status page that is not a feed; and a status page under a path of a general site
+    yield OTHER_HOST, page(OTHER_PAGE)
+    yield OTHER_HOST, signin_page(OTHER_PAGE)
+    yield OTHER_HOST, {**page(OTHER_PAGE), "covers": "api"}
+    yield "www.vendor-general.net", page(PATH_PAGE)
+
+
+OTHER_HOST = "status.vendor-status.net"
+PATH_PAGE = "https://www.vendor-general.net/support/systemstatus/"
+G1_ROWS = ("O7", "O7-N", "O7-K")
+
+
+def with_status_host_answer(result, rec, pwf, old_plain, failed):
+    """D114, from the contract: a lookup that is not a status check, has no failure signal and is of a host that serves only status (the page at
+    the root, or a name with status or health) gets the status answer of D76 when the row is O7, O7-N or O7-K and the action is use_official_path.
+    Only the sentence and the url change. Returns (answer, whether the rule applied)."""
+    url = status_url_of(result)
+    row, _ = response_guide.select_row(rec, result["access_profile"], result["provider_status"], result["site_host"], result["official_paths"],
+                                          variants=pwf)
+    if failed or not url or old_plain["next_action"]["do"] != "use_official_path" or row not in G1_ROWS:
+        return old_plain, False
+    host = re.match(r"https://([^/]+)(/.*)?$", url)
+    dedicated = host.group(2) in (None, "", "/") or "status" in host.group(1).lower() or host.group(1).lower().startswith("health.")
+    if not dedicated or host.group(1).lower() != result["site_host"].lower():
+        return old_plain, False
+    out = copy.deepcopy(old_plain)
+    sid = status_id_of(result, url)
+    covers_api = (result["official_status_page"] or {}).get("covers") == "api"
+    out["summary_line"] = STATUS_ROWS["T3-A" if sid == "T3" and covers_api else sid]
+    if sid != "T3-S":
+        out["next_action"]["url"] = url
+    return out, True
 
 
 def status_url_of(result):
@@ -141,7 +173,7 @@ MODES = ((True, False), (True, True), (False, False))   # (proceed_without_failu
 
 
 def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid():
-    counts = dict(pairs=0, changed=0, off=0, other_step=0)
+    counts = dict(pairs=0, changed=0, off=0, other_step=0, status_host=0)
     kinds = {}
     # every case with a developer path and no status feed is walked (the answers that must not name that path), the rest on a stride
     no_feed_dev_path = (c for c in variants(1) if c.get("provider_status") is None and c.get("official")
@@ -173,7 +205,10 @@ def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid()
                     assert guide(copy.deepcopy(result), *args, sc_off, *tail, one_action=False) == old, (case, stage, args)
                     # not a status_check lookup: the answer before D96, switch on or off
                     assert not status_check_applies("login", True, True, ec, stage) and not status_check_applies(None, True, True, ec, stage)
-                    assert guide(copy.deepcopy(result), *args, False, *tail, one_action=True) == old_plain
+                    # (a status page host looked up on its own gets the status answer, D114)
+                    plain, status_host = with_status_host_answer(result, rec, pwf, old_plain, failed)
+                    assert guide(copy.deepcopy(result), *args, False, *tail, one_action=True) == plain, (case, site_host, stage, args)
+                    counts["status_host"] += status_host
                     counts["other_step"] += 1
                     counts["off"] += 1
                     # switch on
@@ -182,7 +217,7 @@ def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid()
                     new = guide(copy.deepcopy(result), *args, applies, *tail, one_action=True)
                     counts["pairs"] += 1
                     if not applies:
-                        assert new == old_plain, (case, stage, args)       # human_verification / login_auth with a failure
+                        assert new == plain, (case, stage, args)       # human_verification / login_auth with a failure
                         continue
                     want, kind_name = expected_new(result, rec, pwf, old_plain, old_sc, failed)
                     assert new == want, (kind_name, case, site_host, stage, args)
@@ -198,7 +233,7 @@ def test_the_pairs_that_change_are_exactly_the_d96_condition_in_the_whole_grid()
                             official = case.get("official") or {}
                             assert action["url"] not in (official.get("api_docs"), official.get("developer_portal")) or action["url"] is None
     print("D96 comparison", counts, kinds)
-    assert counts["pairs"] > 20000 and counts["changed"] > 2000
+    assert counts["pairs"] > 20000 and counts["changed"] > 2000 and counts["status_host"] > 100, counts
     assert set(kinds) == {"self_failed", "widened", "unchanged_status", "failed_status_on", "failed_unchanged", "dev_path_dropped",
                           "failed_unverified"}, kinds
 
