@@ -11,6 +11,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .cause import UNNAMED_VENDORS
+from .check_text import VENDOR_NAMES
+
 # Blanks a template may use. A blank with no value means the sentence is left out; it is never rendered empty.
 BLANKS = frozenset({
     "host", "date", "date2", "time", "time2", "platform", "platform_cap", "platform2", "vendor", "url", "quote", "quote2",
@@ -358,6 +361,10 @@ _t("H-USER-CHECK",
 _t("S-G-SERVER-EN",
    "server.summary_line is the lookup's own sentence and is in English.",
    "server.summary_line 은 조회 서버의 원문이에요(서버 원문, 영어). 한국어 안내는 이 답의 다른 문장에 있어요.")
+# D114: the lookup block of a Korean answer kept a next_checks or cause sentence that has no Korean version in English.
+_t("S-G-SERVER-EN-PARTS",
+   "Some sentences of the server block (summary_line, cause, next_checks) are the lookup's own and are in English.",
+   "server 블록의 일부 문장(summary_line·cause·next_checks)은 조회 서버의 원문이에요(서버 원문, 영어). 한국어 안내는 이 답의 다른 문장에 있어요.")
 # D112: when the lookup's action is a developer path that the explanation's own first layer does not point to, the lookup block moves to the end
 # and says what it is.
 _t("S-G-SERVER-CONTEXT",
@@ -366,7 +373,7 @@ _t("S-G-SERVER-CONTEXT",
 # D113: AHN was not told the task (no task_context), so the account is not assumed.
 _t("S-G-NOCTX",
    "AHN was not told what the task is; the lookup's sentences that start with 'For a task in the user's own account' apply only if it is.",
-   "AHN 은 무슨 작업인지 듣지 못했어요. 조회 문장 중 '사용자 본인 계정의 일에는'(For a task in the user's own account)으로 시작하는 것은 그런 작업일 때만 해당돼요.")
+   "AHN 은 무슨 작업인지 듣지 못했어요. 조회 문장 중 '사용자 본인 계정의 일에는'(조회 문장 원문은 \"For a task in the user's own account\")으로 시작하는 것은 그런 작업일 때만 해당돼요.")
 _t("TL-PLATFORM-DOC",
    "On {date}, AHN saw {platform}'s page {url} change.",
    "{date} 에 AHN 이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")
@@ -730,6 +737,108 @@ STATUS_URL_NOTE_KO = {
     "The page may show a challenge, but this feed address usually answers; fetch it once.":
         "페이지는 챌린지를 보여 줄 수 있지만, 이 피드 주소는 보통 응답해요. 한 번 가져와 보세요.",
 }
+
+# D114: Korean versions of the lookup's own next_checks sentences (triage.CHECK_TEXT_KO, matched on the exact English text) and of the cause
+# line and note of the server block. A cause line is made of fixed sentences filled with a window, an age and a refusal kind, so the table is per
+# line template: "{win}" stands for the window ("" or " (since 11-01 03:04 UTC)", leading space included), "{age}" for the age ("just now",
+# "5 min ago", "2 h ago", "3 days ago"), "{art}" for the article before the refusal kind (left out in Korean) and "{what}" for the refusal kind
+# with the bot-defense provider's name when it has one. A line is translated only when it matches a template (cause_line_ko); otherwise it stays
+# English and the answer says so (S-G-SERVER-EN-PARTS). A test builds every line cause.py can say, so a new line needs its Korean here.
+CAUSE_NOTE = "Information only; follow next_action."
+CAUSE_NOTE_KO = "참고용 정보예요. next_action 을 따르세요."
+_CAUSE_PAIRS = (
+    ("Temporary: provider status page shows a problem{win}. Retry later.", "일시적이에요: 업체 상태 페이지에 문제가 올라 있어요{win}. 나중에 다시 시도하세요."),
+    ("Temporary: provider maintenance{win}. Retry after it ends.", "일시적이에요: 업체가 점검 중이에요{win}. 끝난 뒤에 다시 시도하세요."),
+    ("Temporary: provider problem{win} has cleared. Retry.", "일시적이었어요: 업체 문제가 풀렸어요{win}. 다시 시도하세요."),
+    ("AHN's own checks have not reached the site{win}; that can be AHN's network path alone, so it does not tell whether your tool can reach the site.",
+     "AHN 자체 확인이 사이트에 닿지 못했어요{win}. AHN 쪽 네트워크 경로만의 문제일 수 있어서, 당신 도구가 사이트에 닿는지는 알려 주지 않아요."),
+    ("AHN's own checks have not reached the site for over 7 days{win}; so long a failure is more likely AHN's network path and says nothing about the site or your tool's access.",
+     "AHN 자체 확인이 7일 넘게 사이트에 닿지 못했어요{win}. 이렇게 오래된 실패는 AHN 쪽 네트워크 경로 문제일 가능성이 더 크고, 사이트의 상태나 당신 도구가 닿는지는 알려 주지 않아요."),
+    ("AHN's own checks did not reach the site{win}; they answer again. That can be AHN's network path alone.",
+     "AHN 자체 확인이 사이트에 닿지 못했지만{win}, 지금은 다시 응답해요. AHN 쪽 네트워크 경로만의 문제였을 수 있어요."),
+    ("Probably temporary: several clients were rate limited this hour. Wait, then retry.",
+     "일시적일 가능성이 커요: 이번 시간에 여러 클라이언트가 요청 한도에 걸렸어요. 기다린 뒤 다시 시도하세요."),
+    ("Probably temporary: other clients saw service errors this hour. Retry later.",
+     "일시적일 가능성이 커요: 이번 시간에 다른 클라이언트도 서비스 오류를 봤어요. 나중에 다시 시도하세요."),
+    ("Likely a policy block: the site refused AHN's last two home-page checks.", "정책 차단일 가능성이 커요: 사이트가 AHN 의 최근 홈 페이지 확인 두 번을 거절했어요."),
+    ("Likely a sign-in requirement: the site's home page showed a sign-in wall on AHN's last two checks.",
+     "로그인 요구일 가능성이 커요: 사이트 홈 페이지가 AHN 의 최근 확인 두 번 모두 로그인 벽을 보여 줬어요."),
+    ("Likely a policy block: the site refused AHN's home-page checks at least twice in a row; the latest showed a sign-in wall.",
+     "정책 차단일 가능성이 커요: 사이트가 AHN 의 홈 페이지 확인을 연속으로 두 번 이상 거절했고, 가장 최근에는 로그인 벽을 보여 줬어요."),
+    ("Likely a policy block: clients were refused on 3 or more separate days.", "정책 차단일 가능성이 커요: 클라이언트가 서로 다른 3일 이상 거절당했어요."),
+    ("Likely a policy block: AHN's read of the site's robots.txt shows it now disallows this kind of agent{win}.",
+     "정책 차단일 가능성이 커요: AHN 이 읽은 사이트의 robots.txt 가 이제 이런 종류의 에이전트를 허용하지 않아요{win}."),
+    ("Terms signal changed{win}: llms.txt removed or data-mining reserved. Not an access block.",
+     "이용 조건 신호가 바뀌었어요{win}: llms.txt 가 없어졌거나 데이터 마이닝이 유보됐어요. 접근 차단은 아니에요."),
+    ("Likely a policy block: AHN's home-page check sees a bot-defense page from a new provider{win}; what your tool sees may differ.",
+     "정책 차단일 가능성이 커요: AHN 의 홈 페이지 확인에 새 업체의 봇 방어 화면이 보여요{win}. 당신 도구에 보이는 것은 다를 수 있어요."),
+    ("Not determined: AHN's home-page checks that day were normal, but they do not see single pages; the cause may be on your side.",
+     "판단하지 못했어요: 그날 AHN 의 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
+    ("Not determined: AHN's home-page check {age} was normal, but it does not see single pages; the cause may be on your side.",
+     "판단하지 못했어요: AHN 이 {age} 한 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
+    ("Not determined: AHN has no usable home-page check of this site near that time.", "판단하지 못했어요: 그 시각 즈음에 쓸 만한 AHN 의 홈 페이지 확인이 이 사이트에는 없어요."),
+    ("Not determined: AHN does not measure this site because its robots.txt disallows AHN's check.",
+     "판단하지 못했어요: 이 사이트의 robots.txt 가 AHN 의 확인을 허용하지 않아서 AHN 은 이 사이트를 측정하지 않아요."),
+    ("Not determined: AHN does not measure this site because the site refused AHN's request for robots.txt.",
+     "판단하지 못했어요: 사이트가 AHN 의 robots.txt 요청을 거절해서 AHN 은 이 사이트를 측정하지 않아요."),
+    ("Not determined: that time is past the 14 days of measurements kept; only provider status history was read.",
+     "판단하지 못했어요: 그 시각은 보관하는 측정 14일을 지났어요. 업체 상태 기록만 읽었어요."),
+    ("Not determined: AHN's check {age} saw {art}{what} refusal; recheck_after is AHN's next check, not an instruction.",
+     "판단하지 못했어요: AHN 이 {age} 한 확인에서 {what} 거절을 봤어요. recheck_after 는 AHN 의 다음 확인 시각이고 지시가 아니에요."),
+    ("Not determined: AHN's check {age} saw {art}{what} refusal; AHN checks again. That is AHN's check, not an instruction.",
+     "판단하지 못했어요: AHN 이 {age} 한 확인에서 {what} 거절을 봤어요. AHN 이 다시 확인해요. 이것은 AHN 의 확인이고 지시가 아니에요."),
+)
+_CAUSE_SLOTS = {
+    "win": r"(?P<win>(?: \([^()]*\))?)",
+    "age": r"(?P<age>just now|\d+ min ago|\d+ h ago|\d+ days? ago)",
+    "art": r"(?:an? )",
+    "what": r"(?P<what>(?:(?:" + "|".join(re.escape(name) for key, name in VENDOR_NAMES.items() if key not in UNNAMED_VENDORS) + r") )?(?:bot-challenge|HTTP|login-wall))",
+}
+_REFUSAL_KO = {"bot-challenge": "봇 챌린지", "HTTP": "HTTP", "login-wall": "로그인 벽"}
+
+
+def _cause_regex(english: str):
+    parts = re.split(r"(\{\w+\})", english)
+    return re.compile("^" + "".join(_CAUSE_SLOTS[p[1:-1]] if p.startswith("{") else re.escape(p) for p in parts) + "$")
+
+
+_CAUSE_COMPILED = tuple((_cause_regex(en), ko) for en, ko in _CAUSE_PAIRS)
+
+
+def _window_ko(text: str) -> str:
+    if not text:
+        return ""
+    inner = text.strip()[1:-1]
+    if inner.startswith("since "):
+        return f" ({inner[6:]}부터)"
+    return " (" + inner.replace(" to ", " ~ ") + ")"
+
+
+def _age_ko(text: str) -> str:
+    if text == "just now":
+        return "방금"
+    number = re.match(r"\d+", text).group()
+    return number + ("분" if " min " in text else "시간" if " h " in text else "일") + " 전"
+
+
+def cause_line_ko(line: str) -> str | None:
+    """The Korean version of a cause.line, or None when it matches no template (the caller then keeps the English line and marks it)."""
+    for pattern, korean in _CAUSE_COMPILED:
+        match = pattern.match(line)
+        if not match:
+            continue
+        found = match.groupdict()
+        out = korean
+        if "win" in found:
+            out = out.replace("{win}", _window_ko(found["win"]))
+        if "age" in found:
+            out = out.replace("{age}", _age_ko(found["age"]))
+        if "what" in found:
+            *name, kind = found["what"].split(" ")
+            out = out.replace("{what}", (" ".join(name) + " " if name else "") + _REFUSAL_KO[kind])
+        return out
+    return None
+
 
 # --- fixed phrases that fill blanks (the only values a sentence takes besides AHN's own data) -------------------------
 TOKEN_SCOPE = {"en": "all agents (*)", "ko": "모든 에이전트(*)"}

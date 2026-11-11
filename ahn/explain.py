@@ -25,7 +25,8 @@ from urllib.parse import urlencode
 
 from . import explain_text as X
 from .models import CauseBasis
-from .response_guide import unresolved_incidents
+from .response_guide import status_url_of, unresolved_incidents
+from .triage import CHECK_TEXT_KO
 from .why_models import CHECK_TEXT_MAX, HANDOFF_TEXT_MAX, LAYER_TEXT_MAX, SCHEMA, SHORT_TEXT_MAX
 
 LOG = logging.getLogger(__name__)
@@ -320,6 +321,7 @@ class _Ctx:
         # the lookup of the host as sent, given only when it was answered from its apex; only the status address of next_action is read from it.
         self.server_check = check
         self.sent_check = sent_check
+        self.english_parts = False  # D114: a Korean answer's server block kept a next_checks or cause sentence in English
         self.platform = inputs.agent_platform
         self.entry = None
         if view and self.platform:
@@ -422,7 +424,8 @@ def _site_rows(ctx: _Ctx) -> list[dict]:
     cause = check.get("cause")
     if cause:
         state = "evidence" if cause.get("hint") in SITE_EVIDENCE_HINTS else "background"
-        rows.append(_row(ctx, "L1", state, "S-L1-CAUSE", _fill("S-L1-CAUSE", lang, LAYER_TEXT_MAX, host=host, cause_line=cause.get("line")),
+        line = X.cause_line_ko(cause.get("line") or "") if lang == "ko" else cause.get("line")  # D114: no English clause inside a Korean sentence
+        rows.append(_row(ctx, "L1", state, "S-L1-CAUSE", _fill("S-L1-CAUSE", lang, LAYER_TEXT_MAX, host=host, cause_line=line),
                          _source("ahn_read")))
 
     # L1a: what the site's robots.txt declares, read by AHN
@@ -760,10 +763,17 @@ def _official_id(ctx: _Ctx, url: str | None) -> str:
     return "CHK-OFFICIAL-PATH-CUSTOMER" if _is_customer_path(ctx, url) else "CHK-OFFICIAL-PATH"
 
 
+def _status_url(ctx: _Ctx) -> str | None:
+    """The status page address the way the lookup chose it (response_guide.status_url_of: the provider's, else the official page's)."""
+    return _url(status_url_of(ctx.check))
+
+
 def _official_url(ctx: _Ctx) -> str | None:
     na = ctx.next_action
+    # D114: a status answer (D76, or a status page host looked up on its own) has the status page as next_action.url, its one action (D96);
+    # that is not a developer path, and no developer-path check is listed beside it (the status check is).
     if na.get("do") == "use_official_path" and _url(na.get("url")):
-        return na["url"]
+        return None if na["url"] == _status_url(ctx) else na["url"]
     paths = ctx.check.get("official_paths") or {}
     return _url(paths.get("api_docs")) or _url(paths.get("developer_portal"))
 
@@ -963,7 +973,7 @@ def _checks(ctx: _Ctx, person: dict) -> list[dict]:
         second = X.TEMPLATES["S-L3-C2"][lang]
         both = f"{first} {second}" if first else None
         out.append(_item("CHK-SIGNED-IN", "person", both if both and len(both) <= cap else first))
-    status_url = _url(_get(ctx.check, "provider_status", "source_url")) or _url(_get(ctx.check, "official_status_page", "source_url"))
+    status_url = _status_url(ctx)
     status_name = _safe_name(_get(ctx.check, "provider_status", "source_name")) or _safe_name(_get(ctx.check, "official_status_page", "source_name"))
     official = _official_url(ctx)
     if status_url and status_name:
@@ -1207,6 +1217,21 @@ def _server(ctx: _Ctx) -> dict:
         action = server.get("next_action")
         if action and action.get("status_url_note") in X.STATUS_URL_NOTE_KO:
             server["next_action"] = {**action, "status_url_note": X.STATUS_URL_NOTE_KO[action["status_url_note"]]}
+        # D114: the lookup's next_checks sentences and its cause line and note, in Korean where the tables have them. A sentence without a
+        # Korean version stays whole English and the answer says so (S-G-SERVER-EN-PARTS).
+        if server.get("next_checks"):
+            checks = []
+            for item in server["next_checks"]:
+                korean = CHECK_TEXT_KO.get(item.get("text"))
+                ctx.english_parts = ctx.english_parts or korean is None
+                checks.append({**item, "text": korean or item.get("text")})
+            server["next_checks"] = checks
+        found = server.get("cause")
+        if found:
+            line = X.cause_line_ko(found.get("line") or "")
+            ctx.english_parts = ctx.english_parts or line is None
+            note = X.CAUSE_NOTE_KO if found.get("note") == X.CAUSE_NOTE else found.get("note")
+            server["cause"] = {**found, "line": line or found.get("line"), "note": note}
     return server
 
 
@@ -1314,7 +1339,9 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
         "timeline": _timeline(ctx), "handoff": _handoff(ctx, person), "basis_text": X.TEMPLATES["S-G-BASIS"][lang],
         "links": {"self": _self_link(inputs)},
     }
-    if lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == ctx.server_check.get("summary_line"):
+    if lang == "ko" and ctx.english_parts:
+        body["server_note"] = {"template_id": "S-G-SERVER-EN-PARTS", "text": X.TEMPLATES["S-G-SERVER-EN-PARTS"]["ko"]}
+    elif lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == ctx.server_check.get("summary_line"):
         body["server_note"] = {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
     if ctx.subordinate:
         body["server_context_note"] = {"template_id": "S-G-SERVER-CONTEXT", "text": X.TEMPLATES["S-G-SERVER-CONTEXT"][lang]}

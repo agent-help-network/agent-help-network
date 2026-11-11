@@ -159,6 +159,15 @@ STATUS_FAILED_ROW = {"T1": "T1-F", "T2": "T2-F", "T5": "T5-F", "T3": "T3-F", "T3
 # D96: a failure of these kinds goes to a person whatever the lookup asked; the status answer does not apply to it.
 STATUS_HANDOFF_ERRORS = frozenset({"human_verification", "login_auth"})
 STATUS_KEEP_DO = frozenset({"wait_for_provider", "hand_off_to_human"})
+# D114: the use_official_path rows a status page host answers with its status sentence (not the robots or re-look-up rows).
+STATUS_HOST_ROWS = ("O7", "O7-N", "O7-K")
+
+
+def _status_host_is_site(status_url: str, site_host: str) -> bool:
+    """D114: the looked-up host is a host that serves only status (D70's test: the page at the root, or a name saying status or health) and
+    is the host of status_url. A status page under a path of a general site (www.example.com/support/status) is not."""
+    from .status_refresh import dedicated_status_host  # late: status_refresh pulls in the network readers
+    return dedicated_status_host(status_url) == (site_host or "").lower()
 # A row decided by the site's own robots policy keeps its sentence under status_check: the T sentences say nothing about the block.
 STATUS_KEEP_REASONS = frozenset({"robots_blocks_agents", "robots_fetch_refused", "robots_wildcard_disallow", "robots_names_vendor_alias",
                                  "robots_blocks_some_agents"})
@@ -791,6 +800,15 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
             if customer is None:  # D81: the developer path is not a way to check status
                 sentence = (STATUS_AFTER_ROWS if on else STATUS_AFTER_ROWS_BEFORE).get(row, sentence)
             sentence = f"{STATUS_ROWS[lead]} {sentence}"
+    elif (status_url and not failure_observed(error_class, failure_stage) and do == "use_official_path" and row in STATUS_HOST_ROWS
+          and _status_host_is_site(status_url, result["site_host"]) and not is_reserved_example(result["site_host"])):
+        # D114: the looked-up host is itself the status page, asked about with no failure signal and no status_check step. The same
+        # status answer D76 gives a status_check lookup: the sentence and url say "this is the status page"; ``do`` and every other key stay.
+        covers_api = (result.get("official_status_page") or {}).get("covers") == "api"
+        status_id = status_row(provider_status, result.get("official_status_page"), status_url, d100, incidentio_unread)
+        sentence = STATUS_ROWS["T3-A" if status_id == "T3" and covers_api else status_id]
+        if status_id != "T3-S":
+            action["url"] = status_url
     if (customer and CUSTOMER_REF in sentence and consumer_topic_list(result.get("official_paths"))
             and len(sentence) + len(MORE_BY_TOPIC) <= LINE_MAX):
         sentence += MORE_BY_TOPIC  # D102: a customer sentence points at the one customer_url; with several pages it names the list
