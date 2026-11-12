@@ -24,8 +24,9 @@ from typing import Any
 from urllib.parse import urlencode
 
 from . import explain_text as X
+from .cause import long_ahn_path
 from .models import CauseBasis
-from .response_guide import status_url_of, unresolved_incidents
+from .response_guide import noctx_summary, status_url_of, unresolved_incidents
 from .triage import CHECK_TEXT_KO
 from .why_models import CHECK_TEXT_MAX, HANDOFF_TEXT_MAX, LAYER_TEXT_MAX, SCHEMA, SHORT_TEXT_MAX
 
@@ -321,6 +322,7 @@ class _Ctx:
         # the lookup of the host as sent, given only when it was answered from its apex; only the status address of next_action is read from it.
         self.server_check = check
         self.sent_check = sent_check
+        self.summary_in_english = False  # D110: a Korean answer's server.summary_line stayed the lookup's English sentence
         self.english_parts = False  # D114: a Korean answer's server block kept a next_checks or cause sentence in English
         self.platform = inputs.agent_platform
         self.entry = None
@@ -467,7 +469,7 @@ def _site_rows(ctx: _Ctx) -> list[dict]:
         # A normal home page with only a bot-defense marker is background. On a sign-in step, a sign-in page or an
         # off-site redirect at the home page is what such a step looks like, so it is background there as well.
         sign_in_home = ctx.sign_in_step and home["outcome"] in ("login_wall", "redirected_offsite")
-        state = "background" if home["outcome"] in HOME_NORMAL or sign_in_home else "evidence"
+        state = "background" if home["outcome"] in HOME_NORMAL or sign_in_home or (home["outcome"] == "unreachable" and long_ahn_path(check.get("cause"))) else "evidence"
         rows.append(_row(ctx, "L1b", state, "S-L1B-AHN-HOME", _fill(
             "S-L1B-AHN-HOME", lang, LAYER_TEXT_MAX, host=host, date=_day(home["measured_at"]),
             outcome_words=_words(X.HOME_OUTCOME, home["outcome"], lang), vendor_part=vendor_part), _source("ahn_read", None, home["measured_at"])))
@@ -773,7 +775,7 @@ def _official_url(ctx: _Ctx) -> str | None:
     # D114: a status answer (D76, or a status page host looked up on its own) has the status page as next_action.url, its one action (D96);
     # that is not a developer path, and no developer-path check is listed beside it (the status check is).
     if na.get("do") == "use_official_path" and _url(na.get("url")):
-        return None if na["url"] == _status_url(ctx) else na["url"]
+        return None if na["url"] in (_status_url(ctx), na.get("status_url")) else na["url"]   # D115: the status feed is the status answer's url too
     paths = ctx.check.get("official_paths") or {}
     return _url(paths.get("api_docs")) or _url(paths.get("developer_portal"))
 
@@ -1203,6 +1205,9 @@ def _server(ctx: _Ctx) -> dict:
     for key in ("summary_line", "next_action", "cause", "failure_stage"):
         if check.get(key) is not None:
             server[key] = check[key]
+    if ctx.i.task_context is None and not ctx.r3 and server.get("summary_line"):
+        # D115: AHN was not told the task (and no stop implies an account, as for S-G-NOCTX), so the lookup's sentences that assume a task in the user's own account give way to fixed neutral ones.
+        server["summary_line"] = noctx_summary(server["summary_line"])
     sent_action = (ctx.sent_check or {}).get("next_action") or {}
     if sent_action.get("status_url") and server.get("next_action"):
         # D113: the status feed address of the host as sent (the root domain's lookup does not have it); nothing else of its action is read.
@@ -1214,6 +1219,8 @@ def _server(ctx: _Ctx) -> dict:
         korean = X.summary_line_ko(server["summary_line"]) if server.get("summary_line") else None
         if korean:
             server["summary_line"] = korean
+        elif server.get("summary_line"):
+            ctx.summary_in_english = True
         action = server.get("next_action")
         if action and action.get("status_url_note") in X.STATUS_URL_NOTE_KO:
             server["next_action"] = {**action, "status_url_note": X.STATUS_URL_NOTE_KO[action["status_url_note"]]}
@@ -1341,7 +1348,7 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     }
     if lang == "ko" and ctx.english_parts:
         body["server_note"] = {"template_id": "S-G-SERVER-EN-PARTS", "text": X.TEMPLATES["S-G-SERVER-EN-PARTS"]["ko"]}
-    elif lang == "ko" and body["server"].get("summary_line") and body["server"]["summary_line"] == ctx.server_check.get("summary_line"):
+    elif lang == "ko" and ctx.summary_in_english:
         body["server_note"] = {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
     if ctx.subordinate:
         body["server_context_note"] = {"template_id": "S-G-SERVER-CONTEXT", "text": X.TEMPLATES["S-G-SERVER-CONTEXT"][lang]}

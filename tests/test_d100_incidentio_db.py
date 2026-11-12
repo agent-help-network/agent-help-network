@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from ahn import background_reads, feed_robots, status_refresh  # noqa: E402
 from ahn.db import connect, migrate  # noqa: E402
 from ahn.main import create_app  # noqa: E402
-from ahn.response_guide import STATUS_ROWS  # noqa: E402
+from ahn.response_guide import FEED_HANDOFF_TAIL, STATUS_ROWS  # noqa: E402
 from ahn.settings import Settings  # noqa: E402
 from ahn.status_refresh import refresh_batch, refresh_one  # noqa: E402
 
@@ -213,14 +213,14 @@ def test_the_status_page_that_did_not_open_with_a_listed_incident_goes_to_the_us
         read_feed(settings, client, "openai.com")
         result = status_check(client, OPENAI, error_class="service_error", failure_stage="before_target_response")
         unread = None
-    assert result["summary_line"] == STATUS_ROWS["T6-F"]
+    assert result["summary_line"] == STATUS_ROWS["T6-F"] + FEED_HANDOFF_TAIL  # D115: a feed status_url on a hand-off
     assert result["next_action"]["do"] == "hand_off_to_human" and result["next_action"]["url"] is None
     with connect(settings) as conn:
         conn.execute("TRUNCATE status_cache")
     with use(monkeypatch, openai_feed(httpx.Response(403))):
         read_feed(settings, client, "openai.com")
         unread = status_check(client, OPENAI, error_class="service_error", failure_stage="before_target_response")
-    assert unread["summary_line"] == STATUS_ROWS["T2-F"] and unread["next_action"]["do"] == "hand_off_to_human"
+    assert unread["summary_line"] == STATUS_ROWS["T2-F"] + FEED_HANDOFF_TAIL and unread["next_action"]["do"] == "hand_off_to_human"
 
 
 def test_an_atlassian_page_with_the_indicator_none_is_read_and_answered_as_before(lookup, monkeypatch):

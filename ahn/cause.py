@@ -83,6 +83,7 @@ D84_ERROR_CLASSES = ("site_access", "human_verification")   # the failures to wh
 GATE_OUTCOMES = frozenset({"bot_challenge", "refused", "login_wall"})   # rate_limited is neither gate nor outage
 NORMAL_OUTCOMES = frozenset({"reachable", "redirected_same_host"})
 OUTAGE_KINDS = frozenset({"no_response", "tls_error", "server_error"})
+UNANSWERED_KINDS = frozenset({"no_response", "tls_error"})   # D115: the site gave no answer at all (a 5xx is an answer)
 REFUSAL_CLASSES = ("login_auth", "human_verification")
 
 BRANCHES = ("policy_closed", "transient", "undetermined")
@@ -103,6 +104,7 @@ LINES: dict[str, str] = {
     "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
     "site_errors": "AHN's own checks have not reached the site {win}; that can be AHN's network path alone, so it does not tell whether your tool can reach the site.",
     "site_errors_long": "AHN's own checks have not reached the site for over 7 days {win}; so long a failure is more likely AHN's network path and says nothing about the site or your tool's access.",
+    "site_errors_unreached_long": "AHN's own checks have not reached the site for over 7 days {win}; likely AHN's network path, but a site that blocks automated clients looks the same. It says nothing about your tool.",
     "recovered_site": "AHN's own checks did not reach the site {win}; they answer again. That can be AHN's network path alone.",
     "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
     "others_failing_same_hour": "Probably temporary: other clients saw service errors this hour. Retry later.",
@@ -285,13 +287,22 @@ def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
         return _cause("transient", "recovered", confidence, ["outage_episodes"], "recovered_site", start=row["first_fail_at"], end=ended)
     key = "site_errors"
     if row["ended_at"] is None and now - row["first_fail_at"] > LONG_FAIL:
-        # D114: only the sentence changes (hint, confidence, basis and window are those of site_errors). A period this long that nobody
-        # else saw is more likely AHN's own path than the site, and the sentence says so instead of reading as evidence about the site.
+        # A period this long that nobody else saw is more likely AHN's own path than the site. D114 changed only the sentence. D115: when the
+        # site gave no answer at all (no_response, tls_error), a site that turns away automated clients can look the same, so the cause is
+        # undetermined (no_measurement, low), its window has only a start, and the sentence leaves both open. A 5xx is an answer from the site
+        # or its edge, so that kind keeps the D114 shape.
         if others is None:
             others = _others_saw_errors(conn, host, row["first_fail_at"], now)
         if not others:
+            if row["kind"] in UNANSWERED_KINDS:
+                return _cause("undetermined", "no_measurement", "low", ["outage_episodes"], "site_errors_unreached_long", start=row["first_fail_at"])
             key = "site_errors_long"
     return _cause("transient", "site_errors", confidence, ["outage_episodes"], key, start=row["first_fail_at"], end=ended)
+
+
+def long_ahn_path(cause: dict | None) -> bool:
+    """D115: the cause is AHN's own unanswered period of over 7 days that nobody else saw (``site_errors_unreached_long``); its probe is not site evidence."""
+    return bool(cause) and cause.get("hint") == "no_measurement" and "outage_episodes" in (cause.get("basis") or [])
 
 
 def _others_saw_errors(conn, host: str, start: datetime, end: datetime) -> bool:

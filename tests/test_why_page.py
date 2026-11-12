@@ -114,7 +114,7 @@ def test_the_script_sends_only_the_hostname_the_choices_and_the_language():
 
 
 def test_the_lookups_own_sentence_is_shown_as_given_and_labelled():
-    assert 'server: "Server summary (as given)"' in JS and 'server: "서버 요약(서버 원문, 영어)"' in JS
+    assert 'server: "Server summary (as given)"' in JS and 'server: "서버 요약",' in JS and 'server_en: "서버 요약(서버 원문, 영어)"' in JS
     assert "line.lang = \"en\"" in JS
 
 

@@ -283,7 +283,8 @@ def test_the_whole_table_passes_the_server_summary_pattern_and_keeps_control_cha
 
 def with_summary(summary, lang, **extra):
     check = fake_check("hand_off_to_human", "hand_off_to_human", summary_line=summary, **extra)
-    return run(check=check, lang=lang)
+    extra_run = {"task_context": "other"}  # D115: with no task_context the why answer neutralizes account sentences
+    return run(check=check, lang=lang, **extra_run)
 
 
 def test_every_table_sentence_comes_out_korean_in_a_korean_answer_and_unchanged_in_an_english_one():

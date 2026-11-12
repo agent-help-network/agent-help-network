@@ -133,7 +133,7 @@ def test_a_why_of_the_status_host_takes_the_lookup_of_its_root_and_only_the_stat
         assert action["url"] == root["next_action"]["url"] == OFFICIAL["api_docs"] and action["do"] == "use_official_path"
         assert action["status_url"] == sent["next_action"]["status_url"]
         if lang == "en":
-            assert body["server"]["summary_line"] == root["summary_line"]
+            assert body["server"]["summary_line"] == response_guide.noctx_summary(root["summary_line"])  # D115: no task_context
         else:
             assert HANGUL.search(body["server"]["summary_line"])
         WhyResponse.model_validate(body)
@@ -213,8 +213,8 @@ class Result:
 class Conn:
     """Answers the two queries _site_errors makes: the open period, and whether anyone else saw the host failing."""
 
-    def __init__(self, days, *, others=False, confirmed=True, ended=None):
-        self.row = {"kind": "no_response", "first_fail_at": NOW - timedelta(days=days), "confirmed_at": NOW if confirmed else None,
+    def __init__(self, days, *, others=False, confirmed=True, ended=None, kind="no_response"):
+        self.row = {"kind": kind, "first_fail_at": NOW - timedelta(days=days), "confirmed_at": NOW if confirmed else None,
                     "ended_at": ended, "ended_reason": "answered" if ended else None, "last_event_at": NOW - timedelta(minutes=5),
                     "held_overlap": 0}
         self.others = others
@@ -240,18 +240,20 @@ def test_the_long_failure_line_fits_and_is_plain_ascii():
 
 @pytest.mark.parametrize("days, long_line", [(8, True), (7.5, True), (6.9, False), (6, False), (1, False)])
 def test_a_period_older_than_7_days_that_nobody_else_saw_gets_the_long_sentence(days, long_line):
-    found = site_errors(Conn(days))
+    """A 5xx period (server_error) keeps the D114 shape: only the sentence changes (the unanswered kinds are D115, in test_why_d115)."""
+    found = site_errors(Conn(days, kind="server_error"))
     assert found["line"].startswith("AHN's own checks have not reached the site for over 7 days") == long_line
     assert (found["branch"], found["hint"]) == ("transient", "site_errors")
 
 
 def test_only_the_line_changes():
-    long, short = site_errors(Conn(8)), site_errors(Conn(6))
+    long, short = site_errors(Conn(8, kind="server_error")), site_errors(Conn(6, kind="server_error"))
     assert long["line"] != short["line"]
     assert {k: v for k, v in long.items() if k not in ("line", "window")} == {k: v for k, v in short.items() if k not in ("line", "window")}
-    assert judgment(site_errors(Conn(8, confirmed=False)))["confidence"] == "medium"
+    assert judgment(site_errors(Conn(8, confirmed=False, kind="server_error")))["confidence"] == "medium"
     # the confidence is what it was before (D82): high with someone else's evidence, medium without it
-    assert site_errors(Conn(8, others=True))["confidence"] == "high" and site_errors(Conn(8))["confidence"] == "medium"
+    assert site_errors(Conn(8, others=True, kind="server_error"))["confidence"] == "high"
+    assert site_errors(Conn(8, kind="server_error"))["confidence"] == "medium"
 
 
 def test_another_source_that_saw_the_host_failing_keeps_the_old_sentence():
@@ -406,12 +408,12 @@ def _korean_strings(node, template_id=None):
 
 
 QUOTED = re.compile(r'"([^"]*)"|“([^”]*)”')
-ALLOWED_ENGLISH_QUOTE = {"S-G-NOCTX"}   # quotes the lookup's own English sentence start so the reader can match it
+ALLOWED_ENGLISH_QUOTE: set[str] = set()   # D115: S-G-NOCTX no longer quotes the lookup's English sentence start, so no table quotes English
 
 
 def test_the_quoted_english_in_the_korean_tables_is_one_template_s_quotation_of_the_lookup():
     """The scan lets a quoted text pass inside a Korean sentence because it is the document's or the page's own words. A Korean table of ours
-    must not use that for an English sentence of its own: the only quoted English is the lookup's sentence start in S-G-NOCTX."""
+    must not use that for an English sentence of its own: no Korean table quotes an English sentence (D115)."""
     found = {}
     for name in dir(X):
         value = getattr(X, name)
