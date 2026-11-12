@@ -47,6 +47,9 @@ WAIT_SECONDS = FEED_RETRY_MINUTES * 60
 # site's human page may show a challenge while its feed address usually answers.
 FEED_JSON_PATH = re.compile(r"^/(?:api/v2/[A-Za-z0-9_.-]+\.json|summary\.json|index\.json)$")
 FEED_JSON_NOTE = "The page may show a challenge, but this feed address usually answers; fetch it once."
+# D115: appended to the summary of a hand-off whose next_action also carries a status feed, so the two do not seem to disagree: the step is the
+# user's, and the feed is only for reading the service status.
+FEED_HANDOFF_TAIL = " To see only the service status, you may read the status_url feed once; the step itself stays with your user."
 _WAIT_IN = f"look up again in about {FEED_RETRY_MINUTES} minutes"
 
 # Template id -> (do, sentence). "{n}" is the only placeholder.
@@ -809,11 +812,63 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         sentence = STATUS_ROWS["T3-A" if status_id == "T3" and covers_api else status_id]
         if status_id != "T3-S":
             action["url"] = status_url
+            # D115: the status page of this host may answer a challenge to a client that is not a browser, while its feed address (the provider's
+            # known one, never a guessed one, on this very host) usually answers: it becomes url and status_url, marked as the feed (D112).
+            feed = safe_url(feed_url) if feed_url else None
+            # Not when the sentence says the feed could not be read (T5): that feed is the one the sentence is about.
+            if (feed and status_id not in ("T5", "T5-N") and (urlparse(feed).hostname or "").lower() == result["site_host"].lower()
+                    and FEED_JSON_PATH.match(urlparse(feed).path or "")):
+                action["url"] = action["status_url"] = feed
+                action.pop("status_url_covers", None)   # it described the status page that status_url was, not the feed
+                action["status_url_kind"] = "feed_json"
+                action["status_url_note"] = FEED_JSON_NOTE
     if (customer and CUSTOMER_REF in sentence and consumer_topic_list(result.get("official_paths"))
             and len(sentence) + len(MORE_BY_TOPIC) <= LINE_MAX):
         sentence += MORE_BY_TOPIC  # D102: a customer sentence points at the one customer_url; with several pages it names the list
+    if (action["do"] == "hand_off_to_human" and action.get("status_url_kind") == "feed_json"
+            and len(sentence) + len(FEED_HANDOFF_TAIL) <= STATUS_LINE_MAX):
+        sentence += FEED_HANDOFF_TAIL  # D115: only the sentence; do, url and every other key are as they were
     out = {"summary_line": sentence, "next_action": action}
     found = links(on)
     if found:
         out["links"] = found
     return out
+
+
+# D115: /v1/why with no task_context. The lookup's sentences that assume a task "in the user's own account" are replaced, sentence by sentence,
+# with these fixed ones (no sentence is built): the account is not assumed, and a customer page is only named. The lookup answer itself is
+# not changed; only /v1/why calls noctx_summary. Key: one sentence exactly as above; value: its replacement (one or more sentences).
+_NOCTX_REFUSED = "If a page refused you, tell your user."
+NOCTX_SENTENCES: dict[str, str] = {
+    "An official developer path is listed; for API work use it, not page automation; for a task in the user's own account, hand the step to your user.":
+        "An official developer path is listed; for API work use it, not page automation.",
+    "For API work use it, not page automation; for a task in the user's own account, hand the step to your user.":
+        "For API work use it, not page automation.",
+    "For API work use one you have or ask before signing up; for a task in the user's own account, hand the step to your user.":
+        "For API work use one you have or ask before signing up.",
+    "Prefer that documented API or portal over page automation for API work; for a task in the user's own account, hand the step to your user.":
+        "Prefer that documented API or portal over page automation for API work.",
+    "For a task in the user's own account, use the site's customer page (next_action.customer_url) instead of retrying page automation.": _NO_PATH_CUSTOMER,
+    "For a task in the user's own account, use the site's customer page (next_action.customer_url).": _NO_PATH_CUSTOMER,
+    "For tasks in the user's own account, the site's customer page is next_action.customer_url.": _NO_PATH_CUSTOMER,
+    "The API may not reach the user's own account; hand the user next_action.customer_url.": _NO_PATH_CUSTOMER,
+    "The API may not reach the user's own account; the site's page is next_action.customer_url.": _NO_PATH_CUSTOMER,
+    "If a page refused you, tell your user; for a task in their own account, hand them next_action.customer_url.": _NOCTX_REFUSED + " " + _NO_PATH_CUSTOMER,
+    "If a page refused you, tell your user; for their own account, hand them next_action.customer_url.": _NOCTX_REFUSED + " " + _NO_PATH_CUSTOMER,
+}
+_SENTENCE_SPLIT = re.compile(r"(?<=\.)\s+")
+
+
+def noctx_summary(line: str) -> str:
+    """``line`` with every sentence in NOCTX_SENTENCES replaced by its fixed neutral one (a sentence already in the line is not repeated).
+    A line with none of them is returned as it is, and so is a line whose replacement would pass the summary cap (STATUS_LINE_MAX)."""
+    sentences = _SENTENCE_SPLIT.split(line.strip())
+    if not any(sentence in NOCTX_SENTENCES for sentence in sentences):
+        return line
+    out: list[str] = []
+    for sentence in sentences:
+        for item in _SENTENCE_SPLIT.split(NOCTX_SENTENCES.get(sentence, sentence)):
+            if item not in out:
+                out.append(item)
+    result = " ".join(out)
+    return result if len(result) <= STATUS_LINE_MAX else line

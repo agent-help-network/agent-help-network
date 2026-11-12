@@ -332,19 +332,19 @@ _t("H-IT",
    "{since} 부터 {platform} 내장 브라우저로 {host} 에 로그인하면 \"{stop_words}\" 에서 멈춰요. 같은 계정이 보통 브라우저에서는 돼요. 우리 접근 정책상 별도 브라우저 프로필에서 이 앱의 회사 로그인이 허용되나요?")
 _t("H-ORG-ADMIN",
    "Since {since}, {platform} stops on {host} at: {stop_words}. Does our organization's {platform} site policy cover {host}?",
-   "{since} 부터 {host} 에서 \"{stop_words}\" 로 멈춰요(도구: {platform}). 우리 조직의 {platform} 사이트 정책이 {host} 에 걸려 있나요?")
+   "{since} 부터 {platform} 에서 {host} 의 단계가 \"{stop_words}\" 로 멈춰요. 우리 조직의 {platform} 사이트 정책이 {host} 에 걸려 있나요?")
 _t("H-PLATFORM",
    "Since {since}, {platform} stops on {host} at: {stop_words}, while the same step works in a usual browser. App version: (fill in).",
-   "{since} 부터 {host} 에서 \"{stop_words}\" 로 멈추고(도구: {platform}), 같은 단계는 보통 브라우저에서 돼요. 앱 버전: (직접 적기).")
+   "{since} 부터 {platform} 에서 {host} 의 단계가 \"{stop_words}\" 로 멈추고, 같은 단계는 보통 브라우저에서 돼요. 앱 버전: (직접 적기).")
 _t("H-SITE",
    "Since {since}, a step on {host} stops at: {stop_words}, in every browser I tried.",
    "{since} 부터 {host} 의 단계가 제가 써 본 모든 브라우저에서 \"{stop_words}\" 로 멈춰요.")
 _t("H-USER",
    "{platform_cap} could not finish this step on {host} (stopped at: {stop_words}). {person_line}",
-   "이 단계를 {host} 에서 끝내지 못했어요(\"{stop_words}\") — 도구: {platform_cap}. {person_line}")
+   "{host} 의 이 단계를 {platform_cap} 에서 하다가 끝내지 못했어요(\"{stop_words}\"). {person_line}")
 _t("H-USER-NOHOST",
    "{platform_cap} could not finish this step (stopped at: {stop_words}). {person_line}",
-   "이 단계를 끝내지 못했어요(\"{stop_words}\") — 도구: {platform_cap}. {person_line}")
+   "이 단계를 {platform_cap} 에서 하다가 끝내지 못했어요(\"{stop_words}\"). {person_line}")
 _t("H-USER-YES",
    "You need to do this step yourself: {reason_short}.",
    "이 단계는 직접 하셔야 해요: {reason_short}.")
@@ -360,11 +360,11 @@ _t("H-USER-CHECK",
 # D110: in a Korean answer, server.summary_line is the lookup's own sentence and stays in English; this says so.
 _t("S-G-SERVER-EN",
    "server.summary_line is the lookup's own sentence and is in English.",
-   "server.summary_line 은 조회 서버의 원문이에요(서버 원문, 영어). 한국어 안내는 이 답의 다른 문장에 있어요.")
+   "server.summary_line 은 조회 서버의 원문이라 영어 그대로예요. 한국어 안내는 이 답의 다른 문장에 있어요.")
 # D114: the lookup block of a Korean answer kept a next_checks or cause sentence that has no Korean version in English.
 _t("S-G-SERVER-EN-PARTS",
    "Some sentences of the server block (summary_line, cause, next_checks) are the lookup's own and are in English.",
-   "server 블록의 일부 문장(summary_line·cause·next_checks)은 조회 서버의 원문이에요(서버 원문, 영어). 한국어 안내는 이 답의 다른 문장에 있어요.")
+   "server 블록의 일부 문장(summary_line·cause·next_checks)은 조회 서버의 원문이라 영어 그대로예요. 한국어 안내는 이 답의 다른 문장에 있어요.")
 # D112: when the lookup's action is a developer path that the explanation's own first layer does not point to, the lookup block moves to the end
 # and says what it is.
 _t("S-G-SERVER-CONTEXT",
@@ -372,8 +372,8 @@ _t("S-G-SERVER-CONTEXT",
    "이 블록은 단계 맥락 없이 낸 조회 답의 요약이고, 전문은 links.check 에 있어요.")
 # D113: AHN was not told the task (no task_context), so the account is not assumed.
 _t("S-G-NOCTX",
-   "AHN was not told what the task is; the lookup's sentences that start with 'For a task in the user's own account' apply only if it is.",
-   "AHN 은 무슨 작업인지 듣지 못했어요. 조회 문장 중 '사용자 본인 계정의 일에는'(조회 문장 원문은 \"For a task in the user's own account\")으로 시작하는 것은 그런 작업일 때만 해당돼요.")
+   "AHN was not told what the task is. If it is a task in the user's own account, hand that step to your user (next_action.customer_url when a customer page is listed).",
+   "AHN 은 무슨 작업인지 듣지 못했어요. 사용자 본인 계정의 일이면 그 단계는 사용자에게 넘기세요(고객 페이지가 있으면 next_action.customer_url).")
 _t("TL-PLATFORM-DOC",
    "On {date}, AHN saw {platform}'s page {url} change.",
    "{date} 에 AHN 이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")
@@ -387,6 +387,15 @@ _SUMMARY_PAIRS = (
     ("A customer page is listed (next_action.customer_url) for tasks a person does on the site.",
      "사람이 사이트에서 하는 일에는 고객 페이지가 올라 있어요(next_action.customer_url)."),
     ("A developer API is also listed (official_paths).", "개발자 API 도 올라 있어요(official_paths)."),
+    ("To see only the service status, you may read the status_url feed once; the step itself stays with your user.",
+     "서비스 상태만 보고 싶다면 status_url 피드를 한 번 읽어도 돼요. 단계 자체는 사용자 몫으로 남아요."),
+    # D115: the neutral sentences of /v1/why without a task_context (response_guide.NOCTX_SENTENCES)
+    ("An official developer path is listed; for API work use it, not page automation.",
+     "공식 개발자 경로가 올라 있어요. API 작업에는 페이지 자동화 대신 그 경로를 쓰세요."),
+    ("For API work use it, not page automation.", "API 작업에는 페이지 자동화 대신 그것을 쓰세요."),
+    ("For API work use one you have or ask before signing up.", "API 작업에는 이미 가진 키를 쓰거나 가입하기 전에 먼저 물어보세요."),
+    ("Prefer that documented API or portal over page automation for API work.", "API 작업에는 문서화된 그 API 나 포털을 페이지 자동화보다 우선 쓰세요."),
+    ("If a page refused you, tell your user.", "페이지가 당신을 거절했다면 사용자에게 알리세요."),
     ("A developer API is listed (official_paths) for API work; for pages, follow your operator's rules and tell your user.",
      "API 작업용 개발자 API 가 올라 있어요(official_paths). 페이지 작업은 운영자의 규칙을 따르고 사용자에게 알리세요."),
     ("A developer API is listed (official_paths) for API work; for pages, tell your user.",
@@ -754,6 +763,8 @@ _CAUSE_PAIRS = (
      "AHN 자체 확인이 사이트에 닿지 못했어요{win}. AHN 쪽 네트워크 경로만의 문제일 수 있어서, 당신 도구가 사이트에 닿는지는 알려 주지 않아요."),
     ("AHN's own checks have not reached the site for over 7 days{win}; so long a failure is more likely AHN's network path and says nothing about the site or your tool's access.",
      "AHN 자체 확인이 7일 넘게 사이트에 닿지 못했어요{win}. 이렇게 오래된 실패는 AHN 쪽 네트워크 경로 문제일 가능성이 더 크고, 사이트의 상태나 당신 도구가 닿는지는 알려 주지 않아요."),
+    ("AHN's own checks have not reached the site for over 7 days{win}; likely AHN's network path, but a site that blocks automated clients looks the same. It says nothing about your tool.",
+     "AHN 자체 확인이 7일 넘게 사이트에 닿지 못했어요{win}. 이렇게 오래된 실패는 AHN 쪽 네트워크 경로 문제일 가능성이 더 크지만, 자동 클라이언트를 막는 사이트도 똑같이 보일 수 있어서 당신 도구가 닿는지는 알려 주지 않아요."),
     ("AHN's own checks did not reach the site{win}; they answer again. That can be AHN's network path alone.",
      "AHN 자체 확인이 사이트에 닿지 못했지만{win}, 지금은 다시 응답해요. AHN 쪽 네트워크 경로만의 문제였을 수 있어요."),
     ("Probably temporary: several clients were rate limited this hour. Wait, then retry.",

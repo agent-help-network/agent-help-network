@@ -256,13 +256,13 @@ def test_no_template_hard_codes_a_particle_after_a_blank():
 def test_the_korean_user_handoff_has_no_particle_after_the_tool_name(platform):
     body = run(lang="ko", agent_platform=platform, stop_point="site_login")
     line = user_line(body)
-    assert "에이전트 이" not in line and "도구: " in line
+    assert "에이전트 이" not in line and "도구: " not in line and " 에서 하다가 끝내지 못했어요" in line and "—" not in line
 
 
 def test_a_korean_answer_marks_the_english_server_sentence():
     ko = run(lang="ko")
     assert ko["server_note"] == {"template_id": "S-G-SERVER-EN", "text": X.TEMPLATES["S-G-SERVER-EN"]["ko"]}
-    assert "서버 원문, 영어" in ko["server_note"]["text"]
+    assert "영어 그대로" in ko["server_note"]["text"] and "서버 원문, 영어" not in ko["server_note"]["text"]
     assert "server_note" not in run(lang="en")
     no_line = {k: v for k, v in fake_check().items() if k != "summary_line"}
     assert "server_note" not in run(lang="ko", check=no_line)

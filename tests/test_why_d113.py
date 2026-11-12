@@ -188,17 +188,16 @@ def test_the_noctx_unknown_is_given_only_where_the_noctx_check_is():
         assert has_check == ("S-G-NOCTX" in [u["template_id"] for u in body["what_happened"]["unknowns"]]), stop
 
 
-def test_the_korean_noctx_sentence_quotes_the_phrase_the_korean_lookup_sentences_have():
-    phrase = "사용자 본인 계정의 일에는"
-    assert phrase in X.TEMPLATES["S-G-NOCTX"]["ko"] and "사용자 계정 작업이면" not in X.TEMPLATES["S-G-NOCTX"]["ko"]
-    assert any(ko.startswith(phrase) or f", {phrase}" in ko or phrase in ko for ko in X.SUMMARY_SENTENCES_KO.values())
-    assert any("For a task in the user's own account" in en for en in X.SUMMARY_SENTENCES_KO)
+def test_the_korean_noctx_sentence_quotes_no_english():
+    """D115: the sentence says what to do if the task is in the user's own account, in Korean only (the lookup's English text is not quoted)."""
+    ko = X.TEMPLATES["S-G-NOCTX"]["ko"]
+    assert "사용자 본인 계정의 일이면" in ko and "next_action.customer_url" in ko and '"' not in ko and "For a task" not in ko
 
 
 def test_the_noctx_sentences():
     assert X.TEMPLATES["CHK-BROWSER-COMPARE-NOCTX"]["en"].startswith("A person can open the same page once in their usual browser; sign in only if the task needs the user's account.")
-    assert X.TEMPLATES["S-G-NOCTX"]["en"] == ("AHN was not told what the task is; the lookup's sentences that start with 'For a task in the user's own account' "
-                                              "apply only if it is.")
+    assert X.TEMPLATES["S-G-NOCTX"]["en"] == ("AHN was not told what the task is. If it is a task in the user's own account, hand that step to your user "
+                                              "(next_action.customer_url when a customer page is listed).")
 
 
 def test_a_public_read_wins_over_no_context_and_a_given_context_keeps_the_default():

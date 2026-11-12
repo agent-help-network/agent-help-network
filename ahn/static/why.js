@@ -44,7 +44,8 @@ const WHY_COPY = {
     person_yes: "예",
     person_no: "표시 없음",
     who: "대상",
-    server: "서버 요약(서버 원문, 영어)",
+    server: "서버 요약",
+    server_en: "서버 요약(서버 원문, 영어)",
     action: "다음 행동",
     happened: "AHN 기록과 고른 답이 보여 주는 것",
     unknowns: "AHN 이 볼 수 없는 것",
@@ -192,7 +193,8 @@ function renderPerson(copy, body) {
 }
 
 function renderServer(copy, body) {
-  const box = section(copy, copy.server, "why-server");
+  // D115: the "as given, English" label only where an English sentence of the lookup is left in the Korean answer (the answer says so in server_note)
+  const box = section(copy, body.server_note && copy.server_en ? copy.server_en : copy.server, "why-server");
   const s = body.server;
   if (s.summary_line) {
     const line = el("p", "why-lead", s.summary_line);

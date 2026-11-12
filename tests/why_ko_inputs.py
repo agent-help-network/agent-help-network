@@ -100,6 +100,9 @@ def cause_objects() -> list[dict]:
     ended = start + timedelta(days=2)
     out = []
     for key in cause.LINES:
+        if key == "site_errors_unreached_long":   # D115: the one shape cause.compute gives it, a window with only a start
+            out.append(cause._cause("undetermined", "no_measurement", "low", ["outage_episodes"], key, start=start))
+            continue
         for window in ((None, None), (start, None), (start, start + timedelta(hours=2)), (start, ended)):
             out.append(cause._cause("transient", "site_errors", "medium", ["outage_episodes"], key, start=window[0], end=window[1]))
     ages = [timedelta(seconds=s) for s in (60, 600, 7200, 86400, 3 * 86400)]
