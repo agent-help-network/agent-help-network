@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{% block routes_title %}{{ t.routes_title }}{% endblock %} · {{ t.brand }}{% endblock %}
+{% block content %}
+{% block routes_head %}
+<section class="container page-head">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.routes_eyebrow }}</p>
+  <h1>{{ t.routes_title }}</h1>
+  <p class="lead small-lead">{{ headline }}</p>
+  <p class="muted">{{ t.routes_intro }}</p>
+</section>
+{% endblock %}
+<section class="container section top-tight agent-content">
+  {% block routes_filters %}
+  <form class="routes-filter" method="get" action="/{{ lang }}/routes">
+    <div><label for="f-site">{{ t.routes_f_site }}</label>
+      <select id="f-site" name="site"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_site %}<option value="{{ value }}"{% if picked.site == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+    <div><label for="f-task">{{ t.routes_f_task }}</label>
+      <select id="f-task" name="task_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_task %}<option value="{{ value }}"{% if picked.task_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+    <div><label for="f-outcome">{{ t.routes_f_outcome }}</label>
+      <select id="f-outcome" name="outcome"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_outcome %}<option value="{{ value }}"{% if picked.outcome == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+    <div><label for="f-source">{{ t.routes_f_source }}</label>
+      <select id="f-source" name="source_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_source %}<option value="{{ value }}"{% if picked.source_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+    <button type="submit">{{ t.routes_f_apply }}</button>
+    {% if picked.site or picked.task_kind or picked.outcome or picked.source_kind %}<a href="/{{ lang }}/routes">{{ t.routes_f_reset }}</a>{% endif %}
+  </form>
+  {% endblock %}
+  {% if rows %}
+  <p class="routes-count">{{ t.routes_showing.format(shown=shown_count, total=total) }}{% if any_sensitive %} {{ t.routes_sensitive_page }}{% endif %}</p>
+  <div class="scroll">
+  <table class="routes-table">
+    <thead><tr>
+      <th scope="col">{{ t.routes_c_site }}</th><th scope="col">{{ t.routes_c_task }}</th><th scope="col">{{ t.routes_c_obstacle }}</th>
+      <th scope="col">{{ t.routes_c_worked }}</th><th scope="col">{{ t.routes_c_outcome }}</th><th scope="col">{{ t.routes_c_basis }}</th>
+      <th scope="col">{{ t.routes_c_period }}</th><th scope="col">{{ t.routes_c_records }}</th><th scope="col">{{ t.routes_c_source }}</th>
+    </tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/{{ lang }}/routes/{{ row.host }}">{{ row.host }}</a></td>
+      <td>{{ row.task }}</td>
+      <td>{{ row.obstacle }}{% if row.detail %}<span class="routes-small">{{ row.detail }}</span>{% endif %}
+        {% if row.sensitive %}<span class="routes-sensitive">{{ t.routes_sensitive }}</span>{% endif %}</td>
+      <td>{% if row.worked is none %}{{ t.routes_not_stated }}{% elif row.worked == 'none' %}{{ t.routes_none_worked }}{% else %}{{ row.worked }}{% endif %}
+        {% if row.tried %}<span class="routes-small">{{ t.routes_tried }}: {{ row.tried|join(', ') }}</span>{% endif %}</td>
+      <td>{{ row.outcome }}</td>
+      <td>{{ row.basis }}</td>
+      <td>{{ row.period }}</td>
+      <td>{{ row.count }}</td>
+      <td>{{ row.source }}
+        {% if row.verified_at %}<span class="routes-small">{{ t.routes_checked }} {{ row.verified_at }}</span>{% endif %}
+        <span class="routes-small routes-links">{% if row.source_url %}<a href="{{ row.source_url }}" rel="nofollow noopener">{{ t.routes_source_page }}</a>{% endif %}{% if row.official_url and row.official_url != row.source_url %}<a href="{{ row.official_url }}" rel="nofollow noopener">{{ t.routes_official_page }}</a>{% endif %}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="routes-empty">{{ t.routes_empty }}</p>
+  {% endif %}
+  {% block routes_foot %}
+  <p class="routes-foot"><code>GET /v1/task-routes?site_host=</code> <span>{{ t.routes_api }}</span></p>
+  {% endblock %}
+</section>
+{% endblock %}
