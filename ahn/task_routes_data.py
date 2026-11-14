@@ -21,8 +21,8 @@ from .task_routes import period_for
 # An entry older than this is left out of answers until it is verified again (same age as consumer paths).
 TASK_ROUTE_MAX_AGE_DAYS = 90
 
-# Reviewed exact URLs that a curated_official entry may carry although the link rule would refuse them (a long identifier in
-# the path, or a query of id, pageId or docId; D120). Each key maps to the same site's public index page that links it, so
+# Reviewed exact URLs that a curated_official entry may carry although the link rule would refuse them (a path with up to 15
+# digits in a row; never a query; D120). Each key maps to the same site's public index page that links it, so
 # the address is shown to be a public page and not a personal one. A URL matches only when it is the same string. The index
 # page itself follows the ordinary link rule. Empty until entries are reviewed; scripts/verify_official_paths.py
 # --task-routes-only reads every index page and checks that it links the exact URL.

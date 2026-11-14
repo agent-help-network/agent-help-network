@@ -265,28 +265,14 @@ class _TaskRouteFields(StrictModel):
         return self
 
 
-def _URL_SCHEMA(schema: dict) -> None:
-    """Advertise the plain-link pattern inside the string branch, as the Field pattern did; see TaskRoute.url_shape."""
-    schema["anyOf"][0]["pattern"] = r"^https://[^\s?#]+$"
-
-
 class TaskRoute(_TaskRouteFields):
     """One task-route record as an answer carries it. ``sensitive`` and ``period`` are set by the server."""
     period: str
     source_kind: RouteSourceKind
     sensitive: bool
-    official_url: str | None = Field(default=None, max_length=200, json_schema_extra=_URL_SCHEMA, exclude_if=_omit_none)
-    source_url: str | None = Field(default=None, max_length=200, json_schema_extra=_URL_SCHEMA, exclude_if=_omit_none)
+    official_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
+    source_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
     verified_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", exclude_if=_omit_none)
-
-    @field_validator("official_url", "source_url")
-    @classmethod
-    def url_shape(cls, value):
-        # The advertised schema keeps the plain-link pattern (D120 leaves the response shape alone); a listed exception needs
-        # a "?", so this only keeps whitespace and fragments out and official_url_problem does the rest.
-        if value is not None and not re.fullmatch(r"https://[^\s#]+", value):
-            raise ValueError("invalid_task_route: not a plain https URL")
-        return value
 
     @field_validator("verified_at")
     @classmethod
@@ -398,27 +384,25 @@ def route_host(site_host: str) -> str | None:
     return host if aggregate_eligible_host(host) else None
 
 
-# The one exception to the link rule (D120): a curated entry may carry a reviewed page whose address has a long identifier or a
-# short query (a retail help article, for one). Only the exact strings in ahn.task_routes_data.CURATED_URL_EXCEPTIONS, and only
-# for a curated_official entry; the query may use these keys only, with a plain token as the value.
-CURATED_QUERY_KEYS = frozenset({"id", "pageId", "docId"})
-_QUERY_VALUE = re.compile(r"[A-Za-z0-9-]{1,40}")
+# The one exception to the link rule (D120): a curated entry may carry a reviewed page whose path has a long identifier (a retail
+# help article or category, for one). Only the exact strings in ahn.task_routes_data.CURATED_URL_EXCEPTIONS, and only for a
+# curated_official entry. A query is never excepted. The exception lifts the six-digit limit only up to the bounds below.
+_EXCEPTION_MAX_DIGITS = re.compile(r"\d{16,}")
+_EXCEPTION_DIGIT_CHUNK = re.compile(r"\d{3,}")
+_EXCEPTION_CASE_WORD = re.compile(r"^(?:case|claim|order|ticket|invoice|account)", re.IGNORECASE)
 
 
-def _exception_query_problem(query: str) -> str | None:
-    seen = set()
-    for pair in query.split("&"):
-        key, equals, value = pair.partition("=")
-        if not equals or key not in CURATED_QUERY_KEYS or key in seen:
-            return "query keys other than id, pageId and docId are not allowed"
-        seen.add(key)
-        if not _QUERY_VALUE.fullmatch(value):
-            return "query value is not a plain token of at most 40 letters, digits and hyphens"
-        if _UUID_LIKE.search(value):
-            return "query value looks like a UUID"
-        digits = value.replace("-", "")
-        if digits.isdigit() and len(digits) >= 10:
-            return "query value looks like an account or order number"
+def _exception_path_problem(segments) -> str | None:
+    for segment in segments:
+        if _UUID_LIKE.search(segment):
+            return "path has a UUID-shaped segment"
+        if _EXCEPTION_MAX_DIGITS.search(segment):
+            return "path has more than 15 digits in a row"
+        chunks = _EXCEPTION_DIGIT_CHUNK.findall(segment)
+        if "-" in segment and len(chunks) >= 2 and sum(len(chunk) for chunk in chunks) >= 10:
+            return "path has a segment of hyphen-separated digit groups that looks like an account or order number"
+        if _EXCEPTION_CASE_WORD.match(segment):
+            return "path has a segment that starts like a case, claim, order, ticket, invoice or account"
     return None
 
 
@@ -436,8 +420,9 @@ def official_url_problem(site_host: str, url, *, curated: bool = False) -> str |
     segment that looks like it names a person or a case: six or more digits in a row, an e-mail address or a UUID.
 
     ``curated=True`` is for a curated_official entry only: a URL that equals, character for character, a key of
-    CURATED_URL_EXCEPTIONS skips the digits and UUID path checks and may carry a query of id, pageId or docId (D120). Every
-    other rule still applies, and so does every rule to any other URL."""
+    CURATED_URL_EXCEPTIONS may have up to 15 digits in a row in its path (D120), but not a UUID-shaped segment, a
+    hyphenated account or order number, or a segment starting with case, claim, order, ticket, invoice or account. Every other
+    rule still applies, and so does every rule to any other URL."""
     return _url_problem(site_host, url, _listed_exceptions() if curated else None)
 
 
@@ -450,14 +435,8 @@ def _url_problem(site_host: str, url, exceptions) -> str | None:
     parts = urlsplit(url)
     if parts.scheme != "https" or not url.startswith("https://"):
         return "not an https URL"
-    shape = url
     if parts.query or "?" in url:
-        if not excepted:
-            return "has a query"
-        shape, _, query = url.partition("?")
-        problem = _exception_query_problem(query)
-        if problem:
-            return problem
+        return "has a query"
     if parts.fragment or "#" in url:
         return "has a fragment"
     if "@" in parts.netloc or parts.username or parts.password:
@@ -476,11 +455,16 @@ def _url_problem(site_host: str, url, exceptions) -> str | None:
         return "path has a . or .. segment"
     if "@" in path:
         return "path looks like it carries an e-mail address"
-    if not excepted and _UUID_LIKE.search(path):
-        return "path has a UUID-shaped segment"
-    if not excepted and _LONG_NUMBER.search(path):
-        return "path has six or more digits in a row"
-    if not _URL_SHAPE.fullmatch(shape):
+    if excepted:
+        problem = _exception_path_problem(segments)
+        if problem:
+            return problem
+    else:
+        if _UUID_LIKE.search(path):
+            return "path has a UUID-shaped segment"
+        if _LONG_NUMBER.search(path):
+            return "path has six or more digits in a row"
+    if not _URL_SHAPE.fullmatch(url):
         return "not a plain https URL"
     try:
         if valid_host(parts.hostname or "") != parts.netloc:
