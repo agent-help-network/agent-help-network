@@ -1,6 +1,7 @@
 """The task-route write path (D118): a public report of a task route, its withdrawal, review, and the stored records the lookup reads.
 
-A report carries closed values only (ahn.task_routes.TaskRouteIn): no free text, no link, no time finer than the reporting period.
+A report carries closed values only (ahn.task_routes.TaskRouteIn): no free text, no link. An answer shows no time finer than the
+reporting period; the row keeps received_at, reviewed_at and withdrawn_at for review, retention and withdrawal, never shown.
 The server sets source_kind (external_agent), period (period_for), sensitive (is_sensitive) and review_state; a report is kept
 under the site's root domain (route_host), and a tenant or account subdomain is refused. Idempotency, the daily caps and the
 withdrawal token follow the observation intake (ahn.service.submit) on tables of their own (migration 042), with caps of their own.
@@ -29,7 +30,8 @@ TASK_ROUTE_SITE_KIND_DAILY_CAP = 3
 TASK_ROUTE_MANUAL_REVIEW = True
 TASK_ROUTE_MIN_REVIEW_AGE = timedelta(minutes=10)
 TASK_ROUTE_SITE_WINDOW = timedelta(hours=24)
-# A withdrawn report is left out of every read at once; the row itself goes after this grace (as for observations).
+# A withdrawn report is left out of every read (a cached answer may still show it for up to five minutes, the max-age of
+# GET /v1/task-routes); the row itself goes after this grace (as for observations).
 TASK_ROUTE_WITHDRAWN_GRACE_DAYS = 30
 # The daily intake counters are kept this many days (today and the 7 before); platform_metrics.prune_analytics deletes older ones.
 TASK_ROUTE_INTAKE_DAYS = 8

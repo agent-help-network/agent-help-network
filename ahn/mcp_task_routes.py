@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import pydantic_core
+from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, WithJsonSchema
@@ -76,6 +77,10 @@ REPORT_DESCRIPTION = ("Report one task route you went through on a public site: 
                       "operating authority and platform rules. Reports start private and are reviewed before any is shown. Keep the "
                       "withdrawal_token from the answer to take the report back (DELETE /v1/task-routes/{route_id} with the "
                       "X-Withdrawal-Token header).")
+REPORT_SITE_HOST_DESCRIPTION = ("The public hostname of the site the task was on, for example example.com. Only the host: no URL path, "
+                                "query, port or credentials (a pasted https:// scheme, capital letters or a trailing dot are read as "
+                                "the host). The report is kept under the site's root domain; an account or tenant subdomain, or a "
+                                "public suffix such as co.uk or github.io, is refused.")
 REPORT_FIELD_DESCRIPTION = ("The task route: site_host, task_kind, obstacle, basis and outcome are required; the finer fields are each "
                             "allowed only under the obstacle they explain (verification_kind under verification_step, site_requires "
                             "under site_requires_info_from_person, document_kind under the three document obstacles, "
@@ -93,7 +98,7 @@ def _report_schema() -> dict:
                               TASK_ROUTE_MAX_TRIED, TaskObstacle, VerificationKind)
 
     properties = {
-        "site_host": {"type": "string", "description": SITE_HOST_DESCRIPTION},
+        "site_host": {"type": "string", "description": REPORT_SITE_HOST_DESCRIPTION},
         "task_kind": _enum_schema(TaskKind), "obstacle": _enum_schema(TaskObstacle),
         "verification_kind": _enum_schema(VerificationKind), "site_requires": _enum_schema(SiteRequires),
         "document_kind": _enum_schema(DocumentKind), "entry_point_kind": _enum_schema(EntryPointKind),
@@ -112,9 +117,11 @@ class TaskRouteReceipt(BaseModel):
     withdrawal_token: str
 
 
-def register_reports(mcp, call_api) -> None:
+def register_reports(mcp, call_api, outer_headers=None) -> None:
     """Register report_task_route. The adapter calls this only while the write switch, public mode and public reporting are on.
-    The report is checked here with the same model as POST /v1/task-routes and sent to it; a refusal is its error code alone."""
+    The report is checked here with the same model as POST /v1/task-routes and sent to it; a refusal is its error code alone.
+    ``outer_headers`` (the adapter's outer_request_headers) passes the caller's address on, so the per-client report limit of
+    POST /v1/task-routes applies to a report sent over MCP as well."""
     from pydantic import ValidationError
 
     from .task_routes import TaskRouteIn
@@ -125,7 +132,8 @@ def register_reports(mcp, call_api) -> None:
                                     open_world_hint=True),
         structured_output=True,
     )
-    async def report_task_route(report: Annotated[Any, WithJsonSchema(_report_schema())]) -> TaskRouteReceipt:
+    async def report_task_route(report: Annotated[Any, WithJsonSchema(_report_schema())],
+                                ctx: Context | None = None) -> TaskRouteReceipt:
         if not isinstance(report, dict):
             raise ToolError("invalid_task_route")
         try:  # the same model as the REST path; the error never repeats what was sent
@@ -133,4 +141,5 @@ def register_reports(mcp, call_api) -> None:
         except ValidationError:
             raise ToolError("invalid_task_route") from None
         payload = data.model_dump(mode="json", exclude_none=True)
-        return TaskRouteReceipt(**await call_api("POST", "/v1/task-routes", payload=payload, write=True))
+        extra = outer_headers(ctx) if outer_headers is not None else None
+        return TaskRouteReceipt(**await call_api("POST", "/v1/task-routes", payload=payload, write=True, extra_headers=extra))

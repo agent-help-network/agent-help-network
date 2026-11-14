@@ -240,6 +240,65 @@ def test_intake_paused_answers_503_and_withdrawal_still_works(api):
 
 
 @needs_db
+@pytest.mark.parametrize("host", ["co.uk", "gov.uk", "github.io", "www.co.uk", "www.github.io", "pages.dev"])
+def test_a_public_or_shared_hosting_suffix_is_not_a_site(api, host):
+    settings, client = api
+    response = post(client, report(site_host=host))
+    assert response.status_code == 422 and response.json() == {"error": "site_host_not_accepted"}
+    assert rows(settings) == [] and rows(settings, "SELECT * FROM task_route_intake_daily") == []
+    assert task_routes.route_host(host) is None
+
+
+@needs_db
+def test_a_row_under_a_suffix_name_is_never_read_into_another_sites_answer(api):
+    from ahn.cli import _task_route_command
+
+    settings, client = api
+    # Rows that slipped in before the rule (or by hand): one under co.uk and one under github.io, both published.
+    for host in ("co.uk", "github.io"):
+        run(settings, """INSERT INTO task_routes (id,site_host,task_kind,obstacle,routes_tried,basis,outcome,period,source_kind,sensitive,
+                             review_state,reviewed_at) VALUES (%s,%s,'refund_request','wrong_channel','{phone}','own_attempt','resolved',
+                             '2026-Q4','external_agent',false,'published',now())""", (uuid4(), host))
+    for host in ("bbc.co.uk", "amazon.co.uk", "www.bbc.co.uk", "co.uk", "www.co.uk", "someone.github.io", "github.io"):
+        answer = client.get("/v1/task-routes", params={"site_host": host}).json()
+        assert answer["routes"] == [] and answer["counts"]["records"] == 0, host
+        assert lookup(host, settings=settings).counts.records == 0, host
+    assert "co.uk" not in client.get("/en/routes").text.replace("bbc.co.uk", "")
+    assert task_routes.key_candidates("www.bbc.co.uk") == ["www.bbc.co.uk", "bbc.co.uk"]
+    assert task_routes.key_candidates("a.b.github.io") == ["a.b.github.io", "b.github.io"]
+    with pytest.raises(SystemExit):  # the operator command keeps the same rule
+        _task_route_command(settings, operator_args(site_host="co.uk", official_url=None), None)
+
+
+@needs_db
+def test_a_report_host_is_read_as_a_lookup_reads_it(api):
+    settings, client = api
+    response = post(client, report(site_host=" HTTPS://WWW.Example.COM./ "))
+    assert response.status_code == 201
+    [row] = rows(settings)
+    assert row["site_host"] == "example.com"
+    assert post(client, report(site_host="https://example.com/help")).status_code == 422  # a path is still refused
+
+
+@needs_db
+def test_a_report_over_mcp_takes_the_per_client_limit_of_the_address_the_adapter_passes_on(db, monkeypatch):
+    from ahn.lookup_signals import ORIGIN_HEADER
+    from ahn.tool_metrics import mcp_metric_token
+
+    monkeypatch.setattr(task_routes_data, "TASK_ROUTES_CURATED", {})
+    hop = {"X-AHN-MCP-Call": mcp_metric_token(db.key_pepper)}
+    kinds = ["refund_request", "cancel_subscription", "account_recovery", "portal_login"]
+    with TestClient(create_app(db), client=("127.0.0.1", 50000)) as client:
+        codes = [client.post("/v1/task-routes", json=report(task_kind=kind), headers={**hop, ORIGIN_HEADER: "203.0.113.7"}).status_code
+                 for kind in kinds]
+        other = client.post("/v1/task-routes", json=report(site_host="example.org"), headers={**hop, ORIGIN_HEADER: "203.0.113.8"})
+        unmarked = [client.post("/v1/task-routes", json=report(site_host="example.net", task_kind=kind), headers=hop).status_code
+                    for kind in kinds]
+    assert codes == [201, 201, 201, 429] and other.status_code == 201
+    assert unmarked == [201, 201, 201, 429]  # without a passed-on address every such report shares one slot set
+
+
+@needs_db
 def test_the_per_client_limiter_refuses_the_fourth_report_in_a_minute(db, monkeypatch):
     monkeypatch.setattr(task_routes_data, "TASK_ROUTES_CURATED", {})
     with TestClient(create_app(db)) as client:
@@ -275,7 +334,7 @@ def test_pending_and_held_reports_are_never_shown_and_a_published_one_is(api):
 
 
 @needs_db
-def test_withdrawal_takes_a_report_out_of_every_answer_at_once(api):
+def test_withdrawal_takes_a_report_out_of_the_next_uncached_answer(api):
     settings, client = api
     receipt = post(client, report()).json()
     publish(settings, receipt["route_id"])
@@ -414,6 +473,29 @@ def test_operator_add_publish_and_hold(api, capsys):
     _task_route_command(settings, operator_args(route_command="hold", route_id=route_id), None)
     assert capsys.readouterr().out.splitlines()[-1] == "held"
     assert client.get("/v1/task-routes", params={"site_host": "example.com"}).json()["routes"] == []
+
+
+@needs_db
+def test_operator_withdraw_takes_a_record_out_even_with_the_write_switch_off(api, capsys):
+    from ahn.cli import _task_route_command
+
+    settings, client = api
+    _task_route_command(settings, operator_args(), None)
+    route_id = capsys.readouterr().out.splitlines()[-1]
+    _task_route_command(settings, operator_args(route_command="publish", route_id=route_id), None)
+    assert client.get("/v1/task-routes", params={"site_host": "example.com"}).json()["counts"]["records"] == 1
+    off = write_settings(task_route_reports=False, task_route_reports_since=None)
+    _task_route_command(off, operator_args(route_command="withdraw", route_id=route_id), None)
+    assert capsys.readouterr().out.splitlines()[-1] == "withdrawn"
+    assert client.get("/v1/task-routes", params={"site_host": "example.com"}).json()["counts"]["records"] == 0
+    [row] = rows(settings)
+    assert row["withdrawn_at"] is not None
+    _task_route_command(off, operator_args(route_command="withdraw", route_id=route_id), None)
+    assert capsys.readouterr().out.splitlines()[-1] == "not_found_or_withdrawn"
+    _task_route_command(settings, operator_args(route_command="publish", route_id=route_id), None)
+    assert capsys.readouterr().out.splitlines()[-1] == "not_found_or_not_reviewable"
+    events = [row["event_type"] for row in rows(settings, "SELECT event_type FROM audit_events ORDER BY id")]
+    assert events == ["task_route_operator_added", "task_route_published", "task_route_operator_withdrawn"]
 
 
 @needs_db
@@ -591,3 +673,67 @@ def test_the_lookup_answers_from_the_curated_table_when_the_database_cannot_be_r
     assert answer.counts.records == 1 and "task_route_db_unavailable" in caplog.text
     client = TestClient(create_app(write_settings("postgresql://invalid/unused")))
     assert client.get("/v1/task-routes", params={"site_host": "example.com"}).json()["counts"]["records"] == 1
+
+
+def _old_key_candidates(host: str) -> list[str]:
+    """key_candidates as main had it before D118 (every parent, down to two labels), for the byte-identity check below."""
+    labels = host.split(".")
+    return [".".join(labels[index:]) for index in range(len(labels) - 1)]
+
+
+def test_every_curated_answer_is_byte_identical_to_the_walk_before_the_suffix_floor(monkeypatch):
+    # The read path shares key_candidates with the write path; the floor at the registrable domain must not change any curated answer.
+    hosts = set()
+    for host in task_routes_data.TASK_ROUTES_CURATED:
+        hosts |= {host, f"www.{host}", f"support.{host}", f"help.www.{host}", f"springfield.{host}"}
+        labels = host.split(".")
+        hosts |= {".".join(labels[index:]) for index in range(len(labels) - 1)}  # each parent, down to a suffix such as co.uk
+    read_only = Settings("postgresql://invalid/unused", PEPPER, public_mode=True, task_routes=True, task_routes_since=SINCE)
+    today = datetime.now(timezone.utc).date()
+
+    def answers():
+        out = {}
+        with TestClient(create_app(read_only)) as client:
+            for host in sorted(hosts):
+                out[host] = (lookup(host, today=today).model_dump_json(),
+                             client.get("/v1/task-routes", params={"site_host": host}).content,
+                             client.get(f"/en/routes/{host}", follow_redirects=False).content)
+        return out
+
+    new = answers()
+    with monkeypatch.context() as patch:
+        patch.setattr(task_routes, "key_candidates", _old_key_candidates)
+        old = answers()
+    assert len(hosts) >= 5 * len(task_routes_data.TASK_ROUTES_CURATED)
+    assert [host for host in sorted(hosts) if new[host] != old[host]] == []
+
+
+def test_a_report_reads_its_host_as_a_lookup_does():
+    from ahn.task_routes import TaskRouteIn
+
+    body = report(site_host=" https://Shop.Example.COM./ ")
+    assert TaskRouteIn.model_validate(body).site_host == "shop.example.com"
+    assert task_routes.parse_query(" https://Shop.Example.COM./ ")[0] == "shop.example.com"
+    for bad in ("https://example.com/help", "example.com:443", "user@example.com", "", 7):
+        with pytest.raises(ValueError):
+            TaskRouteIn.model_validate(report(site_host=bad))
+
+
+def test_report_task_route_passes_the_callers_address_on_and_describes_the_site_for_a_report():
+    from mcp.server import MCPServer
+    from ahn import mcp_task_routes
+
+    sent = []
+
+    async def call_api(method, path, *, payload=None, write=False, extra_headers=None, **_kw):
+        sent.append(extra_headers)
+        return {"route_id": str(uuid4()), "review_state": "pending", "withdrawal_token": "a" * 64}
+
+    server = MCPServer(name="test")
+    mcp_task_routes.register_reports(server, call_api, lambda _ctx: {"x-ahn-origin-ip": "203.0.113.9"})
+    asyncio.run(server.call_tool("report_task_route", {"report": report()}))
+    assert sent == [{"x-ahn-origin-ip": "203.0.113.9"}]
+    [tool] = [tool for tool in asyncio.run(server.list_tools()) if tool.name == "report_task_route"]
+    assert sorted(tool.input_schema["properties"]) == ["report"]
+    text = tool.input_schema["properties"]["report"]["properties"]["site_host"]["description"]
+    assert "the site the task was on" in text and "co.uk" in text and "task routes you want" not in text

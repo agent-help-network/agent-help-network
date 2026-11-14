@@ -462,6 +462,28 @@ def test_report_task_route_inputs_are_covered_by_the_policy():
             assert needle in section(lang, "02", True, 0, True, True)
 
 
+TASK_ROUTE_TIME_COLUMNS = {
+    ("task_routes", "received_at"): {"en": "the time it was received", "ko": "접수 시각"},
+    ("task_routes", "reviewed_at"): {"en": "the time of its review", "ko": "검토 시각"},
+    ("task_routes", "withdrawn_at"): {"en": "the time of a withdrawal", "ko": "철회 시각"},
+    ("task_route_submissions", "created_at"): {"en": "the time it was stored", "ko": "저장 시각"},
+}
+
+
+def test_every_time_a_task_route_row_keeps_is_named_in_the_policy():
+    import re
+
+    sql = (ROOT / "migrations" / "042_task_routes.sql").read_text(encoding="utf-8")
+    found = set()
+    for table, body in re.findall(r"CREATE TABLE (\w+) \((.*?)\n\);", sql, re.S):
+        found |= {(table, column) for column in re.findall(r"^\s+(\w+) (?:timestamptz|timestamp|date)\b", body, re.M)
+                  if table != "task_route_intake_daily"}  # the counters' day is described with the counters
+    assert found == set(TASK_ROUTE_TIME_COLUMNS), f"migration 042 keeps the times {sorted(found)}: name each in section 02"
+    for words in TASK_ROUTE_TIME_COLUMNS.values():
+        for lang in LANGS:
+            assert words[lang] in section(lang, "02", True, 0, True, True), (lang, words[lang])
+
+
 def test_task_route_report_caps_in_the_policy_match_the_code():
     from ahn import task_route_intake as intake
 
@@ -481,8 +503,8 @@ def test_task_route_report_retention_in_the_policy_matches_the_code():
     source = inspect.getsource(intake.prune_task_route_reports)
     assert "TASK_ROUTE_WITHDRAWN_GRACE_DAYS" in source and "retention_days <= 0" in source
     wording = {"en": f"Task-route reports are deleted {REPORT_RETENTION_DAYS} days after they are received; a withdrawn record is excluded "
-                     f"from every read at once and deleted {GRACE_DAYS} days after withdrawal",
-               "ko": f"태스크 경로 제보는 접수 {REPORT_RETENTION_DAYS}일 뒤 삭제됩니다. 철회한 기록은 즉시 모든 조회에서 빠지고 철회 {GRACE_DAYS}일 뒤 삭제됩니다"}
+                     f"from every read within a few minutes and deleted {GRACE_DAYS} days after withdrawal",
+               "ko": f"태스크 경로 제보는 접수 {REPORT_RETENTION_DAYS}일 뒤 삭제됩니다. 철회한 기록은 몇 분 안에 모든 조회에서 빠지고 철회 {GRACE_DAYS}일 뒤 삭제됩니다"}
     none = {"en": "Task-route reports have no automatic deletion date during the beta",
             "ko": "태스크 경로 제보는 베타 기간 동안 자동 삭제 기한이 없습니다"}
     for lang in LANGS:
@@ -491,8 +513,12 @@ def test_task_route_report_retention_in_the_policy_matches_the_code():
 
 
 def test_task_route_report_withdrawal_and_exclusions_are_stated():
-    for lang, needles in (("en", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token")),
-                          ("ko", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token"))):
+    from ahn.task_routes_api import CACHE_CONTROL
+
+    # "within a few minutes": a cached GET /v1/task-routes answer may still show a withdrawn record until it expires.
+    assert int(CACHE_CONTROL.rsplit("max-age=", 1)[1]) <= 600
+    for lang, needles in (("en", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token", "leaves every answer within a few minutes")),
+                          ("ko", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token", "몇 분 안에 모든 답에서 빠집니다"))):
         for needle in needles:
             assert needle in section(lang, "07", True, 0, True, True)
     for lang, needle in (("en", "not part of the offline data bundle or the export"), ("ko", "오프라인 데이터 묶음과 내보내기에 들어가지 않습니다")):
