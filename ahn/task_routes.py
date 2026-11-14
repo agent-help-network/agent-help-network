@@ -401,8 +401,8 @@ def _exception_path_problem(segments) -> str | None:
         chunks = _EXCEPTION_DIGIT_CHUNK.findall(segment)
         if "-" in segment and len(chunks) >= 2 and sum(len(chunk) for chunk in chunks) >= 10:
             return "path has a segment of hyphen-separated digit groups that looks like an account or order number"
-        if _EXCEPTION_CASE_WORD.match(segment):
-            return "path has a segment that starts like a case, claim, order, ticket, invoice or account"
+        if _EXCEPTION_CASE_WORD.match(segment) and any(ch.isdigit() for ch in segment):
+            return "path has a numbered segment that starts like a case, claim, order, ticket, invoice or account"
     return None
 
 
@@ -421,7 +421,7 @@ def official_url_problem(site_host: str, url, *, curated: bool = False) -> str |
 
     ``curated=True`` is for a curated_official entry only: a URL that equals, character for character, a key of
     CURATED_URL_EXCEPTIONS may have up to 15 digits in a row in its path (D120), but not a UUID-shaped segment, a
-    hyphenated account or order number, or a segment starting with case, claim, order, ticket, invoice or account. Every other
+    hyphenated account or order number, or a segment that starts with case, claim, order, ticket, invoice or account and has a digit. Every other
     rule still applies, and so does every rule to any other URL."""
     return _url_problem(site_host, url, _listed_exceptions() if curated else None)
 

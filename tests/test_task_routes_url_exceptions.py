@@ -35,6 +35,9 @@ LISTED_OK = (
     f"{BASE}/site/product/123456789012345",              # fifteen digits
     f"{BASE}/c/pcmcat123456789012",                      # a category id with a letter prefix
     f"{BASE}/help/returns-and-orders",                   # a word, not a number
+    f"{BASE}/orders",                                    # a prefix word without a digit is fine
+    f"{BASE}/account-help",
+    f"{BASE}/help/Invoice-faq",
     f"{BASE}/help/page-1234-5678",                       # two groups, eight digits in all
     f"{BASE}/help/Article_123456789",
 )
@@ -45,11 +48,11 @@ LISTED_BAD = (
     f"{BASE}/help/account-12345678",
     f"{BASE}/help/Account12",
     f"{BASE}/help/order-1",
-    f"{BASE}/help/ORDERS",
+    f"{BASE}/help/order-12345",
+    f"{BASE}/help/case12",
+    f"{BASE}/help/ORDERS2",
     f"{BASE}/help/ticket9",
-    f"{BASE}/help/claim/x",
-    f"{BASE}/help/invoice-abc",
-    f"{BASE}/help/case",
+    f"{BASE}/help/Claim-7-status",
     f"{BASE}/help/123-4567-8901",                        # three groups, eleven digits
     f"{BASE}/help/0123456789abcdef0123456789abcdef",     # UUID-shaped, no dashes
     f"{BASE}/help/01234567-89ab-cdef-0123-456789abcdef",
@@ -71,7 +74,7 @@ def test_the_shipped_list_is_empty_and_valid():
     assert task_routes_data.CURATED_URL_EXCEPTIONS is CURATED_URL_EXCEPTIONS
 
 
-LONG_NUMBER_OK = [url for url in LISTED_OK if url.rsplit("/", 1)[1] not in ("returns-and-orders", "page-1234-5678")]
+LONG_NUMBER_OK = [url for url in LISTED_OK if url.rsplit("/", 1)[1] not in ("returns-and-orders", "page-1234-5678", "orders", "account-help", "Invoice-faq")]
 
 
 @pytest.mark.parametrize("url", LONG_NUMBER_OK)
