@@ -31,8 +31,10 @@ VOLATILE = ("generated_at", "feedback_token", "lookup_activity")
 HOUR = timedelta(hours=1)
 
 
-def settings_with(*, edge: bool = True) -> Settings:
-    return Settings(TEST_URL, PEPPER, public_mode=True, reporting_enabled=True, collect_lookup_metrics=True, edge_refusal_handoff=edge)
+def settings_with(*, edge: bool = True, d121: bool = False) -> Settings:
+    # D121 is off here so that "the switch off" is still the proceed answer before D85; the last test below turns it on.
+    return Settings(TEST_URL, PEPPER, public_mode=True, reporting_enabled=True, collect_lookup_metrics=True, edge_refusal_handoff=edge,
+                    d121_handoff=d121)
 
 
 @pytest.fixture
@@ -309,3 +311,25 @@ def test_a_provider_wait_a_robots_block_or_an_official_path_come_before_the_edge
     assert on["recommendation"]["action"] == "hand_off_to_human" and off["recommendation"]["action"] == "proceed"
     assert on["next_action"]["customer_url"] == off["next_action"]["customer_url"] == "https://www.example.com/help"
     assert on["summary_line"].startswith("The site's edge refused both you and AHN's own check (ahn_check).")
+
+
+@pytest.mark.parametrize("index", range(len(CASES)))
+def test_with_d121_on_the_edge_rule_still_comes_first_and_the_rest_is_a_low_hand_off(db, index):
+    """D121: a site_access lookup whose answer would be proceed is handed off (caller_reported_refusal, low) unless the D85 rule
+    applies, which keeps its own reason and confidence; with D85 off every such lookup gets the D121 hand-off."""
+    outcome, status, age, refusals, changes = CASES[index]
+    host = HOSTS[40 + index]
+    seed(db, host, outcome, age, refusals=refusals, status=status)
+    both = look(settings_with(d121=True), host, error_class="site_access")
+    only_d85 = look(db, host, error_class="site_access")
+    no_d85 = look(settings_with(edge=False, d121=True), host, error_class="site_access")
+    neither = look(settings_with(edge=False), host, error_class="site_access")
+    assert neither["recommendation"]["action"] == "proceed"
+    assert no_d85["recommendation"] == {"action": "hand_off_to_human", "confidence": "low",
+                                        "reasons": ["caller_reported_refusal", *neither["recommendation"]["reasons"]]}
+    assert no_d85["next_checks"] == neither["next_checks"]
+    if changes:
+        assert both["recommendation"] == only_d85["recommendation"] and both["recommendation"]["reasons"][0] == EDGE_CODE
+        assert both["recommendation"]["confidence"] == "medium" and both["summary_line"] == only_d85["summary_line"]
+    else:
+        assert both["recommendation"] == no_d85["recommendation"] and both["summary_line"] == no_d85["summary_line"]

@@ -782,7 +782,10 @@ def check(settings: Settings, site_host: str, error_class: str | None = None, ta
                                      assume_failure=assume_failure, edge_refusal=edge_refusal,
                                      service_error_reference_only=settings.d95_no_dev_path_on_failure,
                                      robots_refusal_handoff=robots_refusal, no_path_handoff=no_path,
-                                     customer_same_site=customer_same_site, apex_lookup=apex_lookup)
+                                     customer_same_site=customer_same_site, apex_lookup=apex_lookup,
+                                     # D121: both hand-offs; the reported-refusal one is withheld from a lookup-only word and the plain view
+                                     minor_incident_handoff=settings.d121_handoff,
+                                     caller_refusal_handoff=bool(settings.d121_handoff and not plain_view and not lookup_only))
         edge_decided = EDGE_CODE in recommended["reasons"]
         no_path_decided = NO_PATH_CODE in recommended["reasons"]
         robots_edge_decided = EDGE_ROBOTS_CODE in recommended["reasons"]

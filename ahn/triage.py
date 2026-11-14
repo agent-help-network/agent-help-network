@@ -509,6 +509,22 @@ EDGE_FAILURE_STAGES = (None, "access_denial_observed")
 EDGE_ROBOTS_CODE = "edge_refusal_robots"
 # D101: a service_error lookup (a 5xx or no response) whose first line would send the caller to no path outside AHN is handed to the user.
 NO_PATH_CODE = "no_path_after_failure"
+# D121: a proceed answer for a lookup that itself reported site_access (no AHN measurement agrees or disagrees) is handed to the user.
+# A reason only: next_checks has no such code.
+CALLER_REFUSAL_CODE = "caller_reported_refusal"
+# D121: the worst incident impacts under which a minor page does not hold a human_verification step back.
+MINOR_HANDOFF_IMPACTS = frozenset({"none", "minor"})
+
+
+def minor_incident_page(provider_status: dict | None) -> bool:
+    """D121: a fresh minor page whose incident list was read (one or more active incidents) and whose worst incident impact was read
+    as none or minor. Unknown severity (an Atom history, no incident list, no impact), maintenance, components only, a major or critical
+    page (including one above a minor incident) are not this."""
+    if not (provider_status and provider_status.get("freshness") == "fresh" and provider_status.get("indicator") == "minor"):
+        return False
+    incidents = provider_status.get("active_incidents")
+    return (type(incidents) is int and incidents >= 1 and provider_status.get("basis") in (None, "incident")
+            and provider_status.get("max_incident_impact") in MINOR_HANDOFF_IMPACTS)
 # The reasons of the answers that list no developer or customer path (rows U6, U7, U9) or only a developer path that D95 made reference
 # (U7-O, U9-O); an empty list is U9 as well.
 _NO_PATH_REASONS = (["robots_fetch_refused"], ["robots_unknown"], ["profile_not_read"], [],
@@ -536,7 +552,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
                    failure_stage: str | None = None, proceed_without_failure: bool = True,
                    assume_failure: bool = False, edge_refusal: bool = False,
                    service_error_reference_only: bool = False, robots_refusal_handoff: bool = False,
-                   no_path_handoff: bool = False, customer_same_site: bool = False, apex_lookup: bool = False) -> dict:
+                   no_path_handoff: bool = False, customer_same_site: bool = False, apex_lookup: bool = False,
+                   minor_incident_handoff: bool = False, caller_refusal_handoff: bool = False) -> dict:
     """One action for the calling agent, derived only from declared and official sources.
 
     provider_regional: the stored scope's affected_regional (every affected component is in a region or
@@ -546,7 +563,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     failure_stage, proceed_without_failure: D63. With the switch on, a lookup that reports no failure (neither error_class
     nor failure_stage) and a robots.txt that is clear or absent gets proceed even where an official path is listed.
     assume_failure: D66 (AHN_PROCEED_WITHOUT_FAILURE=d65): the lookup is judged as if it had reported site_access; the reply is
-    then the one such a lookup gets, and no new row exists.
+    then the one such a lookup gets, and no new row exists (D121 exception: caller_refusal_handoff applies only when site_access was
+    sent, so an assumed failure keeps its proceed answer).
     edge_refusal: D85. The caller reported site_access and AHN's own home-page check was refused too (service.edge_refusal_for).
     Only a proceed answer for a site_access lookup with no failure_stage or access_denial_observed changes: it becomes
     hand_off_to_human. Every other answer, and the order of the branches in _recommendation, stay as they were.
@@ -562,17 +580,28 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
     no_path_handoff: D101 (AHN_D101_NO_PATH_HANDOFF; the service passes the setting, with the D63 and D87 switches on, and withholds it for a
     status_check or plain-view answer; the default here is the answer before D101). A service_error lookup whose answer is _no_path_handoff()
     (customer_same_site: the curated customer page is on the same site as the host; apex_lookup: the guide sends the host to its root domain)
-    becomes hand_off_to_human, confidence low, with the earlier reasons followed by no_path_after_failure. Every other answer stays as it was."""
+    becomes hand_off_to_human, confidence low, with the earlier reasons followed by no_path_after_failure. Every other answer stays as it was.
+    minor_incident_handoff: D121 (AHN_D121_HANDOFF; the service passes the setting, the default here is the answer before D121). A
+    human_verification lookup that would wait for the provider (reason provider_scope) on a minor_incident_page() is handed to the user
+    instead: hand_off_to_human, confidence medium, reasons human_handoff, provider_scope. Decided inside _recommendation only;
+    provider_wait_reason(), which the public board shares, is unchanged.
+    caller_refusal_handoff: D121 (the service passes the setting and withholds it for task_step status_check or preflight and for the
+    plain search-page view). A proceed answer for a lookup that sent error_class=site_access itself (not assume_failure) with no
+    failure_stage or access_denial_observed becomes hand_off_to_human, confidence low, with caller_reported_refusal followed by the proceed
+    reasons. D85 comes first (its answer is no longer proceed). The optional signal codes (http_status, challenge) are not read (D47)."""
     vendor = agent_vendor if vendor_aware else None
     result = _recommendation(error_class, provider_status, access_profile, official, profile_not_read=profile_not_read,
                              provider_regional=provider_regional, now=now, agent_vendor=vendor, vendor_aware=vendor_aware,
                              failure_stage=failure_stage, proceed_without_failure=proceed_without_failure,
                              assume_failure=assume_failure,
                              reference_only=service_error_reference_only and error_class == "service_error"
-                             and proceed_without_failure)
+                             and proceed_without_failure, minor_incident_handoff=minor_incident_handoff)
     if (edge_refusal and result["action"] == "proceed" and error_class == "site_access"
             and failure_stage in EDGE_FAILURE_STAGES):
         result = {"action": "hand_off_to_human", "confidence": "medium", "reasons": [EDGE_CODE, *result["reasons"]]}
+    if (caller_refusal_handoff and result["action"] == "proceed" and error_class == "site_access"
+            and failure_stage in EDGE_FAILURE_STAGES):
+        result = {"action": "hand_off_to_human", "confidence": "low", "reasons": [CALLER_REFUSAL_CODE, *result["reasons"]]}
     if (robots_refusal_handoff and result["action"] == "unknown" and result["reasons"] == ["robots_fetch_refused"]
             and error_class == "site_access" and failure_stage in EDGE_FAILURE_STAGES):
         result = {"action": "hand_off_to_human", "confidence": "medium", "reasons": [EDGE_ROBOTS_CODE, "robots_fetch_refused"]}
@@ -587,7 +616,8 @@ def recommendation(error_class: str | None, provider_status: dict | None, access
 def _recommendation(error_class: str | None, provider_status: dict | None, access_profile: dict | None,
                     official: dict | None, *, profile_not_read: bool, provider_regional: bool, now: datetime | None,
                     agent_vendor: str | None, vendor_aware: bool, failure_stage: str | None = None,
-                    proceed_without_failure: bool = True, assume_failure: bool = False, reference_only: bool = False) -> dict:
+                    proceed_without_failure: bool = True, assume_failure: bool = False, reference_only: bool = False,
+                    minor_incident_handoff: bool = False) -> dict:
     wait_reason = provider_wait_reason(provider_status, now)
     if wait_reason == "provider_components_only":
         return {"action": "wait_provider_incident", "confidence": "medium", "reasons": ["provider_components_only"]}
@@ -595,6 +625,10 @@ def _recommendation(error_class: str | None, provider_status: dict | None, acces
         # D57: an announced open incident read from the Atom history: no severity and no components (so no regional
         # scope either), so less sure.
         return {"action": "wait_provider_incident", "confidence": "low", "reasons": ["provider_scope", "provider_history_incident"]}
+    if (minor_incident_handoff and error_class == "human_verification" and wait_reason == "provider_scope"
+            and minor_incident_page(provider_status)):
+        # D121: a verification screen is the user's step; a minor incident whose severity was read does not hold it back.
+        return {"action": "hand_off_to_human", "confidence": "medium", "reasons": ["human_handoff", "provider_scope"]}
     if wait_reason is not None:
         result = _wait(wait_reason, provider_regional)
         if wait_reason == "provider_scope" and page_time_unknown(provider_status, now):

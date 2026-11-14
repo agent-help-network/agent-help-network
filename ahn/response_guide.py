@@ -52,6 +52,8 @@ FEED_JSON_NOTE = "The page may show a challenge, but this feed address usually a
 FEED_HANDOFF_TAIL = " To see only the service status, you may read the status_url feed once; the step itself stays with your user."
 _WAIT_IN = f"look up again in about {FEED_RETRY_MINUTES} minutes"
 
+# D121: the H4 sentence ends with the rest of the task: only the refused page goes to the user.
+_OTHER_WORK = "Continue the work that does not need this page."
 # Template id -> (do, sentence). "{n}" is the only placeholder.
 ROWS: dict[str, tuple[str, str]] = {
     "W1": ("wait_for_provider", f"The provider reports an active issue. Wait instead of retrying, and {_WAIT_IN}; its status page lists the affected services."),
@@ -71,6 +73,9 @@ ROWS: dict[str, tuple[str, str]] = {
     "H3": ("hand_off_to_human", "The site's edge refused both you and AHN's own home-page check (ahn_check). Do not switch tools or user agents; tell your user now, who can open the page themselves."),
     # D98: the caller reported site_access and AHN's own plain robots.txt read was refused too (no developer path). H3-R-C is EDGE_CONSUMER_ROWS.
     "H3-R": ("hand_off_to_human", "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; tell your user now, who can open the page themselves."),
+    # D121: the caller reported site_access itself and the answer would have been proceed (no AHN measurement of the refusal). H4-C (with a
+    # curated customer page) is EDGE_CONSUMER_ROWS.
+    "H4": ("hand_off_to_human", "You reported a refused page, and the site declares no block for listed agent vendors. Do not switch tools or user agents; tell your user now. " + _OTHER_WORK),
     "O1": ("use_official_path", "An official developer path is listed; for API work use it, not page automation; for a task in the user's own account, hand the step to your user. robots.txt is pending: look up once more in {n} s."),
     "O2": ("use_official_path", "The site's robots.txt blocks agent user agents at the site root. Stop retrying pages and use the listed official developer path instead."),
     "O3": ("use_official_path", "robots.txt blocks some agent tokens, and this applies to requests that send them (next_action.stop_if_you_are). Use the listed official developer path instead of page automation."),
@@ -204,6 +209,7 @@ CONSUMER_ROWS_BEFORE = {
 EDGE_CONSUMER_ROWS: dict[str, str] = {
     "H3": "The site's edge refused both you and AHN's own check (ahn_check). Do not switch tools; hand your user the step and the site's customer page, next_action.customer_url.",
     "H3-R": "The site's edge refused both you and AHN's plain robots.txt read. Do not switch tools or user agents; hand your user the site's customer page, next_action.customer_url.",
+    "H4": "You reported a refused page, and the site declares no block for listed agent vendors. Do not switch tools; hand your user next_action.customer_url. " + _OTHER_WORK,
 }
 CONSUMER_HAND_TAIL = " The API may not reach the user's own account; hand the user next_action.customer_url."
 # D63: where robots.txt does not block pages (O1, O7) the customer page comes first and the developer API is the tail.
@@ -257,6 +263,9 @@ BLOCKED_PROCEED_CONSUMER_ROWS: dict[str, str] = {
 }
 # D116: the lookup reports a refusal (error_class site_access, or failure_stage access_denial_observed): the proceed sentence says where the
 # refusal came from instead of a conditional ("If a page refused you"). Same row and verdict (do stays proceed); only the sentence changes.
+# Since D121 a lookup that sent error_class=site_access with no failure_stage or access_denial_observed (not with task_step status_check or
+# preflight) is handed off (H4) and no longer reaches these rows; they remain for the other stages, the lookup-only words and a failure_stage
+# sent without error_class.
 _CAME = "Your refusal came from your tool, the site's edge or a login. Don't retry; tell your user"
 REFUSED_PROCEED_ROWS: dict[str, str] = {
     "P1": "robots.txt blocks no listed agent vendor at the root. " + _CAME + ".",
@@ -417,6 +426,8 @@ def select_row(recommendation: dict, access_profile: dict | None, provider_statu
             return "H3", True
         if "edge_refusal_robots" in reasons:
             return "H3-R", True
+        if "caller_reported_refusal" in reasons:
+            return "H4", True
     elif action == "use_official_path":
         for code, row in (("profile_pending", "O1"), ("robots_blocks_agents", "O2"), ("robots_blocks_some_agents", "O3"),
                           ("robots_names_vendor_alias", "O4"), ("robots_fetch_refused", "O5"),
@@ -621,10 +632,11 @@ _AFFECTED_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._&()/+-]{0,39}")
 # A stored name that says "no name" is not a component: "Affected: None." would read as "nothing is affected".
 AFFECTED_PLACEHOLDERS = frozenset({"none", "null", "nil", "n/a", "na", "n.a.", "unknown", "undefined", "tbd", "empty", "-"})
 # A name is a short label. One with more words than this, or with one of these words, reads as a sentence addressed to the reader (a hostile
-# or broken feed), not as a component, and is left out. Matched on whole words, case-insensitively.
+# or broken feed), not as a component, and is left out. Matched on whole words, case-insensitively. A token with no letter or digit ("-", "/", "&")
+# is a separator, not a word, and is not counted.
 AFFECTED_MAX_WORDS = 6
-AFFECTED_ORDER_WORDS = frozenset({"ignore", "disregard", "forget", "override", "previous", "instruction", "instructions", "prompt", "you", "your",
-                                  "must", "should", "please", "assistant"})
+AFFECTED_ORDER_WORDS = frozenset({"ignore", "disregard", "forget", "override", "previous", "instruction", "instructions", "prompt", "you",
+                                  "must", "should", "please"})
 
 
 def affected_name_ok(name) -> bool:
@@ -632,7 +644,8 @@ def affected_name_ok(name) -> bool:
     if not (isinstance(name, str) and _AFFECTED_NAME.fullmatch(name) and ". " not in name and "  " not in name):
         return False
     words = name.strip().split()
-    if not words or name.strip().lower() in AFFECTED_PLACEHOLDERS or len(words) > AFFECTED_MAX_WORDS:
+    counted = [word for word in words if any(ch.isalnum() for ch in word)]  # "Australia / New Zealand 2 - AU02" is 5 words
+    if not words or name.strip().lower() in AFFECTED_PLACEHOLDERS or len(counted) > AFFECTED_MAX_WORDS:
         return False
     if any(word.lower().strip("._&()/+-") in AFFECTED_ORDER_WORDS for word in words):
         return False
@@ -700,14 +713,14 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
     if not on and row in ROWS_BEFORE:
         sentence = ROWS_BEFORE[row]
     customer = None
-    if (do == "use_official_path" and row in CONSUMER_ROWS) or (on and (do == "proceed" or row in ("H3", "H3-R"))):
+    if (do == "use_official_path" and row in CONSUMER_ROWS) or (on and (do == "proceed" or row in EDGE_CONSUMER_ROWS)):
         raw = customer_url(result.get("official_paths"))
         customer = safe_url(raw) if raw else None
         if raw and customer is None:
             LOG.warning("response_guide_url_dropped")
         if customer:
-            if row in ("H3", "H3-R"):
-                sentence = EDGE_CONSUMER_ROWS[row]  # D85 (D98: H3-R the same way): only reached with the D63 switch on, like the proceed answer it replaces
+            if row in EDGE_CONSUMER_ROWS:
+                sentence = EDGE_CONSUMER_ROWS[row]  # D85 (D98: H3-R, D121: H4 the same way): only reached with the D63 switch on, like the proceed answer it replaces
             elif on:
                 sentence = PROCEED_CONSUMER_ROWS[row] if do == "proceed" else CONSUMER_ROWS[row]
             else:
