@@ -725,6 +725,40 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - 읽기: 조회 한 번, 그다음 짧은 트랜잭션 하나(락 대기 200ms, 읽기마다 세이브포인트)로 `host_access_changes`·`platform_doc_events` 를 읽어요. 읽기가 실패하면 그 부분만 비어요.
 - 조회 한 번으로 세고, 위에서 고른 값은 집계·저장·로그 모두 하지 않으며, `feedback_token` 도 주지 않아요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 바뀌지 않고(`lang=en` 에서 테스트가 두 답을 바이트 단위로 견줘요. `lang=ko` 는 위 한국어판만 달라요), 이 끝점은 MCP 도구 정의도 바꾸지 않아요(D112 가 `check_incident` 의 `next_action` 에 더한 선택 필드 `status_url_kind`·`status_url_note` 는 위 `status_url_kind` 항목이 설명해요. 실패 코드를 보낸 `check_incident` 호출의 결과에만 위의 텍스트 한 줄이 더 붙어요).
 
+## 업무 경로(Task routes: `GET /v1/task-routes`, MCP `find_task_route`, D117)
+
+`GET /v1/task-routes`(JSON)와 MCP 도구 `find_task_route` 는 공개 호스트명에 기록된 업무 경로를 돌려줘요. 고객 업무 종류(환불, 해지, 예약 등)마다 흔한 걸림돌과, 사이트 자신의 문서가 말하는 경로예요(D117). 조회와 별개의 정보 층이에요. 답은 기록의 목록일 뿐 보장도 조언도 아니고, 목록이 비어 있다고 경로가 없다는 뜻도 아니에요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, 조회는 이 표를 읽지 않아요. 기술적 막힘(403·CAPTCHA·장애)은 `check_incident` 가 답하는 영역이고, `obstacle` 값 `technical_block` 은 기록이 그런 것임을 표시할 뿐이에요.
+
+답은 서비스 코드 안의 큐레이션 표에서 읽어요. 데이터베이스도, 사이트로 가는 요청도 없어요(D33). 모든 칸은 닫힌 값이고 자유 글은 없어요. 운영자가 켜야 제공해요(`AHN_TASK_ROUTES`). 꺼져 있으면 `GET /v1/task-routes` 와 아래 페이지는 404이고 도구도 목록에 나오지 않아요.
+
+매개변수.
+
+- `site_host`(필수): 공개 호스트명. 대소문자, 붙여 넣은 스킴, 끝의 슬래시·점은 잘라요. 공개 호스트명이 아니면 `400 invalid_site_host`.
+- `task_kind`(선택): 아래 목록의 값 정확히 하나. 그 밖의 값은 빈 문자열을 포함해 `400 invalid_task_kind`. 빼면 그 사이트의 모든 업무 종류를 줘요.
+- 오류는 코드뿐이고 평소처럼 `{ "error": "code" }` 모양이며 입력을 되풀이하지 않아요. 다른 실패는 없어요. 기록이 없는 사이트는 오류가 아니라 빈 답이에요.
+
+답(`200`, `Cache-Control: public, max-age=300`). 없는 필드는 null 이 아니라 생략해요.
+
+- `site_host`: 요청에서 읽은 호스트. `summary_line`: 인쇄 가능한 ASCII 200자 이하 문장 하나로, 고정 어구·개수·업무 종류 이름으로만 만들어요(`task route records`, 출처별 개수, 20건을 넘으면 `Showing the 20 newest.`, `Records, not guarantees.`, `notice` 가 있으면 `Case record, not advice.`). 기록이 없으면 `No task route records for this site.`(`task_kind` 를 보냈으면 `No task route records for this site and task kind.`) 다음에 `A missing record does not mean there is no route.` 가 와요.
+- `routes[]`: 최대 20건, `period` 최신순(같으면 `verified_at`·`task_kind`·`obstacle` 순, 모두 내림차순). `counts`: `records`(맞는 기록 전부, 보여 준 것만이 아님)와 `by_source_kind`(출처별 개수). `notice`: `case_record_not_advice`, 보여 준 기록 중 `sensitive: true` 가 하나라도 있을 때만.
+- 기록 하나는 `site_host`(표에서 그 기록의 키), `task_kind`, `obstacle`, `routes_tried[]`(최대 6, 중복 없음), `basis`, `outcome`, `period`, `source_kind`, `sensitive` 를 갖고, 해당할 때 `verification_kind`·`site_requires`·`document_kind`·`entry_point_kind`·`route_worked`·`duration`·`official_url`·`source_url`·`verified_at` 을 더해요.
+- `task_kind`: `claim_unclaimed_property`, `warranty_claim`, `warranty_dispute`, `refund_request`, `return_or_exchange`, `cancel_subscription`, `account_closure`, `account_recovery`, `portal_login`, `address_or_profile_change`, `appointment_booking`, `appointment_change_or_cancel`, `records_request`, `complaint_filing`, `billing_dispute`, `fee_waiver_or_adjustment`, `insurance_claim`, `government_benefit_application`, `tax_or_government_filing`, `id_or_license_renewal`, `accommodation_request`, `prescription_refill`, `document_submission`, `other`.
+- `obstacle`: `document_missing`, `document_rejected`, `substitute_document_needed`, `form_unclear`, `wrong_entry_point`, `wrong_channel`, `wrong_department_or_jurisdiction`, `eligibility_unclear`, `verification_step`, `code_expired`, `deadline_or_window`, `fee_required`, `waiting_reply`, `no_reply`, `request_denied`, `site_requires_info_from_person`, `technical_block`, `none`.
+- 세부 칸은 그것을 설명하는 걸림돌일 때만 나와요. `verification_step` 에는 `verification_kind`(`sms_code`·`email_code`·`app_approval`·`new_device`·`security_question`·`account_locked`·`consent_screen`·`id_document_upload`), `site_requires_info_from_person` 에는 `site_requires`(`referral_or_prescription`·`prior_approval_record`·`account_holder_step`·`original_document`·`preference_only`), `document_missing`·`document_rejected`·`substitute_document_needed` 에는 `document_kind`(`proof_of_identity`·`proof_of_address`·`proof_of_ownership`·`proof_of_purchase`·`proof_of_authority`·`business_registration_or_closure`·`sworn_statement`·`approval_or_authorization_letter`·`professional_letter`·`prior_correspondence`·`account_statement`·`official_form`·`other`), `wrong_entry_point` 에는 `entry_point_kind`(`role_specific_portal`·`regional_site`·`separate_subdomain`·`mobile_app_only`·`partner_or_third_party_portal`).
+- `routes_tried[]`·`route_worked` 의 값: `support_chat`, `phone`, `email`, `web_form`, `office_visit`, `mail_or_fax`, `consumer_agency`, `regulator`, `designated_dispute_program`, `official_app`, `different_entry_point`, `escalation_within_site`, `other`. `route_worked` 는 `none` 일 수도 있고, 아니면 `routes_tried` 중 하나예요.
+- `basis`: `official_doc`, `agency_reply`, `outcome_observed`, `own_attempt`. `outcome`: `resolved`, `progressed`, `no_progress`, `gave_up`, `not_applicable`. `source_kind`: `operator_panel`, `external_agent`, `curated_official`, `curated_community`. `duration`(모르면 생략): `under_1w`, `from_1w_to_4w`, `over_4w`.
+- 사이트 자신의 문서에서 온 기록은 `source_kind` `curated_official`, `basis` `official_doc`, `outcome` `not_applicable` 이에요(문서가 경로를 말할 뿐 누구의 결과도 기록하지 않음). 항상 `source_url`(그것을 말하는 사이트 자신의 페이지)과 `verified_at`(AHN 이 읽은 날)을 가져요. `verified_at` 이 90일 이내이고 미래가 아닐 때만 답에 나오고, 더 오래된 기록은 다시 확인될 때까지 빠져요. `period` 는 서버가 `verified_at` 으로 `YYYY-Qn` 형식으로 정해요.
+- `official_url`·`source_url` 은 쿼리·프래그먼트가 없는 https 링크(스키마 패턴 `^https://[^\s?#]+$`)이고 사이트 자신의 도메인이어야 해요. 사이트 자신의 문서에서 온 기록이나 운영자 기록만 링크를 가져요(D117 규칙 4). D120 이 이런 주소의 경로 규칙에 검토를 거친 정확한 URL 예외 하나를 더해요. 다른 필드에는 링크가 없어요.
+- `sensitive` 는 서버가 정하고 출처에서 베끼지 않으며, 기록을 보여 주는 방식만 바꿔요. 일반 경로보다 사례 기록으로 읽는 편이 맞을 때 `true` 예요. `task_kind` 가 `accommodation_request`·`prescription_refill`·`insurance_claim`·`government_benefit_application`·`warranty_dispute`·`billing_dispute`·`complaint_filing`·`records_request` 인 경우, `site_requires` 가 `referral_or_prescription` 인 경우, `document_kind` 가 `professional_letter`·`sworn_statement` 인 경우, `portal_login` 이 `entry_point_kind` `role_specific_portal` 과 함께 있는 경우, 정부 전용 접미사 아래이거나 공개 정부 도메인 목록에 있는 호스트인 경우예요.
+
+어느 사이트로 답하나. 호스트는 표에 있는 자기 항목으로 답하고, 없으면 가장 가까운 상위 도메인으로 답해요(`www.example.com` 과 `shop.example.com` 은 모두 `example.com` 을 찾음). 최상위 라벨 하나만으로는 답하지 않아요. 덧붙은 라벨이 모두 같은 사이트의 서비스 이름(`www`·`support`·`help`·`care`·`shop`·`store`·`m`·`mobile`·`en`·`us`)이면 상위 도메인으로 답해요. 그 밖의 하위 도메인 중 이름 자체가 집계에 적합한 공개 루트 호스트가 아닌 것(계정·학군·소규모 업체 하위 도메인)은 빈 답이고, 상위 도메인의 기록을 주지 않아요.
+
+MCP `find_task_route(site_host, task_kind?)` 는 읽기 전용(`readOnlyHint`·`idempotentHint`, 열린 세계 아님)이고 같은 인자 둘을 받아요. REST 와 똑같이 읽고 거절하며 오류 코드도 같은 둘이에요. 결과의 첫 텍스트 블록은 답의 `summary_line`, 둘째는 JSON 으로 된 답이고 링크는 여기에만 나와요. `structuredContent` 는 REST 답과 같아요.
+
+- 사람용 페이지 `/en/routes`·`/ko/routes` 는 현재 기록 전부를 최신 기간순으로 보여 주고, 표 위의 문장이 출처별 개수를 세요. 필터는 `site`·`task_kind`·`outcome`·`source_kind` 이고, 목록에 없는 값은 무시하며 되풀이하지 않아요. `/en/routes/{host}`·`/ko/routes/{host}` 는 사이트 하나를 보여 줘요. 표의 키가 아닌 호스트는 키로 `301` 이동하고, 항목이 없는 호스트나 테넌트 하위 도메인은 그냥 404 예요. 모르는 언어도 404 예요. 두 페이지는 같은 표를 읽고 서버가 정한 값을 서버가 계산한 그대로 보여 줘요.
+- 읽는 것: 코드 안의 표뿐이에요. `feedback_token` 은 주지 않아요.
+- 참고용이며 보장이 아니에요. 기록은 사이트 자신의 문서가 읽은 날에 말한 것일 뿐이에요. 사이트의 현재 규칙과 사용자의 지시가 먼저이고, 기록이 없다는 것은 아무것도 증명하지 않아요.
+
 ## 다음 계약: 질문·경험 네트워크
 
 사이트 호스트가 없는 질문, 자발적 경험 공유, 답변·정정·검색은 현재 v1 제보 계약에 포함되지 않는다. 이를 위한 별도 `/v2/knowledge/*` 계약과 스키마는 제안만 했을 뿐 구현되지 않았다. 실제 API나 MCP 도구가 이미 제공되는 것처럼 안내하지 않는다.
