@@ -63,8 +63,8 @@ from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS
                                 access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
 from ahn.task_routes import (PRIVATE_SUFFIXES, TaskRoute, is_current as task_route_is_current,  # noqa: E402
-                             official_url_problem, period_for, registrable, route_host)
-from ahn.task_routes_data import TASK_ROUTES_CURATED  # noqa: E402
+                             curated_exception_problems, official_url_problem, period_for, registrable, route_host)
+from ahn.task_routes_data import CURATED_URL_EXCEPTIONS, TASK_ROUTES_CURATED  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
 MIN_INTERVAL = 1.0
@@ -558,7 +558,7 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
             add("period", "must be the period of verified_at (use _route())")
     official = route.get("official_url")
     if official is not None:
-        add("official_url", official_url_problem(host, official) or _url_problem(host, official))
+        add("official_url", official_url_problem(host, official, curated=True) or _url_problem(host, official))
         if SIGN_IN.search(urlsplit(official).path):
             add("official_url", f"a sign-in page: {official}")
     if len(source) > 200 or not SAFE_CONSUMER_URL.fullmatch(source):
@@ -926,6 +926,9 @@ class ConsumerCheck:
                 source, source_body = self.page(source_url, site)
                 if source["result"] != "ok":
                     failures.append(f"{host}: source_url {source['result']}: {source_url}")
+                elif kind == "exception_link":
+                    if url not in page_hrefs(source_body, source["final_url"]):  # D120: the exact string, no looser match
+                        failures.append(f"{host}: exception URL not linked as written from its index page: {url}")
                 elif url != source_url and not self.linked_from(url, source_body, source["final_url"], site):
                     failures.append(f"{host}: {kind} not linked from its source_url page: {url}")
                 target, _ = self.page(url, {"apple.com", "google.com"} if kind == "official_app" else site)
@@ -955,22 +958,37 @@ def check_consumer(hosts: set[str] | None) -> int:
     return 1 if problems or failures else 0
 
 
-def check_task_routes(hosts: set[str] | None) -> int:
-    """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
-    source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
-    keys = [host for host in TASK_ROUTES_CURATED if not hosts or host in hosts]
-    problems = task_routes_table_problems({host: TASK_ROUTES_CURATED[host] for host in keys})
+def task_route_check_pages(keys, exceptions=None) -> dict[str, dict]:
+    """The pages ConsumerCheck reads for TASK_ROUTES_CURATED hosts ``keys``: each record's source page and its official_url
+    linked from it. An official_url or source_url that is a CURATED_URL_EXCEPTIONS key (D120) is instead read from its index
+    page, which must link that exact string; it must also answer 200 at that address."""
+    exceptions = CURATED_URL_EXCEPTIONS if exceptions is None else exceptions
     pages = {}
     for host in keys:
         paths = []
         for route in TASK_ROUTES_CURATED[host]:
             if not isinstance(route, dict) or not isinstance(route.get("source_url"), str):
                 continue
-            item = {"kind": "entry_link", "url": route.get("official_url") or route["source_url"], "source_url": route["source_url"]}
-            if item not in paths:
-                paths.append(item)
+            official = route.get("official_url")
+            items = []
+            if official not in exceptions:
+                items.append({"kind": "entry_link", "url": official or route["source_url"], "source_url": route["source_url"]})
+            for url in (official, route["source_url"]):
+                if isinstance(url, str) and url in exceptions:
+                    items.append({"kind": "exception_link", "url": url, "source_url": exceptions[url]})
+            paths += [item for item in items if item not in paths]
         if paths:
             pages[host] = {"paths": paths}
+    return pages
+
+
+def check_task_routes(hosts: set[str] | None) -> int:
+    """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
+    source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
+    keys = [host for host in TASK_ROUTES_CURATED if not hosts or host in hosts]
+    problems = task_routes_table_problems({host: TASK_ROUTES_CURATED[host] for host in keys})
+    problems += [f"exceptions: {line}" for line in curated_exception_problems(CURATED_URL_EXCEPTIONS)]
+    pages = task_route_check_pages(keys)
     fetcher = Fetcher()
     checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
     failures = checker.run(pages, list(pages)) if not problems else []

@@ -103,6 +103,15 @@ site), at most 200 characters; a URL with a query, fragment, userinfo, port, six
 a UUID-shaped segment is refused for either field. `verified_at` must be a real calendar date. `verified_at` is the
 day you read the page; records older than 90 days are left out of answers until re-verified.
 
+One reviewed exception (D120): `CURATED_URL_EXCEPTIONS` in `ahn/task_routes_data.py` maps an exact URL to the same site's
+public index page that links it. A curated_official record may carry such a URL as `official_url` or `source_url` even though
+it has a long identifier in its path or a query; the URL must equal the key character for character (case, a trailing slash
+and query order all count), the query may use `id`, `pageId` and `docId` only, each value a plain token of at most 40 letters,
+digits and hyphens that is not an e-mail address, a UUID or a run of ten or more digits, and every other rule still applies.
+The index page itself follows the ordinary rules. The live run reads each index page and requires the exact URL as a link
+(`href`) there, a 200 at that address without sign-in, and robots.txt permission; no script is run in the page, so a page that
+draws its content with scripts is left out. Add an entry only for a page you opened from that index page.
+
 Every field takes only these values (the enums in `ahn/task_routes.py` hold the same lists, and a test keeps them in agreement):
 
 - `task_kind`: `claim_unclaimed_property`, `warranty_claim`, `warranty_dispute`, `refund_request`, `return_or_exchange`, `cancel_subscription`, `account_closure`, `account_recovery`, `portal_login`, `address_or_profile_change`, `appointment_booking`, `appointment_change_or_cancel`, `records_request`, `complaint_filing`, `billing_dispute`, `fee_waiver_or_adjustment`, `insurance_claim`, `government_benefit_application`, `tax_or_government_filing`, `id_or_license_renewal`, `accommodation_request`, `prescription_refill`, `document_submission`, `other`
