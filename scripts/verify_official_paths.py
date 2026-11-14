@@ -62,7 +62,8 @@ from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS
                                 CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, CONSUMER_TOPICS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
                                 access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
-from ahn.task_routes import TaskRoute, is_current as task_route_is_current, official_url_problem, period_for, route_host  # noqa: E402
+from ahn.task_routes import (PRIVATE_SUFFIXES, TaskRoute, is_current as task_route_is_current,  # noqa: E402
+                             official_url_problem, period_for, registrable, route_host)
 from ahn.task_routes_data import TASK_ROUTES_CURATED  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
@@ -70,8 +71,8 @@ MIN_INTERVAL = 1.0
 TIMEOUT = 10.0
 MAX_HOPS = 5
 TITLE_CAP = 65_536
-# Shared hosting suffixes: a.github.io and b.github.io are different owners.
-PRIVATE_SUFFIXES = frozenset({"github.io", "gitbook.io", "readthedocs.io", "netlify.app", "vercel.app", "pages.dev"})
+# Shared hosting suffixes (a.github.io and b.github.io are different owners) and registrable() come from ahn.task_routes, so
+# the curation checks and the task-route link rules share one definition.
 # Other domains that belong to the same publisher as the table key (docs hosts, parent companies,
 # the publisher's own organisation on GitHub). Every cross-domain URL in the table must be declared here.
 PUBLISHER_DOMAINS: dict[str, set[str]] = {
@@ -242,13 +243,6 @@ OPENAPI_MARK = re.compile(rb"[\"']?(?:openapi|swagger)[\"']?\s*:\s*[\"']?[23]\."
 _TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', " ": " ", "–": "-",
                              "—": "-", "​": "", "‍": "", "﻿": ""})
 _INVISIBLE = re.compile(r"(?is)<(script|style|noscript|svg|template)\b[^>]*>.*?</\1\s*>")
-
-
-def registrable(host: str) -> str:
-    labels = host.lower().rstrip(".").split(".")
-    if len(labels) >= 3 and (".".join(labels[-2:]) in PUBLIC_SUFFIXES_2 or ".".join(labels[-2:]) in PRIVATE_SUFFIXES):
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
 
 
 # --- Access bundles: pure checks (also run by tests/test_official_access.py) ---------------------------------------
@@ -522,8 +516,9 @@ def consumer_problems(host: str, consumer, today: date | None = None) -> list[st
 def task_route_problems(host: str, route, today: date | None = None) -> list[str]:
     """Rule violations in one TASK_ROUTES_CURATED record (D117), without the network: the closed values and their
     combinations (ahn.task_routes.TaskRoute), a curated_official record from _route(), the apex key, a verified_at that is a
-    real past date, an official_url that ahn.task_routes.official_url_problem accepts and that is publisher-owned, and a
-    source_url on the site's own registrable domain that is not a sign-in page."""
+    real past date, and an official_url and source_url that ahn.task_routes.official_url_problem accepts (applied through
+    TaskRoute), that are publisher-owned and that are not sign-in pages. A hand-written record that misses a field is
+    reported as a rule problem, never a traceback."""
     problems: list[str] = []
 
     def add(field: str, problem: str | None) -> None:
@@ -548,7 +543,10 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
         return problems
     if route.get("source_kind") != "curated_official":
         add("source_kind", "a curated record is curated_official (use _route())")
-    verified = route["verified_at"]
+    verified, source = route.get("verified_at"), route.get("source_url")
+    if not isinstance(verified, str) or not isinstance(source, str):
+        add("*", "a curated record needs source_url and verified_at (use _route())")
+        return problems
     try:
         verified_on = date.fromisoformat(verified)
     except ValueError:
@@ -563,7 +561,6 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
         add("official_url", official_url_problem(host, official) or _url_problem(host, official))
         if SIGN_IN.search(urlsplit(official).path):
             add("official_url", f"a sign-in page: {official}")
-    source = route["source_url"]
     if len(source) > 200 or not SAFE_CONSUMER_URL.fullmatch(source):
         add("source_url", f"not a plain https URL of at most 200 characters: {source!r}")
     else:

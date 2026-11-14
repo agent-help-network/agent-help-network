@@ -97,8 +97,10 @@ documents name for it (a cancellation taken by phone only, a claim that needs a 
 group of users). Add a record with `_route(...)` in `ahn/task_routes_data.py` only when the site's own page states it
 outright; a hint is left out. Read pages exactly as for consumer paths above (robots.txt first, curation user agent, the site's
 own links, nothing built by hand, no phone numbers or quoted text). Keys are apex hosts; `source_url` is the page that states
-the route and `official_url`, when there is one, is the page the route starts from, linked from `source_url`. A URL with a
-query, fragment, port, six or more digits in a row, an e-mail address or a UUID-shaped segment is refused. `verified_at` is the
+the route and `official_url`, when there is one, is the page the route starts from, linked from `source_url`. Both `official_url` and
+`source_url` must be plain https pages on the key's own registrable domain (a shared host such as `github.io` counts per
+site), at most 200 characters; a URL with a query, fragment, userinfo, port, six or more digits in a row, an e-mail address or
+a UUID-shaped segment is refused for either field. `verified_at` must be a real calendar date. `verified_at` is the
 day you read the page; records older than 90 days are left out of answers until re-verified.
 
 Every field takes only these values (the enums in `ahn/task_routes.py` hold the same lists, and a test keeps them in agreement):

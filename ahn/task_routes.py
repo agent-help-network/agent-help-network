@@ -266,8 +266,18 @@ class TaskRoute(_TaskRouteFields):
     source_kind: RouteSourceKind
     sensitive: bool
     official_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
-    source_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s]+$", exclude_if=_omit_none)
+    source_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
     verified_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", exclude_if=_omit_none)
+
+    @field_validator("verified_at")
+    @classmethod
+    def real_date(cls, value):
+        if value is not None:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise ValueError("invalid_task_route: verified_at is not a real date") from None
+        return value
 
     @field_validator("period")
     @classmethod
@@ -287,6 +297,10 @@ class TaskRoute(_TaskRouteFields):
             problem = official_url_problem(self.site_host, self.official_url)
             if problem:
                 raise ValueError(f"invalid_task_route: official_url {problem}")
+        if self.source_url is not None:
+            problem = official_url_problem(self.site_host, self.source_url)
+            if problem:
+                raise ValueError(f"invalid_task_route: source_url {problem}")
         if curated != (self.source_url is not None) or curated != (self.verified_at is not None):
             raise ValueError("invalid_task_route: source_url and verified_at belong to curated_official, which needs both")
         return self
@@ -340,11 +354,18 @@ ROUTE_LINE_MAX = 240
 ROUTE_LINE_NOTICE = "Case record, not advice."
 
 
-def _registrable(host: str) -> str:
+# Shared hosting suffixes: a.github.io and b.github.io are different owners. scripts/verify_official_paths.py uses this
+# same set and registrable(), so curation checks and these rules agree on who owns a domain.
+PRIVATE_SUFFIXES = frozenset({"github.io", "gitbook.io", "readthedocs.io", "netlify.app", "vercel.app", "pages.dev"})
+
+
+def registrable(host: str) -> str:
+    """The registrable domain of a host: the last two labels, or three under a two-label public suffix (co.uk) or a shared
+    hosting suffix (github.io)."""
     from .service import PUBLIC_SUFFIXES_2
 
     labels = host.lower().rstrip(".").split(".")
-    if len(labels) >= 3 and ".".join(labels[-2:]) in PUBLIC_SUFFIXES_2:
+    if len(labels) >= 3 and (".".join(labels[-2:]) in PUBLIC_SUFFIXES_2 or ".".join(labels[-2:]) in PRIVATE_SUFFIXES):
         return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
@@ -402,7 +423,7 @@ def official_url_problem(site_host: str, url) -> str | None:
             return "not a public hostname"
     except ValueError:
         return "not a public hostname"
-    if _registrable(parts.hostname) != _registrable(site_host):
+    if registrable(parts.hostname) != registrable(site_host):
         return "not on the site's own registrable domain"
     return None
 
@@ -447,8 +468,12 @@ def is_current(route: dict, today: date | None = None) -> bool:
     verified = route.get("verified_at")
     if verified is None:
         return True
+    try:
+        verified_on = date.fromisoformat(verified)
+    except (TypeError, ValueError):
+        return False  # not a real date: never answered with (TaskRoute and the curation check refuse it too)
     today = today or datetime.now(timezone.utc).date()
-    age = (today - date.fromisoformat(verified)).days
+    age = (today - verified_on).days
     return 0 <= age <= TASK_ROUTE_MAX_AGE_DAYS
 
 
