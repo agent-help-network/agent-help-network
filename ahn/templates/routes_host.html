@@ -1,0 +1,27 @@
+{% extends "routes.html" %}
+{% block routes_title %}{{ site_host }} · {{ t.routes_title }}{% endblock %}
+{% block routes_head %}
+<section class="container page-head">
+  <p class="eyebrow"><span class="eyebrow-dot"></span>{{ t.routes_eyebrow }}</p>
+  <h1 class="host-title">{{ site_host }}</h1>
+  <p class="lead small-lead">{{ headline }}</p>
+  <p class="muted">{{ t.routes_intro }}</p>
+</section>
+{% endblock %}
+{% block routes_filters %}
+<form class="routes-filter" method="get" action="/{{ lang }}/routes/{{ site_host }}">
+  <div><label for="f-task">{{ t.routes_f_task }}</label>
+    <select id="f-task" name="task_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_task %}<option value="{{ value }}"{% if picked.task_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+  <div><label for="f-outcome">{{ t.routes_f_outcome }}</label>
+    <select id="f-outcome" name="outcome"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_outcome %}<option value="{{ value }}"{% if picked.outcome == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+  <div><label for="f-source">{{ t.routes_f_source }}</label>
+    <select id="f-source" name="source_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_source %}<option value="{{ value }}"{% if picked.source_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+  <button type="submit">{{ t.routes_f_apply }}</button>
+  {% if picked.task_kind or picked.outcome or picked.source_kind %}<a href="/{{ lang }}/routes/{{ site_host }}">{{ t.routes_f_reset }}</a>{% endif %}
+</form>
+{% endblock %}
+{% block routes_foot %}
+<p class="routes-foot"><a href="/{{ lang }}/routes">{{ t.routes_back }}</a>
+  <a href="/v1/task-routes?site_host={{ site_host }}"><code>GET /v1/task-routes</code></a> <span>{{ t.routes_api }}</span></p>
+{% if newest_only %}<p class="routes-count">{{ t.routes_newest.format(shown=shown_max, total=total) }}</p>{% endif %}
+{% endblock %}
