@@ -132,7 +132,8 @@ def registered_tools(reporting: bool, task_routes: bool = False, task_route_repo
     code = ("import asyncio, json; from ahn.mcp_adapter import mcp; "
             "print(json.dumps({t.name: sorted(t.input_schema.get('properties', {})) "
             "for t in asyncio.run(mcp.list_tools())}))")
-    env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1" if reporting else "0",
+    # AHN_TEST_MODE is pinned off as on the public deployment; another test module sets it in os.environ when imported.
+    env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_TEST_MODE": "0", "AHN_REPORTING_ENABLED": "1" if reporting else "0",
            "AHN_TASK_ROUTES": "1" if task_routes else "0", "AHN_TASK_ROUTES_SINCE": POLICY_UPDATED.isoformat(),
            "AHN_TASK_ROUTE_REPORTS": "1" if task_route_reports else "0", "AHN_TASK_ROUTE_REPORTS_SINCE": POLICY_UPDATED.isoformat()}
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)

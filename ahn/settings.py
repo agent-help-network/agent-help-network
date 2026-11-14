@@ -49,6 +49,14 @@ def task_route_reports_env_enabled() -> bool:
     return True
 
 
+def task_route_reports_tool_enabled() -> bool:
+    """Whether the MCP adapter lists report_task_route (D118): the write switch is on (task_route_reports_env_enabled) and this
+    is the public service taking reports (AHN_PUBLIC_MODE and AHN_REPORTING_ENABLED "1", AHN_TEST_MODE not "1"). The REST
+    write path answers 404 otherwise, so the tool is then not listed."""
+    return (task_route_reports_env_enabled() and os.getenv("AHN_PUBLIC_MODE") == "1" and os.getenv("AHN_REPORTING_ENABLED") == "1"
+            and os.getenv("AHN_TEST_MODE") != "1")
+
+
 def task_route_reports_served(settings: "Settings") -> bool:
     """Whether this deployment serves the task-route write path and the stored records (D118): both task-route switches with their
     dates, the public service with reporting on, and not test mode. One function, so the REST paths, the lookup's database read,
