@@ -23,6 +23,7 @@ Exit code 1 when any URL is not ok, a quote or endpoint is not found, or a rule 
     python scripts/verify_official_paths.py --hosts a.com,b.org --json work/official-paths.json
     python scripts/verify_official_paths.py --access-only --hosts stripe.com   # one access bundle
     python scripts/verify_official_paths.py --consumer-only                    # consumer paths (D61)
+    python scripts/verify_official_paths.py --task-routes-only                 # curated task routes (D117)
 
 Consumer paths (CONSUMER_PATHS, D61) are the sites' own help pages, store listings and entry links, so --consumer-only
 reads each hostname's robots.txt before its first request there (redirect targets included) and requests nothing it
@@ -54,11 +55,15 @@ sys.path.insert(0, str(ROOT))
 
 from urllib.robotparser import RobotFileParser  # noqa: E402
 
+from pydantic import ValidationError  # noqa: E402
+
 from ahn.models import valid_host  # noqa: E402
 from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS_QUOTE_MAX, CONSUMER_KINDS,  # noqa: E402
                                 CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, CONSUMER_TOPICS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
                                 access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
+from ahn.task_routes import TaskRoute, is_current as task_route_is_current, official_url_problem, period_for, route_host  # noqa: E402
+from ahn.task_routes_data import TASK_ROUTES_CURATED  # noqa: E402
 
 USER_AGENT = "AgentHelpNetwork-curation/0.1 (+https://agenthelpnetwork.com/en/policy)"
 MIN_INTERVAL = 1.0
@@ -514,6 +519,78 @@ def consumer_problems(host: str, consumer, today: date | None = None) -> list[st
     return problems
 
 
+def task_route_problems(host: str, route, today: date | None = None) -> list[str]:
+    """Rule violations in one TASK_ROUTES_CURATED record (D117), without the network: the closed values and their
+    combinations (ahn.task_routes.TaskRoute), a curated_official record from _route(), the apex key, a verified_at that is a
+    real past date, an official_url that ahn.task_routes.official_url_problem accepts and that is publisher-owned, and a
+    source_url on the site's own registrable domain that is not a sign-in page."""
+    problems: list[str] = []
+
+    def add(field: str, problem: str | None) -> None:
+        if problem:
+            problems.append(f"{host}: task_route.{field}: {problem}")
+
+    try:
+        key = route_host(host)
+    except ValueError:
+        key = None
+    if key != host:
+        add("*", "the key must be an apex host that answers for itself (policy_host) and is eligible for public totals")
+        return problems
+    if not isinstance(route, dict):
+        add("*", "must be an object made by _route()")
+        return problems
+    try:
+        TaskRoute.model_validate({"site_host": host, "sensitive": False, **route})
+    except ValidationError as error:
+        for item in error.errors():
+            add(".".join(str(part) for part in item["loc"]) or "*", item["msg"])
+        return problems
+    if route.get("source_kind") != "curated_official":
+        add("source_kind", "a curated record is curated_official (use _route())")
+    verified = route["verified_at"]
+    try:
+        verified_on = date.fromisoformat(verified)
+    except ValueError:
+        add("verified_at", "must be an ISO date YYYY-MM-DD")
+    else:
+        if verified_on > (today or datetime.now(timezone.utc).date()):
+            add("verified_at", "is in the future")
+        elif route["period"] != period_for(verified_on):
+            add("period", "must be the period of verified_at (use _route())")
+    official = route.get("official_url")
+    if official is not None:
+        add("official_url", official_url_problem(host, official) or _url_problem(host, official))
+        if SIGN_IN.search(urlsplit(official).path):
+            add("official_url", f"a sign-in page: {official}")
+    source = route["source_url"]
+    if len(source) > 200 or not SAFE_CONSUMER_URL.fullmatch(source):
+        add("source_url", f"not a plain https URL of at most 200 characters: {source!r}")
+    else:
+        add("source_url", _url_problem(host, source))
+        if registrable(urlsplit(source).hostname or "") != registrable(host):
+            add("source_url", f"not on the site's own domain: {source}")
+        if SIGN_IN.search(urlsplit(source).path):
+            add("source_url", f"a sign-in page: {source}")
+    return problems
+
+
+def task_routes_table_problems(table: dict, today: date | None = None) -> list[str]:
+    """task_route_problems for every record, plus the same record listed twice under one host."""
+    problems: list[str] = []
+    for host, routes in table.items():
+        if not isinstance(routes, list) or not routes:
+            problems.append(f"{host}: task_routes: must be a non-empty list of _route() records")
+            continue
+        seen: list[dict] = []
+        for route in routes:
+            problems += task_route_problems(host, route, today)
+            if route in seen:
+                problems.append(f"{host}: task_routes: the same record is listed twice")
+            seen.append(route)
+    return problems
+
+
 def store_links(body: bytes, base: str) -> set[str]:
     """Canonical store listings linked (href) from a page."""
     found = set()
@@ -881,17 +958,54 @@ def check_consumer(hosts: set[str] | None) -> int:
     return 1 if problems or failures else 0
 
 
+def check_task_routes(hosts: set[str] | None) -> int:
+    """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
+    source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
+    keys = [host for host in TASK_ROUTES_CURATED if not hosts or host in hosts]
+    problems = task_routes_table_problems({host: TASK_ROUTES_CURATED[host] for host in keys})
+    pages = {}
+    for host in keys:
+        paths = []
+        for route in TASK_ROUTES_CURATED[host]:
+            if not isinstance(route, dict) or not isinstance(route.get("source_url"), str):
+                continue
+            item = {"kind": "entry_link", "url": route.get("official_url") or route["source_url"], "source_url": route["source_url"]}
+            if item not in paths:
+                paths.append(item)
+        if paths:
+            pages[host] = {"paths": paths}
+    fetcher = Fetcher()
+    checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
+    failures = checker.run(pages, list(pages)) if not problems else []
+    for line in problems + failures:
+        print(f"task_routes: {line}")
+    for host in keys:
+        for route in TASK_ROUTES_CURATED[host]:
+            if isinstance(route, dict) and route.get("verified_at") and not task_route_is_current(route):
+                print(f"stale: {host} task route {route.get('task_kind')} verified_at {route['verified_at']} is left out of "
+                      "answers until re-verified")
+    for name, reason in sorted(checker.stopped.items()):
+        print(f"stopped: {name} {reason}")
+    print(f"\ntask route hosts: {len(keys)}; pages: {len(checker.pages)}; failures: {len(failures)}; "
+          f"rule problems: {len(problems)}; requests: {fetcher.requests}")
+    return 1 if problems or failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--hosts", help="comma-separated table keys to check (default: all)")
     parser.add_argument("--access-only", action="store_true", help="check only access bundles (URLs, quotes, MCP endpoints)")
     parser.add_argument("--consumer-only", action="store_true",
                         help="check only consumer paths (D61): robots.txt first, then each page, and store links on the source page")
+    parser.add_argument("--task-routes-only", action="store_true",
+                        help="check only curated task routes (D117): rules first, then robots.txt, each source page and its link")
     parser.add_argument("--json", type=Path, help="write per-URL and per-host results to this file")
     args = parser.parse_args()
     hosts = {h.strip() for h in args.hosts.split(",") if h.strip()} if args.hosts else None
     if args.consumer_only:
         return check_consumer(hosts)
+    if args.task_routes_only:
+        return check_task_routes(hosts)
     access_hosts = [host for host in OFFICIAL_ACCESS if not hosts or host in hosts]
     problems = [line for host in access_hosts for line in access_problems(host, OFFICIAL_ACCESS[host])]
     problems += [f"{host}: access bundle for a host that is not in OFFICIAL_PATHS" for host in access_hosts if host not in OFFICIAL_PATHS]
