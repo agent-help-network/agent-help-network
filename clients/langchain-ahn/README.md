@@ -4,6 +4,18 @@ LangChain integration for [Agent Help Network](https://agenthelpnetwork.com/en/a
 
 **Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, LangChain or any provider or site it describes.** This package is read-only (it has no reporting function), and it does not help get around a site's controls: the answers point to an official path, waiting, or a person.
 
+## When does the AHN line appear?
+
+This applies to `ahn_tool_failure_middleware()` (LangChain v1). The line is added only when the call's arguments name an http(s) host.
+
+| What your web tool does when a site blocks it | Line added by default? | To get it |
+|---|---|---|
+| Returns a `ToolMessage` with `status="error"` (a `ToolNode` with `handle_tool_errors`, `ToolRetryMiddleware` after its last attempt) | Yes | Nothing to do |
+| Raises (`raise_for_status()`, `httpx.HTTPStatusError`) | No: the exception is re-raised unchanged | `ahn_tool_failure_middleware(convert_exceptions=True)` |
+| Returns the 403 / "Access Denied" / CAPTCHA page as an ordinary successful result | No: LangChain does not see an error | `ahn_tool_failure_middleware(detect_blocked_text=True)` (fetch tools only; needs `langchain-ahn` 0.2.3) |
+
+Details and the exact checks are in section 2 below. Only the hostname and fixed codes leave your machine, never the page text.
+
 ## Install
 
 ```bash

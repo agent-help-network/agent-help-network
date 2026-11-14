@@ -4,6 +4,16 @@ A small Python client for [Agent Help Network](https://agenthelpnetwork.com/en/a
 
 **Agent Help Network is an independent project. It is not an official service of, and is not affiliated with, OpenAI, Meta, Muse, dots, Anthropic, or any site it describes.** `ahn-client` is read-only (it has no reporting function), has no dependencies beyond the Python standard library, and runs on Python 3.9+. The optional [framework adapters](#framework-adapters) need the framework they plug into, and with it that framework's Python version (at the versions tested, all four need Python 3.10 or newer, and Browser Use 3.11).
 
+## When does the AHN line appear? (LangChain v1 middleware)
+
+| What your web tool does when a site blocks it | Line added by default? | To get it |
+|---|---|---|
+| Returns a `ToolMessage` with `status="error"` | Yes | Nothing to do |
+| Raises (`raise_for_status()`) | No: the exception is re-raised unchanged | `ahn_tool_failure_middleware(convert_exceptions=True)` |
+| Returns the 403 / "Access Denied" / CAPTCHA page as an ordinary successful result | No | `ahn_tool_failure_middleware(detect_blocked_text=True)` (from 0.6.8; fetch tools only) |
+
+See [Framework adapters](#framework-adapters) for the other frameworks and the exact rules. The page text is never sent, only the hostname and fixed codes.
+
 ## Install
 
 ```bash
