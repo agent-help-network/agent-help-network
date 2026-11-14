@@ -36,11 +36,6 @@ def _route(task_kind: str, *, obstacle: str, source_url: str, verified_at: str, 
 
 
 TASK_ROUTES_CURATED: dict[str, list[dict]] = {
-    "target.com": [
-        _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form", "official_app", "office_visit"],
-               official_url="https://www.target.com/returns", source_url="https://www.target.com/returns",
-               verified_at="2026-11-14"),
-    ],
     "samsung.com": [
         _route("warranty_claim", obstacle="wrong_department_or_jurisdiction",
                official_url="https://www.samsung.com/us/support/warranty/",
@@ -50,11 +45,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form"],
                official_url="https://www.dell.com/en-us/shop/lp/return-policy",
                source_url="https://www.dell.com/en-us/shop/lp/return-policy", verified_at="2026-11-14"),
-    ],
-    "lg.com": [
-        _route("account_recovery", obstacle="site_requires_info_from_person", site_requires="account_holder_step",
-               official_url="https://www.lg.com/us/support/mylg-troubleshooting",
-               source_url="https://www.lg.com/us/support/mylg-troubleshooting", verified_at="2026-11-14"),
     ],
     "microsoft.com": [
         _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
@@ -75,7 +65,7 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                official_url="https://support.microsoft.com/en-us/surface/update-your-surface-warranty-with-your-proof-of-purchase",
                source_url="https://support.microsoft.com/en-us/surface/update-your-surface-warranty-with-your-proof-of-purchase",
                verified_at="2026-11-14"),
-        _route("account_recovery", obstacle="verification_step", routes=["web_form"], verification_kind="account_locked",
+        _route("account_recovery", obstacle="verification_step", verification_kind="account_locked",
                official_url="https://support.microsoft.com/en-us/accounts-billing/manage/microsoft-account-has-been-locked",
                source_url="https://support.microsoft.com/en-us/accounts-billing/manage/microsoft-account-has-been-locked",
                verified_at="2026-11-14"),
@@ -98,8 +88,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                official_url="https://www.verizon.com/support/return-policy/",
                source_url="https://www.verizon.com/support/return-policy/", verified_at="2026-11-14"),
         _route("return_or_exchange", obstacle="fee_required", official_url="https://www.verizon.com/support/return-policy/",
-               source_url="https://www.verizon.com/support/return-policy/", verified_at="2026-11-14"),
-        _route("cancel_subscription", obstacle="fee_required", official_url="https://www.verizon.com/support/return-policy/",
                source_url="https://www.verizon.com/support/return-policy/", verified_at="2026-11-14"),
     ],
 }
