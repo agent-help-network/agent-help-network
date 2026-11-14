@@ -174,4 +174,39 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                official_url="https://www.target.com/help/article/000061982",
                source_url="https://www.target.com/help/article/000061982", verified_at="2026-11-14"),
     ],
+    "ourpetpolicy.com": [
+        _route("accommodation_request", obstacle="document_missing", document_kind="professional_letter",
+               official_url="https://www.ourpetpolicy.com/resident-faq",
+               source_url="https://www.ourpetpolicy.com/resident-faq", verified_at="2026-11-14"),
+    ],
+    "classlink.com": [
+        _route("portal_login", obstacle="wrong_entry_point", routes=["different_entry_point"],
+               entry_point_kind="separate_subdomain",
+               official_url="https://www.classlink.com/blog/parents-guide-easy-classlink-access",
+               source_url="https://www.classlink.com/blog/parents-guide-easy-classlink-access", verified_at="2026-11-14"),
+    ],
+    "mazdausa.com": [
+        _route("warranty_dispute", obstacle="request_denied", routes=["designated_dispute_program"],
+               official_url="https://www.mazdausa.com/siteassets/global-resources/vehicle-resources/owner-manuals/2026/2026-warranty-information.pdf",
+               source_url="https://www.mazdausa.com/siteassets/global-resources/vehicle-resources/owner-manuals/2026/2026-warranty-information.pdf",
+               verified_at="2026-11-14"),
+    ],
+    "nissanusa.com": [
+        _route("warranty_dispute", obstacle="request_denied", routes=["designated_dispute_program"],
+               official_url="https://www.nissanusa.com/content/dam/Nissan/us/manuals-and-guides/shared/2026/2026-nissan-warranty-booklet.pdf",
+               source_url="https://www.nissanusa.com/content/dam/Nissan/us/manuals-and-guides/shared/2026/2026-nissan-warranty-booklet.pdf",
+               verified_at="2026-11-14"),
+    ],
+    "hyundaiusa.com": [
+        _route("warranty_dispute", obstacle="request_denied", routes=["designated_dispute_program"],
+               official_url="https://www.hyundaiusa.com/content/dam/hyundai/us/com/pdf/assurance/2026_owners_handbook_warranty.pdf",
+               source_url="https://www.hyundaiusa.com/content/dam/hyundai/us/com/pdf/assurance/2026_owners_handbook_warranty.pdf",
+               verified_at="2026-11-14"),
+    ],
+    "honda.com": [
+        _route("warranty_dispute", obstacle="request_denied", routes=["designated_dispute_program"],
+               official_url="https://owners.honda.com/Documentum/Warranty/Handbooks/2025_Honda_Warranty_Basebook.pdf",
+               source_url="https://owners.honda.com/Documentum/Warranty/Handbooks/2025_Honda_Warranty_Basebook.pdf",
+               verified_at="2026-11-14"),
+    ],
 }
