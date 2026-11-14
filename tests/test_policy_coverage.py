@@ -68,7 +68,8 @@ class Exempt:
 @functools.lru_cache(maxsize=None)
 def policy_html(lang: str, reporting: bool, retention_days: int = 0, task_routes: bool = False) -> str:
     settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True,
-                        reporting_enabled=reporting, report_retention_days=retention_days, task_routes=task_routes)
+                        reporting_enabled=reporting, report_retention_days=retention_days, task_routes=task_routes,
+                        task_routes_since=POLICY_UPDATED if task_routes else None)
     response = TestClient(create_app(settings)).get(f"/{lang}/policy")  # no `with`: lifespan (database) never runs
     assert response.status_code == 200
     return response.text
@@ -128,7 +129,7 @@ def registered_tools(reporting: bool, task_routes: bool = False) -> dict[str, li
             "print(json.dumps({t.name: sorted(t.input_schema.get('properties', {})) "
             "for t in asyncio.run(mcp.list_tools())}))")
     env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1" if reporting else "0",
-           "AHN_TASK_ROUTES": "1" if task_routes else "0"}
+           "AHN_TASK_ROUTES": "1" if task_routes else "0", "AHN_TASK_ROUTES_SINCE": POLICY_UPDATED.isoformat()}
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])

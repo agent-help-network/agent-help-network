@@ -22,7 +22,7 @@ os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
 from ahn import task_routes, task_routes_data
 from ahn.main import create_app
-from ahn.settings import Settings
+from ahn.settings import Settings, task_routes_env_enabled
 from ahn.task_routes import (ROUTE_LINE_NOTICE, SOURCE_LABELS, SUMMARY_MAX, TASK_ROUTE_ENUMS, TASK_ROUTES_MAX, RouteSourceKind,
                              TaskKind, lookup, summary_line)
 from ahn.task_routes_data import TASK_ROUTE_MAX_AGE_DAYS, _route
@@ -30,6 +30,7 @@ from ahn.task_routes_data import TASK_ROUTE_MAX_AGE_DAYS, _route
 ROOT = Path(__file__).resolve().parents[1]
 TODAY = datetime.now(timezone.utc).date()
 HOST = "example-retailer.com"
+SINCE = date(2026, 11, 20)
 PAGE = "https://www.example-retailer.com/help/cancel"
 HELP = "https://www.example-retailer.com/help"
 
@@ -45,7 +46,8 @@ def entry(task_kind="cancel_subscription", *, obstacle="wrong_channel", verified
 
 
 def client(task_routes_on: bool) -> TestClient:
-    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=task_routes_on)
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=task_routes_on,
+                        task_routes_since=SINCE if task_routes_on else None)
     return TestClient(create_app(settings))  # no `with`: the lifespan (database) never runs
 
 
@@ -66,8 +68,10 @@ def tools(task_routes_flag: str | None, reporting: str = "1") -> dict:
             "'output_schema': t.output_schema} for t in asyncio.run(mcp.list_tools())}))")
     env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": reporting}
     env.pop("AHN_TASK_ROUTES", None)
+    env.pop("AHN_TASK_ROUTES_SINCE", None)
     if task_routes_flag is not None:
         env["AHN_TASK_ROUTES"] = task_routes_flag
+        env["AHN_TASK_ROUTES_SINCE"] = SINCE.isoformat()
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -97,11 +101,52 @@ def test_switch_off_the_policy_does_not_mention_task_routes():
 def test_settings_read_the_switch_from_the_environment(monkeypatch):
     monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://invalid/unused")
     monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 32)
-    for value, expected in (("", False), ("0", False), ("true", False), ("1", True), (" 1 ", True)):
+    monkeypatch.setenv("AHN_TASK_ROUTES_SINCE", "2026-11-20")
+    for value, expected in (("", False), ("0", False), ("true", False), ("1", True), (" 1 ", True), ("1\t", True)):
         monkeypatch.setenv("AHN_TASK_ROUTES", value)
-        assert Settings.from_env().task_routes is expected
+        settings = Settings.from_env()
+        assert settings.task_routes is expected
+        assert settings.task_routes_since == (SINCE if expected else None)
+        assert task_routes_env_enabled() is expected  # the MCP adapter reads the switch the same way
     monkeypatch.delenv("AHN_TASK_ROUTES")
-    assert Settings.from_env().task_routes is False
+    assert Settings.from_env().task_routes is False and task_routes_env_enabled() is False
+
+
+@pytest.mark.parametrize("since", [None, "", "soon", "2026-13-01"])
+def test_the_switch_without_a_valid_since_date_turns_nothing_on(monkeypatch, since):
+    monkeypatch.setenv("AHN_DATABASE_URL", "postgresql://invalid/unused")
+    monkeypatch.setenv("AHN_KEY_PEPPER", "x" * 32)
+    monkeypatch.setenv("AHN_TASK_ROUTES", "1")
+    if since is None:
+        monkeypatch.delenv("AHN_TASK_ROUTES_SINCE", raising=False)
+    else:
+        monkeypatch.setenv("AHN_TASK_ROUTES_SINCE", since)
+    assert task_routes_env_enabled() is False  # the MCP adapter lists no tool
+    with pytest.raises(RuntimeError, match="AHN_TASK_ROUTES_SINCE"):  # as AHN_PUBLIC_BOARD and AHN_PUBLIC_BUNDLE refuse to start
+        Settings.from_env()
+    # Built directly (a test, or a caller that skips from_env), the app behaves as if the switch were off.
+    app_client = TestClient(create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, task_routes=True)))
+    assert app_client.get("/v1/task-routes", params={"site_host": HOST}).status_code == 404
+    assert "find_task_route" not in app_client.get("/en/policy").text
+
+
+def policy_page(**options) -> str:
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, **options)
+    return " ".join(TestClient(create_app(settings)).get("/en/policy").text.split())
+
+
+def test_the_policy_date_follows_the_since_date_only_while_task_routes_are_on():
+    from ahn.main import POLICY_UPDATED
+
+    base = policy_page()
+    assert policy_page(task_routes=True) == base  # no SINCE: the page of the switch off, character for character
+    assert policy_page(task_routes_since=SINCE) == base  # a date alone turns nothing on
+    moved = POLICY_UPDATED + timedelta(days=30)
+    later = policy_page(task_routes=True, task_routes_since=moved)
+    assert f"Last updated {moved:%B} {moved.day}, {moved.year}." in later
+    assert f"Last updated {moved:%B} {moved.day}, {moved.year}." not in base
+    earlier = policy_page(task_routes=True, task_routes_since=POLICY_UPDATED - timedelta(days=30))
+    assert f"Last updated {POLICY_UPDATED:%B} {POLICY_UPDATED.day}, {POLICY_UPDATED.year}." in earlier  # never moves back
 
 
 # --- Switch on: the REST answer ---------------------------------------------------------------------------------------------
@@ -129,6 +174,25 @@ def test_an_unrelated_host_gets_an_empty_answer_not_an_error(monkeypatch, on):
         assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS
     assert on.get("/v1/task-routes", params={"site_host": "other-example.org", "task_kind": "refund_request"}).json()["summary_line"] == \
         task_routes.SUMMARY_NO_RECORDS_FOR_KIND
+
+
+def test_a_tenant_subdomain_gets_the_empty_answer_and_a_generic_one_gets_the_apex_records(monkeypatch, on):
+    item = {**entry(), "source_url": "https://www.classlink.com/help", "official_url": "https://www.classlink.com/help/x"}
+    table(monkeypatch, {"classlink.com": [item], HOST: [entry()]})
+    apex = on.get("/v1/task-routes", params={"site_host": "classlink.com"}).json()
+    assert apex["counts"]["records"] == 1
+    for tenant in ("springfield.classlink.com", "x.springfield.classlink.com", "support.springfield.classlink.com"):
+        body = on.get("/v1/task-routes", params={"site_host": tenant}).json()
+        assert body["routes"] == [] and body["counts"]["records"] == 0, tenant
+        assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS
+    for generic in ("www.classlink.com", "support.classlink.com", "help.classlink.com", "support.help.classlink.com"):
+        body = on.get("/v1/task-routes", params={"site_host": generic}).json()
+        assert body["routes"] == apex["routes"] and body["counts"] == apex["counts"], generic
+    # A two-label public suffix works as it does elsewhere: the apex is three labels.
+    shop = {**entry(), "source_url": "https://www.example-shop.co.uk/help", "official_url": "https://www.example-shop.co.uk/help/x"}
+    table(monkeypatch, {"example-shop.co.uk": [shop]})
+    assert on.get("/v1/task-routes", params={"site_host": "support.example-shop.co.uk"}).json()["counts"]["records"] == 1
+    assert on.get("/v1/task-routes", params={"site_host": "tenant.example-shop.co.uk"}).json()["counts"]["records"] == 0
 
 
 def test_the_empty_table_answers_200_with_no_records(on):
@@ -347,23 +411,60 @@ def test_find_task_route_returns_the_line_first_and_json_second_with_urls_only_i
 def test_find_task_route_with_no_record_and_with_an_empty_task_kind(monkeypatch):
     table(monkeypatch, {})
     server = mcp_with_tool()
-    for arguments in ({"site_host": HOST}, {"site_host": HOST, "task_kind": ""}, {"site_host": HOST, "task_kind": None}):
+    for arguments in ({"site_host": HOST}, {"site_host": HOST, "task_kind": None}):
         result = asyncio.run(server.call_tool("find_task_route", arguments))
         assert result.content[0].text == task_routes.SUMMARY_NO_RECORDS
         assert result.structured_content["routes"] == []
 
 
-@pytest.mark.parametrize("arguments", [
-    {"site_host": "not a host"}, {"site_host": "localhost"}, {"site_host": HOST, "task_kind": "nope"},
-    {"site_host": HOST, "task_kind": 5}, {"site_host": HOST, "task_kind": {"a": 1}},
-])
-def test_find_task_route_refuses_bad_input_without_echoing_it(arguments):
+# One list of queries, answered by both entry points: the same answer or the same error code.
+PARITY = [
+    ({"site_host": HOST}, None), ({"site_host": "WWW." + HOST.upper() + "."}, None), ({"site_host": "https://" + HOST + "/"}, None),
+    ({"site_host": " " + HOST + " "}, None), ({"site_host": "support." + HOST}, None),
+    ({"site_host": HOST, "task_kind": "cancel_subscription"}, None), ({"site_host": HOST, "task_kind": "refund_request"}, None),
+    ({"site_host": ""}, "invalid_site_host"), ({"site_host": "not a host zzqq"}, "invalid_site_host"),
+    ({"site_host": "localhost"}, "invalid_site_host"), ({"site_host": "127.0.0.1"}, "invalid_site_host"),
+    ({"site_host": HOST + "/path?q=zzqq"}, "invalid_site_host"),
+    ({"site_host": HOST, "task_kind": ""}, "invalid_task_kind"), ({"site_host": HOST, "task_kind": "nopezzqq"}, "invalid_task_kind"),
+    ({"site_host": HOST, "task_kind": "Cancel_Subscription"}, "invalid_task_kind"),
+]
+
+
+@pytest.mark.parametrize("arguments,error", PARITY)
+def test_rest_and_mcp_give_the_same_answer_or_the_same_error_for_the_same_input(monkeypatch, on, arguments, error):
     from mcp.server.mcpserver.exceptions import ToolError
 
+    table(monkeypatch, {HOST: [entry(), entry("refund_request", obstacle="eligibility_unclear", routes=(), worked=None)]})
+    rest = on.get("/v1/task-routes", params=arguments)
     server = mcp_with_tool()
+    if error is None:
+        result = asyncio.run(server.call_tool("find_task_route", arguments))
+        assert rest.status_code == 200 and rest.json() == result.structured_content
+        assert rest.json()["counts"]["records"] >= 1
+    else:
+        assert rest.status_code == 400 and rest.json() == {"error": error}
+        with pytest.raises(ToolError) as raised:
+            asyncio.run(server.call_tool("find_task_route", arguments))
+        assert error in str(raised.value)
+        for text in (rest.text, str(raised.value)):  # neither echoes what was sent
+            assert "zzqq" not in text and HOST not in text
+
+
+@pytest.mark.parametrize("arguments", [{"site_host": HOST, "task_kind": 5}, {"site_host": HOST, "task_kind": {"a": 1}},
+                                       {"site_host": HOST, "task_kind": ["refund_request"]}])
+def test_find_task_route_refuses_a_task_kind_that_is_not_a_string_with_the_code_only(arguments):
+    from mcp.server.mcpserver.exceptions import ToolError
+
     with pytest.raises(ToolError) as error:
-        asyncio.run(server.call_tool("find_task_route", arguments))
-    assert "nope" not in str(error.value) or "must be one of" in str(error.value)
+        asyncio.run(mcp_with_tool().call_tool("find_task_route", arguments))
+    assert "invalid_task_kind" in str(error.value) and "refund" not in str(error.value)
+
+
+def test_the_tool_sees_a_tenant_subdomain_as_the_rest_path_does(monkeypatch, on):
+    table(monkeypatch, {"classlink.com": [{**entry(), "source_url": "https://www.classlink.com/help", "official_url": "https://www.classlink.com/help/x"}]})
+    result = asyncio.run(mcp_with_tool().call_tool("find_task_route", {"site_host": "springfield.classlink.com"}))
+    assert result.structured_content["routes"] == []
+    assert on.get("/v1/task-routes", params={"site_host": "springfield.classlink.com"}).json() == result.structured_content
 
 
 def test_find_task_route_is_read_only_and_every_argument_is_described():

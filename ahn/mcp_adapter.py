@@ -21,6 +21,7 @@ from .check_text import VENDOR_NAMES, age_text, unfollowed_www_redirect
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, TEST_QUERY, WHY_BASE, lenient_codes, test_marked, why_url
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
+from .settings import task_routes_env_enabled
 from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
@@ -344,7 +345,7 @@ def open_output_schema(schema):
     return schema
 
 
-if os.getenv("AHN_TASK_ROUTES") == "1":  # off by default: the tool is then not listed
+if task_routes_env_enabled():  # off by default: the tool is then not listed
     from .mcp_task_routes import register as register_task_routes
     register_task_routes(mcp)
 

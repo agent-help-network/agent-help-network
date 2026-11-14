@@ -231,7 +231,8 @@ def tools_in(public: str, reporting: str, switch: str = "1") -> dict:
     code = ("import asyncio, json; from ahn.mcp_adapter import mcp; "
             "print(json.dumps({t.name: [t.input_schema, t.annotations.model_dump(), t.description, t.output_schema] "
             "for t in asyncio.run(mcp.list_tools())}))")
-    env = {**os.environ, "AHN_PUBLIC_MODE": public, "AHN_REPORTING_ENABLED": reporting, "AHN_LOOKUP_FEEDBACK": switch}
+    env = {key: value for key, value in os.environ.items() if key not in ("AHN_TASK_ROUTES", "AHN_TASK_ROUTES_SINCE", "AHN_TASK_ROUTE_REPORTS")}
+    env.update({"AHN_PUBLIC_MODE": public, "AHN_REPORTING_ENABLED": reporting, "AHN_LOOKUP_FEEDBACK": switch})
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
