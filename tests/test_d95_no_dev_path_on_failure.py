@@ -35,6 +35,8 @@ _spec.loader.exec_module(pre)
 _spec_rg = importlib.util.spec_from_file_location("pre_d95_response_guide", HERE / "_pre_d95_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec_rg)
 _spec_rg.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 
 PORTAL = {"name": "Example", "api_docs": None, "developer_portal": "https://developer.example.com/", "note": None}
 ERROR_PROFILE = {"robots_status": "error", "robots": None, "freshness": "pending", "llms_txt_status": "absent"}

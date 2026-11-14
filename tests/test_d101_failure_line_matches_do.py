@@ -38,6 +38,8 @@ _spec.loader.exec_module(pre)
 _spec_rg = importlib.util.spec_from_file_location("pre_d101_response_guide", HERE / "_pre_d101_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec_rg)
 _spec_rg.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 
 FULL = os.environ.get("AHN_D101_FULL") == "1"   # the one-off full walk of the grid (the PR numbers); the suite walks every 29th case
 HELP = "https://www.example.com/help"
@@ -220,9 +222,9 @@ def test_a_customer_page_on_another_site_or_after_a_5xx_keeps_the_answer_from_be
 
 
 FIVE_XX = {
-    "U7-H": "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Tell your user now; they can open the page themselves.",
-    "U6-H": "AHN cannot judge a single page's 5xx; the site also refused AHN's plain robots.txt read. Tell your user now; they can open the page themselves.",
-    "U9-H": "AHN cannot judge a single page's 5xx, and has no declared policy for this host. Tell your user now; they can open the page themselves.",
+    "U7-H": "AHN cannot judge a single page's timeout or 5xx, and could not read the site's robots.txt. Tell your user now; they can open the page themselves.",
+    "U6-H": "AHN cannot judge a single page's timeout or 5xx; the site also refused AHN's plain robots.txt read. Tell your user now; they can open the page themselves.",
+    "U9-H": "AHN cannot judge a single page's timeout or 5xx, and has no declared policy for this host. Tell your user now; they can open the page themselves.",
 }
 FIVE_XX["U7-O-H"] = FIVE_XX["U7-H"] + " API work: official_paths."
 FIVE_XX["U9-O-H"] = FIVE_XX["U9-H"] + " API work: official_paths."

@@ -139,7 +139,7 @@ def test_the_5xx_sentence_keeps_the_way_to_the_person_when_a_customer_path_is_cu
         if official is curated:
             assert new["next_action"]["customer_url"] == help_url
             assert new["summary_line"] == SERVICE_ERROR_CONSUMER_ROWS["P1"]
-            assert new["summary_line"].endswith("tell your user and hand them next_action.customer_url.")
+            assert new["summary_line"].endswith("tell your user; hand them next_action.customer_url.")
         else:
             assert "customer_url" not in new["next_action"] and new["summary_line"] == SERVICE_ERROR_ROWS["P1"]
 

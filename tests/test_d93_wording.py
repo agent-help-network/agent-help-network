@@ -32,6 +32,8 @@ from ahn.triage import failure_observed  # noqa: E402
 _spec = importlib.util.spec_from_file_location("pre_d93_response_guide", HERE / "_pre_d93_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 
 CHANGED_ROWS = ("O1", "O7", "O7-N", "O7-K", "U8")
 OFFICIAL_ROWS = ("O1", "O7", "O7-N", "O7-K")

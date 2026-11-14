@@ -39,14 +39,30 @@ def no_path_sentence(row, error_class, stage, customer):
         return head + ("Check your tool; retry once later, then hand your user next_action.customer_url." if customer
                        else "Check your tool and path; retry once later; then tell your user.")
     if error_class == "service_error":
-        head = f"AHN cannot judge a single page's 5xx{_CAUSE_5XX[row]}. "
+        head = f"AHN cannot judge a single page's timeout or 5xx{_CAUSE_5XX[row]}. "
         return head + ("Retry once later; if it persists, tell your user and hand them next_action.customer_url." if customer
                        else "Retry once later; if it persists, tell your user.")
     return _CUSTOMER_TAIL[row] if customer else None
 
 
+def _d116_refusal(old_out, row, kind, error_class, stage):
+    """D116: a reported refusal (site_access / access_denial_observed) on a blocked-mode proceed row gets the resolved sentence."""
+    if not (kind and (error_class == "site_access" or stage == "access_denial_observed")):
+        return None
+    for plain, refused in ((response_guide.BLOCKED_PROCEED_ROWS, response_guide.REFUSED_PROCEED_ROWS),
+                           (response_guide.BLOCKED_PROCEED_CONSUMER_ROWS, response_guide.REFUSED_PROCEED_CONSUMER_ROWS)):
+        if row in refused and old_out.get("summary_line") == plain[row]:
+            out = copy.deepcopy(old_out)
+            out["summary_line"] = refused[row]
+            return out
+    return None
+
+
 def adjust(old_out, row, on, status_check, error_class, stage, kind, official):
     """The answer of the older guide, as D97 changes it (a deep copy), or ``old_out`` itself when D97 does not apply."""
+    refused = _d116_refusal(old_out, row, kind, error_class, stage)
+    if refused is not None:
+        return refused
     if not (kind and on and not status_check and row in ("U6", "U7", "U9")):
         return old_out
     customer = customer_of(official)

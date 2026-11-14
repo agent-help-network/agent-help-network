@@ -185,7 +185,7 @@ def test_with_a_task_context_the_summary_is_the_lookups_own_and_nothing_else_cha
 def test_the_noctx_unknown_names_no_english_and_still_points_to_the_customer_page():
     en, ko = X.TEMPLATES["S-G-NOCTX"]["en"], X.TEMPLATES["S-G-NOCTX"]["ko"]
     assert "hand that step to your user" in en and "next_action.customer_url" in en
-    assert ko == "AHN 은 무슨 작업인지 듣지 못했어요. 사용자 본인 계정의 일이면 그 단계는 사용자에게 넘기세요(고객 페이지가 있으면 next_action.customer_url)."
+    assert ko == "AHN은 무슨 작업인지 듣지 못했어요. 사용자 본인 계정의 일이면 그 단계는 사용자에게 넘기세요(고객 페이지가 있으면 next_action.customer_url)."
     for body in (run(stop_point="page_blank_or_blocked", lang="ko"), run(lang="ko")):
         unknown = next(u for u in body["what_happened"]["unknowns"] if u["template_id"] == "S-G-NOCTX")
         assert unknown["text"] == ko and english_sentences(unknown["text"]) == []

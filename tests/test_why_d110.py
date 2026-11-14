@@ -256,7 +256,7 @@ def test_no_template_hard_codes_a_particle_after_a_blank():
 def test_the_korean_user_handoff_has_no_particle_after_the_tool_name(platform):
     body = run(lang="ko", agent_platform=platform, stop_point="site_login")
     line = user_line(body)
-    assert "에이전트 이" not in line and "도구: " not in line and " 에서 하다가 끝내지 못했어요" in line and "—" not in line
+    assert "에이전트 이" not in line and "도구: " not in line and "에서 하다가 끝내지 못했어요" in line and "—" not in line
 
 
 def test_a_korean_answer_marks_the_english_server_sentence():

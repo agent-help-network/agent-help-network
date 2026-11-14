@@ -200,7 +200,7 @@ def test_the_code_follows_every_maintenance_only_wait_and_nothing_else():
 def test_the_texts_say_no_incident_and_maintenance_and_keep_the_wait():
     en, ko = CHECKS[CODE], CHECKS_KO[CODE]
     assert "announced no incident" in en and "maintenance in progress" in en and "still waits" in en
-    assert "사건은 없습니다" in ko and "진행 중인 점검뿐" in ko and "대기는 유지" in ko
+    assert "사건은 없어요" in ko and "진행 중인 점검뿐" in ko and "대기는 유지" in ko
     for text in (en, ko):
         assert "provider_scope_partial" in text and "basis" in text and "active_incidents" in text
         assert not re.search(r"continue|진행하세요", text)  # the answer still waits: the text never says to go ahead

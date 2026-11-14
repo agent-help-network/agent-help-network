@@ -24,6 +24,22 @@ BLANKS = frozenset({
 
 TEMPLATES: dict[str, dict[str, str]] = {}
 
+# D116: a Korean particle after a blank is written with a space after the blank, which suits a blank filled with a Latin name, a host or a number
+# ("Claude in Chrome 에서", "example.com 의"). A blank filled with a Korean word takes the particle without a space ("에이전트에서"):
+# attach_particles removes the space for the values that end in Hangul, so a template is written once.
+_PARTICLES = ("에서", "에는", "에도", "에게", "으로", "로", "의", "은", "는", "이", "가", "을", "를", "에", "도", "만", "와", "과", "부터", "까지")
+_AFTER_BLANK = re.compile(r"\{(\w+)\} (" + "|".join(_PARTICLES) + r")(?![가-힣])")
+
+
+def attach_particles(template: str, values: dict[str, Any]) -> str:
+    def join(match):
+        value = values.get(match.group(1))
+        if isinstance(value, str) and value and "가" <= value[-1] <= "힣":
+            return "{" + match.group(1) + "}" + match.group(2)
+        return match.group()
+
+    return _AFTER_BLANK.sub(join, template)
+
 
 def _t(template_id: str, en: str, ko: str) -> None:
     TEMPLATES[template_id] = {"en": en, "ko": ko}
@@ -32,34 +48,34 @@ def _t(template_id: str, en: str, ko: str) -> None:
 # --- L1 site ----------------------------------------------------------------------------------------------------------
 _t("S-L1A-ALLOW",
    "The robots.txt AHN read for {host} on {date} does not disallow the site root for {token_scope}. It states crawler rules only and does not show that your step will work.",
-   "AHN 이 {date} 에 읽은 {host} 의 robots.txt 는 {token_scope} 에 대해 사이트 루트를 막지 않아요. 크롤러 규칙의 선언일 뿐, 당신의 단계가 될 거라는 뜻은 아니에요.")
+   "AHN이 {date} 에 읽은 {host} 의 robots.txt 는 {token_scope} 에 대해 사이트 루트를 막지 않아요. 크롤러 규칙의 선언일 뿐, 당신의 단계가 될 거라는 뜻은 아니에요.")
 _t("S-L1A-ABSENT",
    "When AHN read {host} on {date}, the site had no robots.txt, so it declares no crawler rules there. That does not show that your step will work.",
-   "AHN 이 {date} 에 읽었을 때 {host} 에는 robots.txt 가 없었어요. 그곳에 선언된 크롤러 규칙이 없다는 뜻일 뿐, 당신의 단계가 될 거라는 뜻은 아니에요.")
+   "AHN이 {date} 에 읽었을 때 {host} 에는 robots.txt 가 없었어요. 그곳에 선언된 크롤러 규칙이 없다는 뜻일 뿐, 당신의 단계가 될 거라는 뜻은 아니에요.")
 _t("S-L1A-BLOCK",
    "The robots.txt AHN read for {host} on {date} disallows the site root for {token_scope}. This is the site's declaration; AHN cannot confirm it is what stopped your step.",
-   "AHN 이 {date} 에 읽은 {host} 의 robots.txt 는 {token_scope} 에 대해 사이트 루트를 막아요. 사이트의 선언이며, 이것이 당신의 단계를 멈춘 원인인지는 AHN 이 확인하지 못해요.")
+   "AHN이 {date} 에 읽은 {host} 의 robots.txt 는 {token_scope} 에 대해 사이트 루트를 막아요. 사이트의 선언이며, 이것이 당신의 단계를 멈춘 원인인지는 AHN이 확인하지 못해요.")
 _t("S-L1A-SOME",
    "The robots.txt AHN read for {host} on {date} blocks some agent tokens but not all agents (*).",
-   "AHN 이 {date} 에 읽은 {host} 의 robots.txt 는 일부 에이전트 토큰을 막지만 모든 에이전트(*)를 막지는 않아요.")
+   "AHN이 {date} 에 읽은 {host} 의 robots.txt 는 일부 에이전트 토큰을 막지만 모든 에이전트(*)를 막지는 않아요.")
 _t("S-L1A-BACKGROUND-BROWSER",
    "The same step works in your usual browser, so AHN treats this site's robots.txt as background here, not as the deciding layer.",
-   "같은 단계가 보통 브라우저에서는 되므로, AHN 은 이 사이트의 robots.txt 를 결정 층이 아니라 참고로 둬요.")
+   "같은 단계가 보통 브라우저에서는 되므로, AHN은 이 사이트의 robots.txt 를 결정 층이 아니라 참고로 둬요.")
 _t("S-L1A-BACKGROUND-ACCOUNT",
    "robots.txt states crawler rules; it does not say whether a signed-in person's agent can finish a task in their own account. AHN treats it as background here.",
    "robots.txt 는 크롤러 규칙이에요. 로그인한 사람의 에이전트가 자기 계정의 작업을 끝낼 수 있는지는 말해 주지 않아요. 그래서 여기서는 참고로 둬요.")
 _t("S-L1A-UNREAD",
    "AHN has no usable read of this site's robots.txt ({state}). Its declared policy is unknown, not permissive.",
-   "AHN 은 이 사이트의 robots.txt 를 쓸 수 있게 읽지 못했어요({state}). 선언 정책은 \"허용\"이 아니라 \"모름\"이에요.")
+   "AHN은 이 사이트의 robots.txt 를 쓸 수 있게 읽지 못했어요({state}). 선언 정책은 \"허용\"이 아니라 \"모름\"이에요.")
 _t("S-L1A-STALE",
    "This read is from {date} and may be out of date.",
    "이 읽기는 {date} 기준이라 지금과 다를 수 있어요.")
 _t("S-L1A-TOKEN-UNDOC",
    "{vendor}'s official documentation does not say which robots.txt token, if any, {platform} sends, so AHN cannot say which rule group applies to it.",
-   "{vendor} 공식 문서에는 어떤 robots.txt 토큰을 보내는지(보내기는 하는지) 적혀 있지 않아요(제품: {platform}). 그래서 어느 규칙 묶음이 적용되는지 AHN 이 말할 수 없어요.")
+   "{vendor} 공식 문서에는 어떤 robots.txt 토큰을 보내는지(보내기는 하는지) 적혀 있지 않아요(제품: {platform}). 그래서 어느 규칙 묶음이 적용되는지 AHN이 말할 수 없어요.")
 _t("S-L1B-NOSEE",
    "AHN does not observe bot-defense systems on this site, so it cannot say whether one is in use or recently changed.",
-   "AHN 은 이 사이트의 봇 방어 체계를 관측하지 않아요. 쓰는지, 최근 바뀌었는지 말할 수 없어요.")
+   "AHN은 이 사이트의 봇 방어 체계를 관측하지 않아요. 쓰는지, 최근 바뀌었는지 말할 수 없어요.")
 _t("S-L1B-AHN-HOME",
    "When AHN's server requested {host}'s home page on {date}, it received {outcome_words}{vendor_part}. Your tool may get a different answer.",
    "AHN 서버가 {date} 에 {host} 의 홈 페이지를 요청했을 때 받은 것은 {outcome_words}{vendor_part} 였어요. 당신의 도구는 다른 답을 받을 수 있어요.")
@@ -74,40 +90,40 @@ _t("S-L1D-ACTIVE-NOTIME",
    "{provider} 상태 페이지 표시: {indicator}(AHN 읽기 {time2}). 쓸 수 있는 시작 시각은 적혀 있지 않아요.")
 _t("S-L1D-CLEAR",
    "{provider}'s status page showed no announced incident when AHN read it at {time}. That does not confirm the site works.",
-   "AHN 이 {time} 에 읽은 {provider} 상태 페이지에는 발표된 장애가 없었어요. 사이트가 정상이라는 확인은 아니에요.")
+   "AHN이 {time} 에 읽은 {provider} 상태 페이지에는 발표된 장애가 없었어요. 사이트가 정상이라는 확인은 아니에요.")
 # D110: the overall indicator reads operational but the page lists an unresolved incident (the T6 reading of the lookup, D100).
 _t("S-L1D-UNRESOLVED",
    "{provider}'s status page lists an unresolved incident, though its overall indicator reads operational (AHN read it at {time}). Check whether it touches your step.",
    "{provider} 상태 페이지의 전체 표시는 정상이지만 미해결 사건이 올라 있어요(AHN 읽기 {time}). 당신의 단계에 닿는지 확인해 보세요.")
 _t("S-L1D-NONE",
    "AHN has no connected status feed for this site.",
-   "AHN 에는 이 사이트의 상태 피드가 연결돼 있지 않아요.")
+   "AHN에는 이 사이트의 상태 피드가 연결돼 있지 않아요.")
 _t("S-L1E-CHANGED",
    "On {date}, AHN recorded a change in {host}'s {field_words}: {from_words} to {to_words}.",
-   "{date} 에 AHN 이 {host} 의 {field_words} 변화를 기록했어요: {from_words} 에서 {to_words} 로.")
+   "{date} 에 AHN이 {host} 의 {field_words} 변화를 기록했어요: {from_words} 에서 {to_words} 로.")
 # D110: a change of AHN's own home-page check says what AHN's request got, never what the site set. A bot-defense marker is
 # recorded only when that request got a challenge, so "no marker" means no challenge that time, not that the site removed one.
 _t("S-L1E-HOME-CHALLENGE-ON",
    "On {date}, AHN's home-page check of {host} started getting a {vendor} challenge. This is what AHN's own request got, not a site setting AHN read.",
-   "{date} 에 AHN 의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받기 시작했어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+   "{date} 에 AHN의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받기 시작했어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
 _t("S-L1E-HOME-CHALLENGE-OFF",
    "On {date}, AHN's home-page check of {host} stopped getting a {vendor} challenge. This is what AHN's own request got, not a site setting AHN read.",
-   "{date} 에 AHN 의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받지 않게 됐어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+   "{date} 에 AHN의 {host} 홈 페이지 확인이 {vendor} 챌린지를 받지 않게 됐어요. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
 _t("S-L1E-HOME-CHALLENGE-SWAP",
    "On {date}, AHN's home-page check of {host} got a {to_words} challenge where it had got a {from_words} challenge. This is what AHN's own request got, not a site setting AHN read.",
-   "{date} 에 AHN 의 {host} 홈 페이지 확인이 받은 챌린지가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
+   "{date} 에 AHN의 {host} 홈 페이지 확인이 받은 챌린지가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과이지 사이트 설정을 읽은 것이 아니에요.")
 _t("S-L1E-HOME-OUTCOME",
    "On {date}, AHN's home-page check of {host} got {to_words} where it had got {from_words}. This is what AHN's own request got.",
-   "{date} 에 AHN 의 {host} 홈 페이지 확인 결과가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과예요.")
+   "{date} 에 AHN의 {host} 홈 페이지 확인 결과가 바뀌었어요: {from_words} → {to_words}. AHN 자신의 요청이 받은 결과예요.")
 _t("S-L1E-FLAP",
    "AHN's own check results went back and forth in this period; this change alone does not show that the site changed.",
    "이 기간에 AHN 확인 결과가 흔들렸어요. 이 변화만으로 사이트가 바뀌었다고 볼 수 없어요.")
 _t("S-L1E-UNCHANGED",
    "AHN recorded no change in {host}'s declared files or home-page check from {date} to {date2}. It reads them about once a day to once a week and sees nothing between reads.",
-   "{date}~{date2} 에 AHN 이 기록한 {host} 의 선언 파일·홈 페이지 확인에는 변화가 없었어요. 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요.")
+   "{date}~{date2} 에 AHN이 기록한 {host} 의 선언 파일·홈 페이지 확인에는 변화가 없었어요. 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요.")
 _t("S-L1-CAUSE",
    "AHN's stored measurements for {host} say: {cause_line}",
-   "AHN 이 저장한 {host} 의 측정은 이렇게 말해요: {cause_line}")
+   "AHN이 저장한 {host} 의 측정은 이렇게 말해요: {cause_line}")
 
 # --- L2 platform ------------------------------------------------------------------------------------------------------
 _t("S-L2-DOC",
@@ -121,22 +137,22 @@ _t("S-L2-PROHIBITED",
    "{platform} 문서({url})는 하지 않는 행동 목록에 이런 문구를 적어요: \"{quote}\"")
 _t("S-L2-NOCLASS",
    "AHN does not judge whether this site falls under that description.",
-   "이 사이트가 그 설명에 드는지는 AHN 이 판단하지 않아요.")
+   "이 사이트가 그 설명에 드는지는 AHN이 판단하지 않아요.")
 _t("S-L2-CONFLICT",
    "{platform}'s official pages describe this differently (\"{quote}\" / \"{quote2}\"). AHN does not choose between them.",
-   "{platform} 공식 문서끼리 이 부분을 다르게 적어요(\"{quote}\" / \"{quote2}\"). AHN 은 어느 쪽인지 고르지 않아요.")
+   "{platform} 공식 문서끼리 이 부분을 다르게 적어요(\"{quote}\" / \"{quote2}\"). AHN은 어느 쪽인지 고르지 않아요.")
 _t("S-L2-NODOC",
    "AHN found no official documentation from {vendor} on which sites {platform} limits or how it handles sign-in (checked {date}). AHN cannot say whether a {platform} rule is involved.",
-   "어떤 사이트를 제한하는지·로그인을 어떻게 다루는지 적은 공식 문서를 AHN 이 찾지 못했어요(회사: {vendor}, 제품: {platform}, {date} 확인). 제품({platform})의 규칙이 관련됐는지 AHN 은 말할 수 없어요.")
+   "어떤 사이트를 제한하는지·로그인을 어떻게 다루는지 적은 공식 문서를 AHN이 찾지 못했어요(회사: {vendor}, 제품: {platform}, {date} 확인). 제품({platform})의 규칙이 관련됐는지 AHN은 말할 수 없어요.")
 _t("S-L2-UNREAD",
    "{vendor} publishes a help page on this ({url}), but AHN could not read it (checked {date}): {unread_reason}.",
-   "관련 도움말({url}, 발행: {vendor})이 있지만 AHN 은 읽지 못했어요({date} 확인): {unread_reason}.")
+   "관련 도움말({url}, 발행: {vendor})이 있지만 AHN은 읽지 못했어요({date} 확인): {unread_reason}.")
 _t("S-L2-NOT-REVIEWED",
    "AHN has not reviewed {platform}'s documentation yet.",
-   "AHN 은 아직 {platform} 문서를 검토하지 않았어요.")
+   "AHN은 아직 {platform} 문서를 검토하지 않았어요.")
 _t("S-L2-NOLIST",
    "{platform} does not publish a full list of the sites it limits, and AHN does not try to rebuild one.",
-   "제한하는 사이트의 전체 목록은 공개돼 있지 않고(제품: {platform}), AHN 은 그것을 복원하려 하지 않아요.")
+   "제한하는 사이트의 전체 목록은 공개돼 있지 않고(제품: {platform}), AHN은 그것을 복원하려 하지 않아요.")
 _t("S-L2-MSG-MATCH",
    "You chose the message {platform}'s documentation shows when {mechanism}. If your screen shows it, that documentation is the place to look next.",
    "고른 메시지는 {platform} 문서가 \"{mechanism}\" 때 뜬다고 적은 문구예요. 화면에 그 문구가 보이면 다음으로 볼 곳은 그 문서예요.")
@@ -147,7 +163,7 @@ _t("S-L2-MSG-OTHER-PLATFORM",
 # --- L3 account and agent environment ---------------------------------------------------------------------------------
 _t("S-L3-SCOPE",
    "AHN cannot see your account, device, network or company settings, and makes no finding about them.",
-   "AHN 은 당신의 계정·기기·네트워크·회사 설정을 볼 수 없고, 그에 대해 어떤 판정도 하지 않아요.")
+   "AHN은 당신의 계정·기기·네트워크·회사 설정을 볼 수 없고, 그에 대해 어떤 판정도 하지 않아요.")
 _t("S-L3-SSO-GENERAL",
    "Some company sign-in systems allow access only from managed browsers or devices. Only your IT team can say whether yours does.",
    "회사 로그인 체계 중에는 관리되는 브라우저·기기에서만 접속을 허용하는 것이 있어요. 당신 회사가 그런지는 IT 팀만 알 수 있어요.")
@@ -159,16 +175,16 @@ _t("S-L3-C2",
    "지금 로그인할 때 다른 기기에서 추가 승인을 요구하나요?")
 _t("S-L3A-VERIFY",
    "You said the step stopped at an extra verification after the password (a code, an app approval or a new-device check). That step is meant for the account holder; AHN cannot see whether the site sent the request or where.",
-   "비밀번호 뒤 추가 인증(코드·앱 승인·새 기기 확인)에서 멈췄다고 했어요. 그 단계는 계정 주인을 위한 것이고, 사이트가 요청을 보냈는지·어디로 보냈는지 AHN 은 볼 수 없어요.")
+   "비밀번호 뒤 추가 인증(코드·앱 승인·새 기기 확인)에서 멈췄다고 했어요. 그 단계는 계정 주인을 위한 것이고, 사이트가 요청을 보냈는지·어디로 보냈는지 AHN은 볼 수 없어요.")
 _t("S-L3A-SIGNIN",
    "You said the step stopped at the site's own sign-in. Signing in is the account holder's step; AHN cannot see the account and makes no finding about it.",
-   "사이트 자체 로그인에서 멈췄다고 했어요. 로그인은 계정 주인의 단계이고, AHN 은 계정을 볼 수 없어서 그에 대한 판정은 하지 않아요.")
+   "사이트 자체 로그인에서 멈췄다고 했어요. 로그인은 계정 주인의 단계이고, AHN은 계정을 볼 수 없어서 그에 대한 판정은 하지 않아요.")
 _t("S-L3A-AFTER",
    "You said an action after signing in failed. AHN cannot see the account or what the site did, and makes no finding about them.",
-   "로그인 뒤의 행동이 실패했다고 했어요. AHN 은 계정이나 사이트가 한 일을 볼 수 없어서 그에 대한 판정은 하지 않아요.")
+   "로그인 뒤의 행동이 실패했다고 했어요. AHN은 계정이나 사이트가 한 일을 볼 수 없어서 그에 대한 판정은 하지 않아요.")
 _t("S-L3B-CLOUD",
    "You said the agent works in a cloud browser, not on the person's device, so the site sees a sign-in that did not start on that device. AHN cannot see how this site treats that.",
-   "에이전트가 사람 기기가 아니라 클라우드 브라우저에서 일한다고 했어요. 그래서 사이트는 그 기기에서 시작되지 않은 로그인을 보게 돼요. 이 사이트가 그것을 어떻게 다루는지 AHN 은 볼 수 없어요.")
+   "에이전트가 사람 기기가 아니라 클라우드 브라우저에서 일한다고 했어요. 그래서 사이트는 그 기기에서 시작되지 않은 로그인을 보게 돼요. 이 사이트가 그것을 어떻게 다루는지 AHN은 볼 수 없어요.")
 _t("S-L3B-DEVICE",
    "{platform}'s documentation ({url}) says: \"{quote}\"",
    "{platform} 문서({url})는 이렇게 적어요: \"{quote}\"")
@@ -176,7 +192,7 @@ _t("S-L3B-DEVICE",
 # --- L4 task ----------------------------------------------------------------------------------------------------------
 _t("S-L4-TERMS",
    "The site's terms page ({url}) contains this sentence: \"{quote}\" AHN does not interpret it.",
-   "사이트 약관 페이지({url})에 이 문장이 있어요: \"{quote}\" AHN 은 이를 해석하지 않아요.")
+   "사이트 약관 페이지({url})에 이 문장이 있어요: \"{quote}\" AHN은 이를 해석하지 않아요.")
 _t("S-L4-PLATFORM-CONFIRM",
    "{platform}'s documentation says it asks the person before some actions: \"{quote}\"",
    "{platform} 문서는 일부 행동 전에 사람에게 묻는다고 적어요: \"{quote}\"")
@@ -185,39 +201,39 @@ _t("S-L4-OFFICIAL-PATH-ACCOUNT",
    "등록된 공식 개발자 경로는 개발자·파트너용일 수 있어, 당신 계정의 작업을 대신하지 못할 수 있어요.")
 _t("S-L4-NOJUDGE",
    "AHN does not decide whether a task is allowed.",
-   "작업이 허용되는지는 AHN 이 판단하지 않아요.")
+   "작업이 허용되는지는 AHN이 판단하지 않아요.")
 
 # --- common, others, where to look, person ----------------------------------------------------------------------------
 _t("S-G-BASIS",
    "This answer uses only declarations, official documents and AHN's own read records. It did not test the site, the agent or your account.",
-   "이 답은 선언·공식 문서·AHN 의 읽기 기록만으로 만들었어요. 사이트·에이전트·당신 계정을 실제로 시험하지 않았어요.")
+   "이 답은 선언·공식 문서·AHN의 읽기 기록만으로 만들었어요. 사이트·에이전트·당신 계정을 실제로 시험하지 않았어요.")
 _t("S-G-NO-SUCCESS",
    "AHN is consulted only when something fails, so it cannot tell whether other agents succeed on this site.",
-   "AHN 은 실패할 때만 호출돼서, 다른 에이전트가 이 사이트에서 되는지는 알 수 없어요.")
+   "AHN은 실패할 때만 호출돼서, 다른 에이전트가 이 사이트에서 되는지는 알 수 없어요.")
 _t("S-G-WINDOW-EMPTY",
    "AHN saw no change in this period. It does not see bot defenses, accounts, or platforms' unpublished lists.",
-   "이 기간에 AHN 이 본 변화는 없어요. 봇 방어·계정·플랫폼의 비공개 목록은 보지 못해요.")
+   "이 기간에 AHN이 본 변화는 없어요. 봇 방어·계정·플랫폼의 비공개 목록은 보지 못해요.")
 _t("S-G-WINDOW-LIMITS",
    "AHN reads a host's files about once a day to once a week and sees nothing between reads. It does not see bot defenses, accounts, or platforms' unpublished lists.",
-   "AHN 은 호스트의 파일을 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요. 봇 방어·계정·플랫폼의 비공개 목록도 보지 못해요.")
+   "AHN은 호스트의 파일을 하루에서 일주일에 한 번쯤 읽고, 읽기 사이의 일은 보지 못해요. 봇 방어·계정·플랫폼의 비공개 목록도 보지 못해요.")
 _t("S-G-APEX",
    "You entered an address with more than a registered domain; AHN looked up {host} only and did not send the rest.",
-   "등록 도메인보다 긴 주소를 넣었어요. AHN 은 등록 도메인 {host} 만 조회했고 나머지는 보내지 않았어요.")
+   "등록 도메인보다 긴 주소를 넣었어요. AHN은 등록 도메인 {host} 만 조회했고 나머지는 보내지 않았어요.")
 _t("S-G-PATH-DROPPED",
    "AHN kept only the hostname; the path and query were not sent.",
-   "AHN 은 호스트명만 남겼고 경로·쿼리는 보내지 않았어요.")
+   "AHN은 호스트명만 남겼고 경로·쿼리는 보내지 않았어요.")
 _t("S-O-NONE",
    "No other agent reported a problem on {host} in the last 7 days. That does not show the site works for them.",
    "지난 7일 동안 다른 에이전트가 {host} 의 문제를 알린 적은 없어요. 그렇다고 다른 에이전트에게 된다는 뜻은 아니에요.")
 _t("S-O-SOME",
    "{n} report(s) from other agents in the last 7 days, not verified by AHN:",
-   "지난 7일 동안 다른 에이전트가 올린 제보 {n}건이에요. AHN 이 검증한 것은 아니에요:")
+   "지난 7일 동안 다른 에이전트가 올린 제보 {n}건이에요. AHN이 검증한 것은 아니에요:")
 _t("S-O-ROW",
    "{date}: {outcome_words} at {step_words}{env_words}{cause_part}",
    "{date}: {step_words}에서 {outcome_words}{env_words}{cause_part}")
 _t("S-W-FIRST",
    "Look first at the {layer_words} layer: {reason_words}. AHN has not confirmed this is the cause.",
-   "먼저 {layer_words} 쪽을 보세요: {reason_words}. 이것이 원인이라고 AHN 이 확인한 것은 아니에요.")
+   "먼저 {layer_words} 쪽을 보세요: {reason_words}. 이것이 원인이라고 AHN이 확인한 것은 아니에요.")
 _t("S-W-UNKNOWN",
    "AHN has no evidence that points to one layer yet. The checks below split the layers.",
    "아직 한 층을 가리키는 근거가 없어요. 아래 확인이 층을 갈라 줘요.")
@@ -248,7 +264,10 @@ _t("S-P-SERVER-HAND-OFF",
 # D110: the server hands a public read to the person only because AHN's own reads could not reach the page.
 _t("S-P-SERVER-HAND-OFF-OPEN",
    "AHN's next action hands this step to the person: AHN's own reads could not reach the page, and the person can open it themselves to see whether it loads for them.",
-   "서버의 다음 행동이 이 단계를 사람에게 넘겨요. AHN 의 읽기가 페이지에 닿지 못했고, 사용자가 직접 열어 보면 열리는지 알 수 있어요.")
+   "서버의 다음 행동이 이 단계를 사람에게 넘겨요. AHN의 읽기가 페이지에 닿지 못했고, 사용자가 직접 열어 보면 열리는지 알 수 있어요.")
+_t("S-P-SERVER-HAND-OFF-OPEN-LONG",
+   "AHN's next action hands this step to the person: the person can open the page themselves to see whether it loads for them. AHN's own reads have failed for over a week, which is not evidence about this site.",
+   "서버의 다음 행동이 이 단계를 사람에게 넘겨요. 사용자가 직접 열어 보면 열리는지 알 수 있어요. AHN의 읽기도 오래 닿지 못하고 있어 이 사이트 근거가 되지 않아요.")
 _t("S-P-TOOLS-OFF",
    "The page shows but the agent's tools could not act on it. The person can open the page and do the step themselves.",
    "페이지는 보이는데 에이전트 도구가 동작하지 못했어요. 사람이 직접 페이지를 열어 그 단계를 할 수 있어요.")
@@ -300,7 +319,7 @@ _t("CHK-SIGNED-IN-TAIL", "", "")  # placeholder removed below; CHK-SIGNED-IN is 
 del TEMPLATES["CHK-SIGNED-IN-TAIL"]
 _t("CHK-PLATFORM-CHANGES",
    "AHN saw {platform}'s page {url} change on {date}. Check the app version and that page.",
-   "AHN 이 {date} 에 {platform} 의 페이지가 바뀐 것을 봤어요({url}). 앱 버전과 그 페이지를 확인해 보세요.")
+   "AHN이 {date} 에 {platform} 의 페이지가 바뀐 것을 봤어요({url}). 앱 버전과 그 페이지를 확인해 보세요.")
 _t("CHK-PLATFORM-REMEDY",
    "{platform}'s documentation suggests: \"{quote}\" ({url})",
    "{platform} 문서가 제안하는 것: \"{quote}\" ({url})")
@@ -320,6 +339,10 @@ _t("CHK-OFFICIAL-PATH",
 _t("CHK-OFFICIAL-PATH-CUSTOMER",
    "The site's own customer page is {url}.",
    "사이트 자체 고객 페이지는 {url} 이에요.")
+# D116: with no task_context, a customer page is listed only for a task in the user's own account.
+_t("CHK-OFFICIAL-PATH-CUSTOMER-NOCTX",
+   "If the task is a user-account matter, the site's own customer page is {url}.",
+   "작업이 사용자 계정 일이면 사이트 자체 고객 페이지는 {url} 이에요.")
 _t("CHK-WAIT",
    "Wait instead of retrying; the server gives when to look up once more (server.next_action.retry_after_seconds).",
    "재시도 말고 기다리세요. 다시 조회할 때는 서버가 정해 줘요.")
@@ -350,10 +373,13 @@ _t("H-USER-YES",
    "이 단계는 직접 하셔야 해요: {reason_short}.")
 _t("H-USER-NO",
    "AHN found no cause it can confirm; see the checks listed.",
-   "AHN 이 확인한 범위에서는 짚이는 곳이 없었어요. 확인 목록을 따라가 보세요.")
+   "AHN이 확인한 범위에서는 짚이는 곳이 없었어요. 확인 목록을 따라가 보세요.")
 _t("H-USER-OPEN",
    "You can open the page yourself to see whether it loads for you; AHN's own reads could not reach it.",
-   "직접 페이지를 열어 보면 열리는지 알 수 있어요. AHN 의 읽기는 페이지에 닿지 못했어요.")
+   "직접 페이지를 열어 보면 열리는지 알 수 있어요. AHN의 읽기는 페이지에 닿지 못했어요.")
+_t("H-USER-OPEN-LONG",
+   "You can open the page yourself to see whether it loads for you. AHN's reads have failed for over a week, which is not evidence about this site.",
+   "직접 페이지를 열어 보면 열리는지 알 수 있어요. AHN의 읽기도 오래 닿지 못하고 있어 이 사이트 근거가 되지 않아요.")
 _t("H-USER-CHECK",
    "One of the checks needs you; AHN does not say the whole step is yours.",
    "확인 하나는 직접 하셔야 해요. 단계 전체가 당신 몫이라는 뜻은 아니에요.")
@@ -373,10 +399,10 @@ _t("S-G-SERVER-CONTEXT",
 # D113: AHN was not told the task (no task_context), so the account is not assumed.
 _t("S-G-NOCTX",
    "AHN was not told what the task is. If it is a task in the user's own account, hand that step to your user (next_action.customer_url when a customer page is listed).",
-   "AHN 은 무슨 작업인지 듣지 못했어요. 사용자 본인 계정의 일이면 그 단계는 사용자에게 넘기세요(고객 페이지가 있으면 next_action.customer_url).")
+   "AHN은 무슨 작업인지 듣지 못했어요. 사용자 본인 계정의 일이면 그 단계는 사용자에게 넘기세요(고객 페이지가 있으면 next_action.customer_url).")
 _t("TL-PLATFORM-DOC",
    "On {date}, AHN saw {platform}'s page {url} change.",
-   "{date} 에 AHN 이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")
+   "{date} 에 AHN이 {platform} 의 페이지가 바뀐 것을 봤어요({url}).")
 
 # D112: Korean versions of the lookup's own summary_line, for a Korean answer. The lookup's line is built from the fixed English sentences of
 # ahn/response_guide.py (one or more, joined by a space), so the table is per sentence: the key is one English sentence exactly as the lookup
@@ -404,30 +430,33 @@ _SUMMARY_PAIRS = (
      "공급자 상태 피드가 올라 있지만(provider_status) 지금은 분명한 현재 상태를 주지 않아요. next_action.status_url 의 상태 페이지에서 확인하세요."),
     ("A provider status feed is listed (provider_status), but it gives no clear current state, and the status page did not open for you.",
      "공급자 상태 피드가 올라 있지만(provider_status) 분명한 현재 상태를 주지 않고, 상태 페이지도 당신에게 열리지 않았어요."),
-    ("AHN cannot judge a single page's 5xx, and could not read the site's robots.txt.",
-     "AHN 은 페이지 하나의 5xx 를 판단할 수 없고, 사이트의 robots.txt 도 읽지 못했어요."),
-    ("AHN cannot judge a single page's 5xx, and has no declared policy for this host.",
-     "AHN 은 페이지 하나의 5xx 를 판단할 수 없고, 이 호스트에 대해 선언된 정책도 없어요."),
-    ("AHN cannot judge a single page's 5xx.", "AHN 은 페이지 하나의 5xx 를 판단할 수 없어요."),
-    ("AHN cannot judge a single page's 5xx; the site also refused AHN's plain robots.txt read.",
-     "AHN 은 페이지 하나의 5xx 를 판단할 수 없고, 사이트가 AHN 의 일반 robots.txt 읽기도 거절했어요."),
+    ("AHN cannot judge a single page's timeout or 5xx, and could not read the site's robots.txt.",
+     "AHN은 페이지 하나의 시간 초과나 5xx 를 판단할 수 없고, 사이트의 robots.txt 도 읽지 못했어요."),
+    ("AHN cannot judge a single page's timeout or 5xx, and has no declared policy for this host.",
+     "AHN은 페이지 하나의 시간 초과나 5xx 를 판단할 수 없고, 이 호스트에 대해 선언된 정책도 없어요."),
+    ("AHN cannot judge a page's timeout or 5xx.", "AHN은 페이지 하나의 시간 초과나 5xx 를 판단할 수 없어요."),
+    ("Retry once later; if it lasts, tell your user; hand them next_action.customer_url.",
+     "한 번 나중에 다시 해 보고, 계속되면 사용자에게 알리고 next_action.customer_url 을 넘기세요."),
+    ("AHN cannot judge a single page's timeout or 5xx.", "AHN은 페이지 하나의 시간 초과나 5xx 를 판단할 수 없어요."),
+    ("AHN cannot judge a single page's timeout or 5xx; the site also refused AHN's plain robots.txt read.",
+     "AHN은 페이지 하나의 시간 초과나 5xx 를 판단할 수 없고, 사이트가 AHN의 일반 robots.txt 읽기도 거절했어요."),
     ("AHN could not read this provider's status feed just now (provider_status), so it cannot say whether the site is up.",
-     "AHN 이 방금 이 공급자의 상태 피드를 읽지 못해서(provider_status) 사이트가 열려 있는지 말할 수 없어요."),
+     "AHN이 방금 이 공급자의 상태 피드를 읽지 못해서(provider_status) 사이트가 열려 있는지 말할 수 없어요."),
     ("AHN could not read this provider's status feed just now, and the status page did not open for you.",
-     "AHN 이 방금 이 공급자의 상태 피드를 읽지 못했고, 상태 페이지도 당신에게 열리지 않았어요."),
+     "AHN이 방금 이 공급자의 상태 피드를 읽지 못했고, 상태 페이지도 당신에게 열리지 않았어요."),
     ("AHN knows no official status page for this site, so it cannot say whether it is up.",
-     "AHN 은 이 사이트의 공식 상태 페이지를 알지 못해서 열려 있는지 말할 수 없어요."),
+     "AHN은 이 사이트의 공식 상태 페이지를 알지 못해서 열려 있는지 말할 수 없어요."),
     ("AHN knows no official status page for this site, so it cannot say whether it is up; tell your user its status is unverified.",
-     "AHN 은 이 사이트의 공식 상태 페이지를 알지 못해서 열려 있는지 말할 수 없어요. 상태를 확인하지 못했다고 사용자에게 알리세요."),
+     "AHN은 이 사이트의 공식 상태 페이지를 알지 못해서 열려 있는지 말할 수 없어요. 상태를 확인하지 못했다고 사용자에게 알리세요."),
     ("AHN reads no status feed for this site, and its status page did not open for you, so AHN cannot say whether it is up.",
-     "AHN 은 이 사이트의 상태 피드를 읽지 않고, 상태 페이지도 당신에게 열리지 않아서 열려 있는지 말할 수 없어요."),
+     "AHN은 이 사이트의 상태 피드를 읽지 않고, 상태 페이지도 당신에게 열리지 않아서 열려 있는지 말할 수 없어요."),
     ("AHN reads no status feed for this site, so it cannot say whether it is up.",
-     "AHN 은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요."),
+     "AHN은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요."),
     ("AHN reads no status feed for this site, so it cannot say whether it is up; tell your user its status is unverified.",
-     "AHN 은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요. 상태를 확인하지 못했다고 사용자에게 알리세요."),
+     "AHN은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요. 상태를 확인하지 못했다고 사용자에게 알리세요."),
     ("AHN reads no status feed for this site, so it cannot say whether it is up; the status page it knows covers only the provider's API.",
-     "AHN 은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요. AHN 이 아는 상태 페이지는 공급자의 API 만 다뤄요."),
-    ("AHN sees hosts, not pages, so it cannot judge this 5xx.", "AHN 은 페이지가 아니라 호스트를 보기 때문에 이 5xx 를 판단할 수 없어요."),
+     "AHN은 이 사이트의 상태 피드를 읽지 않아서 열려 있는지 말할 수 없어요. AHN이 아는 상태 페이지는 공급자의 API 만 다뤄요."),
+    ("AHN sees hosts, not pages, so it cannot judge this timeout or 5xx.", "AHN은 페이지가 아니라 호스트를 보기 때문에 이 시간 초과나 5xx 를 판단할 수 없어요."),
     ("API work: official_paths.", "API 작업은 official_paths 를 보세요."),
     ("An earlier read of the site's robots.txt failed and another is queued.",
      "앞서 사이트의 robots.txt 읽기가 실패했고 다음 읽기가 대기 중이에요."),
@@ -486,7 +515,7 @@ _SUMMARY_PAIRS = (
      "도구를 바꾸지 말고 사용자에게 그 단계와 next_action.customer_url 을 넘기세요."),
     ("Do not switch tools; hand your user the step and the site's customer page, next_action.customer_url.",
      "도구를 바꾸지 말고 사용자에게 그 단계와 사이트의 고객 페이지(next_action.customer_url)를 넘기세요."),
-    ("Either way, AHN cannot judge this 5xx.", "어느 쪽이든 AHN 은 이 5xx 를 판단할 수 없어요."),
+    ("AHN cannot judge this timeout or 5xx.", "AHN은 이 시간 초과나 5xx 를 판단할 수 없어요."),
     ("Either way, do not switch tools or user agents to retry after a refusal; tell your user.",
      "어느 쪽이든 거절당한 뒤에 도구나 user agent 를 바꿔 다시 시도하지 말고 사용자에게 알리세요."),
     ("Either way, no response came; check your tool, retry once later, then tell your user.",
@@ -511,6 +540,10 @@ _SUMMARY_PAIRS = (
      "평소 인계 방법으로 사용자에게 넘기고, 확인을 풀거나 피하려고 하지 마세요."),
     ("Hand it to the user; never ask for, store or pass on credentials.",
      "사용자에게 넘기세요. 자격 증명은 요구하거나 저장하거나 전달하지 마세요."),
+    ("robots.txt blocks some agents; stop if yours is in robots.agents_blocked.", "robots.txt 가 일부 에이전트를 막고 있어요. 당신 것이 robots.agents_blocked 에 있으면 멈추세요."),
+    ("Your refusal came from your tool, the site's edge or a login.", "그 거절은 도구, 사이트의 edge, 로그인 중 하나에서 온 거예요."),
+    ("Don't retry; tell your user.", "다시 시도하지 말고 사용자에게 알리세요."),
+    ("Don't retry; tell your user; hand over next_action.customer_url.", "다시 시도하지 말고 사용자에게 알리고 next_action.customer_url 을 넘기세요."),
     ("If a page refused you, tell your user; else continue.", "페이지가 당신을 거절했다면 사용자에게 알리고, 아니면 계속하세요."),
     ("If a page refused you, tell your user; for a task in their own account, hand them next_action.customer_url.",
      "페이지가 당신을 거절했다면 사용자에게 알리세요. 사용자 본인 계정의 일이면 next_action.customer_url 을 넘기세요."),
@@ -547,13 +580,13 @@ _SUMMARY_PAIRS = (
     ("No declared policy or official path is available for this host.", "이 호스트에는 선언된 정책도 공식 경로도 없어요."),
     ("No official path is listed; follow your operator's rules.", "올라 있는 공식 경로가 없어요. 운영자의 규칙을 따르세요."),
     ("No response came (timeout or connection), and AHN could not read robots.txt.",
-     "응답이 오지 않았고(시간 초과 또는 연결), AHN 도 robots.txt 를 읽지 못했어요."),
+     "응답이 오지 않았고(시간 초과 또는 연결), AHN도 robots.txt 를 읽지 못했어요."),
     ("No response came (timeout or connection), and AHN could not read the site's robots.txt either.",
-     "응답이 오지 않았고(시간 초과 또는 연결), AHN 도 사이트의 robots.txt 를 읽지 못했어요."),
+     "응답이 오지 않았고(시간 초과 또는 연결), AHN도 사이트의 robots.txt 를 읽지 못했어요."),
     ("No response came (timeout or connection), and AHN has no declared policy for this host.",
-     "응답이 오지 않았고(시간 초과 또는 연결), AHN 에는 이 호스트에 대해 선언된 정책이 없어요."),
+     "응답이 오지 않았고(시간 초과 또는 연결), AHN에는 이 호스트에 대해 선언된 정책이 없어요."),
     ("No response came (timeout or connection), and the site refused AHN's plain robots.txt read too.",
-     "응답이 오지 않았고(시간 초과 또는 연결), 사이트가 AHN 의 일반 robots.txt 읽기도 거절했어요."),
+     "응답이 오지 않았고(시간 초과 또는 연결), 사이트가 AHN의 일반 robots.txt 읽기도 거절했어요."),
     ("No response came (timeout or connection).", "응답이 오지 않았어요(시간 초과 또는 연결)."),
     ("Nothing here forbids the step; follow your operator's rules and the site's terms.",
      "여기에는 이 단계를 금지하는 것이 없어요. 운영자의 규칙과 사이트 약관을 따르세요."),
@@ -606,7 +639,7 @@ _SUMMARY_PAIRS = (
     ("The provider's status feed reports no active issue (provider_status, see its fetched_at).",
      "공급자의 상태 피드는 진행 중인 문제가 없다고 알려요(provider_status, fetched_at 참고)."),
     ("The provider's status feed's overall indicator reads operational, but AHN did not read its incident list.",
-     "공급자 상태 피드의 전체 지표는 정상이지만, AHN 은 그 장애 목록을 읽지 않았어요."),
+     "공급자 상태 피드의 전체 지표는 정상이지만, AHN은 그 장애 목록을 읽지 않았어요."),
     ("The provider's status page lists an unresolved incident (provider_status.active_incidents), and that page did not open for you.",
      "공급자의 상태 페이지에 해결되지 않은 장애가 올라 있고(provider_status.active_incidents) 그 페이지가 당신에게 열리지 않았어요."),
     ("The provider's status page lists an unresolved incident (provider_status.active_incidents), though its overall indicator reads operational.",
@@ -617,12 +650,12 @@ _SUMMARY_PAIRS = (
      "사이트가 일반 자동화 robots.txt 읽기마저 거절했고, 올라 있는 공식 경로도 없어요."),
     ("The site refused even a plain automated robots.txt read.", "사이트가 일반 자동화 robots.txt 읽기마저 거절했어요."),
     ("The site refused even a plain robots.txt read; pages may refuse too.", "사이트가 일반 robots.txt 읽기마저 거절했어요. 페이지도 거절할 수 있어요."),
-    ("The site's edge refused both you and AHN's own check (ahn_check).", "사이트의 edge 가 당신과 AHN 의 자체 확인(ahn_check)을 모두 거절했어요."),
+    ("The site's edge refused both you and AHN's own check (ahn_check).", "사이트의 edge 가 당신과 AHN의 자체 확인(ahn_check)을 모두 거절했어요."),
     ("The site's edge refused both you and AHN's own home-page check (ahn_check).",
-     "사이트의 edge 가 당신과 AHN 의 자체 홈페이지 확인(ahn_check)을 모두 거절했어요."),
-    ("The site's edge refused both you and AHN's plain robots.txt read.", "사이트의 edge 가 당신과 AHN 의 일반 robots.txt 읽기를 모두 거절했어요."),
+     "사이트의 edge 가 당신과 AHN의 자체 홈페이지 확인(ahn_check)을 모두 거절했어요."),
+    ("The site's edge refused both you and AHN's plain robots.txt read.", "사이트의 edge 가 당신과 AHN의 일반 robots.txt 읽기를 모두 거절했어요."),
     ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too.",
-     "사이트의 edge 가 당신을 거절했고, AHN 의 마지막 홈페이지 확인(하루 넘게 전)도 거절됐어요."),
+     "사이트의 edge 가 당신을 거절했고, AHN의 마지막 홈페이지 확인(하루 넘게 전)도 거절됐어요."),
     ("The site's robots.txt blocks agent user agents at the root.", "사이트의 robots.txt 가 루트에서 에이전트 user agent 를 막아요."),
     ("The site's robots.txt blocks agent user agents at the site root.", "사이트의 robots.txt 가 사이트 루트에서 에이전트 user agent 를 막아요."),
     ("The site's robots.txt blocks some agent tokens (next_action.stop_if_you_are).",
@@ -658,7 +691,7 @@ _SUMMARY_PAIRS = (
      "사이트가 robots.txt 를 공개하지 않아요. 에이전트에 대한 제한 선언이 없어요."),
     ("This site publishes no robots.txt: no declared restriction.", "사이트가 robots.txt 를 공개하지 않아요. 선언된 제한이 없어요."),
     ("This site's status page needs your user's sign-in, so AHN cannot read it.",
-     "이 사이트의 상태 페이지는 사용자의 로그인이 필요해서 AHN 이 읽을 수 없어요."),
+     "이 사이트의 상태 페이지는 사용자의 로그인이 필요해서 AHN이 읽을 수 없어요."),
     ("This step likely needs the user's sign-in or permission.", "이 단계에는 사용자의 로그인이나 허락이 필요해 보여요."),
     ("This step needs human verification.", "이 단계에는 사람의 확인이 필요해요."),
     ("To check if it is up, hand next_action.status_url to your user; next_action.do and url are for any other step on this site.",
@@ -730,6 +763,8 @@ def summary_line_ko(line: str) -> str | None:
     out = []
     for sentence in _SENTENCE_SPLIT.split(line.strip()):
         found = SUMMARY_SENTENCES_KO.get(sentence)
+        if found is None and sentence.startswith("Affected: ") and sentence.endswith("."):
+            found = "영향받는 구성요소: " + sentence[len("Affected: "):-1] + "."  # D116: component names as the provider lists them
         if found is None:
             for pattern, korean, token in _SUMMARY_NUMBERED:
                 match = pattern.match(sentence)
@@ -771,33 +806,33 @@ _CAUSE_PAIRS = (
      "일시적일 가능성이 커요: 이번 시간에 여러 클라이언트가 요청 한도에 걸렸어요. 기다린 뒤 다시 시도하세요."),
     ("Probably temporary: other clients saw service errors this hour. Retry later.",
      "일시적일 가능성이 커요: 이번 시간에 다른 클라이언트도 서비스 오류를 봤어요. 나중에 다시 시도하세요."),
-    ("Likely a policy block: the site refused AHN's last two home-page checks.", "정책 차단일 가능성이 커요: 사이트가 AHN 의 최근 홈 페이지 확인 두 번을 거절했어요."),
+    ("Likely a policy block: the site refused AHN's last two home-page checks.", "정책 차단일 가능성이 커요: 사이트가 AHN의 최근 홈 페이지 확인 두 번을 거절했어요."),
     ("Likely a sign-in requirement: the site's home page showed a sign-in wall on AHN's last two checks.",
-     "로그인 요구일 가능성이 커요: 사이트 홈 페이지가 AHN 의 최근 확인 두 번 모두 로그인 벽을 보여 줬어요."),
+     "로그인 요구일 가능성이 커요: 사이트 홈 페이지가 AHN의 최근 확인 두 번 모두 로그인 벽을 보여 줬어요."),
     ("Likely a policy block: the site refused AHN's home-page checks at least twice in a row; the latest showed a sign-in wall.",
-     "정책 차단일 가능성이 커요: 사이트가 AHN 의 홈 페이지 확인을 연속으로 두 번 이상 거절했고, 가장 최근에는 로그인 벽을 보여 줬어요."),
+     "정책 차단일 가능성이 커요: 사이트가 AHN의 홈 페이지 확인을 연속으로 두 번 이상 거절했고, 가장 최근에는 로그인 벽을 보여 줬어요."),
     ("Likely a policy block: clients were refused on 3 or more separate days.", "정책 차단일 가능성이 커요: 클라이언트가 서로 다른 3일 이상 거절당했어요."),
     ("Likely a policy block: AHN's read of the site's robots.txt shows it now disallows this kind of agent{win}.",
-     "정책 차단일 가능성이 커요: AHN 이 읽은 사이트의 robots.txt 가 이제 이런 종류의 에이전트를 허용하지 않아요{win}."),
+     "정책 차단일 가능성이 커요: AHN이 읽은 사이트의 robots.txt 가 이제 이런 종류의 에이전트를 허용하지 않아요{win}."),
     ("Terms signal changed{win}: llms.txt removed or data-mining reserved. Not an access block.",
      "이용 조건 신호가 바뀌었어요{win}: llms.txt 가 없어졌거나 데이터 마이닝이 유보됐어요. 접근 차단은 아니에요."),
     ("Likely a policy block: AHN's home-page check sees a bot-defense page from a new provider{win}; what your tool sees may differ.",
-     "정책 차단일 가능성이 커요: AHN 의 홈 페이지 확인에 새 업체의 봇 방어 화면이 보여요{win}. 당신 도구에 보이는 것은 다를 수 있어요."),
+     "정책 차단일 가능성이 커요: AHN의 홈 페이지 확인에 새 업체의 봇 방어 화면이 보여요{win}. 당신 도구에 보이는 것은 다를 수 있어요."),
     ("Not determined: AHN's home-page checks that day were normal, but they do not see single pages; the cause may be on your side.",
-     "판단하지 못했어요: 그날 AHN 의 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
+     "판단하지 못했어요: 그날 AHN의 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
     ("Not determined: AHN's home-page check {age} was normal, but it does not see single pages; the cause may be on your side.",
-     "판단하지 못했어요: AHN 이 {age} 한 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
-    ("Not determined: AHN has no usable home-page check of this site near that time.", "판단하지 못했어요: 그 시각 즈음에 쓸 만한 AHN 의 홈 페이지 확인이 이 사이트에는 없어요."),
+     "판단하지 못했어요: AHN이 {age} 한 홈 페이지 확인은 정상이었지만 개별 페이지는 보지 못해서, 원인이 당신 쪽에 있을 수 있어요."),
+    ("Not determined: AHN has no usable home-page check of this site near that time.", "판단하지 못했어요: 그 시각 즈음에 쓸 만한 AHN의 홈 페이지 확인이 이 사이트에는 없어요."),
     ("Not determined: AHN does not measure this site because its robots.txt disallows AHN's check.",
-     "판단하지 못했어요: 이 사이트의 robots.txt 가 AHN 의 확인을 허용하지 않아서 AHN 은 이 사이트를 측정하지 않아요."),
+     "판단하지 못했어요: 이 사이트의 robots.txt 가 AHN의 확인을 허용하지 않아서 AHN은 이 사이트를 측정하지 않아요."),
     ("Not determined: AHN does not measure this site because the site refused AHN's request for robots.txt.",
-     "판단하지 못했어요: 사이트가 AHN 의 robots.txt 요청을 거절해서 AHN 은 이 사이트를 측정하지 않아요."),
+     "판단하지 못했어요: 사이트가 AHN의 robots.txt 요청을 거절해서 AHN은 이 사이트를 측정하지 않아요."),
     ("Not determined: that time is past the 14 days of measurements kept; only provider status history was read.",
      "판단하지 못했어요: 그 시각은 보관하는 측정 14일을 지났어요. 업체 상태 기록만 읽었어요."),
     ("Not determined: AHN's check {age} saw {art}{what} refusal; recheck_after is AHN's next check, not an instruction.",
-     "판단하지 못했어요: AHN 이 {age} 한 확인에서 {what} 거절을 봤어요. recheck_after 는 AHN 의 다음 확인 시각이고 지시가 아니에요."),
+     "판단하지 못했어요: AHN이 {age} 한 확인에서 {what} 거절을 봤어요. recheck_after 는 AHN의 다음 확인 시각이고 지시가 아니에요."),
     ("Not determined: AHN's check {age} saw {art}{what} refusal; AHN checks again. That is AHN's check, not an instruction.",
-     "판단하지 못했어요: AHN 이 {age} 한 확인에서 {what} 거절을 봤어요. AHN 이 다시 확인해요. 이것은 AHN 의 확인이고 지시가 아니에요."),
+     "판단하지 못했어요: AHN이 {age} 한 확인에서 {what} 거절을 봤어요. AHN이 다시 확인해요. 이것은 AHN의 확인이고 지시가 아니에요."),
 )
 _CAUSE_SLOTS = {
     "win": r"(?P<win>(?: \([^()]*\))?)",
@@ -868,7 +903,7 @@ ROBOTS_STATE = {
     "none": {"en": "not read for this host", "ko": "이 호스트는 읽지 않음"},
 }
 UNREAD_REASON = {
-    "http_403": {"en": "the page refused AHN's request", "ko": "그 페이지가 AHN 의 요청을 거절했어요"},
+    "http_403": {"en": "the page refused AHN's request", "ko": "그 페이지가 AHN의 요청을 거절했어요"},
     "challenge_page": {"en": "the page showed a human-verification check", "ko": "그 페이지가 사람 확인 화면을 보여 줬어요"},
     "script_rendered": {"en": "the page needs a script to show its text", "ko": "그 페이지는 스크립트가 있어야 글이 보여요"},
     "not_read_this_round": {"en": "not read in the last 90 days", "ko": "최근 90일 안에 읽지 않았어요"},
@@ -955,11 +990,11 @@ LAYER_WORDS = {
     "task": {"en": "task and approval", "ko": "작업·승인"},
 }
 REASON_WORDS = {
-    ("site", "cause"): {"en": "AHN's stored measurements for this site point to it", "ko": "AHN 이 저장한 이 사이트 측정이 여기를 가리켜요"},
-    ("site", "robots_block"): {"en": "the site's robots.txt blocks the agents AHN checked", "ko": "사이트의 robots.txt 가 AHN 이 확인한 에이전트를 막아요"},
+    ("site", "cause"): {"en": "AHN's stored measurements for this site point to it", "ko": "AHN이 저장한 이 사이트 측정이 여기를 가리켜요"},
+    ("site", "robots_block"): {"en": "the site's robots.txt blocks the agents AHN checked", "ko": "사이트의 robots.txt 가 AHN이 확인한 에이전트를 막아요"},
     ("site", "provider_incident"): {"en": "the provider's status page shows an announced incident", "ko": "공급사 상태 페이지에 발표된 장애가 있어요"},
-    ("site", "home_check"): {"en": "AHN's own home-page check got an answer other than a normal page", "ko": "AHN 의 홈 페이지 확인이 정상 페이지가 아닌 답을 받았어요"},
-    ("site", "change_recorded"): {"en": "AHN recorded a change in the site's declared policy or in what its own home-page check got", "ko": "AHN 이 사이트의 선언 정책이나 자신의 홈 페이지 확인 결과에서 변화를 기록했어요"},
+    ("site", "home_check"): {"en": "AHN's own home-page check got an answer other than a normal page", "ko": "AHN의 홈 페이지 확인이 정상 페이지가 아닌 답을 받았어요"},
+    ("site", "change_recorded"): {"en": "AHN recorded a change in the site's declared policy or in what its own home-page check got", "ko": "AHN이 사이트의 선언 정책이나 자신의 홈 페이지 확인 결과에서 변화를 기록했어요"},
     ("platform", "stopped_before_site"): {"en": "the agent product stopped before opening the site, and its own documentation describes sites it does not open", "ko": "에이전트 제품이 사이트를 열기 전에 멈췄고, 제품 공식 문서가 열지 않는 사이트를 설명해요"},
     ("platform", "stopped_plain"): {"en": "the agent product stopped before opening the site", "ko": "에이전트 제품이 사이트를 열기 전에 멈췄어요"},
     ("platform", "tools_off_plain"): {"en": "the page opened but the agent product's tools did not work on it", "ko": "페이지는 열렸지만 에이전트 제품의 도구가 거기서 작동하지 않았어요"},
@@ -982,7 +1017,7 @@ REASON_SHORT = {
     "company_it_decides": {"en": "only the company's IT team can decide this", "ko": "이건 회사 IT 팀만 정할 수 있어요"},
     "platform_admin_decides": {"en": "only the organization's administrator can decide this", "ko": "이건 조직 관리자만 정할 수 있어요"},
     "platform_refused_step": {"en": "the agent product stopped here, so the person decides this step", "ko": "에이전트 제품이 여기서 멈췄으니 이 단계는 사람이 정해요"},
-    "server_hand_off": {"en": "AHN's next action also hands this step to the person", "ko": "AHN 의 다음 행동도 이 단계를 사람에게 넘기라고 해요"},
+    "server_hand_off": {"en": "AHN's next action also hands this step to the person", "ko": "AHN의 다음 행동도 이 단계를 사람에게 넘기라고 해요"},
     "page_visible_tools_off": {"en": "the page shows but the agent's tools could not act on it, so you can open it and do the step yourself", "ko": "페이지는 보이는데 에이전트 도구가 동작하지 못해서, 직접 열어 그 단계를 하시면 돼요"},
     "check_needs_person": {"en": "one of the checks is one only you can do", "ko": "확인 하나는 직접 하셔야 해요"},
 }

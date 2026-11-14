@@ -49,6 +49,8 @@ def guide(*args, **kwargs):
 _spec = importlib.util.spec_from_file_location("pre_d96_response_guide", HERE / "_pre_d96_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 
 HANDOFF = ("human_verification", "login_auth")
 ROBOTS_CODES = response_guide.STATUS_KEEP_REASONS
