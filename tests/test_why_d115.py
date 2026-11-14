@@ -91,6 +91,23 @@ def test_a_long_period_of_5xx_answers_keeps_the_d114_shape():
     assert united(found)["where_to_look"]["first"] == "site"
 
 
+@pytest.mark.parametrize("lang", ["en", "ko"])
+def test_a_long_period_of_5xx_answers_never_blames_ahns_path_and_keeps_the_action(lang):
+    """A 5xx is the site or its edge answering with an error: the long sentence says so instead of pointing at AHN's network path, in
+    English and in Korean, while first, do, recommendation and next_action stay those of the shorter 5xx period."""
+    long, short = site_errors(Conn(8, kind="server_error")), site_errors(Conn(6, kind="server_error"))
+    assert "network path" not in long["line"] and "answered with an error" in long["line"] and "network path" in short["line"]
+    a, b = united(long, lang=lang), united(short, lang=lang)
+    assert a["where_to_look"]["first"] == b["where_to_look"]["first"] == "site"
+    for key in ("recommendation", "next_action"):
+        assert a["server"][key] == b["server"][key]
+    if lang == "ko":
+        korean = X.cause_line_ko(long["line"])   # (this public read gets the short subordinate server block, so the line is read directly)
+        assert korean and "네트워크 경로" not in korean and "서버 오류" in korean
+    for kind in ("no_response", "tls_error"):   # the unanswered kinds keep their own sentence
+        found = site_errors(Conn(8, kind=kind))
+        assert "AHN's network path" in found["line"] and "blocks automated clients" in found["line"]
+
 def test_the_long_sentence_leaves_the_possibility_of_a_site_that_blocks_automated_clients_open():
     line = cause.line_for("site_errors_unreached_long", NOW - timedelta(days=8))
     assert "blocks automated clients" in line and "AHN's network path" in line and "nothing about the site" not in line

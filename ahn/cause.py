@@ -103,7 +103,7 @@ LINES: dict[str, str] = {
     "provider_maintenance": "Temporary: provider maintenance {win}. Retry after it ends.",
     "recovered_provider": "Temporary: provider problem {win} has cleared. Retry.",
     "site_errors": "AHN's own checks have not reached the site {win}; that can be AHN's network path alone, so it does not tell whether your tool can reach the site.",
-    "site_errors_long": "AHN's own checks have not reached the site for over 7 days {win}; so long a failure is more likely AHN's network path and says nothing about the site or your tool's access.",
+    "site_errors_long": "AHN's own checks have had server errors (5xx) from the site for over 7 days {win}; the site or its edge answered with an error. It does not tell whether your tool can reach it.",
     "site_errors_unreached_long": "AHN's own checks have not reached the site for over 7 days {win}; likely AHN's network path, but a site that blocks automated clients looks the same. It says nothing about your tool.",
     "recovered_site": "AHN's own checks did not reach the site {win}; they answer again. That can be AHN's network path alone.",
     "rate_limited": "Probably temporary: several clients were rate limited this hour. Wait, then retry.",
@@ -290,7 +290,7 @@ def _site_errors(conn, host: str, when: When, now: datetime) -> dict | None:
         # A period this long that nobody else saw is more likely AHN's own path than the site. D114 changed only the sentence. D115: when the
         # site gave no answer at all (no_response, tls_error), a site that turns away automated clients can look the same, so the cause is
         # undetermined (no_measurement, low), its window has only a start, and the sentence leaves both open. A 5xx is an answer from the site
-        # or its edge, so that kind keeps the D114 shape.
+        # or its edge, so that kind keeps the D114 shape, with a sentence (D115) that says the site answered with errors, not AHN's path.
         if others is None:
             others = _others_saw_errors(conn, host, row["first_fail_at"], now)
         if not others:
