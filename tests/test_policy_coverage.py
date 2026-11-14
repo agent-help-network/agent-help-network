@@ -66,9 +66,9 @@ class Exempt:
 # --- Rendering ---------------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=None)
-def policy_html(lang: str, reporting: bool, retention_days: int = 0) -> str:
+def policy_html(lang: str, reporting: bool, retention_days: int = 0, task_routes: bool = False) -> str:
     settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True,
-                        reporting_enabled=reporting, report_retention_days=retention_days)
+                        reporting_enabled=reporting, report_retention_days=retention_days, task_routes=task_routes)
     response = TestClient(create_app(settings)).get(f"/{lang}/policy")  # no `with`: lifespan (database) never runs
     assert response.status_code == 200
     return response.text
@@ -78,14 +78,14 @@ def plain(markup: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
 
 
-def policy_text(lang: str, reporting: bool = True, retention_days: int = 0) -> str:
-    return plain(policy_html(lang, reporting, retention_days))
+def policy_text(lang: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False) -> str:
+    return plain(policy_html(lang, reporting, retention_days, task_routes))
 
 
-def section(lang: str, number: str, reporting: bool = True, retention_days: int = 0) -> str:
+def section(lang: str, number: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False) -> str:
     """Text of numbered policy section 01-08 (02 data collected, 03 returned, 06 retention)."""
     found = re.search(rf'<article><span class="policy-index">{number}</span>.*?</article>',
-                      policy_html(lang, reporting, retention_days), re.S)
+                      policy_html(lang, reporting, retention_days, task_routes), re.S)
     assert found, f"policy section {number} not found in the {lang} page"
     return plain(found.group())
 
@@ -110,13 +110,16 @@ def assert_phrases(label: str, text_by_lang: dict[str, str], wanted: dict[str, P
 # --- 1. MCP tools ------------------------------------------------------------------------------
 
 # What the public server may expose. A new tool changes this table, which sends you to the policy.
+# Keyed by (reporting, task_routes): AHN_REPORTING_ENABLED and AHN_TASK_ROUTES each add one tool and nothing else.
 PUBLIC_TOOLS = {
-    False: {"check_incident", "rate_last_lookup"},                       # reporting off: the lookup and its feedback (D58)
-    True: {"check_incident", "rate_last_lookup", "report_observation"},  # reporting on
+    (False, False): {"check_incident", "rate_last_lookup"},                       # reporting off: the lookup and its feedback (D58)
+    (True, False): {"check_incident", "rate_last_lookup", "report_observation"},  # reporting on
+    (False, True): {"check_incident", "rate_last_lookup", "find_task_route"},     # task routes on (D117)
+    (True, True): {"check_incident", "rate_last_lookup", "report_observation", "find_task_route"},
 }
 
 
-def registered_tools(reporting: bool) -> dict[str, list[str]]:
+def registered_tools(reporting: bool, task_routes: bool = False) -> dict[str, list[str]]:
     """Tool name -> input property names, read from the MCP server as the public deployment builds it.
 
     A subprocess, because ahn.mcp_adapter chooses its tools from the environment when imported.
@@ -124,25 +127,29 @@ def registered_tools(reporting: bool) -> dict[str, list[str]]:
     code = ("import asyncio, json; from ahn.mcp_adapter import mcp; "
             "print(json.dumps({t.name: sorted(t.input_schema.get('properties', {})) "
             "for t in asyncio.run(mcp.list_tools())}))")
-    env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1" if reporting else "0"}
+    env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1" if reporting else "0",
+           "AHN_TASK_ROUTES": "1" if task_routes else "0"}
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
+@pytest.mark.parametrize("task_routes", [False, True])
 @pytest.mark.parametrize("reporting", [False, True])
-def test_every_public_mcp_tool_is_named_in_the_policy(reporting):
-    tools = registered_tools(reporting)
-    assert set(tools) == PUBLIC_TOOLS[reporting], (
+def test_every_public_mcp_tool_is_named_in_the_policy(reporting, task_routes):
+    tools = registered_tools(reporting, task_routes)
+    assert set(tools) == PUBLIC_TOOLS[(reporting, task_routes)], (
         f"The MCP tools changed to {sorted(tools)}. Describe the new tool in the privacy policy "
         "(ahn/templates/policy.html, English and Korean), then update PUBLIC_TOOLS here.")
     for lang in LANGS:
-        text = policy_text(lang, reporting)
+        text = policy_text(lang, reporting, task_routes=task_routes)
         for name in tools:
-            assert name in text, f"the {lang} policy never names the MCP tool {name} (reporting={reporting})"
+            assert name in text, f"the {lang} policy never names the MCP tool {name} (reporting={reporting}, task_routes={task_routes})"
         if not reporting:
             # The policy must not claim a write tool the deployment does not expose.
             assert "report_observation" not in text, f"the {lang} policy names report_observation while reporting is off"
+        if not task_routes:
+            assert "find_task_route" not in text and "/v1/task-routes" not in text, f"the {lang} policy names task routes while they are off"
 
 
 # --- 2. Input fields ---------------------------------------------------------------------------
@@ -332,6 +339,68 @@ def test_returned_fields_are_all_covered_by_the_policy():
 def test_published_observations_expose_nothing_that_reports_do_not_collect():
     # A field returned to everyone in an observation but never listed as collected would be a new data use.
     assert set(CheckObservation.model_fields) <= set(ObservationIn.model_fields)
+
+
+# Task routes (D117): GET /v1/task-routes and find_task_route, described only while AHN_TASK_ROUTES is on. Every field of an answer
+# is named in section 03; the two inputs in section 02.
+TASK_ROUTE_FIELDS = {
+    "site_host": Exempt("the hostname of the table entry, or the lookup's own input echoed back"),
+    "task_kind": Phrase("task kind", "태스크 종류"),
+    "obstacle": Phrase("obstacle", "걸림돌"),
+    "verification_kind": Exempt("one of the fixed-list obstacle details; the policy names the obstacle"),
+    "site_requires": Exempt("one of the fixed-list obstacle details; the policy names the obstacle"),
+    "document_kind": Phrase("kind of document", "서류 종류"),
+    "entry_point_kind": Phrase("kind of entry point", "입구 종류"),
+    "routes_tried": Phrase("kinds of route tried", "시도한 경로 종류"),
+    "route_worked": Exempt("one of routes_tried or none; the policy names the routes tried"),
+    "basis": Exempt("a fixed-list value that goes with the source kind"),
+    "outcome": Phrase("outcome", "결과"),
+    "duration": Exempt("a fixed-list value of the same kind as the outcome"),
+    "period": Phrase("a reporting quarter", "보고 분기"),
+    "source_kind": Phrase("source kind", "출처 종류"),
+    "sensitive": Phrase("a flag that marks it as a case record, not advice", "사례 기록이며 조언이 아님을 알리는 표시"),
+    "official_url": Phrase("a link to the site's own page", "그 사이트 자체 페이지 링크"),
+    "source_url": Phrase("the page it was read from", "읽은 페이지"),
+    "verified_at": Phrase("the date it was read", "읽은 날짜"),
+    "summary_line": Phrase("one summary sentence built from fixed words", "정해진 말로 만든 요약 한 문장"),
+    "routes": Exempt("the list of records described above"),
+    "counts": Phrase("counts by source kind", "출처 종류별 개수"),
+    "records": Exempt("the number of records, a count of the list above"),
+    "by_source_kind": Phrase("counts by source kind", "출처 종류별 개수"),
+    "notice": Exempt("the fixed code case_record_not_advice, set when a record is marked as a case record"),
+}
+TASK_ROUTE_INPUTS = {
+    "site_host": Phrase("a public hostname (site_host)", "공개 호스트명(site_host)"),
+    "task_kind": Phrase("task_kind", "task_kind"),
+}
+
+
+def test_task_route_fields_and_inputs_are_covered_by_the_policy_while_they_are_on():
+    from ahn.task_routes import TaskRoute, TaskRouteCounts, TaskRoutesResponse
+
+    returned = set(TaskRoute.model_fields) | set(TaskRoutesResponse.model_fields) | set(TaskRouteCounts.model_fields)
+    unmapped = returned - set(TASK_ROUTE_FIELDS)
+    assert not unmapped, (f"The task-route answer now returns {sorted(unmapped)}. Say so in policy section 03 "
+                          "(English and Korean, the {% if task_routes %} paragraph), then map the field here.")
+    covered = {name: phrase for name, phrase in TASK_ROUTE_FIELDS.items() if isinstance(phrase, Phrase)}
+    assert_phrases("task route fields", {lang: section(lang, "03", task_routes=True) for lang in LANGS}, covered)
+    tool_inputs = set(registered_tools(False, True)["find_task_route"])
+    assert tool_inputs == set(TASK_ROUTE_INPUTS), f"find_task_route takes {sorted(tool_inputs)}: describe the input in section 02, then map it here"
+    assert_phrases("task route inputs", {lang: section(lang, "02", task_routes=True) for lang in LANGS}, TASK_ROUTE_INPUTS)
+
+
+@pytest.mark.parametrize("number", ["02", "03", "05"])
+def test_the_task_routes_switch_adds_one_paragraph_to_a_section_and_changes_nothing_else(number):
+    import difflib
+
+    for lang in LANGS:
+        off, on = section(lang, number).split(), section(lang, number, task_routes=True).split()
+        changes = [op for op in difflib.SequenceMatcher(None, off, on, autojunk=False).get_opcodes() if op[0] != "equal"]
+        assert len(changes) == 1 and changes[0][0] == "insert", f"the {lang} section {number} changes more than one inserted paragraph"
+        added = " ".join(on[changes[0][3]:changes[0][4]])
+        assert "find_task_route" in added or "task_kind" in added or "task_routes" in added or "/v1/task-routes" in added
+        for other in ("01", "04", "06", "07", "08"):
+            assert section(lang, other) == section(lang, other, task_routes=True), f"the {lang} section {other} changed with the switch"
 
 
 # --- 4. Database tables and retention ----------------------------------------------------------

@@ -262,6 +262,9 @@ class Settings:
     # AHN_D104_BETTERSTACK_UPDATED_AT=0 (D104) stores a Better Stack feed's page-level updated_at as its update time again (and names no
     # affected resources). On by default; an unknown value is read as off (with one warning), never as on.
     d104_betterstack_updated_at: bool = True
+    # AHN_TASK_ROUTES=1 serves the task-routes read API and MCP tool (ahn/task_routes_api.py, ahn/mcp_task_routes.py): GET /v1/task-routes
+    # and find_task_route. Off by default: the path then does not exist (404), the tool is not listed and the policy text is unchanged.
+    task_routes: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -327,4 +330,5 @@ class Settings:
                    d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")),
                    d100_incidentio_incidents=parse_d100_switch(os.environ.get("AHN_D100_INCIDENTIO_INCIDENTS", "")),
                    d104_betterstack_updated_at=parse_d104_switch(os.environ.get("AHN_D104_BETTERSTACK_UPDATED_AT", "")),
-                   d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")))
+                   d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")),
+                   task_routes=os.environ.get("AHN_TASK_ROUTES", "").strip() == "1")
