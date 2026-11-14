@@ -379,7 +379,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/{lang}/why", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/{lang}/why", "/{lang}/routes", "/{lang}/routes/{host}", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"

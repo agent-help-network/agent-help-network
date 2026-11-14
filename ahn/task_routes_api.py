@@ -11,13 +11,14 @@ Errors are codes only and never echo the input: invalid_site_host (400), invalid
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlencode
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
                           SiteRequires, TaskKind, TaskObstacle, TaskRouteInputError, VerificationKind, is_current, lookup,
-                          parse_query, server_route)
+                          parse_query, server_route, table_key)
 
 LOG = logging.getLogger(__name__)
 
@@ -222,24 +223,33 @@ def add_pages(app, settings, render, lang_text) -> None:
         hosts = sorted({record.site_host for record in records})
         picked = read_filters(request.query_params, hosts)
         context = page_context(records, [record for record in records if keep(record, picked)], lang, lang_text)
-        return render(request, lang, "routes", picked=picked, opts_site=[(host, host) for host in hosts], **context)
+        return render(request, lang, "routes", picked=picked, lang_query=urlencode([(n, picked[n]) for n in FILTERS if picked[n]]),
+                      opts_site=[(host, host) for host in hosts], **context)
 
     @app.get("/{lang}/routes/{host}", include_in_schema=False)
     def routes_host_page(request: Request, lang: str, host: str):
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
+        # The page exists only for a key of the curated table, found by the same walk as GET /v1/task-routes (table_key). Any other
+        # name (a bad host, a site with no entry, a tenant subdomain) is a plain 404 and appears nowhere in the answer.
         try:
             site, _kind = parse_query(host)
         except TaskRouteInputError:
-            return render(request, lang, "not-found", status_code=404)  # the input is never echoed
-        answer = lookup(site)
-        # lookup() shows at most TASK_ROUTES_MAX records; the counts cover all of them.
+            raise ServiceError("not_found", 404) from None
+        key = table_key(site)
+        if key is None:
+            raise ServiceError("not_found", 404)
         picked = read_filters(request.query_params, [])
+        query = urlencode([(name, picked[name]) for name in FILTERS if picked[name]])
+        if host != key:  # www., upper case, a trailing dot, support.: one address per site
+            return RedirectResponse(f"/{lang}/routes/{key}" + (f"?{query}" if query else ""), status_code=301)
+        answer = lookup(key)
+        # lookup() shows at most TASK_ROUTES_MAX records; the counts cover all of them.
         shown = [record for record in answer.routes if keep(record, picked)]
         context = page_context(answer.routes, shown, lang, lang_text)
         context["total"] = answer.counts.records
         for row in context["rows"]:
             row["count"] = answer.counts.records  # the site's whole count, not only the shown ones
         context["headline"] = headline(lang, lang_text, answer.counts.records, answer.counts.by_source_kind)
-        return render(request, lang, "routes_host", site_host=answer.site_host, picked=picked, opts_site=[],
+        return render(request, lang, "routes_host", site_host=key, picked=picked, lang_query=query, opts_site=[],
                       newest_only=answer.counts.records > len(answer.routes), shown_max=len(answer.routes), **context)
