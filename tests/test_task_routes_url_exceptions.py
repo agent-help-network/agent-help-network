@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,20 +41,30 @@ LISTED_OK = (
     f"{BASE}/help/Invoice-faq",
     f"{BASE}/help/page-1234-5678",                       # two groups, eight digits in all
     f"{BASE}/help/Article_123456789",
+    f"{BASE}/site/help/pcmcat260800050014",
+    f"{BASE}/help/Account12",                            # a word with fewer than six digits is not a long number
+    f"{BASE}/help/order-12345",
+    f"{BASE}/help/case12",
+    f"{BASE}/help/ORDERS2",
+    f"{BASE}/help/ticket9",
+    f"{BASE}/help/Claim-7-status",
+    f"{BASE}/help/123-4567-8901",                        # eleven digits, no run of six
+    f"{BASE}/x/1234567/abc",
 )
 LISTED_BAD = (
     f"{BASE}/help/article/1234567890123456",             # sixteen digits
     f"{BASE}/claims/CASE-2026-0012345678",
     f"{BASE}/orders/112-1234567-1234567",
     f"{BASE}/help/account-12345678",
-    f"{BASE}/help/Account12",
-    f"{BASE}/help/order-1",
-    f"{BASE}/help/order-12345",
-    f"{BASE}/help/case12",
-    f"{BASE}/help/ORDERS2",
-    f"{BASE}/help/ticket9",
-    f"{BASE}/help/Claim-7-status",
-    f"{BASE}/help/123-4567-8901",                        # three groups, eleven digits
+    f"{BASE}/orders/123456789012345",                    # a case word with a long number
+    f"{BASE}/my-order-123456789012",
+    f"{BASE}/x/123456789012345a123456789012345",         # thirty digits, two runs
+    f"{BASE}/x/1234567.1234567",                         # two runs
+    f"{BASE}/x/1234567/1234567",
+    f"{BASE}/view%3Border-123456789012",                 # a percent escape does not hide the word
+    f"{BASE}/view%253Bticket-123456",
+    f"{BASE}/INVOICE/654321",
+    f"{BASE}/x/1234567890/12345678",                     # more than fifteen digits in all
     f"{BASE}/help/0123456789abcdef0123456789abcdef",     # UUID-shaped, no dashes
     f"{BASE}/help/01234567-89ab-cdef-0123-456789abcdef",
     f"{BASE}/help/article?id=abc",                       # a query is never excepted
@@ -74,7 +85,7 @@ def test_the_shipped_list_is_empty_and_valid():
     assert task_routes_data.CURATED_URL_EXCEPTIONS is CURATED_URL_EXCEPTIONS
 
 
-LONG_NUMBER_OK = [url for url in LISTED_OK if url.rsplit("/", 1)[1] not in ("returns-and-orders", "page-1234-5678", "orders", "account-help", "Invoice-faq")]
+LONG_NUMBER_OK = [url for url in LISTED_OK if re.search(r"\d{6,}", url.split(".com", 1)[1])]
 
 
 @pytest.mark.parametrize("url", LONG_NUMBER_OK)
@@ -120,7 +131,7 @@ def test_a_variant_of_a_listed_url_is_not_a_match(listed, url):
     f"{BASE}/help/../article/1234567890",                              # dot segment
     f"{BASE}/help/a@b.com/1234567890",                                 # e-mail shaped path
     f"{BASE}/help/" + "a" * 200 + "/1234567890",                       # longer than 200
-    f"{BASE}/help/%61ccount-12345678",                                 # an escaped letter does not hide the prefix
+    f"{BASE}/help/%61ccount-12345678",                                 # an escaped letter does not hide the word
 ])
 def test_the_other_rules_still_apply_to_a_listed_url(monkeypatch, url):
     monkeypatch.setitem(CURATED_URL_EXCEPTIONS, url, INDEX)

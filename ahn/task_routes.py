@@ -386,23 +386,23 @@ def route_host(site_host: str) -> str | None:
 
 # The one exception to the link rule (D120): a curated entry may carry a reviewed page whose path has a long identifier (a retail
 # help article or category, for one). Only the exact strings in ahn.task_routes_data.CURATED_URL_EXCEPTIONS, and only for a
-# curated_official entry. A query is never excepted. The exception lifts the six-digit limit only up to the bounds below.
-_EXCEPTION_MAX_DIGITS = re.compile(r"\d{16,}")
-_EXCEPTION_DIGIT_CHUNK = re.compile(r"\d{3,}")
-_EXCEPTION_CASE_WORD = re.compile(r"^(?:case|claim|order|ticket|invoice|account)", re.IGNORECASE)
+# curated_official entry. A query is never excepted. The exception lifts the six-digit limit only for a path of the shape below.
+_EXCEPTION_MAX_DIGITS = 15  # digits in the whole path
+_LONG_RUN = re.compile(r"\d{6,}")
+_EXCEPTION_CASE_WORDS = ("case", "claim", "order", "ticket", "invoice", "account")
 
 
-def _exception_path_problem(segments) -> str | None:
-    for segment in segments:
-        if _UUID_LIKE.search(segment):
-            return "path has a UUID-shaped segment"
-        if _EXCEPTION_MAX_DIGITS.search(segment):
-            return "path has more than 15 digits in a row"
-        chunks = _EXCEPTION_DIGIT_CHUNK.findall(segment)
-        if "-" in segment and len(chunks) >= 2 and sum(len(chunk) for chunk in chunks) >= 10:
-            return "path has a segment of hyphen-separated digit groups that looks like an account or order number"
-        if _EXCEPTION_CASE_WORD.match(segment) and any(ch.isdigit() for ch in segment):
-            return "path has a numbered segment that starts like a case, claim, order, ticket, invoice or account"
+def _exception_path_problem(path: str) -> str | None:
+    """The shape a listed path must have; ``path`` is already percent-decoded."""
+    if _UUID_LIKE.search(path):
+        return "path has a UUID-shaped segment"
+    if len(re.findall(r"\d", path)) > _EXCEPTION_MAX_DIGITS:
+        return f"path has more than {_EXCEPTION_MAX_DIGITS} digits"
+    runs = _LONG_RUN.findall(path)
+    if len(runs) > 1:
+        return "path has more than one run of six or more digits"
+    if runs and any(word in path.lower() for word in _EXCEPTION_CASE_WORDS):
+        return "path has a case, claim, order, ticket, invoice or account word next to a long number"
     return None
 
 
@@ -420,9 +420,9 @@ def official_url_problem(site_host: str, url, *, curated: bool = False) -> str |
     segment that looks like it names a person or a case: six or more digits in a row, an e-mail address or a UUID.
 
     ``curated=True`` is for a curated_official entry only: a URL that equals, character for character, a key of
-    CURATED_URL_EXCEPTIONS may have up to 15 digits in a row in its path (D120), but not a UUID-shaped segment, a
-    hyphenated account or order number, or a segment that starts with case, claim, order, ticket, invoice or account and has a digit. Every other
-    rule still applies, and so does every rule to any other URL."""
+    CURATED_URL_EXCEPTIONS may have a longer number in its path (D120), if the decoded path has at most 15 digits in all, at
+    most one run of six or more digits, no UUID-shaped segment, and no case, claim, order, ticket, invoice or account word
+    together with a run of six or more digits. Every other rule still applies, and so does every rule to any other URL."""
     return _url_problem(site_host, url, _listed_exceptions() if curated else None)
 
 
@@ -456,7 +456,7 @@ def _url_problem(site_host: str, url, exceptions) -> str | None:
     if "@" in path:
         return "path looks like it carries an e-mail address"
     if excepted:
-        problem = _exception_path_problem(segments)
+        problem = _exception_path_problem(path)
         if problem:
             return problem
     else:
