@@ -558,7 +558,7 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
             add("period", "must be the period of verified_at (use _route())")
     official = route.get("official_url")
     if official is not None:
-        add("official_url", official_url_problem(host, official, curated=True) or _url_problem(host, official))
+        add("official_url", official_url_problem(host, official, curated=route.get("source_kind") == "curated_official") or _url_problem(host, official))
         if SIGN_IN.search(urlsplit(official).path):
             add("official_url", f"a sign-in page: {official}")
     if len(source) > 200 or not SAFE_CONSUMER_URL.fullmatch(source):
@@ -927,7 +927,9 @@ class ConsumerCheck:
                 if source["result"] != "ok":
                     failures.append(f"{host}: source_url {source['result']}: {source_url}")
                 elif kind == "exception_link":
-                    if url not in page_hrefs(source_body, source["final_url"]):  # D120: the exact string, no looser match
+                    if source["final_url"] != source_url:
+                        failures.append(f"{host}: index page redirects; list the final address: {source_url} -> {source['final_url']}")
+                    elif url not in page_hrefs(source_body, source["final_url"]):  # D120: the exact string, no looser match
                         failures.append(f"{host}: exception URL not linked as written from its index page: {url}")
                 elif url != source_url and not self.linked_from(url, source_body, source["final_url"], site):
                     failures.append(f"{host}: {kind} not linked from its source_url page: {url}")
@@ -982,12 +984,23 @@ def task_route_check_pages(keys, exceptions=None) -> dict[str, dict]:
     return pages
 
 
+def unused_exceptions(keys, exceptions=None) -> list[str]:
+    """CURATED_URL_EXCEPTIONS keys on the checked hosts that no record carries as official_url or source_url (D120)."""
+    exceptions = CURATED_URL_EXCEPTIONS if exceptions is None else exceptions
+    used = {route.get(field) for host in keys for route in TASK_ROUTES_CURATED[host] if isinstance(route, dict)
+            for field in ("official_url", "source_url")}
+    sites = {registrable(host) for host in keys}
+    return [f"unused exception (no record carries it): {url}" for url in exceptions
+            if isinstance(url, str) and url not in used and registrable(urlsplit(url).hostname or "") in sites]
+
+
 def check_task_routes(hosts: set[str] | None) -> int:
     """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
     source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
     keys = [host for host in TASK_ROUTES_CURATED if not hosts or host in hosts]
     problems = task_routes_table_problems({host: TASK_ROUTES_CURATED[host] for host in keys})
     problems += [f"exceptions: {line}" for line in curated_exception_problems(CURATED_URL_EXCEPTIONS)]
+    problems += [f"exceptions: {line}" for line in unused_exceptions(keys)]
     pages = task_route_check_pages(keys)
     fetcher = Fetcher()
     checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
