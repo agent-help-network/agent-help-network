@@ -200,6 +200,13 @@ def main() -> None:
         print("bundle " + " ".join(f"{key}={value}" for key, value in refresh_if_due(database_url).items()))
     except Exception as exc:  # a failed build keeps the previous file and must not fail the review cron
         print(f"bundle failed={type(exc).__name__}")
+    # D118: pending task-route reports (ahn/task_route_intake.py). While TASK_ROUTE_MANUAL_REVIEW is True every one is held for an operator.
+    from .task_route_intake import review_task_routes
+    try:
+        routes = review_task_routes(database_url)
+        print(f"task_route_review published={routes['published']} held={routes['held']}")
+    except Exception as exc:  # e.g. migration 042 not applied yet: nothing else in the cron depends on this step
+        print(f"task_route_review failed={type(exc).__name__}")
 
 
 if __name__ == "__main__":

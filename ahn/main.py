@@ -31,7 +31,7 @@ from .owner_hosts import (OWNER_HOSTS_DEFAULT_DAYS, OWNER_HOSTS_MAX_DAYS, OWNER_
 from .rate_limit import RequestLimiter
 from .request_log import RequestLog
 from .service import PUBLIC_AGGREGATE_TLDS, PUBLIC_SUFFIXES_2, ServiceError, check, home_example, public_incident, public_incidents, submit, withdraw, withdraw_public
-from .settings import Settings
+from .settings import Settings, task_route_reports_served
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
 from .triage import CHECK_TEXT_KO, CHECKS_KO, accepted_vendor
@@ -242,6 +242,17 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     task_routes_on = settings.task_routes and settings.task_routes_since is not None  # no valid SINCE date: as if the switch were off
     if task_routes_on:  # the policy's "Last updated" date does not stay before the day task routes are served
         policy_updated = max(policy_updated, settings.task_routes_since)
+    # D118: task-route reports are taken (and stored records shown) only on top of the read switch, with public reporting on.
+    task_route_reports_on = task_routes_on and task_route_reports_served(settings)
+    if task_route_reports_on:
+        policy_updated = max(policy_updated, settings.task_route_reports_since)
+    from . import task_route_intake  # the policy states the code's caps and periods, never a copy of them
+    task_route_policy_numbers = {
+        "task_route_caps": (task_route_intake.TASK_ROUTE_DAILY_CAP, task_route_intake.TASK_ROUTE_SITE_DAILY_CAP,
+                            task_route_intake.TASK_ROUTE_SITE_KIND_DAILY_CAP),
+        "task_route_grace_days": task_route_intake.TASK_ROUTE_WITHDRAWN_GRACE_DAYS,
+        "task_route_intake_days": task_route_intake.TASK_ROUTE_INTAKE_DAYS,
+    }
     report_limiter = RequestLimiter(per_client=3, total=20) if settings.public_mode and settings.reporting_enabled else None
     head_routes: list = []  # routes that answer HEAD only through this module; a HEAD request is not a visit and is not counted
     health_lock = Lock()
@@ -436,7 +447,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "task_routes": task_routes_on, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "task_routes": task_routes_on, "task_route_reports": task_route_reports_on, **task_route_policy_numbers, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():

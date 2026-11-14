@@ -34,6 +34,28 @@ def task_routes_env_enabled() -> bool:
     except ValueError:
         return False
     return True
+
+
+def task_route_reports_env_enabled() -> bool:
+    """Whether the task-route write switch is on for this process (D118): the read switch is on (task_routes_env_enabled),
+    AHN_TASK_ROUTE_REPORTS is "1" (spaces ignored) and AHN_TASK_ROUTE_REPORTS_SINCE is a real YYYY-MM-DD date. With the read switch
+    off the write switch is off too. The MCP adapter uses this, so it agrees with Settings.from_env; it never raises."""
+    if not task_routes_env_enabled() or os.getenv("AHN_TASK_ROUTE_REPORTS", "").strip() != "1":
+        return False
+    try:
+        date.fromisoformat(os.getenv("AHN_TASK_ROUTE_REPORTS_SINCE", "").strip())
+    except ValueError:
+        return False
+    return True
+
+
+def task_route_reports_served(settings: "Settings") -> bool:
+    """Whether this deployment serves the task-route write path and the stored records (D118): both task-route switches with their
+    dates, the public service with reporting on, and not test mode. One function, so the REST paths, the lookup's database read,
+    the pages and the policy text follow the same rule."""
+    return bool(settings.task_routes and settings.task_routes_since is not None and settings.task_route_reports
+                and settings.task_route_reports_since is not None and settings.public_mode and settings.reporting_enabled
+                and not settings.test_mode)
 _EDGE_WARNED = False
 _KIND_WARNED = False
 _D95_WARNED = False
@@ -280,6 +302,11 @@ class Settings:
     # AHN_TASK_ROUTES_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date once task routes are served.
     # Without a valid date the switch does not turn anything on (create_app and the MCP adapter), and Settings.from_env refuses to start.
     task_routes_since: date | None = None
+    # AHN_TASK_ROUTE_REPORTS=1 (D118) serves the task-route write path: POST /v1/task-routes, DELETE /v1/task-routes/{id}, the MCP tool
+    # report_task_route, and the stored records in task-route answers and pages. Off by default, and off whenever AHN_TASK_ROUTES is off.
+    task_route_reports: bool = False
+    # AHN_TASK_ROUTE_REPORTS_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date once reports are taken.
+    task_route_reports_since: date | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -331,6 +358,14 @@ class Settings:
             except ValueError:
                 raise RuntimeError("AHN_TASK_ROUTES=1 needs AHN_TASK_ROUTES_SINCE=YYYY-MM-DD, "
                                    "the date the privacy policy shows as last updated") from None
+        task_route_reports = task_routes and os.environ.get("AHN_TASK_ROUTE_REPORTS", "").strip() == "1"
+        task_route_reports_since = None
+        if task_route_reports:
+            try:
+                task_route_reports_since = date.fromisoformat(os.environ.get("AHN_TASK_ROUTE_REPORTS_SINCE", "").strip())
+            except ValueError:
+                raise RuntimeError("AHN_TASK_ROUTE_REPORTS=1 needs AHN_TASK_ROUTE_REPORTS_SINCE=YYYY-MM-DD, "
+                                   "the date the privacy policy shows as last updated") from None
         proceed = parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))  # once: an unknown value warns once
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
@@ -354,4 +389,5 @@ class Settings:
                    d100_incidentio_incidents=parse_d100_switch(os.environ.get("AHN_D100_INCIDENTIO_INCIDENTS", "")),
                    d104_betterstack_updated_at=parse_d104_switch(os.environ.get("AHN_D104_BETTERSTACK_UPDATED_AT", "")),
                    d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")),
-                   task_routes=task_routes, task_routes_since=task_routes_since)
+                   task_routes=task_routes, task_routes_since=task_routes_since,
+                   task_route_reports=task_route_reports, task_route_reports_since=task_route_reports_since)

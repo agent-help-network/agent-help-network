@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .db import connect, create_reporter, migrate
 from .settings import Settings
@@ -15,6 +15,87 @@ def _iso_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise argparse.ArgumentTypeError("--since needs a time zone, for example 2026-10-19T00:00:00Z")
     return parsed
+
+
+def task_route_record(args, today=None):
+    """The operator record that ``task-route add`` stores, checked by the answer model (ahn.task_routes.TaskRoute) with every
+    server-decided value computed here. Raises ValueError for an invalid record or a site that is not kept (route_host)."""
+    from datetime import date
+
+    from .task_routes import TaskRoute, government_suffix, is_sensitive, period_for, route_host
+
+    site = route_host(args.site_host)
+    if site is None:
+        raise ValueError("site_host_not_accepted")
+    fields = {"task_kind": args.task_kind, "obstacle": args.obstacle, "verification_kind": args.verification_kind,
+              "site_requires": args.site_requires, "document_kind": args.document_kind, "entry_point_kind": args.entry_point_kind,
+              "route_worked": args.route_worked, "basis": args.basis, "outcome": args.outcome, "duration": args.duration,
+              "official_url": args.official_url}
+    fields = {name: value for name, value in fields.items() if value not in (None, "")}
+    tried = [item.strip() for item in args.routes_tried.split(",") if item.strip()]
+    sensitive = is_sensitive(fields["task_kind"], site_requires=fields.get("site_requires"), document_kind=fields.get("document_kind"),
+                             entry_point_kind=fields.get("entry_point_kind"), government_host=government_suffix(site))
+    return TaskRoute(site_host=site, routes_tried=tried, period=period_for(today or date.today()), source_kind=args.source_kind,
+                     sensitive=sensitive, **fields)
+
+
+def _task_route_command(settings, args, parser):
+    from .task_route_intake import STORED_COLUMNS
+
+    if args.route_command == "add":
+        try:
+            record = task_route_record(args)
+        except ValueError as error:  # pydantic's ValidationError is a ValueError; an operator sees the reason
+            print(f"invalid: {error}", file=sys.stderr)
+            raise SystemExit(2) from None
+        values = record.model_dump(mode="json")
+        route_id = uuid4()
+        with connect(settings) as conn:
+            conn.execute(
+                f"INSERT INTO task_routes (id,{','.join(STORED_COLUMNS)},sensitive,review_state) VALUES (%s,{','.join(['%s'] * len(STORED_COLUMNS))},%s,'pending')",
+                (route_id, *[values.get(name) if name != "routes_tried" else list(values.get(name) or []) for name in STORED_COLUMNS],
+                 record.sensitive),
+            )
+            conn.execute("INSERT INTO audit_events (event_type,record_id) VALUES (%s,%s)", ("task_route_operator_added", route_id))
+        print(route_id)
+    elif args.route_command == "pending":
+        if not 1 <= args.limit <= 100:
+            parser.error("--limit must be 1-100")
+        with connect(settings) as conn:
+            rows = conn.execute(
+                f"""SELECT id,{','.join(STORED_COLUMNS)},sensitive,review_reason,received_at FROM task_routes
+                    WHERE review_state='pending' AND withdrawn_at IS NULL ORDER BY received_at LIMIT %s""",
+                (args.limit,),
+            ).fetchall()
+        columns = ("id", *STORED_COLUMNS, "sensitive", "review_reason", "received_at")
+        print("# columns: " + " | ".join(columns))
+        for row in rows:
+            print(" | ".join(str(row[name]) for name in columns))
+        print(f"pending_shown={len(rows)}")
+    elif args.route_command == "publish":
+        with connect(settings) as conn:
+            publication = conn.execute("SELECT enabled FROM service_flags WHERE name='public_publication' FOR SHARE").fetchone()
+            if not publication or not publication["enabled"]:
+                print("publication_paused")
+                return
+            row = conn.execute(
+                """UPDATE task_routes SET review_state='published',review_reason='operator',reviewed_at=now()
+                   WHERE id=%s AND review_state IN ('pending','held') AND withdrawn_at IS NULL RETURNING id""",
+                (args.route_id,),
+            ).fetchone()
+            if row:
+                conn.execute("INSERT INTO audit_events (event_type,record_id) VALUES (%s,%s)", ("task_route_published", args.route_id))
+        print("published" if row else "not_found_or_not_reviewable")
+    elif args.route_command == "hold":
+        with connect(settings) as conn:
+            row = conn.execute(
+                """UPDATE task_routes SET review_state='held',review_reason='operator',reviewed_at=now()
+                   WHERE id=%s AND review_state IN ('pending','published') RETURNING id""",
+                (args.route_id,),
+            ).fetchone()
+            if row:
+                conn.execute("INSERT INTO audit_events (event_type,record_id) VALUES (%s,%s)", ("task_route_held", args.route_id))
+        print("held" if row else "not_found_or_held")
 
 
 def main():
@@ -49,8 +130,28 @@ def main():
     bundle_target.add_argument("--out", help="write the .jsonl.gz file here (to inspect it; nothing is published)")
     bundle_target.add_argument("--store", action="store_true",
                                help="replace the stored bundle the web service serves while AHN_PUBLIC_BUNDLE=1")
+    task_route = sub.add_parser("task-route", help="operator only: stored task-route records (D118)")
+    route_sub = task_route.add_subparsers(dest="route_command", required=True)
+    route_add = route_sub.add_parser("add", help="add an operator record; it starts pending, publish it to show it")
+    route_add.add_argument("--site-host", required=True)
+    route_add.add_argument("--task-kind", required=True)
+    route_add.add_argument("--obstacle", required=True)
+    for name in ("verification-kind", "site-requires", "document-kind", "entry-point-kind", "route-worked", "duration", "official-url"):
+        route_add.add_argument(f"--{name}", default=None)
+    route_add.add_argument("--routes-tried", default="", help="comma-separated route kinds")
+    route_add.add_argument("--basis", required=True)
+    route_add.add_argument("--outcome", required=True)
+    # Only operator records: a curated_community record needs a collection method that is not decided yet.
+    route_add.add_argument("--source-kind", choices=("operator_panel",), default="operator_panel")
+    route_pending = route_sub.add_parser("pending", help="list records waiting for review")
+    route_pending.add_argument("--limit", type=int, default=20)
+    for name in ("publish", "hold"):
+        route_sub.add_parser(name).add_argument("route_id", type=UUID)
     args = parser.parse_args()
     settings = Settings.from_env()
+    if args.command == "task-route":
+        _task_route_command(settings, args, parser)
+        return
     if args.command == "migrate":
         print(f"Applied migrations: {migrate(settings)}")
     elif args.command == "create-reporter":
