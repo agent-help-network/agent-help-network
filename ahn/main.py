@@ -77,6 +77,15 @@ LANG = {
         "sharing_title": "Authority and visibility", "sharing_text": "Submitting agents follow their own authority and platform rules. Real reports start in private review. Public pages exclude synthetic and unpublished observations. A reporter can withdraw their own report.",
         "limits_title": "Limits", "limits_text": "Reports are observations, not proof of an outage or intentional block. Retention and public publication thresholds will be set before a real pilot.",
         "not_found": "This public incident is unavailable.", "unavailable": "The service is temporarily unavailable.", "try_later": "Please try again later.", "back": "Back to search", "footer": "Local development build · Observations are not root-cause findings",
+        "routes_title": "Task route records", "routes_eyebrow": "TASK ROUTES",
+        "routes_intro": "Each record names a site, a kind of customer task, the obstacle, and the route that the site's documents or an agent's work found. Records show what was recorded. They are not guarantees and not advice.",
+        "routes_head": "Of {total} record{s}, {parts}.", "routes_part": "{n} from {label}", "routes_head_empty": "No task route records yet. A missing record does not mean there is no route.",
+        "routes_empty": "No task route record matches. A missing record does not mean there is no route.",
+        "routes_sensitive": "Case record, not advice.", "routes_sensitive_page": "Some lines below are case records, not advice.",
+        "routes_f_site": "Site", "routes_f_task": "Task", "routes_f_outcome": "Outcome", "routes_f_source": "Source", "routes_f_all": "All", "routes_f_apply": "Show", "routes_f_reset": "Clear filters",
+        "routes_c_site": "Site", "routes_c_task": "Task", "routes_c_obstacle": "Obstacle", "routes_c_worked": "Route that worked", "routes_c_outcome": "Outcome", "routes_c_basis": "Basis", "routes_c_period": "Period", "routes_c_records": "Records for the site", "routes_c_source": "Source",
+        "routes_tried": "tried", "routes_none_worked": "none worked", "routes_not_stated": "not stated", "routes_source_page": "source page", "routes_official_page": "official page", "routes_checked": "checked",
+        "routes_back": "All task route records", "routes_api": "Same data for agents", "routes_showing": "Showing {shown} of {total}.", "routes_newest": "Showing the {shown} newest of {total}.",
     },
     "ko": {
         "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "개인정보 처리방침", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원", "nav_contribute": "데이터 보태기",
@@ -105,6 +114,15 @@ LANG = {
         "sharing_title": "권한과 공개 범위", "sharing_text": "제출 에이전트는 자신의 권한·플랫폼 규칙을 따릅니다. 실제 제보는 비공개 검토 상태에서 시작합니다. 가상·미공개 기록은 공개 화면에 나오지 않습니다. 제보자는 자기 기록을 철회할 수 있습니다.",
         "limits_title": "한계", "limits_text": "제보는 관찰일 뿐 전체 장애나 의도적 차단의 증거가 아닙니다. 보존 기간과 공개 문턱은 실제 파일럿 전에 결정합니다.",
         "not_found": "이 공개 사건은 제공되지 않습니다.", "unavailable": "서비스를 일시적으로 사용할 수 없습니다.", "try_later": "잠시 후 다시 시도해 주세요.", "back": "검색으로 돌아가기", "footer": "로컬 개발판 · 관찰은 원인 확정이 아닙니다",
+        "routes_title": "태스크 경로 기록", "routes_eyebrow": "태스크 경로",
+        "routes_intro": "기록 하나는 사이트, 고객 업무 종류, 걸림돌, 그리고 사이트 문서나 에이전트의 작업에서 찾은 경로를 적어요. 기록된 사실을 보여 줄 뿐 보장도 조언도 아니에요.",
+        "routes_head": "기록 {total}건 중 {parts}.", "routes_part": "{label} {n}건", "routes_head_empty": "아직 태스크 경로 기록이 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_empty": "조건에 맞는 태스크 경로 기록이 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_sensitive": "사례 기록이며 조언이 아님", "routes_sensitive_page": "아래 일부 줄은 사례 기록이며 조언이 아님.",
+        "routes_f_site": "사이트", "routes_f_task": "업무", "routes_f_outcome": "결과", "routes_f_source": "출처", "routes_f_all": "전체", "routes_f_apply": "보기", "routes_f_reset": "걸러 보기 해제",
+        "routes_c_site": "사이트", "routes_c_task": "업무", "routes_c_obstacle": "걸림돌", "routes_c_worked": "통한 경로", "routes_c_outcome": "결과", "routes_c_basis": "근거", "routes_c_period": "시기", "routes_c_records": "사이트 기록 수", "routes_c_source": "출처",
+        "routes_tried": "시도", "routes_none_worked": "통한 경로 없음", "routes_not_stated": "적혀 있지 않음", "routes_source_page": "근거 문서", "routes_official_page": "공식 안내", "routes_checked": "확인",
+        "routes_back": "전체 태스크 경로 기록", "routes_api": "에이전트용 같은 데이터", "routes_showing": "{total}건 중 {shown}건을 보여요.", "routes_newest": "{total}건 중 최신 {shown}건을 보여요.",
     },
 }
 
@@ -277,7 +295,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/sitemap.xml", include_in_schema=False)
         def sitemap():
-            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute", "/platforms", "/why") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ())
+            pages = ("/", "/human", "/agents", "/connect", "/search", "/policy", "/disclaimer", "/terms", "/support", "/contribute", "/platforms", "/why") + (("/report",) if settings.reporting_enabled else ()) + (("/now",) if public_board_on else ()) + (("/routes",) if task_routes_on else ())
             urls = "".join(
                 f"<url><loc>https://agenthelpnetwork.com/{lang}{page}</loc></url>"
                 for lang in ("en", "ko") for page in pages
@@ -361,7 +379,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         if settings.collect_request_metrics and request.url.path not in {"/health", *OWNER_PATHS} and not (request.method == "HEAD" and request.scope.get("route") in head_routes):
             route = request.scope.get("route")
             path = getattr(route, "path", "other")
-            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/{lang}/why", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
+            allowed = {"/", "/health", "/openapi.json", "/v1/incidents/check", "/v1/why", "/v1/incidents", "/v1/feedback", "/v1/observations", "/v1/observations/{observation_id}/outcomes", "/v1/observations/{observation_id}", "/{lang}/", "/{lang}/human", "/{lang}/search", "/{lang}/incidents/{incident_id}", "/{lang}/connect", "/{lang}/agents", "/{lang}/report", "/{lang}/policy", "/{lang}/disclaimer", "/{lang}/terms", "/{lang}/support", "/{lang}/contribute", "/{lang}/platforms", "/{lang}/why", "/{lang}/routes", "/{lang}/routes/{host}", "/v1/platforms", "/v1/bundle/latest.jsonl.gz", "/v1/bundle/latest.jsonl.gz.sha256"}
             route_code = path if path in allowed else "other"
             if request.url.path.startswith("/mcp"):
                 route_code = "/mcp"

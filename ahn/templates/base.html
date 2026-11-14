@@ -17,7 +17,7 @@
 </head>
 <body>
   {% set other = 'ko' if lang == 'en' else 'en' %}
-  {% set suffix = request.url.path[3:] %}
+  {% set suffix = request.url.path[3:] %}{% set other_query = lang_query if lang_query is defined else request.url.query %}
   {% set audience = 'human' if page in ('human', 'search', 'detail', 'report', 'why') else 'agent' if page in ('home', 'agents', 'connect') else '' %}
   <a class="skip" href="#main">{{ 'Skip to content' if lang == 'en' else '본문으로 이동' }}</a>
   <header class="site-header">
@@ -36,6 +36,6 @@
     </div>
   </header>
   <main id="main">{% block content %}{% endblock %}</main>
-  <footer class="site-footer"><div class="container"><span>{{ t.footer }}</span><div class="footer-links"><a href="/{{ lang }}/disclaimer">{{ t.nav_disclaimer }}</a><a href="/{{ lang }}/policy">{{ t.nav_policy }}</a><a href="/{{ lang }}/terms">{{ t.nav_terms }}</a><a href="/{{ lang }}/contribute">{{ t.nav_contribute }}</a><a href="/{{ lang }}/support">{{ t.nav_support }}</a><a class="language" href="/{{ other }}{{ suffix }}{% if request.url.query %}?{{ request.url.query }}{% endif %}" lang="{{ other }}" aria-label="{{ '한국어로 보기' if other == 'ko' else 'View in English' }}">{{ '한국어' if other == 'ko' else 'English' }}</a></div></div></footer>
+  <footer class="site-footer"><div class="container"><span>{{ t.footer }}</span><div class="footer-links"><a href="/{{ lang }}/disclaimer">{{ t.nav_disclaimer }}</a><a href="/{{ lang }}/policy">{{ t.nav_policy }}</a><a href="/{{ lang }}/terms">{{ t.nav_terms }}</a><a href="/{{ lang }}/contribute">{{ t.nav_contribute }}</a><a href="/{{ lang }}/support">{{ t.nav_support }}</a><a class="language" href="/{{ other }}{{ suffix }}{% if other_query %}?{{ other_query }}{% endif %}" lang="{{ other }}" aria-label="{{ '한국어로 보기' if other == 'ko' else 'View in English' }}">{{ '한국어' if other == 'ko' else 'English' }}</a></div></div></footer>
 </body>
 </html>

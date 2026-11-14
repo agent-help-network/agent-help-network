@@ -231,3 +231,21 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .why-first strong{color:var(--blue)}.why-who{font-weight:750}.why-server{border-left:5px solid #2b84bd}.why-basis{margin-top:18px}
 .why-handoff{margin-top:12px}.why-handoff blockquote{margin:6px 0 8px;padding:10px 14px;background:#f1f5f8;border-radius:8px;line-height:1.6;overflow-wrap:anywhere}.why-copy{border:1px solid #cbd8e1;background:#fff;border-radius:8px;padding:6px 12px;font-weight:650;cursor:pointer}
 .why-previous{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}.why-previous summary{cursor:pointer;color:var(--blue);font-size:14px;font-weight:750;overflow-wrap:anywhere}
+/* /en|ko/routes (task routes, human view) */
+.routes-filter{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:end;margin:0 0 20px}
+.routes-filter div{min-width:0}
+.routes-filter label{display:block;font-size:12px;font-weight:750;color:var(--muted);margin:0 0 6px}
+.routes-filter select{max-width:240px}
+.routes-filter button{border:0;background:var(--blue);color:#fff;padding:11px 18px;border-radius:8px;font-weight:750;cursor:pointer}
+.routes-filter a{color:var(--blue);font-weight:700;font-size:14px;padding:11px 4px}
+.routes-count{font-size:14px;color:var(--muted);margin:0 0 10px}
+.routes-table{border-collapse:collapse;width:100%;min-width:900px;font-size:13.5px;background:#fff;border:1px solid var(--line)}
+.routes-table th,.routes-table td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.routes-table th{color:#5b6f80;font-weight:650;font-size:11px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.routes-table td a{color:var(--blue);font-weight:700}
+.routes-small{display:block;font-size:12px;color:var(--muted);margin-top:3px}
+.routes-sensitive{display:block;font-size:12px;font-weight:750;color:#8a4b00;margin-top:5px}
+.routes-links a+a{margin-left:10px}
+.routes-empty{background:#fff;border:1px dashed #bbcbd7;border-radius:13px;padding:34px;text-align:center;color:var(--muted)}
+.routes-foot{display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:18px;font-size:14px}
+.routes-foot a{color:var(--blue);font-weight:700}

@@ -613,6 +613,21 @@ def tenant_host(host: str) -> bool:
     return not (below and all(label in GENERIC_SUBDOMAIN_LABELS for label in below))
 
 
+def table_key(host: str) -> str | None:
+    """The key of the curated table that answers for ``host`` (a normalized public hostname): the host itself or its nearest parent,
+    never a bare top-level label, and None for a tenant subdomain or a site with no entry. lookup() and the human pages both use it."""
+    from . import task_routes_data
+
+    if tenant_host(host):  # a tenant subdomain gets the empty answer
+        return None
+    labels = host.split(".")
+    for index in range(len(labels) - 1):  # exact host first, then each parent, as official_paths() does
+        candidate = ".".join(labels[index:])
+        if candidate in task_routes_data.TASK_ROUTES_CURATED:
+            return candidate
+    return None
+
+
 def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRoutesResponse:
     """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
     shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
@@ -622,14 +637,8 @@ def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRou
     from . import task_routes_data
 
     host, kind = parse_query(site_host, task_kind)
-    labels = host.split(".")
-    key, entries = None, []
-    walk = [] if tenant_host(host) else range(len(labels) - 1)  # a tenant subdomain gets the empty answer
-    for index in walk:  # exact host first, then each parent, as official_paths() does
-        candidate = ".".join(labels[index:])
-        if candidate in task_routes_data.TASK_ROUTES_CURATED:
-            key, entries = candidate, task_routes_data.TASK_ROUTES_CURATED[candidate]
-            break
+    key = table_key(host)
+    entries = task_routes_data.TASK_ROUTES_CURATED[key] if key is not None else []
     records: list[TaskRoute] = []
     for entry in entries:
         if not is_current(entry, today):
