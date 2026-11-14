@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Literal
@@ -401,7 +402,9 @@ def _exception_path_problem(path: str) -> str | None:
     runs = _LONG_RUN.findall(path)
     if len(runs) > 1:
         return "path has more than one run of six or more digits"
-    if runs and any(word in path.lower() for word in _EXCEPTION_CASE_WORDS):
+    # Compatibility forms (full-width letters, ligatures) read as the plain word they look like, so "ｏｒｄｅｒ" is "order".
+    folded = unicodedata.normalize("NFKC", path).lower()
+    if runs and any(word in folded for word in _EXCEPTION_CASE_WORDS):
         return "path has a case, claim, order, ticket, invoice or account word next to a long number"
     return None
 
@@ -679,32 +682,73 @@ def tenant_host(host: str) -> bool:
     return not (below and all(label in GENERIC_SUBDOMAIN_LABELS for label in below))
 
 
-def table_key(host: str) -> str | None:
-    """The key of the curated table that answers for ``host`` (a normalized public hostname): the host itself or its nearest parent,
-    never a bare top-level label, and None for a tenant subdomain or a site with no entry. lookup() and the human pages both use it."""
+def key_candidates(host: str) -> list[str]:
+    """The names that may answer for ``host``, nearest first: the host itself, then each parent, never a bare top-level label."""
+    labels = host.split(".")
+    return [".".join(labels[index:]) for index in range(len(labels) - 1)]
+
+
+def table_key(host: str, stored_keys=frozenset()) -> str | None:
+    """The key that answers for ``host`` (a normalized public hostname): the host itself or its nearest parent that has a curated
+    table entry or, with ``stored_keys``, stored records (D118), never a bare top-level label, and None for a tenant subdomain or a
+    site with neither. lookup(), GET /v1/task-routes, find_task_route and the human pages all use it, so they agree on the site."""
     from . import task_routes_data
 
     if tenant_host(host):  # a tenant subdomain gets the empty answer
         return None
-    labels = host.split(".")
-    for index in range(len(labels) - 1):  # exact host first, then each parent, as official_paths() does
-        candidate = ".".join(labels[index:])
-        if candidate in task_routes_data.TASK_ROUTES_CURATED:
+    for candidate in key_candidates(host):  # exact host first, then each parent, as official_paths() does
+        if candidate in task_routes_data.TASK_ROUTES_CURATED or candidate in stored_keys:
             return candidate
     return None
 
 
-def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRoutesResponse:
+def stored_route(row: dict) -> TaskRoute:
+    """A stored record (a row of task_routes, D118) as an answer carries it. ``sensitive`` is computed again here by is_sensitive(), so a
+    change of the rule applies to stored rows too; the other server-decided values (period, source_kind) are the ones the server
+    stored. Raises ValueError when the row is not a valid record."""
+    fields = {name: row.get(name) for name in ("task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
+                                               "entry_point_kind", "route_worked", "basis", "outcome", "duration", "period",
+                                               "source_kind", "official_url")}
+    fields = {name: value for name, value in fields.items() if value is not None}
+    sensitive = is_sensitive(row.get("task_kind"), site_requires=row.get("site_requires"), document_kind=row.get("document_kind"),
+                             entry_point_kind=row.get("entry_point_kind"), government_host=government_suffix(row["site_host"]))
+    return TaskRoute(site_host=row["site_host"], routes_tried=list(row.get("routes_tried") or []), sensitive=sensitive, **fields)
+
+
+def site_records(host: str, settings=None) -> tuple[str | None, list[dict]]:
+    """The key that answers for ``host`` and the stored rows under it. Stored rows are read only while the write switch is served
+    (settings.task_route_reports_served); otherwise, with no settings, or when the database cannot be read (a warning is logged and
+    the answer is the curated table alone), there are none."""
+    if tenant_host(host):
+        return None, []
+    rows: list[dict] = []
+    if settings is not None:
+        from .settings import task_route_reports_served
+
+        if task_route_reports_served(settings):
+            from .task_route_intake import published_rows
+
+            try:
+                rows = published_rows(settings, key_candidates(host))
+            except Exception:  # the database is down or not migrated yet: answer from the curated table alone
+                LOG.warning("task_route_db_unavailable")
+                rows = []
+    key = table_key(host, frozenset(row["site_host"] for row in rows))
+    return key, [row for row in rows if row["site_host"] == key]
+
+
+def lookup(site_host: str, task_kind=None, today: date | None = None, *, settings=None) -> TaskRoutesResponse:
     """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
     shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
-    task kind, newest period first, at most TASK_ROUTES_MAX records. Reads the in-code table only: no database, no network.
+    task kind, newest period first, at most TASK_ROUTES_MAX records. Reads the in-code table and, with ``settings`` while the write
+    switch is served (D118), the published, not withdrawn stored records of the same site; no network.
 
     Raises TaskRouteInputError (a ValueError) for a host that is not a public hostname or a task_kind outside TaskKind."""
     from . import task_routes_data
 
     host, kind = parse_query(site_host, task_kind)
-    key = table_key(host)
-    entries = task_routes_data.TASK_ROUTES_CURATED[key] if key is not None else []
+    key, rows = site_records(host, settings)
+    entries = task_routes_data.TASK_ROUTES_CURATED.get(key, []) if key is not None else []
     records: list[TaskRoute] = []
     for entry in entries:
         if not is_current(entry, today):
@@ -713,6 +757,14 @@ def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRou
             record = server_route(key, entry)
         except ValueError:  # one malformed table entry must not take the answer down; the curation check reports it
             LOG.warning("task_route_entry_invalid")
+            continue
+        if kind is None or record.task_kind == kind:
+            records.append(record)
+    for row in rows:
+        try:
+            record = stored_route(row)
+        except ValueError:  # a row the current rules refuse is left out, never shown half-checked
+            LOG.warning("task_route_row_invalid")
             continue
         if kind is None or record.task_kind == kind:
             records.append(record)

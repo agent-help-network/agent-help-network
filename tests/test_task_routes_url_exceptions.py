@@ -405,3 +405,18 @@ def test_the_live_check_stops_at_a_robots_refusal_and_reads_nothing_else():
 def test_a_refused_index_page_stops_the_host():
     failures, fetcher = live({INDEX: (403, None, "", b"")})
     assert failures and LONG_PATH not in fetcher.requested
+
+
+FULL_WIDTH_ORDER = "%EF%BD%8F%EF%BD%92%EF%BD%84%EF%BD%85%EF%BD%92"  # "ｏｒｄｅｒ" (full-width letters), percent-encoded
+
+
+def test_a_full_width_case_word_next_to_a_long_number_is_refused_even_when_listed(monkeypatch):
+    # NFKC reads the full-width letters as "order", so the case-word check sees the word they look like.
+    url = f"{BASE}/help/{FULL_WIDTH_ORDER}-123456789"
+    monkeypatch.setitem(CURATED_URL_EXCEPTIONS, url, INDEX)
+    assert official_url_problem(SITE, url, curated=True) is not None
+    assert task_routes._exception_path_problem("/help/ｏｒｄｅｒ-123456789") is not None
+    # A path without a case word keeps the D120 answer.
+    plain = f"{BASE}/help/article/123456789"
+    monkeypatch.setitem(CURATED_URL_EXCEPTIONS, plain, INDEX)
+    assert official_url_problem(SITE, plain, curated=True) is None

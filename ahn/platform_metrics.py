@@ -211,3 +211,14 @@ def prune_analytics(database_url: str, report_retention_days: int = 0) -> None:
             conn.execute("DELETE FROM lookup_feedback_used WHERE expires_at < now() - interval '5 minutes'")  # feedback.EXPIRY_GRACE
     except psycopg.Error as exc:
         print(f"lookup_feedback_prune failed={type(exc).__name__}")
+    # Task-route reports (migration 042, ahn/task_route_intake.py, D118): the daily intake counters 8 days (today and the 7 days
+    # before), public reports by the report retention period and withdrawn records after the grace, as for observations.
+    # Own transaction for the same reason as above.
+    try:
+        from .task_route_intake import prune_task_route_reports
+
+        with connect_url(database_url) as conn:
+            conn.execute("DELETE FROM task_route_intake_daily WHERE day < CURRENT_DATE - 7")
+            prune_task_route_reports(conn, report_retention_days)
+    except psycopg.Error as exc:
+        print(f"task_route_prune failed={type(exc).__name__}")

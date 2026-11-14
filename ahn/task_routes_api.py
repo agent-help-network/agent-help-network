@@ -1,4 +1,5 @@
-"""Task routes read API (D117): ``GET /v1/task-routes``.
+"""Task routes API (D117, D118): ``GET /v1/task-routes``, and with the write switch ``POST /v1/task-routes`` and
+``DELETE /v1/task-routes/{route_id}``.
 
 Off by default. With ``AHN_TASK_ROUTES`` unset the path is never registered (404) and nothing here runs. The answer comes from
 ahn.task_routes.lookup: the curated table in code, no database and no request to any site (D33). It is a separate layer from
@@ -6,6 +7,11 @@ the lookup verdict: nothing here is read by check(), and the verdict does not ch
 
 Query: ``site_host`` (a public hostname, required) and ``task_kind`` (one value of ahn.task_routes.TaskKind, optional).
 Errors are codes only and never echo the input: invalid_site_host (400), invalid_task_kind (400).
+
+The write paths exist only while settings.task_route_reports_served (AHN_TASK_ROUTE_REPORTS=1 on top of AHN_TASK_ROUTES=1, with public
+reporting on); otherwise they are 404. A report is the closed values of ahn.task_routes.TaskRouteIn as JSON. Any other field, including
+the ones the server sets (source_kind, period, sensitive, review_state) and any link, is refused with 422 invalid_task_route; the
+answer never repeats what was sent. With the switch on, answers and pages also carry the published stored records (ahn.task_route_intake).
 """
 
 from __future__ import annotations
@@ -13,24 +19,31 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlencode
 
+from uuid import UUID
+
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import ValidationError
 
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
-                          SiteRequires, TaskKind, TaskObstacle, TaskRouteInputError, VerificationKind, is_current, lookup,
-                          parse_query, server_route, table_key)
+                          SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRouteInputError, VerificationKind, is_current,
+                          lookup, parse_query, server_route, site_records, stored_route)
 
 LOG = logging.getLogger(__name__)
 
 PATH = "/v1/task-routes"
 CACHE_CONTROL = "public, max-age=300"
+REPORT_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
 
 def add_routes(app, settings, render=None, lang_text=None) -> None:
-    """Register GET /v1/task-routes. Called only while AHN_TASK_ROUTES=1; otherwise the path does not exist (404).
+    """Register GET /v1/task-routes. Called only while AHN_TASK_ROUTES=1; otherwise the path does not exist (404). The write paths
+    are registered too while settings.task_route_reports_served (D118).
 
     ``render`` and ``lang_text`` are the page helpers of the app; with both given, the two human pages are registered too."""
     from .service import ServiceError
+    from .settings import task_route_reports_served
 
     headers = {"Cache-Control": CACHE_CONTROL, "X-Content-Type-Options": "nosniff"}
 
@@ -40,16 +53,79 @@ def add_routes(app, settings, render=None, lang_text=None) -> None:
             host, kind = parse_query(site_host, task_kind)
         except TaskRouteInputError as error:
             raise ServiceError(error.code, 400) from None
-        answer = lookup(host, kind)
+        answer = lookup(host, kind, settings=settings)
         return JSONResponse(answer.model_dump(mode="json"), headers=headers)
 
+    if task_route_reports_served(settings):
+        add_write_routes(app, settings)
+    else:  # the write paths do not exist: 404, as with the read switch off (not 405 because GET shares the path)
+        @app.post(PATH, include_in_schema=False)
+        def task_routes_write_off():
+            raise ServiceError("not_found", 404)
+
+        @app.delete(PATH + "/{route_id}", include_in_schema=False)
+        def task_routes_withdraw_off(route_id: str):
+            raise ServiceError("not_found", 404)
     if render is not None and lang_text is not None:
         add_pages(app, settings, render, lang_text)
 
 
+def add_write_routes(app, settings) -> None:
+    """POST /v1/task-routes and DELETE /v1/task-routes/{route_id} (D118). Called only while settings.task_route_reports_served."""
+    from .rate_limit import RequestLimiter
+    from .service import ServiceError
+    from .task_route_intake import submit_task_route, withdraw_task_route
+    from .tool_metrics import is_mcp_metric_request
+
+    # Its own limiter, as tight as the observation one: a few reports a minute per client. The MCP adapter's loopback hop is not
+    # counted twice (the outer /mcp request already passed the general limiter).
+    limiter = RequestLimiter(per_client=3, total=20)
+
+    def internal_hop(request: Request) -> bool:
+        return bool(request.client and request.client.host in {"127.0.0.1", "::1"}
+                    and is_mcp_metric_request(request.headers.get("x-ahn-mcp-call"), settings.key_pepper))
+
+    @app.post(PATH, include_in_schema=False)
+    async def report_task_route(request: Request):
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return JSONResponse({"error": "json_required"}, status_code=415, headers=REPORT_HEADERS)
+        if not internal_hop(request) and not await limiter.allow(request):
+            return JSONResponse({"error": "report_rate_limited"}, status_code=429, headers={**REPORT_HEADERS, "Retry-After": "60"})
+        try:
+            payload = await request.json()
+        except ValueError:
+            return JSONResponse({"error": "invalid_request"}, status_code=400, headers=REPORT_HEADERS)
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "invalid_task_route"}, status_code=422, headers=REPORT_HEADERS)
+        try:
+            data = TaskRouteIn.model_validate(payload)
+        except ValidationError:  # unknown or server-set fields, values outside the lists, or a combination the rules refuse
+            return JSONResponse({"error": "invalid_task_route"}, status_code=422, headers=REPORT_HEADERS)
+        try:
+            receipt, created = await run_in_threadpool(submit_task_route, settings, data)
+        except ServiceError as error:
+            extra = {"Retry-After": "3600"} if error.status == 429 else {}
+            return JSONResponse({"error": error.code}, status_code=error.status, headers={**REPORT_HEADERS, **extra})
+        return JSONResponse(receipt, status_code=201 if created else 200, headers=REPORT_HEADERS)
+
+    @app.delete(PATH + "/{route_id}", include_in_schema=False)
+    async def delete_task_route(request: Request, route_id: str):
+        try:
+            parsed = UUID(route_id)
+        except ValueError:
+            return JSONResponse({"error": "not_found"}, status_code=404, headers=REPORT_HEADERS)
+        token = request.headers.get("x-withdrawal-token", "")
+        try:
+            result = await run_in_threadpool(withdraw_task_route, settings, parsed, token)
+        except ServiceError as error:
+            return JSONResponse({"error": error.code}, status_code=error.status, headers=REPORT_HEADERS)
+        return JSONResponse(result, headers=REPORT_HEADERS)
+
+
 # --- Human pages (PR-F): GET /{lang}/routes and /{lang}/routes/{host} ----------------------------------------------------
-# Same flag as the API. The pages read the in-code table through task_routes.lookup / server_route only: they never call check(),
-# open a database or reach a site, and they show the server-decided values (sensitive, source_kind, period) as the server computed them.
+# Same flag as the API. The pages read the in-code table through task_routes.lookup / server_route and, while the write switch is
+# served (D118), the published stored records: they never call check() or reach a site, and they show the server-decided values
+# (sensitive, source_kind, period) as the server computed them.
 PAGE_ROWS_MAX = 500
 SOURCE_ORDER = (RouteSourceKind.operator_panel, RouteSourceKind.curated_official, RouteSourceKind.external_agent,
                 RouteSourceKind.curated_community)
@@ -125,9 +201,12 @@ def label(group: str, value, lang: str) -> str:
     return EN_LABELS.get(group, {}).get(value, str(value).replace("_", " "))
 
 
-def current_records() -> list:
-    """Every current record of the curated table, newest period first. Reads the table at call time; a malformed entry is skipped."""
+def current_records(settings=None) -> list:
+    """Every current record of the curated table and, while the write switch is served, every published stored record, newest
+    period first. Reads the table at call time; a malformed entry is skipped. If the database cannot be read, the curated
+    records alone (a warning is logged)."""
     from . import task_routes_data
+    from .settings import task_route_reports_served
 
     records = []
     for host, entries in task_routes_data.TASK_ROUTES_CURATED.items():
@@ -138,6 +217,19 @@ def current_records() -> list:
                 records.append(server_route(host, item))
             except ValueError:
                 LOG.warning("task_route_entry_invalid")
+    if settings is not None and task_route_reports_served(settings):
+        from .task_route_intake import all_published_rows
+
+        try:
+            rows = all_published_rows(settings)
+        except Exception:  # the database is down or not migrated yet: the curated records alone
+            LOG.warning("task_route_db_unavailable")
+            rows = []
+        for row in rows:
+            try:
+                records.append(stored_route(row))
+            except ValueError:
+                LOG.warning("task_route_row_invalid")
     records.sort(key=lambda r: (r.period, r.verified_at or "", r.site_host, r.task_kind.value, r.obstacle.value), reverse=True)
     return records
 
@@ -219,7 +311,7 @@ def add_pages(app, settings, render, lang_text) -> None:
     def routes_page(request: Request, lang: str):
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
-        records = current_records()
+        records = current_records(settings)
         hosts = sorted({record.site_host for record in records})
         picked = read_filters(request.query_params, hosts)
         context = page_context(records, [record for record in records if keep(record, picked)], lang, lang_text)
@@ -230,20 +322,21 @@ def add_pages(app, settings, render, lang_text) -> None:
     def routes_host_page(request: Request, lang: str, host: str):
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
-        # The page exists only for a key of the curated table, found by the same walk as GET /v1/task-routes (table_key). Any other
-        # name (a bad host, a site with no entry, a tenant subdomain) is a plain 404 and appears nowhere in the answer.
+        # The page exists only for a key with records, found by the same walk as GET /v1/task-routes (site_records and table_key,
+        # which count the published stored records while the write switch is served). Any other name (a bad host, a site with no
+        # entry, a tenant subdomain) is a plain 404 and appears nowhere in the answer.
         try:
             site, _kind = parse_query(host)
         except TaskRouteInputError:
             raise ServiceError("not_found", 404) from None
-        key = table_key(site)
+        key, _rows = site_records(site, settings)
         if key is None:
             raise ServiceError("not_found", 404)
         picked = read_filters(request.query_params, [])
         query = urlencode([(name, picked[name]) for name in FILTERS if picked[name]])
         if host != key:  # www., upper case, a trailing dot, support.: one address per site
             return RedirectResponse(f"/{lang}/routes/{key}" + (f"?{query}" if query else ""), status_code=301)
-        answer = lookup(key)
+        answer = lookup(key, settings=settings)
         # lookup() shows at most TASK_ROUTES_MAX records; the counts cover all of them.
         shown = [record for record in answer.routes if keep(record, picked)]
         context = page_context(answer.routes, shown, lang, lang_text)

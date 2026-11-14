@@ -66,10 +66,12 @@ class Exempt:
 # --- Rendering ---------------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=None)
-def policy_html(lang: str, reporting: bool, retention_days: int = 0, task_routes: bool = False) -> str:
+def policy_html(lang: str, reporting: bool, retention_days: int = 0, task_routes: bool = False,
+                task_route_reports: bool = False) -> str:
     settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True,
                         reporting_enabled=reporting, report_retention_days=retention_days, task_routes=task_routes,
-                        task_routes_since=POLICY_UPDATED if task_routes else None)
+                        task_routes_since=POLICY_UPDATED if task_routes else None, task_route_reports=task_route_reports,
+                        task_route_reports_since=POLICY_UPDATED if task_route_reports else None)
     response = TestClient(create_app(settings)).get(f"/{lang}/policy")  # no `with`: lifespan (database) never runs
     assert response.status_code == 200
     return response.text
@@ -79,14 +81,16 @@ def plain(markup: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
 
 
-def policy_text(lang: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False) -> str:
-    return plain(policy_html(lang, reporting, retention_days, task_routes))
+def policy_text(lang: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False,
+                task_route_reports: bool = False) -> str:
+    return plain(policy_html(lang, reporting, retention_days, task_routes, task_route_reports))
 
 
-def section(lang: str, number: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False) -> str:
+def section(lang: str, number: str, reporting: bool = True, retention_days: int = 0, task_routes: bool = False,
+            task_route_reports: bool = False) -> str:
     """Text of numbered policy section 01-08 (02 data collected, 03 returned, 06 retention)."""
     found = re.search(rf'<article><span class="policy-index">{number}</span>.*?</article>',
-                      policy_html(lang, reporting, retention_days, task_routes), re.S)
+                      policy_html(lang, reporting, retention_days, task_routes, task_route_reports), re.S)
     assert found, f"policy section {number} not found in the {lang} page"
     return plain(found.group())
 
@@ -120,7 +124,7 @@ PUBLIC_TOOLS = {
 }
 
 
-def registered_tools(reporting: bool, task_routes: bool = False) -> dict[str, list[str]]:
+def registered_tools(reporting: bool, task_routes: bool = False, task_route_reports: bool = False) -> dict[str, list[str]]:
     """Tool name -> input property names, read from the MCP server as the public deployment builds it.
 
     A subprocess, because ahn.mcp_adapter chooses its tools from the environment when imported.
@@ -129,7 +133,8 @@ def registered_tools(reporting: bool, task_routes: bool = False) -> dict[str, li
             "print(json.dumps({t.name: sorted(t.input_schema.get('properties', {})) "
             "for t in asyncio.run(mcp.list_tools())}))")
     env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1" if reporting else "0",
-           "AHN_TASK_ROUTES": "1" if task_routes else "0", "AHN_TASK_ROUTES_SINCE": POLICY_UPDATED.isoformat()}
+           "AHN_TASK_ROUTES": "1" if task_routes else "0", "AHN_TASK_ROUTES_SINCE": POLICY_UPDATED.isoformat(),
+           "AHN_TASK_ROUTE_REPORTS": "1" if task_route_reports else "0", "AHN_TASK_ROUTE_REPORTS_SINCE": POLICY_UPDATED.isoformat()}
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -404,6 +409,110 @@ def test_the_task_routes_switch_adds_one_paragraph_to_a_section_and_changes_noth
             assert section(lang, other) == section(lang, other, task_routes=True), f"the {lang} section {other} changed with the switch"
 
 
+# --- 3b. Task-route reports (D118) ---------------------------------------------------------------
+
+# Keyed by (reporting, task_routes) with AHN_TASK_ROUTE_REPORTS=1: the write tool needs the read switch and public reporting.
+REPORT_SWITCH_TOOLS = {
+    (False, False): PUBLIC_TOOLS[(False, False)],
+    (True, False): PUBLIC_TOOLS[(True, False)],          # the read switch off turns the write switch off too
+    (False, True): PUBLIC_TOOLS[(False, True)],          # reporting off: no write tool
+    (True, True): PUBLIC_TOOLS[(True, True)] | {"report_task_route"},
+}
+# What report_task_route accepts (TaskRouteIn), each named in the {% if task_route_reports %} paragraph of section 02.
+TASK_ROUTE_REPORT_INPUTS = {
+    "site_host": Phrase("a public hostname", "공개 호스트명"),
+    "task_kind": Phrase("task kind", "태스크 종류"),
+    "obstacle": Phrase("obstacle", "걸림돌"),
+    "verification_kind": Phrase("kind of verification", "인증 종류"),
+    "site_requires": Phrase("what the site requires", "사이트가 요구하는 것"),
+    "document_kind": Phrase("kind of document", "서류 종류"),
+    "entry_point_kind": Phrase("kind of entry point", "입구 종류"),
+    "routes_tried": Phrase("routes tried", "시도한 경로"),
+    "route_worked": Phrase("the route that worked", "통한 경로"),
+    "basis": Phrase("basis", "근거"),
+    "outcome": Phrase("outcome", "결과"),
+    "duration": Phrase("duration", "걸린 기간"),
+    "idempotency_key": Phrase("idempotency key", "중복 방지 키"),
+}
+
+
+@pytest.mark.parametrize("task_routes", [False, True])
+@pytest.mark.parametrize("reporting", [False, True])
+def test_the_report_switch_adds_report_task_route_only_with_the_read_switch_and_reporting(reporting, task_routes):
+    tools = registered_tools(reporting, task_routes, task_route_reports=True)
+    assert set(tools) == REPORT_SWITCH_TOOLS[(reporting, task_routes)]
+    if "report_task_route" in tools:
+        for lang in LANGS:
+            assert "report_task_route" in policy_text(lang, True, task_routes=True, task_route_reports=True)
+
+
+def test_report_task_route_inputs_are_covered_by_the_policy():
+    from ahn.task_routes import TaskRouteIn
+
+    assert registered_tools(True, True, True)["report_task_route"] == ["report"]
+    fields = set(TaskRouteIn.model_fields)
+    assert fields == set(TASK_ROUTE_REPORT_INPUTS), (f"report_task_route now takes {sorted(fields)}: describe the input in section 02 "
+                                                     "(the {% if task_route_reports %} paragraph), then map it here.")
+    assert_phrases("task route report inputs", {lang: section(lang, "02", True, 0, True, True) for lang in LANGS},
+                   TASK_ROUTE_REPORT_INPUTS)
+    # The server-set values are named as the server's, and a report has no link or text field.
+    for lang, needles in (("en", ("that the server sets", "no field for text, a link")), ("ko", ("서버가 정하는", "글·링크"))):
+        for needle in needles:
+            assert needle in section(lang, "02", True, 0, True, True)
+
+
+def test_task_route_report_caps_in_the_policy_match_the_code():
+    from ahn import task_route_intake as intake
+
+    caps = (intake.TASK_ROUTE_DAILY_CAP, intake.TASK_ROUTE_SITE_DAILY_CAP, intake.TASK_ROUTE_SITE_KIND_DAILY_CAP)
+    assert caps == (100, 5, 3)  # the brief's numbers; a change here is a policy change
+    wording = {"en": "Intake is capped at {} reports a day in all, {} a day per site and {} a day per site and task kind",
+               "ko": "접수는 하루 전체 {}건, 사이트마다 하루 {}건, 사이트·태스크 종류마다 하루 {}건으로 제한"}
+    for lang in LANGS:
+        assert wording[lang].format(*caps) in section(lang, "04", True, 0, True, True)
+    assert intake.TASK_ROUTE_MANUAL_REVIEW is True  # "an operator reviews it before it is shown"
+
+
+def test_task_route_report_retention_in_the_policy_matches_the_code():
+    from ahn import task_route_intake as intake
+
+    assert intake.TASK_ROUTE_WITHDRAWN_GRACE_DAYS == GRACE_DAYS  # the same grace as observations
+    source = inspect.getsource(intake.prune_task_route_reports)
+    assert "TASK_ROUTE_WITHDRAWN_GRACE_DAYS" in source and "retention_days <= 0" in source
+    wording = {"en": f"Task-route reports are deleted {REPORT_RETENTION_DAYS} days after they are received; a withdrawn record is excluded "
+                     f"from every read at once and deleted {GRACE_DAYS} days after withdrawal",
+               "ko": f"태스크 경로 제보는 접수 {REPORT_RETENTION_DAYS}일 뒤 삭제됩니다. 철회한 기록은 즉시 모든 조회에서 빠지고 철회 {GRACE_DAYS}일 뒤 삭제됩니다"}
+    none = {"en": "Task-route reports have no automatic deletion date during the beta",
+            "ko": "태스크 경로 제보는 베타 기간 동안 자동 삭제 기한이 없습니다"}
+    for lang in LANGS:
+        assert wording[lang] in section(lang, "06", True, REPORT_RETENTION_DAYS, True, True)
+        assert none[lang] in section(lang, "06", True, 0, True, True)
+
+
+def test_task_route_report_withdrawal_and_exclusions_are_stated():
+    for lang, needles in (("en", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token")),
+                          ("ko", ("DELETE /v1/task-routes/{route_id}", "X-Withdrawal-Token"))):
+        for needle in needles:
+            assert needle in section(lang, "07", True, 0, True, True)
+    for lang, needle in (("en", "not part of the offline data bundle or the export"), ("ko", "오프라인 데이터 묶음과 내보내기에 들어가지 않습니다")):
+        assert needle in section(lang, "05", True, 0, True, True)
+
+
+@pytest.mark.parametrize("reporting", [False, True])
+def test_the_report_switch_changes_no_byte_of_the_policy_while_it_is_not_served(reporting):
+    # Not served: reporting off, or the switch without the read switch. The page is then the same byte for byte.
+    for lang in LANGS:
+        assert policy_html(lang, reporting, 0, False, False) == policy_html(lang, reporting, 0, False, True)  # read switch off
+        if not reporting:  # reporting off: not served even with the read switch on
+            assert policy_html(lang, False, 0, True, False) == policy_html(lang, False, 0, True, True)
+
+
+@pytest.mark.parametrize("number", ["01", "08"])
+def test_the_report_switch_leaves_these_sections_alone(number):
+    for lang in LANGS:
+        assert section(lang, number, True, 0, True) == section(lang, number, True, 0, True, True)
+
+
 # --- 4. Database tables and retention ----------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -451,6 +560,24 @@ class UntilExpiry:
 @dataclass(frozen=True)
 class ReportRows:
     """Report rows: deleted after AHN_REPORT_RETENTION_DAYS, withdrawn ones after the grace period."""
+
+
+@dataclass(frozen=True)
+class PrunedWhileServed:
+    """Deleted by prune_analytics after a fixed period, and described only while its switch is served (task-route reports, D118)."""
+    section_06: Phrase           # wording in the Retention section with the switch on, with {days}
+
+
+@dataclass(frozen=True)
+class TaskRouteReportRows:
+    """Task-route records (D118): public reports deleted after AHN_REPORT_RETENTION_DAYS, withdrawn records after the grace
+    (task_route_intake.prune_task_route_reports). Checked by test_task_route_report_retention_in_the_policy_matches_the_code."""
+
+
+@dataclass(frozen=True)
+class GoesWithRecord:
+    """A row deleted with the record it belongs to (ON DELETE CASCADE), never on its own."""
+    parent: str
 
 
 # Every table created in migrations/*.sql, with the reason it is or is not described in the policy.
@@ -548,6 +675,11 @@ TABLES = {
         Phrase("this record is replaced on each read", "이 기록은 읽을 때마다 교체됩니다")),
     "observations": ReportRows(),
     "report_submissions": ReportRows(),  # idempotency key and request hash of a report; goes with its observation
+    # Task-route reports (migration 042, D118), described only while the write switch is served.
+    "task_routes": TaskRouteReportRows(),
+    "task_route_submissions": GoesWithRecord("task_routes"),  # idempotency key and request hash of a task-route report
+    "task_route_intake_daily": PrunedWhileServed(
+        Phrase("Daily task-route intake counters per site and task kind: {days} days", "사이트·태스크 종류별 일일 태스크 경로 접수 수: {days}일")),
     # Not request-derived: nothing for the policy to describe.
     "schema_migrations": Exempt("migration bookkeeping"),
     "reporters": Exempt("one shared 'public-unverified' row for all no-account reports; no per-person identity"),
@@ -620,12 +752,13 @@ def test_every_table_is_mapped_to_a_retention_statement():
 
 
 def test_deleted_tables_match_the_policy_mapping():
-    pruned = {t for t, v in TABLES.items() if isinstance(v, Pruned)}
+    pruned = {t for t, v in TABLES.items() if isinstance(v, (Pruned, PrunedWhileServed))}
     assert set(periods_in_prune_analytics()) == pruned, (
         "prune_analytics deletes a different set of tables than TABLES marks as Pruned. "
         "Update the mapping and the policy together.")
     # Tables mapped as 'no automatic deletion' must not be deleted anywhere, or the policy would be wrong.
-    expected_deleted = pruned | {t for t, v in TABLES.items() if isinstance(v, (ReportRows, Transient, UntilSwitchedOff, UntilExpiry))}
+    expected_deleted = pruned | {t for t, v in TABLES.items()
+                                 if isinstance(v, (ReportRows, TaskRouteReportRows, Transient, UntilSwitchedOff, UntilExpiry))}
     assert expiring_in_prune_analytics() == {t for t, v in TABLES.items() if isinstance(v, UntilExpiry)}
     # A replaced list copy is rewritten in place by ahn/gov_registry.py; only the domain rows are deleted from.
     expected_deleted |= {"gov_domain_registry"}
@@ -649,6 +782,24 @@ def test_retention_periods_in_code_match_the_policy():
     assert_phrases("retention section", retention, {t: v.section_06 for t, v in pruned.items()}, days)
     everywhere = {lang: policy_text(lang) for lang in LANGS}
     assert_phrases("technical details", everywhere, {t: v.technical for t, v in pruned.items() if v.technical}, days)
+    # Tables described only while their switch is served: the same check on the page with the task-route write switch on.
+    served = {t: v for t, v in TABLES.items() if isinstance(v, PrunedWhileServed)}
+    retention_on = {lang: section(lang, "06", True, 0, True, True) for lang in LANGS}
+    assert_phrases("retention section (task-route reports on)", retention_on, {t: v.section_06 for t, v in served.items()},
+                   {t: periods[t] for t in served})
+    from ahn import task_route_intake
+    assert periods["task_route_intake_daily"] == task_route_intake.TASK_ROUTE_INTAKE_DAYS
+    for table in served:  # off, the policy does not mention them
+        for lang in LANGS:
+            assert getattr(served[table].section_06, lang).split(":")[0] not in section(lang, "06", True, 0, True)
+
+
+def test_rows_that_go_with_a_record_are_deleted_with_it():
+    sql = "\n".join(path.read_text(encoding="utf-8") for path in sorted((ROOT / "migrations").glob("*.sql")))
+    for table, entry in TABLES.items():
+        if isinstance(entry, GoesWithRecord):
+            body = re.search(rf"CREATE TABLE {table} \((.*?)\n\);", sql, re.S).group(1)
+            assert f"REFERENCES {entry.parent} (id) ON DELETE CASCADE" in body, f"{table} is not deleted with its {entry.parent} row"
 
 
 def test_tables_kept_without_deletion_say_so():

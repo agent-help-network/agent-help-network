@@ -21,7 +21,7 @@ from .check_text import VENDOR_NAMES, age_text, unfollowed_www_redirect
 from .lookup_signals import ORIGIN_HEADER, TEST_HEADER, TEST_QUERY, WHY_BASE, lenient_codes, test_marked, why_url
 from .models import (FEEDBACK_TOKEN, AgentVendor, Challenge, CheckResponse, ErrorClass, FailureStage, FeedbackIn, FeedbackOutcome,
                      FeedbackPath, FeedbackReceipt, ObservationIn, OutcomeIn, Receipt, RetryAfter, STEP, Via, valid_host)
-from .settings import task_routes_env_enabled
+from .settings import task_route_reports_env_enabled, task_routes_env_enabled
 from .triage import accepted_vendor
 from .tool_metrics import mcp_metric_token
 
@@ -348,6 +348,11 @@ def open_output_schema(schema):
 if task_routes_env_enabled():  # off by default: the tool is then not listed
     from .mcp_task_routes import register as register_task_routes
     register_task_routes(mcp)
+    # D118: the write tool only on top of the read switch, and only where the public service takes reports (REST answers 404 otherwise).
+    if (task_route_reports_env_enabled() and os.environ.get("AHN_PUBLIC_MODE") == "1" and os.environ.get("AHN_REPORTING_ENABLED") == "1"
+            and os.environ.get("AHN_TEST_MODE") != "1"):
+        from .mcp_task_routes import register_reports as register_task_route_reports
+        register_task_route_reports(mcp, call_api)
 
 # This relies on MCP SDK internals (mcp==2.3.0, pinned): MCPServer._tool_manager, Tool.fn_metadata.output_schema (read
 # live by FuncMetadata) and the cached Tool.output_schema property. tests/test_lookup_feedback.py checks the advertised
