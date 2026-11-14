@@ -30,6 +30,8 @@ from ahn.triage import failure_observed  # noqa: E402
 _spec = importlib.util.spec_from_file_location("pre_d92_response_guide", HERE / "_pre_d92_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 # D93 changed only these sentences since the snapshot; take them as they are now so the comparison keeps covering everything else
 pre_rg.ROWS.update({row: response_guide.ROWS[row] for row in ("O1", "O7", "O7-N", "O7-K", "U8") if row in pre_rg.ROWS})
 
@@ -95,7 +97,7 @@ def test_proceed_rows_say_no_response_came_and_a_503_keeps_its_d87_sentence(prof
     timeout = lookup(result, "service_error", "before_target_response")
     seen = lookup(result, "service_error", "response_observed")
     assert timeout["summary_line"] == NO_RESPONSE_ROWS[row] and "5xx" not in timeout["summary_line"]
-    assert seen["summary_line"] == SERVICE_ERROR_ROWS[row] == pre_rg.SERVICE_ERROR_ROWS[row]  # 503 regression
+    assert seen["summary_line"] == SERVICE_ERROR_ROWS[row] == pre_rg.SERVICE_ERROR_ROWS[row].replace("judge this 5xx", "judge this timeout or 5xx")  # 503 regression (D116 wording)
     assert lookup(result, "service_error")["summary_line"] == SERVICE_ERROR_ROWS[row]  # no stage: unchanged
     assert timeout["next_action"] == seen["next_action"] and timeout["next_action"]["do"] == "proceed"
 
@@ -130,7 +132,7 @@ def test_sentences_are_short_and_say_no_5xx():
     assert all("next_action.customer_url" in t for t in NO_RESPONSE_CONSUMER_ROWS.values())
     assert not any("customer_url" in t for t in NO_RESPONSE_ROWS.values())
     assert "robots.agents_blocked" in NO_RESPONSE_ROWS["P2"]
-    assert {k: v for k, v in response_guide.ROWS.items() if k not in ("U7-O", "U9-O", "H3", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k != "H3"} and response_guide.SERVICE_ERROR_ROWS == pre_rg.SERVICE_ERROR_ROWS
+    assert {k: v for k, v in response_guide.ROWS.items() if k not in ("U7-O", "U9-O", "H3", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k != "H3"} and response_guide.SERVICE_ERROR_ROWS == {k: v.replace("judge this 5xx", "judge this timeout or 5xx") for k, v in pre_rg.SERVICE_ERROR_ROWS.items()}  # D116 wording
 
 
 def test_documents_name_the_rule():

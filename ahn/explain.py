@@ -301,6 +301,8 @@ def _fill(template_id: str, lang: str, cap: int, **values: Any) -> str | None:
     for name in re.findall(r"{(\w+)}", template):
         if values.get(name) is None:
             return None
+    if lang == "ko":
+        template = X.attach_particles(template, values)
     text = template.format(**values)
     if len(text) > cap:
         LOG.warning("why_item_dropped id=%s reason=too_long", template_id)
@@ -313,6 +315,17 @@ def _words(table: dict[str, dict[str, str]], key: Any, lang: str) -> str | None:
     return entry[lang] if entry else None
 
 
+def _sent_is_status_host(inputs: Inputs, sent_check: dict | None) -> bool:
+    """D116: the host as sent (answered from its apex) is a dedicated status host (D114's test) of the status page its own lookup names."""
+    if not (sent_check and inputs.lookup_host and (sent_check.get("next_action") or {}).get("do")):
+        return False
+    from .response_guide import _status_host_is_site
+
+    sources = ((sent_check.get("provider_status") or {}).get("source_url"), (sent_check.get("official_status_page") or {}).get("source_url"),
+               sent_check["next_action"].get("status_url"))
+    return any(isinstance(source, str) and source and _status_host_is_site(source, inputs.lookup_host) for source in sources)
+
+
 # --- the context every part reads --------------------------------------------------------------------------------------
 class _Ctx:
     def __init__(self, inputs: Inputs, check: dict, view: dict | None, changes: list, doc_events: list, today: date,
@@ -322,6 +335,12 @@ class _Ctx:
         # the lookup of the host as sent, given only when it was answered from its apex; only the status address of next_action is read from it.
         self.server_check = check
         self.sent_check = sent_check
+        # D116: when the host as sent is itself a dedicated status host, the server block is that host's own lookup answer (recommendation,
+        # next_action, summary_line), so it says what the lookup of the same host says. ``sent_host`` is then the host the handoff names.
+        self.sent_host: str | None = None
+        if _sent_is_status_host(inputs, sent_check):
+            self.sent_host = inputs.lookup_host
+            self.server_check = {**check, **{key: sent_check[key] for key in ("recommendation", "next_action", "summary_line") if sent_check.get(key) is not None}}
         self.summary_in_english = False  # D110: a Korean answer's server.summary_line stayed the lookup's English sentence
         self.english_parts = False  # D114: a Korean answer's server block kept a next_checks or cause sentence in English
         self.platform = inputs.agent_platform
@@ -762,7 +781,10 @@ def _is_customer_path(ctx: _Ctx, url: str | None) -> bool:
 
 
 def _official_id(ctx: _Ctx, url: str | None) -> str:
-    return "CHK-OFFICIAL-PATH-CUSTOMER" if _is_customer_path(ctx, url) else "CHK-OFFICIAL-PATH"
+    if _is_customer_path(ctx, url):
+        # D116: no task_context and no stop that implies an account: the customer page is for a task in the user's own account only.
+        return "CHK-OFFICIAL-PATH-CUSTOMER-NOCTX" if ctx.i.task_context is None and not ctx.r3 else "CHK-OFFICIAL-PATH-CUSTOMER"
+    return "CHK-OFFICIAL-PATH"
 
 
 def _status_url(ctx: _Ctx) -> str | None:
@@ -919,6 +941,8 @@ def _person(ctx: _Ctx, rows: list[dict]) -> dict:
     items = []
     for code in codes:
         template_id = "S-P-SERVER-HAND-OFF-OPEN" if code == "server_hand_off" and ctx.open_self else X.PERSON_REASON_ID[code]
+        if template_id == "S-P-SERVER-HAND-OFF-OPEN" and long_ahn_path(ctx.check.get("cause")):
+            template_id = "S-P-SERVER-HAND-OFF-OPEN-LONG"  # D116: AHN's own long-failing probe is not site evidence
         text = _fill(template_id, lang, SHORT_TEXT_MAX, platform=ctx.pname)
         if text:
             items.append({"code": code, "text": text})
@@ -1040,7 +1064,7 @@ def _msg_match_doc(ctx: _Ctx) -> dict | None:
 
 
 def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
-    lang, host = ctx.lang, ctx.i.site_host
+    lang, host = ctx.lang, ctx.sent_host or ctx.i.site_host  # D116: the host as sent, when it is a dedicated status host
     if ctx.i.since_kind == "today_first":
         since = X.SINCE_WORDS["today"][lang]
     elif ctx.i.since_date:
@@ -1062,7 +1086,7 @@ def _handoff(ctx: _Ctx, person: dict) -> list[dict]:
         items.append(_hand("site_support", "H-SITE", _fill("H-SITE", lang, HANDOFF_TEXT_MAX, **common)))
     first_code = person["reasons"][0]["code"] if person["needed"] == "yes" and person["reasons"] else None
     if first_code == "server_hand_off" and ctx.open_self:
-        line = X.TEMPLATES["H-USER-OPEN"][lang]
+        line = X.TEMPLATES["H-USER-OPEN-LONG" if long_ahn_path(ctx.check.get("cause")) else "H-USER-OPEN"][lang]  # D116
     elif first_code == "check_needs_person":
         line = X.TEMPLATES["H-USER-CHECK"][lang]
     elif first_code:
@@ -1302,7 +1326,8 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
 
     ``sent_check`` (D113) is the lookup answer for the host as sent, given only when it was answered from its apex (host_normalized == "apex");
     only the status address of the lookup block's next_action (status_url, status_url_kind, status_url_note) is read from it. Every judgment
-    (recommendation, next_action.do, which block is subordinate, where_to_look) is the root domain's ``check``."""
+    (recommendation, next_action.do, which block is subordinate, where_to_look) is the root domain's ``check``, except (D116) when the host as sent
+    is a dedicated status host: then the lookup block's recommendation, next_action and summary_line are ``sent_check``'s own."""
     ctx = _Ctx(inputs, check, view, changes, doc_events, today, sent_check)
     lang = ctx.lang
     platform_rows, platform_state = _platform_rows(ctx)
@@ -1315,7 +1340,10 @@ def build(inputs: Inputs, check: dict, view: dict | None, changes: list[dict], d
     where = _where_to_look(ctx, order, rows, states)
     ctx.first_layer = where["first"]
     ctx.subordinate = bool(ctx.do == "use_official_path" and not ctx.status_check
-                           and (where["first"] not in ("site", "unknown") or ctx.i.task_context == "public_read"))
+                           and (where["first"] not in ("site", "unknown") or ctx.i.task_context == "public_read"
+                                # D116: a customer page is offered but AHN was not told the task (and no stop implies an account): the lookup block
+                                # is read after the explanation's checks, as for a public read.
+                                or (ctx.i.task_context is None and not ctx.r3 and bool(ctx.next_action.get("customer_url")))))
     checks = _checks(ctx, person)
     person = _person_matches_checks(ctx, person, checks)  # last word on person, before anything that reads it (the handoff)
 

@@ -119,7 +119,7 @@ def test_components_only_is_stored_and_answered_without_wait(lookup, monkeypatch
     codes = [item["code"] for item in answer["next_checks"]]
     assert "provider_components_only" in codes and "provider_scope" not in codes
     korean = client.get("/ko/search", params={"site_host": "rubygems.org"}).text
-    assert "발표한 사건이나 점검은 없습니다" in korean
+    assert "발표한 사건이나 점검은 없어요" in korean
 
 
 def test_an_announced_incident_keeps_waiting_and_shows_its_scope(lookup, monkeypatch):

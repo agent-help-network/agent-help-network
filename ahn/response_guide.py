@@ -255,6 +255,17 @@ BLOCKED_PROCEED_CONSUMER_ROWS: dict[str, str] = {
     "P2-V": "robots.txt blocks other agents, not your vendor's. If a page refused you, tell your user; for their own account, hand them next_action.customer_url.",
     "P3": "This site publishes no robots.txt. If a page refused you, tell your user; for a task in their own account, hand them next_action.customer_url.",
 }
+# D116: the lookup reports a refusal (error_class site_access, or failure_stage access_denial_observed): the proceed sentence says where the
+# refusal came from instead of a conditional ("If a page refused you"). Same row and verdict (do stays proceed); only the sentence changes.
+_CAME = "Your refusal came from your tool, the site's edge or a login. Don't retry; tell your user"
+REFUSED_PROCEED_ROWS: dict[str, str] = {
+    "P1": "robots.txt blocks no listed agent vendor at the root. " + _CAME + ".",
+    "P1-V": "robots.txt does not block your vendor's agents at the root. " + _CAME + ".",
+    "P2": "robots.txt blocks some agents; stop if yours is in robots.agents_blocked. " + _CAME + ".",
+    "P2-V": "robots.txt blocks other agents, not your vendor's. " + _CAME + ".",
+    "P3": "This site publishes no robots.txt, so nothing declared blocks agents. " + _CAME + ".",
+}
+REFUSED_PROCEED_CONSUMER_ROWS: dict[str, str] = {k: v[:-1] + "; hand over next_action.customer_url." for k, v in REFUSED_PROCEED_ROWS.items()}
 # Rows where a curated consumer path is also next_action.url (the others keep the developer path). D65: a proceed row gives no url, so "continue" and "go here" do not compete; customer_url still names the page.
 CUSTOMER_FIRST_ROWS = frozenset({"O1", "O7", "O7-N", "O7-K"})
 # Rows whose retry_after_seconds is the pending profile's own value (a read is queued).
@@ -265,7 +276,7 @@ RETRY_ROWS = frozenset({"O1", "U1", "U2"})
 # it cannot judge this page's 5xx. FAILED_U3 replaces U3 for any lookup with a failure signal (error_class or failure_stage): the robots
 # condition stays, and the caller is told not to switch tools or user agents to retry. Only the sentence changes; the row, ``do`` and
 # every other key are those of the row (with a curated customer path the 5xx sentence also hands the user next_action.customer_url). AHN_FAILURE_KIND_LINES=0 keeps the sentences before D87.
-_FIVE_XX = "AHN sees hosts, not pages, so it cannot judge this 5xx. Retry once later; if it persists, tell your user."
+_FIVE_XX = "AHN sees hosts, not pages, so it cannot judge this timeout or 5xx. Retry once later; if it persists, tell your user."
 SERVICE_ERROR_ROWS: dict[str, str] = {
     "P1": "robots.txt blocks no listed agent vendor at the root. " + _FIVE_XX,
     "P1-V": "robots.txt does not block your vendor's agent tokens at the root. " + _FIVE_XX,
@@ -274,7 +285,7 @@ SERVICE_ERROR_ROWS: dict[str, str] = {
     "P3": "This site publishes no robots.txt, so nothing declared blocks agents. " + _FIVE_XX,
 }
 # With a curated customer path the 5xx sentence keeps the way to the person: the same prefixes, a shorter 5xx clause and the customer_url hand-over.
-_FIVE_XX_CONSUMER = "AHN cannot judge a single page's 5xx. Retry once later; if it persists, tell your user and hand them next_action.customer_url."
+_FIVE_XX_CONSUMER = "AHN cannot judge a page's timeout or 5xx. Retry once later; if it lasts, tell your user; hand them next_action.customer_url."
 SERVICE_ERROR_CONSUMER_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX) + _FIVE_XX_CONSUMER for row, sentence in SERVICE_ERROR_ROWS.items()}
 # D92: a lookup that reports no response at all (failure_stage=before_target_response) is not a 5xx: nothing was received to be a status
 # code. The same prefixes, then a clause that matches next_checks (check your tool and path first). Chosen only when error_class is
@@ -287,11 +298,11 @@ NO_RESPONSE_CONSUMER_ROWS: dict[str, str] = {row: sentence.removesuffix(_FIVE_XX
 # file may block others too, so the sentence says "some tokens, including those", never "only".
 _U3_STOP = "robots.txt blocks some tokens, including those in next_action.stop_if_you_are; if your requests send one, stop. "
 FAILED_U3 = _U3_STOP + "Either way, do not switch tools or user agents to retry after a refusal; tell your user."
-FAILED_U3_SERVICE_ERROR = _U3_STOP + "Either way, AHN cannot judge this 5xx. Retry once later; if it persists, tell your user."
+FAILED_U3_SERVICE_ERROR = _U3_STOP + "AHN cannot judge this timeout or 5xx. Retry once later; if it persists, tell your user."
 FAILED_U3_NO_RESPONSE = _U3_STOP + "Either way, no response came; check your tool, retry once later, then tell your user."
 # D95: the failure-kind sentences of U7-O (a developer API is listed, robots.txt unread; the failure is a 5xx or no response).
 U7_O_NO_RESPONSE = "No response came (timeout or connection), and AHN could not read the site's robots.txt either. Check your tool and path; retry once later; then tell your user."
-U7_O_SERVICE_ERROR = "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Retry once later; if it persists, tell your user. API work: official_paths."
+U7_O_SERVICE_ERROR = "AHN cannot judge a single page's timeout or 5xx, and could not read the site's robots.txt. Retry once later; if it persists, tell your user. API work: official_paths."
 # D97: the same failure-kind sentences for the three rows that list no developer path (a customer path may be curated) (U6 the site refused AHN's plain robots.txt read,
 # U7 robots.txt unread, U9 no policy read for the host). Chosen only with the D87 switch on, for error_class=service_error (no response, or any
 # other 5xx). With a curated customer path the clause hands the user next_action.customer_url (``url`` stays null).
@@ -301,7 +312,7 @@ _NO_PATH_CAUSE = {"U6": "the site refused AHN's plain robots.txt read too", "U7"
 _NO_PATH_CAUSE_5XX = {"U6": "; the site also refused AHN's plain robots.txt read", "U7": ", and could not read the site's robots.txt",
                       "U9": ", and has no declared policy for this host"}
 _NO_PATH_NO_RESPONSE = "No response came (timeout or connection), and "
-_NO_PATH_5XX = "AHN cannot judge a single page's 5xx"
+_NO_PATH_5XX = "AHN cannot judge a single page's timeout or 5xx"
 _NO_PATH_RETRY = "Retry once later; if it persists, tell your user."
 NO_PATH_NO_RESPONSE_ROWS: dict[str, str] = {row: f"{_NO_PATH_NO_RESPONSE}{_NO_PATH_CAUSE[row]}. Check your tool and path; retry once later; then tell your user."
                                             for row in NO_PATH_ROWS}
@@ -602,6 +613,27 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
     return None
 
 
+# D116: the wait rows that name no service say which components the provider lists, when the stored status has them (provider_status.affected,
+# at most MAX_AFFECTED names). Without names the sentence is byte-identical; the names are dropped one by one rather than cut.
+AFFECTED_ROWS = frozenset({"W1", "W3", "W4", "W6"})
+AFFECTED_PREFIX = "Affected: "
+_AFFECTED_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._&()/+-]{0,39}")
+
+
+def with_affected_names(sentence: str, affected) -> str:
+    names: list[str] = []
+    for name in affected if isinstance(affected, (list, tuple)) else ():
+        if (isinstance(name, str) and _AFFECTED_NAME.fullmatch(name) and ". " not in name and "  " not in name and name not in names
+                and not (" " in name and name == name.upper())):  # a shouted phrase is no component name (a hostile name reads as an order)
+            names.append(name.strip())
+    while names:
+        candidate = f"{sentence} {AFFECTED_PREFIX}{', '.join(names)}."
+        if len(candidate) <= LINE_MAX - 1:  # one spare character: the {n} blank of the wait sentence may grow by a digit
+            return candidate
+        names.pop()
+    return sentence
+
+
 def guide(result: dict, proceed_without_failure: bool = True, blocked_default: bool = False, status_check: bool = False,
           status_guide: bool = False, error_class: str | None = None, failure_stage: str | None = None,
           failure_kind_lines: bool = False, one_action: bool = False, d100: bool = False, incidentio_unread: bool = False,
@@ -666,6 +698,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         sentence = PROCEED_OFFICIAL_ROWS[row]
     if on and blocked_default and do == "proceed":
         sentence = (BLOCKED_PROCEED_CONSUMER_ROWS if customer else BLOCKED_PROCEED_ROWS)[row]
+        if failure_kind_lines and (error_class == "site_access" or failure_stage == "access_denial_observed"):
+            sentence = (REFUSED_PROCEED_CONSUMER_ROWS if customer else REFUSED_PROCEED_ROWS)[row]
     status_url = _status_url(result, provider_status) if (status_check or status_guide) else None
     mode = None
     status_id = None
@@ -725,6 +759,8 @@ def guide(result: dict, proceed_without_failure: bool = True, blocked_default: b
         retry = _seconds((access_profile or {}).get("retry_after_seconds"))
     elif do == "wait_for_provider":
         retry = WAIT_SECONDS
+    if row in AFFECTED_ROWS and on and sentence == ROWS[row][1]:
+        sentence = with_affected_names(sentence, (provider_status or {}).get("affected"))
     if "{n}" in sentence:
         sentence = sentence.replace("{n}", str(retry if retry is not None else 0))
     url = customer if on and customer and row in CUSTOMER_FIRST_ROWS else _url_for(do, result.get("official_paths"), provider_status,

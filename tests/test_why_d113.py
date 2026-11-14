@@ -224,7 +224,7 @@ def test_a_stop_that_implies_an_account_keeps_the_account_wording_without_a_cont
 
 
 # --- F4. a subdomain's lookup block is the lookup of the host as sent --------------------------------------------------------
-SENT = "status.replit.com"
+SENT = "api.replit.com"
 
 
 def sent_check():

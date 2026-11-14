@@ -227,7 +227,12 @@ def test_no_table_other_than_the_status_rows_moved():
     assert {k: v for k, v in ROWS.items() if k not in ("H3", "H3-R", *response_guide.HANDOFF_ROWS)} == {k: v for k, v in pre_rg.ROWS.items() if k not in ("H3", "H3-R")} and response_guide.STATUS_AFTER_ROWS == pre_rg.STATUS_AFTER_ROWS
     assert response_guide.CONSUMER_ROWS == pre_rg.CONSUMER_ROWS and response_guide.PROCEED_CONSUMER_ROWS == pre_rg.PROCEED_CONSUMER_ROWS
     assert {k: v for k, v in STATUS_FAILED_ROW.items() if k not in ("T6", "T1-U")} == pre_rg.STATUS_FAILED_ROW
-    assert {k: v for k, v in triage.CHECKS.items() if k != "no_path_after_failure"} == pre_t.CHECKS and {k: v for k, v in triage.CHECKS_KO.items() if k != "no_path_after_failure"} == pre_t.CHECKS_KO  # the D101 code is the only addition
+    assert {k: v for k, v in triage.CHECKS.items() if k != "no_path_after_failure"} == pre_t.CHECKS
+    # D116 moved the Korean wording of triage to the 해요 style on purpose. Only the tables named here are compared by their codes instead of their
+    # wording; every other table above still has to match the frozen copy sentence by sentence.
+    reworded_in_d116 = {"CHECKS_KO": (triage.CHECKS_KO, pre_t.CHECKS_KO)}
+    for name, (now, before) in reworded_in_d116.items():
+        assert {k for k in now if k != "no_path_after_failure"} == set(before), name
 
 
 def test_documents_name_the_rule():

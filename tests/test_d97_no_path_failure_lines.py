@@ -32,6 +32,8 @@ from ahn.triage import failure_observed  # noqa: E402
 _spec = importlib.util.spec_from_file_location("pre_d97_response_guide", HERE / "_pre_d97_response_guide.py")
 pre_rg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pre_rg)
+import _d116_old  # noqa: E402
+_d116_old.install(pre_rg)
 
 HELP = "https://www.example.com/help"
 ERROR_PROFILE = {"robots_status": "error", "robots": None, "freshness": "pending", "llms_txt_status": "absent"}
@@ -109,13 +111,13 @@ def lookup(row, *, error_class="service_error", stage=None, official=None, kind=
 
 SHAPES_OF_LINES = (
     ("U7", "No response came (timeout or connection), and AHN could not read the site's robots.txt either. Check your tool and path; retry once "
-           "later; then tell your user.", "AHN cannot judge a single page's 5xx, and could not read the site's robots.txt. Retry once later; if it "
+           "later; then tell your user.", "AHN cannot judge a single page's timeout or 5xx, and could not read the site's robots.txt. Retry once later; if it "
            "persists, tell your user."),
     ("U9", "No response came (timeout or connection), and AHN has no declared policy for this host. Check your tool and path; retry once later; "
-           "then tell your user.", "AHN cannot judge a single page's 5xx, and has no declared policy for this host. Retry once later; if it "
+           "then tell your user.", "AHN cannot judge a single page's timeout or 5xx, and has no declared policy for this host. Retry once later; if it "
            "persists, tell your user."),
     ("U6", "No response came (timeout or connection), and the site refused AHN's plain robots.txt read too. Check your tool and path; retry once "
-           "later; then tell your user.", "AHN cannot judge a single page's 5xx; the site also refused AHN's plain robots.txt read. Retry once "
+           "later; then tell your user.", "AHN cannot judge a single page's timeout or 5xx; the site also refused AHN's plain robots.txt read. Retry once "
            "later; if it persists, tell your user."),
 )
 

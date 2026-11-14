@@ -117,9 +117,9 @@ def test_the_host_name_decides_not_the_case_of_it():
     assert lookup(STATUS_HOST.upper())["next_action"]["url"] == f"https://{STATUS_HOST}/"
 
 
-def test_a_why_of_the_status_host_takes_the_lookup_of_its_root_and_only_the_status_keys_of_the_host_as_sent():
-    """/v1/why normalizes status.x.com to x.com (D113): the judgment and the sentence are the root lookup's; the status-host answer is the
-    lookup's, so only the three status keys of the host as sent are laid over the server block."""
+def test_a_why_of_the_status_host_takes_the_lookup_of_the_host_as_sent():
+    """/v1/why normalizes status.x.com to x.com (D113) for its layers. D116: a dedicated status host's server block is the lookup of the host
+    as sent (recommendation, next_action, summary_line), the same answer GET /v1/incidents/check gives for that host."""
     root = lookup("fixture-vendor.com")
     sent = lookup(STATUS_HOST)
     assert sent["next_action"]["url"] != root["next_action"]["url"]
@@ -130,10 +130,10 @@ def test_a_why_of_the_status_host_takes_the_lookup_of_its_root_and_only_the_stat
         sent_check = fake_check("use_official_path", "use_official_path", summary_line=sent["summary_line"], next_action=sent["next_action"])
         body = E.build(i, root_check, view(lang), [], [], TODAY, sent_check)
         action = body["server"]["next_action"]
-        assert action["url"] == root["next_action"]["url"] == OFFICIAL["api_docs"] and action["do"] == "use_official_path"
+        assert action["url"] == sent["next_action"]["url"] == f"https://{STATUS_HOST}/" and action["do"] == "use_official_path"
         assert action["status_url"] == sent["next_action"]["status_url"]
         if lang == "en":
-            assert body["server"]["summary_line"] == response_guide.noctx_summary(root["summary_line"])  # D115: no task_context
+            assert body["server"]["summary_line"] == response_guide.noctx_summary(sent["summary_line"])  # D115: no task_context
         else:
             assert HANGUL.search(body["server"]["summary_line"])
         WhyResponse.model_validate(body)
