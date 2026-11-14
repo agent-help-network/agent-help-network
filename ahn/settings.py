@@ -141,6 +141,22 @@ def parse_d101_switch(raw: str) -> bool:
     return False
 
 
+_D121_WARNED = False
+
+
+def parse_d121_switch(raw: str) -> bool:
+    """AHN_D121_HANDOFF (D121): empty and "1" are on, "0" is off. Any other value is off, not on (the change of an answer is the
+    risky side), and logs one warning per process: the code only, never the value."""
+    global _D121_WARNED
+    value = raw.strip()
+    if value in ("", "1"):
+        return True
+    if value != "0" and not _D121_WARNED:
+        _D121_WARNED = True
+        LOG.warning("d121_switch_unknown_value")
+    return False
+
+
 _D99_WARNED = False
 
 
@@ -295,6 +311,10 @@ class Settings:
     # service_error lookup (a 5xx or no response) whose first line sends the caller to no path outside AHN, and the earlier H3 sentence when
     # AHN's home-page check is over a day old. On by default; an unknown value is read as off (with one warning), never as on.
     d101_no_path_handoff: bool = True
+    # AHN_D121_HANDOFF=0 (D121) keeps the answers from before D121: a human_verification lookup waits for a provider's minor incident, and
+    # a proceed answer for a lookup that reported site_access stays proceed. On by default; an unknown value is read as off (with one
+    # warning), never as on.
+    d121_handoff: bool = True
     # AHN_D99_UNREADABLE_NOT_PENDING=0 (D99) shows ahn_check as pending (with retry_after_seconds) again for a host whose robots.txt AHN
     # could not read and that has no read queued. On by default; an unknown value is read as off (with one warning), never as on.
     d99_unreadable_not_pending: bool = True
@@ -393,6 +413,7 @@ class Settings:
                    d95_no_dev_path_on_failure=parse_d95_switch(os.environ.get("AHN_D95_NO_DEV_PATH_ON_FAILURE", "")),
                    d98_robots_refusal_handoff=parse_d98_switch(os.environ.get("AHN_D98_ROBOTS_REFUSAL_HANDOFF", "")),
                    d101_no_path_handoff=parse_d101_switch(os.environ.get("AHN_D101_NO_PATH_HANDOFF", "")),
+                   d121_handoff=parse_d121_switch(os.environ.get("AHN_D121_HANDOFF", "")),
                    d99_unreadable_not_pending=parse_d99_switch(os.environ.get("AHN_D99_UNREADABLE_NOT_PENDING", "")),
                    d100_incidentio_incidents=parse_d100_switch(os.environ.get("AHN_D100_INCIDENTIO_INCIDENTS", "")),
                    d104_betterstack_updated_at=parse_d104_switch(os.environ.get("AHN_D104_BETTERSTACK_UPDATED_AT", "")),

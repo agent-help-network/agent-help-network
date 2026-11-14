@@ -654,6 +654,12 @@ _SUMMARY_PAIRS = (
     ("The site's edge refused both you and AHN's own home-page check (ahn_check).",
      "사이트의 edge 가 당신과 AHN의 자체 홈페이지 확인(ahn_check)을 모두 거절했어요."),
     ("The site's edge refused both you and AHN's plain robots.txt read.", "사이트의 edge 가 당신과 AHN의 일반 robots.txt 읽기를 모두 거절했어요."),
+    # D121: H4 and its customer-page form
+    ("You reported a refused page, and the site declares no block for listed agent vendors.",
+     "당신이 거절된 페이지를 알렸고, 사이트는 목록에 있는 에이전트 업체를 막는다고 선언하지 않았어요."),
+    ("Do not switch tools or user agents; tell your user now.", "도구나 user agent 를 바꾸지 말고 지금 사용자에게 알리세요."),
+    ("Do not switch tools; hand your user next_action.customer_url.", "도구를 바꾸지 말고 사용자에게 next_action.customer_url 을 넘기세요."),
+    ("Continue the work that does not need this page.", "이 페이지가 필요 없는 나머지 작업은 계속하세요."),
     ("The site's edge refused you, and AHN's last home-page check (over a day ago) was refused too.",
      "사이트의 edge 가 당신을 거절했고, AHN의 마지막 홈페이지 확인(하루 넘게 전)도 거절됐어요."),
     ("The site's robots.txt blocks agent user agents at the root.", "사이트의 robots.txt 가 루트에서 에이전트 user agent 를 막아요."),
