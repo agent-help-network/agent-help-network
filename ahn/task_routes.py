@@ -265,14 +265,28 @@ class _TaskRouteFields(StrictModel):
         return self
 
 
+def _URL_SCHEMA(schema: dict) -> None:
+    """Advertise the plain-link pattern inside the string branch, as the Field pattern did; see TaskRoute.url_shape."""
+    schema["anyOf"][0]["pattern"] = r"^https://[^\s?#]+$"
+
+
 class TaskRoute(_TaskRouteFields):
     """One task-route record as an answer carries it. ``sensitive`` and ``period`` are set by the server."""
     period: str
     source_kind: RouteSourceKind
     sensitive: bool
-    official_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
-    source_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
+    official_url: str | None = Field(default=None, max_length=200, json_schema_extra=_URL_SCHEMA, exclude_if=_omit_none)
+    source_url: str | None = Field(default=None, max_length=200, json_schema_extra=_URL_SCHEMA, exclude_if=_omit_none)
     verified_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", exclude_if=_omit_none)
+
+    @field_validator("official_url", "source_url")
+    @classmethod
+    def url_shape(cls, value):
+        # The advertised schema keeps the plain-link pattern (D120 leaves the response shape alone); a listed exception needs
+        # a "?", so this only keeps whitespace and fragments out and official_url_problem does the rest.
+        if value is not None and not re.fullmatch(r"https://[^\s#]+", value):
+            raise ValueError("invalid_task_route: not a plain https URL")
+        return value
 
     @field_validator("verified_at")
     @classmethod
@@ -299,11 +313,11 @@ class TaskRoute(_TaskRouteFields):
         if self.official_url is not None:
             if self.source_kind not in TASK_ROUTE_URL_SOURCES:
                 raise ValueError("invalid_task_route: this source does not carry a link")
-            problem = official_url_problem(self.site_host, self.official_url)
+            problem = official_url_problem(self.site_host, self.official_url, curated=curated)
             if problem:
                 raise ValueError(f"invalid_task_route: official_url {problem}")
         if self.source_url is not None:
-            problem = official_url_problem(self.site_host, self.source_url)
+            problem = official_url_problem(self.site_host, self.source_url, curated=curated)
             if problem:
                 raise ValueError(f"invalid_task_route: source_url {problem}")
         if curated != (self.source_url is not None) or curated != (self.verified_at is not None):
@@ -384,21 +398,66 @@ def route_host(site_host: str) -> str | None:
     return host if aggregate_eligible_host(host) else None
 
 
-def official_url_problem(site_host: str, url) -> str | None:
+# The one exception to the link rule (D120): a curated entry may carry a reviewed page whose address has a long identifier or a
+# short query (a retail help article, for one). Only the exact strings in ahn.task_routes_data.CURATED_URL_EXCEPTIONS, and only
+# for a curated_official entry; the query may use these keys only, with a plain token as the value.
+CURATED_QUERY_KEYS = frozenset({"id", "pageId", "docId"})
+_QUERY_VALUE = re.compile(r"[A-Za-z0-9-]{1,40}")
+
+
+def _exception_query_problem(query: str) -> str | None:
+    seen = set()
+    for pair in query.split("&"):
+        key, equals, value = pair.partition("=")
+        if not equals or key not in CURATED_QUERY_KEYS or key in seen:
+            return "query keys other than id, pageId and docId are not allowed"
+        seen.add(key)
+        if not _QUERY_VALUE.fullmatch(value):
+            return "query value is not a plain token of at most 40 letters, digits and hyphens"
+        if _UUID_LIKE.search(value):
+            return "query value looks like a UUID"
+        digits = value.replace("-", "")
+        if digits.isdigit() and len(digits) >= 10:
+            return "query value looks like an account or order number"
+    return None
+
+
+def _listed_exceptions():
+    from .task_routes_data import CURATED_URL_EXCEPTIONS
+
+    return CURATED_URL_EXCEPTIONS
+
+
+def official_url_problem(site_host: str, url, *, curated: bool = False) -> str | None:
     """Why ``url`` may not be carried as a task route's official_url for ``site_host``, or None when it may.
 
     Only curated and operator entries carry a link (a public report never does). The link must be a plain https page on
     the site's own registrable domain, at most 200 characters, with no query, fragment, userinfo or port, and with no path
-    segment that looks like it names a person or a case: six or more digits in a row, an e-mail address or a UUID."""
+    segment that looks like it names a person or a case: six or more digits in a row, an e-mail address or a UUID.
+
+    ``curated=True`` is for a curated_official entry only: a URL that equals, character for character, a key of
+    CURATED_URL_EXCEPTIONS skips the digits and UUID path checks and may carry a query of id, pageId or docId (D120). Every
+    other rule still applies, and so does every rule to any other URL."""
+    return _url_problem(site_host, url, _listed_exceptions() if curated else None)
+
+
+def _url_problem(site_host: str, url, exceptions) -> str | None:
     if not isinstance(url, str):
         return "not a string"
     if len(url) > TASK_ROUTE_URL_MAX:
         return f"longer than {TASK_ROUTE_URL_MAX} characters"
+    excepted = exceptions is not None and url in exceptions
     parts = urlsplit(url)
     if parts.scheme != "https" or not url.startswith("https://"):
         return "not an https URL"
+    shape = url
     if parts.query or "?" in url:
-        return "has a query"
+        if not excepted:
+            return "has a query"
+        shape, _, query = url.partition("?")
+        problem = _exception_query_problem(query)
+        if problem:
+            return problem
     if parts.fragment or "#" in url:
         return "has a fragment"
     if "@" in parts.netloc or parts.username or parts.password:
@@ -417,11 +476,11 @@ def official_url_problem(site_host: str, url) -> str | None:
         return "path has a . or .. segment"
     if "@" in path:
         return "path looks like it carries an e-mail address"
-    if _UUID_LIKE.search(path):
+    if not excepted and _UUID_LIKE.search(path):
         return "path has a UUID-shaped segment"
-    if _LONG_NUMBER.search(path):
+    if not excepted and _LONG_NUMBER.search(path):
         return "path has six or more digits in a row"
-    if not _URL_SHAPE.fullmatch(url):
+    if not _URL_SHAPE.fullmatch(shape):
         return "not a plain https URL"
     try:
         if valid_host(parts.hostname or "") != parts.netloc:
@@ -431,6 +490,29 @@ def official_url_problem(site_host: str, url) -> str | None:
     if registrable(parts.hostname) != registrable(site_host):
         return "not on the site's own registrable domain"
     return None
+
+
+def curated_exception_problems(exceptions) -> list[str]:
+    """Rule violations in a CURATED_URL_EXCEPTIONS table (D120): each key must pass the link rule once the exception is
+    applied to it, and each value, the public index page that links the key, must pass the plain link rule with no
+    exception, on the same registrable domain, and must be a different page."""
+    problems: list[str] = []
+    if not isinstance(exceptions, dict):
+        return ["CURATED_URL_EXCEPTIONS must be a dict of exact URL -> index page URL"]
+    for url, index in exceptions.items():
+        if not isinstance(url, str) or not isinstance(index, str):
+            problems.append(f"{url!r}: the key and its index page must both be strings")
+            continue
+        host = (urlsplit(url).hostname or "").lower()
+        problem = _url_problem(host, url, {url: index})
+        if problem:
+            problems.append(f"{url}: {problem}")
+        problem = _url_problem(host, index, None)
+        if problem:
+            problems.append(f"{url}: index page {index}: {problem}")
+        elif index == url:
+            problems.append(f"{url}: the index page must be a different page from the URL it links")
+    return problems
 
 
 def _value(item):
