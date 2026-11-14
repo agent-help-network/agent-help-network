@@ -351,7 +351,7 @@ if task_routes_env_enabled():  # off by default: the tool is then not listed
     # D118: the write tool only on top of the read switch, and only where the public service takes reports (REST answers 404 otherwise).
     if task_route_reports_tool_enabled():
         from .mcp_task_routes import register_reports as register_task_route_reports
-        register_task_route_reports(mcp, call_api)
+        register_task_route_reports(mcp, call_api, outer_request_headers)
 
 # This relies on MCP SDK internals (mcp==2.3.0, pinned): MCPServer._tool_manager, Tool.fn_metadata.output_schema (read
 # live by FuncMetadata) and the cached Tool.output_schema property. tests/test_lookup_feedback.py checks the advertised

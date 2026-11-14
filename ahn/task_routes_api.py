@@ -28,7 +28,7 @@ from pydantic import ValidationError
 
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
                           SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRouteInputError, VerificationKind, is_current,
-                          lookup, parse_query, server_route, site_records, stored_route)
+                          lookup, parse_query, server_route, site_records, stored_route, suffix_name)
 
 LOG = logging.getLogger(__name__)
 
@@ -77,19 +77,29 @@ def add_write_routes(app, settings) -> None:
     from .task_route_intake import submit_task_route, withdraw_task_route
     from .tool_metrics import is_mcp_metric_request
 
-    # Its own limiter, as tight as the observation one: a few reports a minute per client. The MCP adapter's loopback hop is not
-    # counted twice (the outer /mcp request already passed the general limiter).
-    limiter = RequestLimiter(per_client=3, total=20)
+    from .lookup_signals import ORIGIN_HEADER, clean_address
 
     def internal_hop(request: Request) -> bool:
         return bool(request.client and request.client.host in {"127.0.0.1", "::1"}
                     and is_mcp_metric_request(request.headers.get("x-ahn-mcp-call"), settings.key_pepper))
 
+    class ReportLimiter(RequestLimiter):
+        """The per-client report limit for both ways in. On the MCP adapter's loopback hop the client is the address the adapter
+        passes on (ORIGIN_HEADER, honoured only on that authenticated hop); without one, every such report shares one slot set."""
+
+        def client_key(self, request: Request) -> str:
+            if internal_hop(request):
+                return "mcp:" + (clean_address(request.headers.get(ORIGIN_HEADER, "")) or "unknown")
+            return RequestLimiter.client_key(request)
+
+    # Its own limiter, as tight as the observation one: a few reports a minute per client, over REST and over MCP alike.
+    limiter = ReportLimiter(per_client=3, total=20)
+
     @app.post(PATH, include_in_schema=False)
     async def report_task_route(request: Request):
         if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
             return JSONResponse({"error": "json_required"}, status_code=415, headers=REPORT_HEADERS)
-        if not internal_hop(request) and not await limiter.allow(request):
+        if not await limiter.allow(request):
             return JSONResponse({"error": "report_rate_limited"}, status_code=429, headers={**REPORT_HEADERS, "Retry-After": "60"})
         try:
             payload = await request.json()
@@ -226,6 +236,8 @@ def current_records(settings=None) -> list:
             LOG.warning("task_route_db_unavailable")
             rows = []
         for row in rows:
+            if suffix_name(row["site_host"]):  # never shown under a public or shared hosting suffix (co.uk, github.io)
+                continue
             try:
                 records.append(stored_route(row))
             except ValueError:

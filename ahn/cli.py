@@ -96,6 +96,15 @@ def _task_route_command(settings, args, parser):
             if row:
                 conn.execute("INSERT INTO audit_events (event_type,record_id) VALUES (%s,%s)", ("task_route_held", args.route_id))
         print("held" if row else "not_found_or_held")
+    elif args.route_command == "withdraw":
+        # Works whatever the switches say, so an operator record (or a report, on a deletion request) can be taken out without SQL.
+        # The row then follows the withdrawn-record rule of prune_task_route_reports.
+        with connect(settings) as conn:
+            row = conn.execute("UPDATE task_routes SET withdrawn_at=now() WHERE id=%s AND withdrawn_at IS NULL RETURNING id",
+                               (args.route_id,)).fetchone()
+            if row:
+                conn.execute("INSERT INTO audit_events (event_type,record_id) VALUES (%s,%s)", ("task_route_operator_withdrawn", args.route_id))
+        print("withdrawn" if row else "not_found_or_withdrawn")
 
 
 def main():
@@ -145,7 +154,7 @@ def main():
     route_add.add_argument("--source-kind", choices=("operator_panel",), default="operator_panel")
     route_pending = route_sub.add_parser("pending", help="list records waiting for review")
     route_pending.add_argument("--limit", type=int, default=20)
-    for name in ("publish", "hold"):
+    for name in ("publish", "hold", "withdraw"):
         route_sub.add_parser(name).add_argument("route_id", type=UUID)
     args = parser.parse_args()
     settings = Settings.from_env()

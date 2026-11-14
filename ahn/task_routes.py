@@ -330,6 +330,12 @@ class TaskRouteIn(_TaskRouteFields):
     field: the server sets the last three, and a public report carries no link. Sending any of them is rejected (extra=forbid)."""
     idempotency_key: UUID = Field(default_factory=uuid4)
 
+    @field_validator("site_host", mode="before")
+    @classmethod
+    def typed_host(cls, value):
+        # The reading parse_query gives a lookup (case, a pasted scheme, a trailing slash or dot), before the hostname check.
+        return normalize_host_input(value) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def public_values(self):
         if self.basis == RouteBasis.official_doc or self.outcome == RouteOutcome.not_applicable:
@@ -382,7 +388,20 @@ def route_host(site_host: str) -> str | None:
     from .service import aggregate_eligible_host, policy_host
 
     host = policy_host(valid_host(site_host))
+    if suffix_name(host):  # co.uk, github.io or www.co.uk names no one site
+        return None
     return host if aggregate_eligible_host(host) else None
+
+
+def suffix_name(host: str) -> bool:
+    """True for a two-label public suffix (co.uk, gov.uk), a shared hosting suffix (github.io) or "www." in front of one
+    (www.co.uk). Such a name is not one site: nothing is kept under it (route_host) and stored rows under it are never read."""
+    from .service import PUBLIC_SUFFIXES_2
+
+    labels = host.split(".")
+    rest = ".".join(labels[1:])
+    return host in PUBLIC_SUFFIXES_2 or host in PRIVATE_SUFFIXES or (labels[0] == "www" and (rest in PUBLIC_SUFFIXES_2
+                                                                                           or rest in PRIVATE_SUFFIXES))
 
 
 # The one exception to the link rule (D120): a curated entry may carry a reviewed page whose path has a long identifier (a retail
@@ -683,9 +702,11 @@ def tenant_host(host: str) -> bool:
 
 
 def key_candidates(host: str) -> list[str]:
-    """The names that may answer for ``host``, nearest first: the host itself, then each parent, never a bare top-level label."""
+    """The names that may answer for ``host``, nearest first: the host itself, then each parent down to its registrable domain
+    (registrable), never above it: bbc.co.uk never climbs to co.uk, a.github.io never to github.io."""
     labels = host.split(".")
-    return [".".join(labels[index:]) for index in range(len(labels) - 1)]
+    floor = len(registrable(host).split("."))
+    return [".".join(labels[index:]) for index in range(max(1, len(labels) - floor + 1))]
 
 
 def table_key(host: str, stored_keys=frozenset()) -> str | None:
@@ -728,8 +749,8 @@ def site_records(host: str, settings=None) -> tuple[str | None, list[dict]]:
         if task_route_reports_served(settings):
             from .task_route_intake import published_rows
 
-            try:
-                rows = published_rows(settings, key_candidates(host))
+            try:  # a row under a suffix name (co.uk) is never read, even if one was stored
+                rows = published_rows(settings, [name for name in key_candidates(host) if not suffix_name(name)])
             except Exception:  # the database is down or not migrated yet: answer from the curated table alone
                 LOG.warning("task_route_db_unavailable")
                 rows = []

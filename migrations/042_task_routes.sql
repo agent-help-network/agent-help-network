@@ -1,6 +1,7 @@
 -- D118: the task route write path. Three new tables and nothing else: no existing table is altered or locked.
 --   task_routes             one record per row: closed values only (the lists of ahn/task_routes.py), never free text, a person,
---                           an account, a time finer than the reporting period, or (for an agent's report) any link.
+--                           an account or (for an agent's report) any link. An answer shows the reporting period only; the row
+--                           also keeps received_at, reviewed_at and withdrawn_at for review, retention and withdrawal.
 --   task_route_submissions  the idempotency key and request hash of a public report, as report_submissions is for observations.
 --   task_route_intake_daily the daily intake counters behind the caps (all reports, per site, per site and task kind); 8 days.
 -- Every enum column has a CHECK with exactly the values the code may write; tests/test_task_routes_write_db.py compares each list with
