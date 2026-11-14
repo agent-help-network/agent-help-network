@@ -478,6 +478,48 @@ def test_checker_reports_rule_problems(host, change, needle):
     assert problems and any(needle in line for line in problems), problems
 
 
+# --- Review regressions -----------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", ["2026-13-45", "2026-02-30", "2026-00-10"])
+def test_verified_at_must_be_a_real_date(bad, monkeypatch, capsys):
+    curated = {**CURATED, "verified_at": bad}
+    with pytest.raises(ValidationError):
+        TaskRoute.model_validate({"site_host": "example.com", "sensitive": False, **curated})
+    assert not is_current(curated, TODAY)  # never raises, never current
+    problems = VERIFIER.task_route_problems("example.com", curated, TODAY)
+    assert any("verified_at" in line for line in problems), problems
+    monkeypatch.setattr(VERIFIER, "TASK_ROUTES_CURATED", {"example.com": [curated]})
+    assert VERIFIER.check_task_routes(None) == 1  # reports the rule problem; the stale loop does not raise
+    assert "rule problems: 1" in capsys.readouterr().out
+
+
+def test_registrable_domain_treats_shared_hosting_per_site():
+    assert official_url_problem("alice.github.io", "https://bob.github.io/help") is not None
+    assert official_url_problem("alice.github.io", "https://alice.github.io/help") is None
+    assert official_url_problem("docs.netlify.app", "https://other.netlify.app/help") is not None
+    assert VERIFIER.registrable is task_routes.registrable and VERIFIER.PRIVATE_SUFFIXES is task_routes.PRIVATE_SUFFIXES
+    assert VERIFIER.registrable("developer.bbc.co.uk") == "bbc.co.uk"
+
+
+def test_checker_reports_missing_fields_instead_of_raising():
+    no_date = {key: value for key, value in CURATED.items() if key != "verified_at"}
+    assert any("verified_at" in line for line in VERIFIER.task_route_problems("example.com", no_date, TODAY))
+    operator = {"task_kind": "cancel_subscription", "obstacle": "wrong_channel", "routes_tried": ["phone"],
+                "route_worked": "phone", "basis": "own_attempt", "outcome": "resolved", "source_kind": "operator_panel",
+                "period": "2026-Q4"}
+    problems = VERIFIER.task_route_problems("example.com", operator, TODAY)
+    assert any("source_url and verified_at" in line for line in problems), problems
+    assert VERIFIER.task_route_problems("example.com", {"task_kind": "cancel_subscription"}, TODAY)
+
+
+@pytest.mark.parametrize("source", ["https://www.example.com/help?lang=en", "https://www.example.com/help#cancel",
+                                    "https://www.example.com/claims/1234567", "https://www.example.com:8443/help"])
+def test_source_url_follows_the_same_link_rules(source):
+    with pytest.raises(ValidationError):
+        TaskRoute.model_validate({"site_host": "example.com", "sensitive": False, **CURATED, "source_url": source})
+    assert any("source_url" in line for line in VERIFIER.task_route_problems("example.com", {**CURATED, "source_url": source}, TODAY))
+
+
 def test_checker_reports_duplicates_and_empty_lists():
     assert any("twice" in line for line in VERIFIER.task_routes_table_problems({"example.com": [CURATED, dict(CURATED)]}, TODAY))
     assert VERIFIER.task_routes_table_problems({"example.com": []}, TODAY)
@@ -490,7 +532,7 @@ def test_task_routes_only_flag_is_offered():
 
 # --- The verdict does not read this layer --------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("module", ["triage.py", "response_guide.py", "cause.py"])
+@pytest.mark.parametrize("module", ["triage.py", "response_guide.py", "cause.py", "service.py", "models.py", "official_paths.py"])
 def test_verdict_modules_do_not_read_task_routes(module):
     source = (ROOT / "ahn" / module).read_text(encoding="utf-8")
     assert "task_route" not in source.lower() and "TaskRoute" not in source
