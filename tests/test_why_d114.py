@@ -233,8 +233,9 @@ def judgment(found):
 
 def test_the_long_failure_line_fits_and_is_plain_ascii():
     line = cause.line_for("site_errors_long", NOW - timedelta(days=8))
-    assert len(line) <= cause.LINE_MAX and line.isascii() and line.startswith("AHN's own checks have not reached the site for over 7 days (since ")
-    assert "AHN's network path" in line and "says nothing about the site" in line
+    assert len(line) <= cause.LINE_MAX and line.isascii() and line.startswith("AHN's own checks have had server errors (5xx) from the site for over 7 days (since ")
+    # D115: this sentence is now only for a 5xx period, an answer from the site or its edge, so it never blames AHN's path
+    assert "network path" not in line and "answered with an error" in line
     assert cause.LONG_FAIL == timedelta(days=7)
 
 
@@ -242,7 +243,8 @@ def test_the_long_failure_line_fits_and_is_plain_ascii():
 def test_a_period_older_than_7_days_that_nobody_else_saw_gets_the_long_sentence(days, long_line):
     """A 5xx period (server_error) keeps the D114 shape: only the sentence changes (the unanswered kinds are D115, in test_why_d115)."""
     found = site_errors(Conn(days, kind="server_error"))
-    assert found["line"].startswith("AHN's own checks have not reached the site for over 7 days") == long_line
+    assert found["line"].startswith("AHN's own checks have had server errors (5xx) from the site for over 7 days") == long_line
+    assert ("network path" in found["line"]) != long_line   # the shorter period keeps the D82 sentence
     assert (found["branch"], found["hint"]) == ("transient", "site_errors")
 
 
@@ -274,6 +276,7 @@ def test_the_long_line_has_a_korean_version():
     line = cause.line_for("site_errors_long", NOW - timedelta(days=8))
     korean = X.cause_line_ko(line)
     assert korean and HANGUL.search(korean) and "7일 넘게" in korean and "(" in korean and "부터)" in korean
+    assert "서버 오류" in korean and "네트워크 경로" not in korean
 
 
 # --- the Korean tables and the scan -----------------------------------------------------------------------------------------
