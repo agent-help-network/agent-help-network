@@ -69,13 +69,6 @@ def text_of(response) -> str:
     return html.unescape(response.text)
 
 
-def visible(response) -> str:
-    """The page without the base template's own address echoes (canonical and alternate links, the other-language link), which
-    carry the request path and query, escaped, on every page of the site."""
-    body = re.sub(r"<link [^>]*>", "", response.text)
-    return re.sub(r'<a class="language"[^>]*>', "", body)
-
-
 # --- Switch off -------------------------------------------------------------------------------------------------------------
 
 def test_switch_off_the_pages_do_not_exist(monkeypatch):
@@ -129,8 +122,8 @@ def test_the_headline_is_computed_from_the_counts():
     assert "agents reporting in" in task_routes_api.headline("en", text, 7, more)
     assert "community" not in task_routes_api.headline("en", text, 7, more)  # an absent source is not named
     assert "0 from AHN operator-side agents" in task_routes_api.headline("en", text, 2, {RouteSourceKind.curated_official: 2})
-    for lang in ("en", "ko"):
-        assert "No task route records yet" in task_routes_api.headline("en", text, 0, {}) and text[lang]["routes_head_empty"]
+    assert task_routes_api.headline("en", text, 0, {}) == "No task route records yet. A missing record does not mean there is no route."
+    assert task_routes_api.headline("ko", text, 0, {}) == "아직 태스크 경로 기록이 없어요. 기록이 없다고 경로가 없는 것은 아니에요."
 
 
 def test_the_page_headline_follows_the_table(on, monkeypatch):
@@ -262,9 +255,8 @@ def test_values_outside_the_list_are_ignored_and_not_echoed(on, monkeypatch, que
     response = on.get(f"/en/routes?{query}")
     assert response.status_code == 200
     assert rows(response) == rows(plain) == 3
-    shown = visible(response)
-    assert "<script>alert" not in response.text and "alert(1)" not in shown
-    assert "evil.example" not in shown and "DROP" not in shown and "aaaaaaaaaa" not in shown
+    assert "<script>alert" not in response.text and "alert(1)" not in response.text
+    assert "evil.example" not in response.text and "DROP" not in response.text and "aaaaaaaaaa" not in response.text
 
 
 def test_the_first_value_of_a_repeated_filter_is_read(on, monkeypatch):
@@ -295,38 +287,125 @@ def test_host_page_shows_the_site_records_in_both_languages(on, monkeypatch):
     assert f'href="/en/routes"' in en.text and f'href="/ko/routes"' in ko.text
 
 
-def test_host_page_follows_the_same_host_rules_as_the_api(on, monkeypatch):
+@pytest.mark.parametrize("variant", [f"www.{HOST}", HOST.upper(), f"Support.{HOST.upper()}", f"{HOST}.", f"shop.{HOST}"])
+def test_host_page_sends_other_spellings_to_the_apex_key(on, monkeypatch, variant):
     three(monkeypatch)
-    assert rows(on.get(f"/en/routes/www.{HOST}")) == 2  # a parent in the table answers
-    assert rows(on.get(f"/en/routes/Support.{HOST.upper()}")) == 2  # case and a generic label
-    empty = on.get("/en/routes/unrecorded-site.com")
-    assert empty.status_code == 200 and "<table" not in empty.text and "does not mean there is no route" in empty.text
-    assert rows(on.get(f"/en/routes/springfield.{HOST}")) == 0  # a tenant subdomain gets the empty answer, as in the API
+    moved = on.get(f"/en/routes/{variant}", follow_redirects=False)
+    assert moved.status_code == 301
+    assert moved.headers["location"] == f"/en/routes/{HOST}"
+    final = on.get(f"/ko/routes/{variant}", follow_redirects=True)
+    assert final.status_code == 200 and str(final.url).endswith(f"/ko/routes/{HOST}") and rows(final) == 2
+    # The apex is the only name on the page: title, heading, canonical and alternate links, form action.
+    body = final.text
+    assert variant.lower().rstrip(".") not in body.replace(HOST, "")
+    assert f"<title>{HOST} · " in body and f'<h1 class="host-title">{HOST}</h1>' in body
+    assert f'rel="canonical" href="https://agenthelpnetwork.com/ko/routes/{HOST}"' in body
+    assert f'hreflang="en" href="https://agenthelpnetwork.com/en/routes/{HOST}"' in body
 
 
-def test_host_page_tenant_rule_matches_the_api(on, monkeypatch):
+def test_host_page_redirect_keeps_only_valid_filters(on, monkeypatch):
     three(monkeypatch)
-    for host in (f"www.{HOST}", "classlink-tenant.classlink.com", "x.github.io"):
+    moved = on.get(f"/en/routes/www.{HOST}?task_kind=refund_request&outcome=zzz&evil=1&source_kind=curated_official", follow_redirects=False)
+    assert moved.status_code == 301
+    assert moved.headers["location"] == f"/en/routes/{HOST}?task_kind=refund_request&source_kind=curated_official"
+    assert on.get(f"/en/routes/www.{HOST}?outcome=zzz", follow_redirects=False).headers["location"] == f"/en/routes/{HOST}"
+
+
+@pytest.mark.parametrize("name", ["call-now-555-0100-refund-desk.com", "unrecorded-site.com", f"springfield.{HOST}", f"{HOST}.evil.example",
+                                  "x.github.io", "com"])
+def test_host_page_is_not_found_for_a_site_without_an_entry_and_echoes_nothing(on, monkeypatch, name):
+    three(monkeypatch)
+    for lang in ("en", "ko"):
+        response = on.get(f"/{lang}/routes/{name}", follow_redirects=False)
+        assert response.status_code == 404
+        assert name not in response.text and name not in " ".join(response.headers.values())
+        assert name.split(".")[0] not in response.text
+
+
+def test_host_page_follows_the_same_walk_as_the_api(on, monkeypatch):
+    three(monkeypatch)
+    for host in (HOST, f"www.{HOST}", f"support.{HOST}", f"www.support.{HOST}", f"springfield.{HOST}", "classlink-tenant.classlink.com", "x.github.io",
+                 "unrecorded-site.com", OTHER, f"www.{OTHER}"):
         api = on.get("/v1/task-routes", params={"site_host": host}).json()["counts"]["records"]
-        page = on.get(f"/en/routes/{host}")
-        assert page.status_code == 200
-        assert rows(page) == api
+        page = on.get(f"/en/routes/{host}", follow_redirects=True)
+        assert (page.status_code == 200) == (api > 0), host
+        if api:
+            assert rows(page) == api
+
+
+def test_table_key_is_the_one_walk_behind_lookup(monkeypatch):
+    from ahn.task_routes import lookup, table_key
+
+    three(monkeypatch)
+    assert table_key(HOST) == table_key(f"www.{HOST}") == table_key(f"www.support.{HOST}") == HOST
+    assert table_key("unrecorded-site.com") is None and table_key(f"springfield.{HOST}") is None and table_key("com") is None
+    assert lookup(f"www.{HOST}").site_host == f"www.{HOST}" and lookup(f"www.{HOST}").counts.records == 2
 
 
 @pytest.mark.parametrize("bad", ["%3Cscript%3Ealert(1)%3C/script%3E", "localhost", "10.0.0.1", "a..b", "x_y.example", "bad%20host.example", "a" * 300 + ".com"])
 def test_host_page_refuses_a_bad_host_and_never_echoes_it(on, bad):
-    response = on.get(f"/en/routes/{bad}")
+    response = on.get(f"/en/routes/{bad}", follow_redirects=False)
     assert response.status_code == 404
-    shown = visible(response)
-    assert "<script>" not in response.text and "alert" not in shown
-    assert "10.0.0.1" not in shown and "aaaaaaaaaa" not in shown
+    assert "<script>" not in response.text and "alert" not in response.text
+    assert "10.0.0.1" not in response.text and "aaaaaaaaaa" not in response.text and "localhost" not in response.text
 
 
 def test_host_page_filters_ignore_values_outside_the_list(on, monkeypatch):
     three(monkeypatch)
     assert rows(on.get(f"/en/routes/{HOST}?task_kind=refund_request")) == 1
     assert rows(on.get(f"/en/routes/{HOST}?task_kind=nonsense&site={OTHER}")) == 2  # the site filter does not exist here
-    assert "nonsense" not in visible(on.get(f"/en/routes/{HOST}?task_kind=nonsense"))
+    assert "nonsense" not in on.get(f"/en/routes/{HOST}?task_kind=nonsense").text
+
+
+# --- The other-language link and the request metrics ---------------------------------------------------------------------
+
+def language_link(response, other: str) -> str:
+    return html.unescape(re.search(rf'<a class="language" href="([^"]*)" lang="{other}"', response.text).group(1))
+
+
+def test_the_language_link_carries_only_validated_filters(on, monkeypatch):
+    three(monkeypatch)
+    assert language_link(on.get("/en/routes"), "ko") == "/ko/routes"
+    assert language_link(on.get("/en/routes?evil=1&task_kind=%3Cb%3E&outcome=zzz"), "ko") == "/ko/routes"
+    assert language_link(on.get(f"/en/routes?task_kind=refund_request&evil=1&site={HOST}"), "ko") == f"/ko/routes?site={HOST}&task_kind=refund_request"
+    assert language_link(on.get(f"/ko/routes/{HOST}?source_kind=curated_official&evil=1&site={OTHER}"), "en") == f"/en/routes/{HOST}?source_kind=curated_official"
+    assert language_link(on.get(f"/en/routes/{HOST}?q=<x>"), "ko") == f"/ko/routes/{HOST}"
+    body = on.get("/en/routes?evil=zzqq&task_kind=%3Cb%3Ex").text
+    assert "zzqq" not in body and "%3Cb%3Ex" not in body and "<b>x" not in body
+
+
+def test_other_pages_keep_echoing_their_own_query_in_the_language_link(on):
+    assert language_link(on.get("/en/platforms?x=1"), "ko") == "/ko/platforms?x=1"
+    assert language_link(on.get("/en/platforms"), "ko") == "/ko/platforms"
+
+
+def test_request_metrics_count_the_route_template_and_never_the_host(monkeypatch):
+    three(monkeypatch)
+    saved = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=()):
+            saved.append(tuple(params))
+
+    monkeypatch.setattr(ahn_main, "connect", lambda settings: Conn())
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=True,
+                        task_routes_since=SINCE, collect_request_metrics=True)
+    metrics = TestClient(create_app(settings))
+    assert metrics.get("/en/routes").status_code == 200
+    assert metrics.get(f"/ko/routes/{HOST}").status_code == 200
+    assert metrics.get("/en/routes/unrecorded-site.com").status_code == 404
+    codes = [params[1] for params in saved if len(params) > 8]  # traffic_attribution_daily rows: (day, route_code, ...)
+    assert codes.count("/{lang}/routes") == 1
+    assert codes.count("/{lang}/routes/{host}") == 2  # the 200 and the 404 are both counted under the template
+    assert "other" not in codes
+    flat = " ".join(str(value) for params in saved for value in params)
+    assert HOST not in flat and "unrecorded-site" not in flat
 
 
 def test_host_page_with_more_than_the_answer_limit_says_so(on, monkeypatch):
