@@ -2,7 +2,8 @@
 
 For a site and a kind of customer task, a task route records the common obstacle and the routes that were tried or that the
 site's own documents name. No database, no network, no settings. Nothing in the lookup verdict (triage, response_guide,
-service.check) imports this module, and no endpoint imports it yet: later steps build the read API, intake and pages on it.
+service.check) imports this module. The read API (ahn/task_routes_api.py) and the MCP tool (ahn/mcp_task_routes.py) call ``lookup``
+behind the AHN_TASK_ROUTES switch; later steps build intake and pages on it.
 The curated table lives in ahn/task_routes_data.py. The helpers fix the rules those steps share:
 
 * ``official_url_problem``  which link a curated or operator entry may carry;
@@ -10,11 +11,13 @@ The curated table lives in ahn/task_routes_data.py. The helpers fix the rules th
 * ``period_for``            the server-set reporting period;
 * ``is_current``            whether a curated entry is recent enough to answer with;
 * ``route_host``            the apex a record is kept under, or None for a tenant subdomain;
-* ``route_line``            one fixed English sentence built only from closed values.
+* ``route_line``            one fixed English sentence built only from closed values;
+* ``lookup``                the answer for a site: current curated records, newest period first, server-computed fields.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime, timezone
 from enum import Enum
@@ -25,6 +28,8 @@ from uuid import UUID, uuid4
 from pydantic import Field, field_validator, model_validator
 
 from .models import StrictModel, _omit_none, valid_host
+
+LOG = logging.getLogger(__name__)
 
 
 # --- Vocabulary -------------------------------------------------------------------------------------------------------------
@@ -506,3 +511,101 @@ def route_line(route) -> str:
     if get("sensitive"):
         line += " " + ROUTE_LINE_NOTICE
     return line
+
+
+# --- Read: the answer for a site (PR-B) -------------------------------------------------------------------------------------
+TASK_ROUTES_MAX = 20  # records in one answer, newest period first
+SOURCE_LABELS = {
+    RouteSourceKind.curated_official: "from the site's own documents",
+    RouteSourceKind.operator_panel: "operator-entered",
+    RouteSourceKind.external_agent: "reported by agents",
+    RouteSourceKind.curated_community: "from community sources",
+}
+SUMMARY_NO_RECORDS = "No task route records for this site. A missing record does not mean there is no route."
+SUMMARY_NO_RECORDS_FOR_KIND = "No task route records for this site and task kind. A missing record does not mean there is no route."
+SUMMARY_MAX = 200
+
+
+def government_suffix(host: str) -> bool:
+    """True when the host's suffix is reserved for government bodies (a reading of the code table, no database). Display only."""
+    from .gov_registry import _suffix_rule_for
+
+    return _suffix_rule_for(host) is not None
+
+
+def server_route(site_host: str, entry: dict) -> TaskRoute:
+    """A table entry as an answer carries it, with every server-decided field computed here.
+
+    ``sensitive``, ``source_kind``, ``basis``, ``outcome`` and ``period`` are never taken from the entry: the curated table is
+    the only source today, so its records are curated_official / official_doc / not_applicable, the period follows
+    ``verified_at``, and ``sensitive`` is computed by is_sensitive() whatever the entry says. Raises ValueError when the entry
+    is not a valid record."""
+    fields = {key: value for key, value in entry.items()
+              if key not in ("sensitive", "source_kind", "basis", "outcome", "period", "site_host")}
+    verified = fields.get("verified_at")
+    try:
+        period = period_for(date.fromisoformat(verified))
+    except (TypeError, ValueError):
+        raise ValueError("invalid_task_route: verified_at is not a real date") from None
+    sensitive = is_sensitive(fields.get("task_kind"), site_requires=fields.get("site_requires"),
+                             document_kind=fields.get("document_kind"), entry_point_kind=fields.get("entry_point_kind"),
+                             government_host=government_suffix(site_host))
+    return TaskRoute(site_host=site_host, source_kind=RouteSourceKind.curated_official, basis=RouteBasis.official_doc,
+                     outcome=RouteOutcome.not_applicable, period=period, sensitive=sensitive, **fields)
+
+
+def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice: bool) -> str:
+    """The one sentence of an answer, built only from fixed words, the counts and the task kind's name."""
+    if total == 0:
+        return SUMMARY_NO_RECORDS_FOR_KIND if task_kind is not None else SUMMARY_NO_RECORDS
+    parts = ", ".join(f"{count} {SOURCE_LABELS[kind]}" for kind, count in by_source.items() if count)
+    line = f"{total} task route record{'s' if total != 1 else ''}" + (f" for {_words(task_kind)}" if task_kind is not None else "")
+    line += f": {parts}."
+    if total > TASK_ROUTES_MAX:
+        line += f" Showing the {TASK_ROUTES_MAX} newest."
+    line += " Records, not guarantees."
+    if notice:
+        line += " " + ROUTE_LINE_NOTICE
+    if len(line) > SUMMARY_MAX:  # cannot happen with the fixed labels at realistic counts; the guard keeps the answer valid
+        line = f"{total} task route records. Records, not guarantees." + (" " + ROUTE_LINE_NOTICE if notice else "")
+    return line
+
+
+def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRoutesResponse:
+    """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
+    shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
+    task kind, newest period first, at most TASK_ROUTES_MAX records. Reads the in-code table only: no database, no network.
+
+    Raises ValueError for a host that is not a public hostname or a task_kind outside TaskKind."""
+    from . import task_routes_data
+
+    host = valid_host(site_host)
+    kind = TaskKind(_value(task_kind)) if task_kind is not None else None
+    labels = host.split(".")
+    key, entries = None, []
+    for index in range(len(labels) - 1):  # exact host first, then each parent, as official_paths() does
+        candidate = ".".join(labels[index:])
+        if candidate in task_routes_data.TASK_ROUTES_CURATED:
+            key, entries = candidate, task_routes_data.TASK_ROUTES_CURATED[candidate]
+            break
+    records: list[TaskRoute] = []
+    for entry in entries:
+        if not is_current(entry, today):
+            continue
+        try:
+            record = server_route(key, entry)
+        except ValueError:  # one malformed table entry must not take the answer down; the curation check reports it
+            LOG.warning("task_route_entry_invalid")
+            continue
+        if kind is None or record.task_kind == kind:
+            records.append(record)
+    records.sort(key=lambda r: (r.period, r.verified_at or "", r.task_kind.value, r.obstacle.value), reverse=True)
+    by_source: dict[RouteSourceKind, int] = {}
+    for record in records:
+        by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
+    shown = records[:TASK_ROUTES_MAX]
+    notice = any(record.sensitive for record in shown)
+    return TaskRoutesResponse(
+        site_host=host, summary_line=summary_line(len(records), by_source, kind, notice), routes=shown,
+        counts=TaskRouteCounts(records=len(records), by_source_kind=by_source),
+        notice="case_record_not_advice" if notice else None)

@@ -344,6 +344,10 @@ def open_output_schema(schema):
     return schema
 
 
+if os.getenv("AHN_TASK_ROUTES") == "1":  # off by default: the tool is then not listed
+    from .mcp_task_routes import register as register_task_routes
+    register_task_routes(mcp)
+
 # This relies on MCP SDK internals (mcp==2.3.0, pinned): MCPServer._tool_manager, Tool.fn_metadata.output_schema (read
 # live by FuncMetadata) and the cached Tool.output_schema property. tests/test_lookup_feedback.py checks the advertised
 # schema through tools/list, so an SDK upgrade that moves these fails there rather than silently.

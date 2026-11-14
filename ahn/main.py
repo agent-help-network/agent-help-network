@@ -415,7 +415,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "task_routes": settings.task_routes, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
@@ -558,6 +558,10 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
     if public_board_on:  # off by default: /v1/now and /{lang}/now then do not exist (404), D53
         from .public_board import add_routes as add_board_routes
         add_board_routes(app, settings, render, lang_text)
+
+    if settings.task_routes:  # off by default: GET /v1/task-routes then does not exist (404)
+        from .task_routes_api import add_routes as add_task_routes
+        add_task_routes(app, settings, render, lang_text)
 
     def lookup_signal(request: Request, *, kind: str | None = None, http_status: str | None = None,
                       challenge: str | None = None, retry_after: str | None = None,
