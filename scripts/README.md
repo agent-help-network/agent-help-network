@@ -106,9 +106,9 @@ day you read the page; records older than 90 days are left out of answers until 
 One reviewed exception (D120): `CURATED_URL_EXCEPTIONS` in `ahn/task_routes_data.py` maps an exact URL to the same site's
 public index page that links it. A curated_official record may carry such a URL as `official_url` or `source_url` although its
 path has more than five digits in a row. The URL must equal the key character for character (case, a trailing slash and any
-added parameter all count); a query is never excepted. A listed path may have at most 15 digits in a row, no UUID-shaped
-segment, no segment of hyphen-separated digit groups (two or more groups of three or more digits, ten or more in all) and no
-segment that starts with case, claim, order, ticket, invoice or account and has a digit; every other rule still applies, and URLs not on the list
+added parameter all count); a query is never excepted. A listed path (read after percent-decoding) may have at most 15 digits in all and at most one run of six or more
+digits, no UUID-shaped segment, and no case, claim, order, ticket, invoice or account word anywhere in it (any case, inside a
+longer word too) together with a run of six or more digits; every other rule still applies, and URLs not on the list
 follow the ordinary rules. The index page itself follows the ordinary rules and must be a different page. The live run reads
 each index page and requires that it does not redirect and links the exact URL (`href`), a 200 at that address without sign-in,
 and robots.txt permission; it also reports a listed URL that no record uses. No script is run in a page, so a page that draws
