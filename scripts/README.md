@@ -90,6 +90,41 @@ The live run must end with `failures: 0; rule problems: 0`. A page that is refus
 page is removed. The checker reads `robots.txt` before the first request to every hostname (redirect targets too), treats a
 5xx or timed-out `robots.txt` as disallowing everything, and stops a hostname at its first 403 or bot challenge. Re-verify every 90 days like access bundles: older entries are left out of answers.
 
+## Curated task routes (`TASK_ROUTES_CURATED`, D117)
+
+A task route records, for a site and a kind of customer task, the obstacle an agent meets and the route the site's own
+documents name for it (a cancellation taken by phone only, a claim that needs a particular form, a separate portal for one
+group of users). Add a record with `_route(...)` in `ahn/task_routes_data.py` only when the site's own page states it
+outright; a hint is left out. Read pages exactly as for consumer paths above (robots.txt first, curation user agent, the site's
+own links, nothing built by hand, no phone numbers or quoted text). Keys are apex hosts; `source_url` is the page that states
+the route and `official_url`, when there is one, is the page the route starts from, linked from `source_url`. A URL with a
+query, fragment, port, six or more digits in a row, an e-mail address or a UUID-shaped segment is refused. `verified_at` is the
+day you read the page; records older than 90 days are left out of answers until re-verified.
+
+Every field takes only these values (the enums in `ahn/task_routes.py` hold the same lists, and a test keeps them in agreement):
+
+- `task_kind`: `claim_unclaimed_property`, `warranty_claim`, `warranty_dispute`, `refund_request`, `return_or_exchange`, `cancel_subscription`, `account_closure`, `account_recovery`, `portal_login`, `address_or_profile_change`, `appointment_booking`, `appointment_change_or_cancel`, `records_request`, `complaint_filing`, `billing_dispute`, `fee_waiver_or_adjustment`, `insurance_claim`, `government_benefit_application`, `tax_or_government_filing`, `id_or_license_renewal`, `accommodation_request`, `prescription_refill`, `document_submission`, `other`
+- `obstacle`: `document_missing`, `document_rejected`, `substitute_document_needed`, `form_unclear`, `wrong_entry_point`, `wrong_channel`, `wrong_department_or_jurisdiction`, `eligibility_unclear`, `verification_step`, `code_expired`, `deadline_or_window`, `fee_required`, `waiting_reply`, `no_reply`, `request_denied`, `site_requires_info_from_person`, `technical_block`, `none`
+- `verification_kind` (only with `verification_step`): `sms_code`, `email_code`, `app_approval`, `new_device`, `security_question`, `account_locked`, `consent_screen`, `id_document_upload`
+- `site_requires` (only with `site_requires_info_from_person`): `referral_or_prescription`, `prior_approval_record`, `account_holder_step`, `original_document`, `preference_only`
+- `document_kind` (only with `document_missing`, `document_rejected`, `substitute_document_needed`): `proof_of_identity`, `proof_of_address`, `proof_of_ownership`, `proof_of_purchase`, `proof_of_authority`, `business_registration_or_closure`, `sworn_statement`, `approval_or_authorization_letter`, `professional_letter`, `prior_correspondence`, `account_statement`, `official_form`, `other`
+- `entry_point_kind` (only with `wrong_entry_point`): `role_specific_portal`, `regional_site`, `separate_subdomain`, `mobile_app_only`, `partner_or_third_party_portal`
+- `routes_tried` (at most 6, no repeats; `route_worked` is one of them or `none`): `support_chat`, `phone`, `email`, `web_form`, `office_visit`, `mail_or_fax`, `consumer_agency`, `regulator`, `designated_dispute_program`, `official_app`, `different_entry_point`, `escalation_within_site`, `other`
+- `basis`: `official_doc`, `agency_reply`, `outcome_observed`, `own_attempt`
+- `outcome`: `resolved`, `progressed`, `no_progress`, `gave_up`, `not_applicable`
+- `duration`: `under_1w`, `from_1w_to_4w`, `over_4w`
+- `source_kind`: `operator_panel`, `external_agent`, `curated_official`, `curated_community`
+
+A curated record is always `basis` `official_doc`, `outcome` `not_applicable` and `source_kind` `curated_official`;
+`_route` sets them and the reporting period (a quarter, `YYYY-Qn`, from `verified_at`).
+
+```
+python -m pytest tests/test_task_routes_vocab.py
+python scripts/verify_official_paths.py --task-routes-only --hosts a.com,b.org
+```
+
+The live run must end with `failures: 0; rule problems: 0`.
+
 ## Weekly status-source jobs
 
 Rank-based expansion of the status mapping stopped at Tranco rank 10,000. Two weekly jobs replace it: re-verify what is
