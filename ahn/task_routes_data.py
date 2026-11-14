@@ -109,11 +109,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                source_url="https://www.paypal.com/us/cshelp/article/how-do-i-open-a-dispute-with-a-seller-help160",
                verified_at="2026-11-14"),
     ],
-    "uber.com": [
-        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["official_app"],
-               entry_point_kind="mobile_app_only", official_url="https://www.uber.com/us/en/uber-one/",
-               source_url="https://www.uber.com/us/en/uber-one/", verified_at="2026-11-14"),
-    ],
     "ikea.com": [
         _route("return_or_exchange", obstacle="deadline_or_window",
                official_url="https://www.ikea.com/us/en/customer-service/returns-claims/",
@@ -124,7 +119,7 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_identity",
                official_url="https://www.ikea.com/us/en/customer-service/returns-claims/",
                source_url="https://www.ikea.com/us/en/customer-service/returns-claims/", verified_at="2026-11-14"),
-        _route("warranty_claim", obstacle="document_missing", routes=["office_visit"], document_kind="proof_of_purchase",
+        _route("warranty_claim", obstacle="document_missing", document_kind="proof_of_purchase",
                official_url="https://www.ikea.com/us/en/customer-service/returns-claims/guarantee/",
                source_url="https://www.ikea.com/us/en/customer-service/returns-claims/guarantee/", verified_at="2026-11-14"),
     ],
@@ -169,9 +164,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
     "siriusxm.com": [
         _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
                entry_point_kind="partner_or_third_party_portal",
-               official_url="https://www.siriusxm.com/help/manage-or-cancel-service",
-               source_url="https://www.siriusxm.com/help/manage-or-cancel-service", verified_at="2026-11-14"),
-        _route("cancel_subscription", obstacle="deadline_or_window",
                official_url="https://www.siriusxm.com/help/manage-or-cancel-service",
                source_url="https://www.siriusxm.com/help/manage-or-cancel-service", verified_at="2026-11-14"),
     ],
