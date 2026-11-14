@@ -27,7 +27,7 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator, model_validator
 
-from .models import StrictModel, _omit_none, valid_host
+from .models import StrictModel, _omit_none, normalize_host_input, valid_host
 
 LOG = logging.getLogger(__name__)
 
@@ -571,19 +571,61 @@ def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice
     return line
 
 
+class TaskRouteInputError(ValueError):
+    """A query that cannot be answered. ``code`` is the whole message: it never carries the input."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def parse_query(site_host, task_kind=None) -> tuple[str, TaskKind | None]:
+    """The one reading of a query for REST and MCP: the host is normalized (case, a pasted scheme, a trailing slash or dot) and must
+    be a public hostname; task_kind is None (no filter) or exactly one TaskKind value, so an empty string is refused."""
+    host = normalize_host_input(site_host if isinstance(site_host, str) else "")
+    try:
+        valid_host(host)
+    except ValueError:
+        raise TaskRouteInputError("invalid_site_host") from None
+    if task_kind is None:
+        return host, None
+    value = _value(task_kind)
+    if not isinstance(value, str) or value not in TaskKind._value2member_map_:
+        raise TaskRouteInputError("invalid_task_kind")
+    return host, TaskKind(value)
+
+
+# Labels that name a service of the same site, not a tenant: support.example.com answers from example.com. Any other subdomain of a
+# name that aggregate_eligible_host() keeps out (springfield.classlink.com) can name a district or a small business: empty answer.
+GENERIC_SUBDOMAIN_LABELS = frozenset({"www", "support", "help", "care", "shop", "store", "m", "mobile", "en", "us"})
+
+
+def tenant_host(host: str) -> bool:
+    """True when ``host`` is an account or tenant subdomain, by the rule behind route_host() (aggregate_eligible_host)."""
+    from .service import aggregate_eligible_host, policy_host
+
+    host = policy_host(host)
+    if aggregate_eligible_host(host):
+        return False
+    labels = host.split(".")
+    apex = registrable(host)
+    below = labels[:len(labels) - len(apex.split("."))]
+    return not (below and all(label in GENERIC_SUBDOMAIN_LABELS for label in below))
+
+
 def lookup(site_host: str, task_kind=None, today: date | None = None) -> TaskRoutesResponse:
     """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
     shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
     task kind, newest period first, at most TASK_ROUTES_MAX records. Reads the in-code table only: no database, no network.
 
-    Raises ValueError for a host that is not a public hostname or a task_kind outside TaskKind."""
+    Raises TaskRouteInputError (a ValueError) for a host that is not a public hostname or a task_kind outside TaskKind."""
     from . import task_routes_data
 
-    host = valid_host(site_host)
-    kind = TaskKind(_value(task_kind)) if task_kind is not None else None
+    host, kind = parse_query(site_host, task_kind)
     labels = host.split(".")
     key, entries = None, []
-    for index in range(len(labels) - 1):  # exact host first, then each parent, as official_paths() does
+    walk = [] if tenant_host(host) else range(len(labels) - 1)  # a tenant subdomain gets the empty answer
+    for index in walk:  # exact host first, then each parent, as official_paths() does
         candidate = ".".join(labels[index:])
         if candidate in task_routes_data.TASK_ROUTES_CURATED:
             key, entries = candidate, task_routes_data.TASK_ROUTES_CURATED[candidate]

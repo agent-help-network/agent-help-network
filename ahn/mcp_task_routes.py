@@ -14,8 +14,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field, WithJsonSchema
 
-from .models import valid_host
-from .task_routes import TaskKind, TaskRoutesResponse, lookup
+from .task_routes import TaskKind, TaskRouteInputError, TaskRoutesResponse, lookup, parse_query
 
 SITE_HOST_DESCRIPTION = ("The public hostname of the site whose task routes you want, lowercase, for example example.com. "
                          "Only the host: no scheme, URL path, query, port or credentials.")
@@ -48,13 +47,8 @@ def register(mcp) -> None:
     )
     async def find_task_route(site_host: Annotated[str, Field(description=SITE_HOST_DESCRIPTION)],
                               task_kind: Annotated[Any, WithJsonSchema(_task_kind_schema())] = None) -> Annotated[CallToolResult, TaskRoutesResponse]:
-        try:
-            valid_host(site_host)
-        except ValueError:
-            raise ToolError("site_host must be a public lowercase hostname") from None
-        kind = None
-        if task_kind not in (None, ""):
-            if not isinstance(task_kind, str) or task_kind not in TaskKind._value2member_map_:
-                raise ToolError("task_kind must be one of: " + ", ".join(item.value for item in TaskKind))
-            kind = task_kind
-        return task_route_result(lookup(site_host, kind))
+        try:  # the same reading and the same error codes as GET /v1/task-routes
+            host, kind = parse_query(site_host, task_kind)
+        except TaskRouteInputError as error:
+            raise ToolError(error.code) from None
+        return task_route_result(lookup(host, kind))

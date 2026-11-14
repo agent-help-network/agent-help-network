@@ -22,6 +22,18 @@ def report_retention_days_from_env() -> int:
 
 
 LOG = logging.getLogger(__name__)
+
+
+def task_routes_env_enabled() -> bool:
+    """Whether the task-routes switch is on for this process: AHN_TASK_ROUTES is "1" (spaces ignored) and AHN_TASK_ROUTES_SINCE is a
+    real YYYY-MM-DD date. The MCP adapter uses this, so it agrees with Settings.from_env and create_app; it never raises."""
+    if os.getenv("AHN_TASK_ROUTES", "").strip() != "1":
+        return False
+    try:
+        date.fromisoformat(os.getenv("AHN_TASK_ROUTES_SINCE", "").strip())
+    except ValueError:
+        return False
+    return True
 _EDGE_WARNED = False
 _KIND_WARNED = False
 _D95_WARNED = False
@@ -265,6 +277,9 @@ class Settings:
     # AHN_TASK_ROUTES=1 serves the task-routes read API and MCP tool (ahn/task_routes_api.py, ahn/mcp_task_routes.py): GET /v1/task-routes
     # and find_task_route. Off by default: the path then does not exist (404), the tool is not listed and the policy text is unchanged.
     task_routes: bool = False
+    # AHN_TASK_ROUTES_SINCE (YYYY-MM-DD), required with the switch: the privacy policy's "Last updated" date once task routes are served.
+    # Without a valid date the switch does not turn anything on (create_app and the MCP adapter), and Settings.from_env refuses to start.
+    task_routes_since: date | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -308,6 +323,14 @@ class Settings:
                 raise RuntimeError("AHN_PUBLIC_BOARD=1 needs AHN_PUBLIC_BOARD_SINCE=YYYY-MM-DD, "
                                    "the date the privacy policy shows as last updated") from None
         public_board_ahn_check = public_board and os.environ.get("AHN_PUBLIC_BOARD_AHN_CHECK", "").strip() == "1"
+        task_routes = os.environ.get("AHN_TASK_ROUTES", "").strip() == "1"
+        task_routes_since = None
+        if task_routes:
+            try:
+                task_routes_since = date.fromisoformat(os.environ.get("AHN_TASK_ROUTES_SINCE", "").strip())
+            except ValueError:
+                raise RuntimeError("AHN_TASK_ROUTES=1 needs AHN_TASK_ROUTES_SINCE=YYYY-MM-DD, "
+                                   "the date the privacy policy shows as last updated") from None
         proceed = parse_proceed_mode(os.environ.get("AHN_PROCEED_WITHOUT_FAILURE", ""))  # once: an unknown value warns once
         return cls(database_url, key_pepper, os.environ.get("AHN_TEST_MODE") == "1", os.environ.get("AHN_COLLECT_LOOKUP_METRICS") == "1", limit, os.environ.get("AHN_COLLECT_REQUEST_METRICS") == "1", os.environ.get("AHN_PUBLIC_MODE") == "1", os.environ.get("AHN_REPORTING_ENABLED") == "1", owner_password, owner_allowed_ips, operator_name, report_retention_days_from_env(), public_bundle, public_bundle_since,
                    os.environ.get("AHN_RESPONSE_GZIP", "").strip() != "0",
@@ -331,4 +354,4 @@ class Settings:
                    d100_incidentio_incidents=parse_d100_switch(os.environ.get("AHN_D100_INCIDENTIO_INCIDENTS", "")),
                    d104_betterstack_updated_at=parse_d104_switch(os.environ.get("AHN_D104_BETTERSTACK_UPDATED_AT", "")),
                    d96_status_check_one_action=parse_d96_switch(os.environ.get("AHN_D96_STATUS_CHECK_ONE_ACTION", "")),
-                   task_routes=os.environ.get("AHN_TASK_ROUTES", "").strip() == "1")
+                   task_routes=task_routes, task_routes_since=task_routes_since)
