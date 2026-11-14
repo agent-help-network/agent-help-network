@@ -79,8 +79,11 @@ def listed(monkeypatch):
         monkeypatch.setitem(CURATED_URL_EXCEPTIONS, url, INDEX)
 
 
-def test_the_shipped_list_is_empty_and_valid():
-    assert CURATED_URL_EXCEPTIONS == {}
+def test_the_shipped_list_is_the_reviewed_set_and_valid():
+    assert CURATED_URL_EXCEPTIONS == {
+        "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
+        "https://www.target.com/help/article/000061982": "https://www.target.com/returns",
+    }
     assert curated_exception_problems(CURATED_URL_EXCEPTIONS) == []
     assert task_routes_data.CURATED_URL_EXCEPTIONS is CURATED_URL_EXCEPTIONS
 

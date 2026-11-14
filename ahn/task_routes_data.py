@@ -24,9 +24,12 @@ TASK_ROUTE_MAX_AGE_DAYS = 90
 # Reviewed exact URLs that a curated_official entry may carry although the link rule would refuse them (a path with up to 15
 # digits in a row; never a query; D120). Each key maps to the same site's public index page that links it, so
 # the address is shown to be a public page and not a personal one. A URL matches only when it is the same string. The index
-# page itself follows the ordinary link rule. Empty until entries are reviewed; scripts/verify_official_paths.py
+# page itself follows the ordinary link rule. Each entry is reviewed by hand; scripts/verify_official_paths.py
 # --task-routes-only reads every index page and checks that it links the exact URL.
-CURATED_URL_EXCEPTIONS: dict[str, str] = {}
+CURATED_URL_EXCEPTIONS: dict[str, str] = {
+    "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
+    "https://www.target.com/help/article/000061982": "https://www.target.com/returns",
+}
 
 
 def _route(task_kind: str, *, obstacle: str, source_url: str, verified_at: str, routes: tuple[str, ...] | list[str] = (),
@@ -47,6 +50,9 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("warranty_claim", obstacle="wrong_department_or_jurisdiction",
                official_url="https://www.samsung.com/us/support/warranty/",
                source_url="https://www.samsung.com/us/support/warranty/", verified_at="2026-11-14"),
+        _route("account_recovery", obstacle="verification_step", verification_kind="app_approval",
+               official_url="https://www.samsung.com/us/support/troubleshoot/TSG10001565/",
+               source_url="https://www.samsung.com/us/support/troubleshoot/TSG10001565/", verified_at="2026-11-14"),
     ],
     "dell.com": [
         _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form"],
@@ -96,5 +102,84 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                source_url="https://www.verizon.com/support/return-policy/", verified_at="2026-11-14"),
         _route("return_or_exchange", obstacle="fee_required", official_url="https://www.verizon.com/support/return-policy/",
                source_url="https://www.verizon.com/support/return-policy/", verified_at="2026-11-14"),
+    ],
+    "paypal.com": [
+        _route("refund_request", obstacle="deadline_or_window", routes=["escalation_within_site"],
+               official_url="https://www.paypal.com/us/cshelp/article/how-do-i-open-a-dispute-with-a-seller-help160",
+               source_url="https://www.paypal.com/us/cshelp/article/how-do-i-open-a-dispute-with-a-seller-help160",
+               verified_at="2026-11-14"),
+    ],
+    "uber.com": [
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["official_app"],
+               entry_point_kind="mobile_app_only", official_url="https://www.uber.com/us/en/uber-one/",
+               source_url="https://www.uber.com/us/en/uber-one/", verified_at="2026-11-14"),
+    ],
+    "ikea.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window",
+               official_url="https://www.ikea.com/us/en/customer-service/returns-claims/",
+               source_url="https://www.ikea.com/us/en/customer-service/returns-claims/", verified_at="2026-11-14"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_purchase",
+               official_url="https://www.ikea.com/us/en/customer-service/returns-claims/",
+               source_url="https://www.ikea.com/us/en/customer-service/returns-claims/", verified_at="2026-11-14"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_identity",
+               official_url="https://www.ikea.com/us/en/customer-service/returns-claims/",
+               source_url="https://www.ikea.com/us/en/customer-service/returns-claims/", verified_at="2026-11-14"),
+        _route("warranty_claim", obstacle="document_missing", routes=["office_visit"], document_kind="proof_of_purchase",
+               official_url="https://www.ikea.com/us/en/customer-service/returns-claims/guarantee/",
+               source_url="https://www.ikea.com/us/en/customer-service/returns-claims/guarantee/", verified_at="2026-11-14"),
+    ],
+    "playstation.com": [
+        _route("refund_request", obstacle="deadline_or_window",
+               official_url="https://www.playstation.com/en-us/support/store/ps-store-refund-request/",
+               source_url="https://www.playstation.com/en-us/support/store/ps-store-refund-request/",
+               verified_at="2026-11-14"),
+        _route("account_recovery", obstacle="verification_step", verification_kind="email_code", routes=["support_chat"],
+               official_url="https://www.playstation.com/en-us/support/account/recover-account/",
+               source_url="https://www.playstation.com/en-us/support/account/recover-account/", verified_at="2026-11-14"),
+    ],
+    "nintendo.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["mail_or_fax"],
+               official_url="https://www.nintendo.com/us/refund-return-policy/nintendo-store/",
+               source_url="https://www.nintendo.com/us/refund-return-policy/nintendo-store/", verified_at="2026-11-14"),
+        _route("return_or_exchange", obstacle="fee_required", routes=["mail_or_fax"],
+               official_url="https://www.nintendo.com/us/refund-return-policy/nintendo-store/",
+               source_url="https://www.nintendo.com/us/refund-return-policy/nintendo-store/", verified_at="2026-11-14"),
+        _route("account_recovery", obstacle="verification_step", verification_kind="email_code",
+               official_url="https://en-americas-support.nintendo.com/app/answers/detail/a_id/27501",
+               source_url="https://en-americas-support.nintendo.com/app/answers/detail/a_id/27501", verified_at="2026-11-14"),
+    ],
+    "sonos.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form"],
+               official_url="https://www.sonos.com/en-us/legal/terms",
+               source_url="https://www.sonos.com/en-us/legal/terms", verified_at="2026-11-14"),
+        _route("warranty_claim", obstacle="deadline_or_window",
+               official_url="https://www.sonos.com/en-us/legal/terms",
+               source_url="https://www.sonos.com/en-us/legal/terms", verified_at="2026-11-14"),
+    ],
+    "peacocktv.com": [
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
+               entry_point_kind="partner_or_third_party_portal", official_url="https://www.peacocktv.com/terms",
+               source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.peacocktv.com/terms",
+               source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
+        _route("refund_request", obstacle="wrong_entry_point", routes=["different_entry_point"],
+               entry_point_kind="partner_or_third_party_portal", official_url="https://www.peacocktv.com/terms",
+               source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
+    ],
+    "siriusxm.com": [
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
+               entry_point_kind="partner_or_third_party_portal",
+               official_url="https://www.siriusxm.com/help/manage-or-cancel-service",
+               source_url="https://www.siriusxm.com/help/manage-or-cancel-service", verified_at="2026-11-14"),
+        _route("cancel_subscription", obstacle="deadline_or_window",
+               official_url="https://www.siriusxm.com/help/manage-or-cancel-service",
+               source_url="https://www.siriusxm.com/help/manage-or-cancel-service", verified_at="2026-11-14"),
+    ],
+    "target.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.target.com/returns",
+               source_url="https://www.target.com/returns", verified_at="2026-11-14"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_purchase",
+               official_url="https://www.target.com/help/article/000061982",
+               source_url="https://www.target.com/help/article/000061982", verified_at="2026-11-14"),
     ],
 }
