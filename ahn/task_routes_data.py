@@ -179,4 +179,44 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                official_url="https://www.ourpetpolicy.com/resident-faq",
                source_url="https://www.ourpetpolicy.com/resident-faq", verified_at="2026-11-14"),
     ],
+    "coned.com": [
+        _route("address_or_profile_change", obstacle="deadline_or_window",
+               official_url="https://www.coned.com/en/services-and-outages/service-management-page",
+               source_url="https://www.coned.com/en/services-and-outages/service-management-page", verified_at="2026-11-15"),
+    ],
+    "delta.com": [
+        _route("refund_request", obstacle="deadline_or_window",
+               official_url="https://www.delta.com/us/en/change-cancel/cancel-flight",
+               source_url="https://www.delta.com/us/en/change-cancel/cancel-flight", verified_at="2026-11-15"),
+    ],
+    "costco.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", routes=["office_visit", "phone", "support_chat"],
+               official_url="https://www.costco.com/f/-/member-privileges-conditions",
+               source_url="https://www.costco.com/f/-/member-privileges-conditions", verified_at="2026-11-15"),
+    ],
+    "ring.com": [
+        _route("warranty_claim", obstacle="deadline_or_window", official_url="https://ring.com/warranty",
+               source_url="https://ring.com/warranty", verified_at="2026-11-15"),
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://ring.com/shipping-and-returns",
+               source_url="https://ring.com/shipping-and-returns", verified_at="2026-11-15"),
+    ],
+    "statefarm.com": [
+        _route("cancel_subscription", obstacle="wrong_channel", routes=["phone", "office_visit"],
+               official_url="https://www.statefarm.com/help-center/account-management/account-essentials/cancel-policy-sf",
+               source_url="https://www.statefarm.com/help-center/account-management/account-essentials/cancel-policy-sf",
+               verified_at="2026-11-15"),
+    ],
+    "cricketwireless.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window",
+               official_url="https://www.cricketwireless.com/support/orders-and-activations/returns-and-exchanges.html",
+               source_url="https://www.cricketwireless.com/support/orders-and-activations/returns-and-exchanges.html",
+               verified_at="2026-11-15"),
+    ],
+    "ulta.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.ulta.com/guestservices/all",
+               source_url="https://www.ulta.com/guestservices/all", verified_at="2026-11-15"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_identity",
+               official_url="https://www.ulta.com/guestservices/all", source_url="https://www.ulta.com/guestservices/all",
+               verified_at="2026-11-15"),
+    ],
 }
