@@ -143,6 +143,8 @@ def test_every_curated_answer_is_byte_identical_with_and_without_the_new_suffixe
         patch.setattr(task_routes, "PRIVATE_SUFFIXES",
                       frozenset({"github.io", "gitbook.io", "readthedocs.io", "netlify.app", "vercel.app", "pages.dev"}))
         patch.setattr(task_routes, "GOVERNMENT_SITE_HOSTS", frozenset())
+        patch.setattr(task_routes, "GOVERNMENT_ZONES", frozenset())
+        patch.setattr(task_routes, "GOVERNMENT_STATE_ZONES", frozenset())
         old = answers()
     assert len(hosts) >= 5 * len(task_routes_data.TASK_ROUTES_CURATED)
     assert [host for host in sorted(hosts) if new[host] != old[host]] == []
@@ -223,30 +225,37 @@ def test_the_limit_over_mcp_counts_the_passed_on_address_by_its_64(db, monkeypat
 
 # --- Government sites kept under their own name -----------------------------------------------------------------------------
 
-def test_the_government_site_list_holds_gov_names_only():
-    assert "unclaimedproperty.nj.gov" in task_routes.GOVERNMENT_SITE_HOSTS
+def test_the_government_site_list_holds_valid_names_and_only_one_www_exception():
+    assert {"unclaimedproperty.nj.gov", "www.gov.uk"} == set(task_routes.GOVERNMENT_SITE_HOSTS)
     for name in task_routes.GOVERNMENT_SITE_HOSTS:
         labels = name.split(".")
-        assert name == name.lower() and name.endswith(".gov") and len(labels) >= 3 and all(labels), name
-        assert not name.startswith("www.")
+        assert name == name.lower() and len(labels) >= 3 and all(labels), name
+        assert task_routes.valid_host(name) == name
+        assert not name.startswith("www.") or name == "www.gov.uk"
 
 
 def test_a_listed_government_site_is_kept_under_its_exact_name_and_nothing_else_gains_from_it():
     listed = "unclaimedproperty.nj.gov"
     assert task_routes.route_host(listed) == listed
     assert task_routes.route_host(f"www.{listed}") == listed
-    for other in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov", "www.x.unclaimedproperty.nj.gov", "a.b.nj.gov", "unclaimed.nj.gov",
-                  "xunclaimedproperty.nj.gov", "unclaimedproperty.nj.gov.example.com", "unclaimedproperty.ny.gov"):
-        assert task_routes.route_host(other) is None, other
+    # Other names under a government zone are sites of their own now (D122), each under its exact name and never the listed one.
+    for other in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov", "a.b.nj.gov", "unclaimed.nj.gov", "xunclaimedproperty.nj.gov",
+                  "unclaimedproperty.ny.gov"):
+        assert task_routes.route_host(other) == other != listed, other
+    assert task_routes.route_host("www.x.unclaimedproperty.nj.gov") == "x.unclaimedproperty.nj.gov"
+    assert task_routes.route_host("unclaimedproperty.nj.gov.example.com") is None
     assert task_routes.route_host("nj.gov") == "nj.gov"  # the parent keeps its own key and does not become the listed name
     assert task_routes.key_candidates(listed) == [listed] == task_routes.key_candidates(f"www.{listed}")
     assert not task_routes.tenant_host(listed) and not task_routes.tenant_host(f"www.{listed}")
     for other in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov"):
-        assert task_routes.tenant_host(other), other
-        assert task_routes.table_key(other, frozenset({listed, "nj.gov"})) is None
+        assert not task_routes.tenant_host(other), other
+        assert task_routes.key_candidates(other) == [other]
+        assert task_routes.table_key(other, frozenset({listed, "nj.gov"})) is None  # neither the listed name nor the parent answers
 
 
 def test_the_government_list_is_read_from_the_constant(monkeypatch):
+    monkeypatch.setattr(task_routes, "GOVERNMENT_ZONES", frozenset())  # no zone: only the list decides, as before D122
+    monkeypatch.setattr(task_routes, "GOVERNMENT_STATE_ZONES", frozenset())
     monkeypatch.setattr(task_routes, "GOVERNMENT_SITE_HOSTS", frozenset())
     assert task_routes.route_host("unclaimedproperty.nj.gov") is None
     monkeypatch.setattr(task_routes, "GOVERNMENT_SITE_HOSTS", frozenset({"records.example.gov"}))
@@ -262,7 +271,7 @@ def test_a_report_for_a_listed_government_site_is_stored_under_its_name_and_answ
     assert created.status_code == 201
     [row] = rows(settings)
     assert row["site_host"] == listed
-    for refused in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov", "www.x.unclaimedproperty.nj.gov"):
+    for refused in ("a.b.c.d.unclaimedproperty.nj.gov", "unclaimedproperty.nj.gov.example.com"):  # too deep, or no zone at all
         assert post(client, report(site_host=refused)).status_code == 422, refused
     assert len(rows(settings)) == 1
     run(settings, "UPDATE task_routes SET review_state='published',reviewed_at=now() WHERE id=%s", (created.json()["route_id"],))
@@ -277,7 +286,8 @@ def test_a_report_for_a_listed_government_site_is_stored_under_its_name_and_answ
     for host in ("nj.gov", "www.nj.gov"):
         answer = client.get("/v1/task-routes", params={"site_host": host}).json()
         assert [route["task_kind"] for route in answer["routes"]] == ["refund_request"], host
-    for host in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov", "www.x.unclaimedproperty.nj.gov", "unclaimedproperty.ny.gov"):
+    for host in ("treasury.nj.gov", "x.unclaimedproperty.nj.gov", "www.x.unclaimedproperty.nj.gov", "unclaimedproperty.ny.gov",
+                 "a.b.c.d.unclaimedproperty.nj.gov"):
         answer = client.get("/v1/task-routes", params={"site_host": host}).json()
         assert answer["routes"] == [], host
         assert lookup(host, settings=settings).counts.records == 0, host
@@ -301,7 +311,7 @@ def test_the_policy_says_an_operator_can_withdraw_a_public_report():
 MORE_REFUSED = [
     "myshopify.com", "wixsite.com", "run.app", "cloudfunctions.net", "azureedge.net", "cloudapp.net", "r2.dev", "deno.dev",
     "replit.app", "webflow.io", "notion.site", "ngrok.io", "ngrok.app", "surge.sh", "ddns.net",
-    "co.at", "or.at", "gv.at", "gov.it", "gov.co", "org.co", "edu.co", "gc.ca", "br.com", "cn.com", "de.com", "ru.com", "sa.com",
+    "co.at", "or.at", "gv.at", "gov.it", "gov.co", "org.co", "edu.co", "br.com", "cn.com", "de.com", "ru.com", "sa.com",
     "za.com", "jpn.com", "gb.net", "uk.net", "eu.org", "us.org",
 ]
 
@@ -311,6 +321,11 @@ def test_the_further_suffixes_are_no_site_and_nothing_below_them_climbs_to_them(
     assert task_routes.suffix_name(host) and task_routes.suffix_name(f"www.{host}")
     assert task_routes.route_host(host) is None and task_routes.route_host(f"shop.{host}") is None
     assert task_routes.key_candidates(f"shop.{host}") == [f"shop.{host}"]
+
+
+def test_gc_ca_is_no_site_itself_but_a_government_zone_below_it():  # D122: the one suffix above that is also a zone
+    assert task_routes.suffix_name("gc.ca") and task_routes.route_host("gc.ca") is None
+    assert task_routes.route_host("shop.gc.ca") == "shop.gc.ca" and task_routes.key_candidates("shop.gc.ca") == ["shop.gc.ca"]
 
 
 @needs_db

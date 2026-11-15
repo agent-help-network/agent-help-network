@@ -426,31 +426,71 @@ def registrable(host: str) -> str:
 
 
 def route_host(site_host: str) -> str | None:
-    """The host a task route is kept under: the apex that policy_host() answers for, or None for an account or tenant
-    subdomain (which can name a district, a school or a small landlord) that aggregate_eligible_host() keeps out."""
+    """The host a task route is kept under: the apex that policy_host() answers for (under a government zone, the exact host name),
+    or None for an account or tenant subdomain (which can name a district, a school or a small landlord) that aggregate_eligible_host() keeps out."""
     from .service import aggregate_eligible_host, policy_host
 
     host = policy_host(valid_host(site_host))
     listed = government_site(host)
-    if listed is not None:  # a listed government site kept under its own full name, never under a parent
+    if listed is not None:  # a government site kept under its own full name, never under a parent or a sibling
         return listed
     if suffix_name(host):  # co.uk, github.io or www.co.uk names no one site
         return None
     return host if aggregate_eligible_host(host) else None
 
 
-# Government sites that live one level below a government apex (a state's own site for one service) and are the site people
-# actually use. A listed name is kept under exactly that name, as if it were an apex: not under the parent (nj.gov), and no other
-# subdomain of the parent gains anything from it. Each entry must end in ".gov". Add a name only after checking that the parent
-# is on the official list of .gov domains and that the parent's own pages link to the name. Its "www." alias is the same site.
-GOVERNMENT_SITE_HOSTS = frozenset({"unclaimedproperty.nj.gov"})
+# Government zones: suffixes under which only government bodies may register a name. Under one, the exact host name is the site
+# key: irs.gov, dmv.ca.gov and my.uscis.gov are three sites, nothing is kept under or answered from a parent (nj.gov) or a
+# sibling, and only one leading "www." is the same site. A fixed list in code, no public suffix list is read. Left out on purpose:
+# school districts (k12.<state>.us) and the names under ci. and co.<place>.<state>.us, whose registrants are not all governments.
+GOVERNMENT_ZONES = frozenset({"gov", "mil", "fed.us", "gov.uk", "go.kr", "gc.ca", "gov.au", "govt.nz"})
+# state.<state>.us is a zone whose own name is a site too (state.nj.us), unlike the suffixes above.
+GOVERNMENT_STATE_ZONES = frozenset(f"state.{label}.us" for label in _US_STATES)
+GOVERNMENT_MAX_BELOW = 3  # labels allowed below the registered name (below irs.gov, or below state.nj.us itself)
+
+# Government sites that no suffix identifies, and exceptions to the zone rule. A listed name is kept under exactly that name, as if
+# it were an apex, with its "www." alias as the same site (except for a name that itself starts with "www."). www.gov.uk is the
+# one name that starts with "www." and is a site: the United Kingdom's national site, while gov.uk itself is only a suffix.
+GOVERNMENT_SITE_HOSTS = frozenset({"unclaimedproperty.nj.gov", "www.gov.uk"})
+
+
+def _zone_below(name: str) -> int | None:
+    """Labels below the registered name of ``name`` inside a government zone (0 for irs.gov or state.nj.us), or None when ``name`` is
+    not in a zone or is a bare zone suffix (gov.uk, fed.us). A name that is deeper than allowed is still in the zone."""
+    labels = name.split(".")
+    for size in (1, 2, 3):
+        if len(labels) < size:
+            break
+        suffix = ".".join(labels[-size:])
+        if suffix in GOVERNMENT_STATE_ZONES:
+            return len(labels) - size
+        if suffix in GOVERNMENT_ZONES:
+            return len(labels) - size - 1 if len(labels) > size else None
+    return None
+
+
+def government_zone(host: str) -> bool:
+    """True when ``host`` (with or without "www.") is inside a government zone, whatever its depth."""
+    name = host[4:] if host.startswith("www.") else host
+    return _zone_below(name) is not None
 
 
 def government_site(host: str) -> str | None:
-    """The listed government site name (GOVERNMENT_SITE_HOSTS) that ``host`` is, or that it is the ``www.`` alias of; else None.
-    Only that one alias: any other subdomain of a listed name, and any parent of it, is not the site."""
+    """The government site name that ``host`` is: a name in a government zone (GOVERNMENT_ZONES, GOVERNMENT_STATE_ZONES) at most
+    GOVERNMENT_MAX_BELOW labels below its registered name and without a punycode label, or a name in GOVERNMENT_SITE_HOSTS, in
+    either case with one leading ``www.`` removed (except for a listed name that starts with www.); else None. Only that one alias:
+    no parent, no sibling and no other subdomain is the site."""
+    if host in GOVERNMENT_SITE_HOSTS:
+        return host
     name = host[4:] if host.startswith("www.") else host
-    return name if name in GOVERNMENT_SITE_HOSTS else None
+    if name != host and name.startswith("www."):  # "www.www." is never the alias of a site
+        return None
+    if name in GOVERNMENT_SITE_HOSTS:
+        return name
+    below = _zone_below(name)
+    if below is None or below > GOVERNMENT_MAX_BELOW or any(label.startswith("xn--") for label in name.split(".")):
+        return None
+    return name
 
 
 def suffix_name(host: str) -> bool:
@@ -671,7 +711,8 @@ SUMMARY_MAX = 200
 
 
 def government_suffix(host: str) -> bool:
-    """True when the host's suffix is reserved for government bodies (a reading of the code table, no database). Display only."""
+    """True when the host is in a government zone or listed as a government site, or its suffix is reserved for government bodies by
+    the registry's rules (a reading of the code tables, no database). Display only."""
     from .gov_registry import _suffix_rule_for
 
     return government_site(host) is not None or _suffix_rule_for(host) is not None
@@ -745,22 +786,26 @@ GENERIC_SUBDOMAIN_LABELS = frozenset({"www", "support", "help", "care", "shop", 
 
 
 def tenant_host(host: str) -> bool:
-    """True when ``host`` is an account or tenant subdomain, by the rule behind route_host() (aggregate_eligible_host)."""
+    """True when ``host`` is an account or tenant subdomain, by the rule behind route_host() (aggregate_eligible_host, and
+    government_site for a government zone, where each exact name is a site)."""
     from .service import aggregate_eligible_host, policy_host
 
     host = policy_host(host)
     if aggregate_eligible_host(host) or government_site(host) is not None:
         return False
+    if government_zone(host):  # in a government zone but too deep or punycode: not a site, and it never climbs to a parent
+        return True
     labels = host.split(".")
     apex = registrable(host)
     below = labels[:len(labels) - len(apex.split("."))]
-    return not (below and all(label in GENERIC_SUBDOMAIN_LABELS for label in below))
+    # A generic label climbs to its apex only when that apex is itself a site (so www.x and x answer alike: neither when x is not).
+    return not (below and all(label in GENERIC_SUBDOMAIN_LABELS for label in below) and aggregate_eligible_host(apex))
 
 
 def key_candidates(host: str) -> list[str]:
     """The names that may answer for ``host``, nearest first: the host itself, then each parent down to its registrable domain
-    (registrable), never above it: bbc.co.uk never climbs to co.uk, a.github.io never to github.io. A listed government site
-    (GOVERNMENT_SITE_HOSTS, with its www. alias) answers for its own name alone."""
+    (registrable), never above it: bbc.co.uk never climbs to co.uk, a.github.io never to github.io. A government site (a name in a
+    government zone, or listed in GOVERNMENT_SITE_HOSTS, with its www. alias) answers for its own name alone."""
     listed = government_site(host)
     if listed is not None:
         return [listed]

@@ -85,7 +85,8 @@ REPORT_DESCRIPTION = ("Report one task route you went through on a public site: 
                       "X-Withdrawal-Token header).")
 REPORT_SITE_HOST_DESCRIPTION = ("The public hostname of the site the task was on, for example example.com. Only the host: no URL path, "
                                 "query, port or credentials (a pasted https:// scheme, capital letters or a trailing dot are read as "
-                                "the host). The report is kept under the site's root domain; an account or tenant subdomain, or a "
+                                "the host). The report is kept under the site's root domain, or under the exact host name for a "
+                                "government site (dmv.ca.gov); an account or tenant subdomain, or a "
                                 "public suffix such as co.uk or github.io, is refused.")
 REPORT_FIELD_DESCRIPTION = ("The task route: site_host, task_kind, obstacle, basis and outcome are required; the finer fields are each "
                             "allowed only under the obstacle they explain (verification_kind under verification_step, site_requires "

@@ -530,7 +530,7 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
     except ValueError:
         key = None
     if key != host:
-        add("*", "the key must be an apex host that answers for itself (policy_host) and is eligible for public totals")
+        add("*", "the key must be a site key that answers for itself (route_host): an apex host eligible for public totals, or the exact host name of a government site")
         return problems
     if not isinstance(route, dict):
         add("*", "must be an object made by _route()")
