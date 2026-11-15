@@ -193,7 +193,7 @@ def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout
     this service's own, lookups disabled), when ``task_kind`` is not one of ``TASK_KINDS``, on a 404 (the service does not
     serve task routes), a network error, a timeout beyond ``timeout`` seconds, or an answer that does not have the expected
     shape. A route is a dictionary of closed values (``task_kind``, ``obstacle``, ``basis``, ``outcome``, ``source_kind``,
-    ``sensitive`` and the like); nothing in it is text from a site. A record is a case record, not advice for the next task, and records are not guarantees: an empty list does not mean there is no route.
+    ``sensitive`` and the like); nothing in it is text from a site. Records are not guarantees or advice (a record marked sensitive is shown as a case record), and an empty list does not mean there is no route.
     ``reason`` says why there is no answer: ``invalid_host`` or ``invalid_task_kind`` (nothing was sent; the kind must be one of
     ``TASK_KINDS``), ``not_served`` (404) or ``no_answer`` (network, timeout, unreadable).
     """
