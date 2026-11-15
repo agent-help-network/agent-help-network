@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from urllib.parse import urlparse
 
 from .background_reads import FEED_RETRY_MINUTES
@@ -628,7 +629,11 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
 # at most MAX_AFFECTED names). Without names the sentence is byte-identical; the names are dropped one by one rather than cut.
 AFFECTED_ROWS = frozenset({"W1", "W3", "W4", "W6"})
 AFFECTED_PREFIX = "Affected: "
-_AFFECTED_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._&()/+-]{0,39}")
+# A name is printable text: Latin letters (accented ones too, as in "Sao Paulo" spelled with a tilde), ASCII digits, spaces and a few separators.
+# No other script (an order in another language would pass the English word lists), no control, format (zero-width, direction marks) or other
+# symbol characters; at most 40 characters; leading and trailing spaces are ignored.
+AFFECTED_NAME_MAX = 40
+_AFFECTED_PUNCT = frozenset(" ._&()/+-,'\u2019\u2013\u2014")  # ASCII separators, comma, apostrophes, en and em dash
 # A stored name that says "no name" is not a component: "Affected: None." would read as "nothing is affected".
 AFFECTED_PLACEHOLDERS = frozenset({"none", "null", "nil", "n/a", "na", "n.a.", "unknown", "undefined", "tbd", "empty", "-"})
 # A name is a short label. One with more words than this, or with one of these words, reads as a sentence addressed to the reader (a hostile
@@ -637,19 +642,72 @@ AFFECTED_PLACEHOLDERS = frozenset({"none", "null", "nil", "n/a", "na", "n.a.", "
 AFFECTED_MAX_WORDS = 6
 AFFECTED_ORDER_WORDS = frozenset({"ignore", "disregard", "forget", "override", "previous", "instruction", "instructions", "prompt", "you",
                                   "must", "should", "please"})
+# A name that starts with one of these verbs followed by one of these words reads as an order ("Send your API key", "Delete all data"), not as
+# a component ("Email Sending", "Upload API" and "Open Banking" are kept).
+AFFECTED_ORDER_VERBS = frozenset({"send", "tell", "delete", "wipe", "upload", "ignore", "reveal", "share", "post", "email", "forward", "print",
+                                  "output", "run", "execute", "open", "click", "visit", "download", "transfer", "pay", "give", "disclose",
+                                  "leak", "copy", "paste", "write", "say", "reply", "respond", "call", "disable", "remove", "erase", "grant",
+                                  "approve", "export", "dump", "show", "display", "submit", "enter", "type", "read", "use", "stop", "obey",
+                                  "follow", "do"})
+# After a comma ("Login, send your API key", "Agent, stop now") one of these verbs starts a clause addressed to the reader even without an
+# object; a component name has a place or a qualifier there ("Amsterdam, Netherlands").
+AFFECTED_ORDER_OBJECTS = frozenset({"your", "the", "all", "this", "that", "these", "those", "my", "our", "me", "us", "them", "it", "any",
+                                    "every", "each", "a", "an", "everything", "anything", "his", "her", "their"})
+# An all-capitals name of more than this many words reads as a shouted phrase ("IGNORE ALL RULES NOW"); "GPT-OSS 120B" and "AVOD - US" are kept.
+AFFECTED_CAPS_MAX_WORDS = 3
+
+
+_AFFECTED_CLAUSE = "[,\u2013\u2014]"
+AFFECTED_CLAUSE_LINKS = frozenset({"and", "then", "now", "also", "so", "just"})
+_AFFECTED_STRIP = "._&()/+-,'\u2019\u2013\u2014"
+
+
+def _affected_char_ok(ch: str) -> bool:
+    if ch in _AFFECTED_PUNCT or ch.isascii() and ch.isalnum():
+        return True
+    # An accented Latin letter decomposes into one ASCII letter or digit and combining accents; a lone accent is a combining mark. Letters that
+    # only look Latin (small capitals, a dotless i), invisible marks (a grapheme joiner, a variation selector) and other scripts are left out.
+    parts = unicodedata.normalize("NFKD", ch)
+    base = [part for part in parts if not unicodedata.combining(part)]
+    return len(base) <= 1 and all(part.isascii() and part.isalnum() for part in base)
+
+
+def _affected_fold(word: str) -> str:
+    """NFKD case-folded with the accents taken off: an accent over a letter does not hide a listed word ("ignore" with a dot or an acute)."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", word) if not unicodedata.combining(ch)).casefold()
+
+
+def _affected_words(text: str) -> list[str]:
+    """The words of a name (tokens with a letter or digit) with their outer separators taken off, folded (_affected_fold); an apostrophe ends the
+    word ("you're" is "you"), and "llama-prompt-guard" is one word, not "prompt"."""
+    words = [word for word in text.split() if any(ch.isalnum() for ch in word)]
+    return [re.split("['\u2019]", _affected_fold(word).strip(_AFFECTED_STRIP))[0] for word in words]
 
 
 def affected_name_ok(name) -> bool:
     """D116: whether a stored provider_status.affected entry is shown as a component name in a wait sentence."""
-    if not (isinstance(name, str) and _AFFECTED_NAME.fullmatch(name) and ". " not in name and "  " not in name):
+    if not isinstance(name, str):
         return False
-    words = name.strip().split()
+    name = name.strip()
+    if not (name and len(name) <= AFFECTED_NAME_MAX and name[0].isalnum() and all(_affected_char_ok(ch) for ch in name)
+            and ". " not in name and "  " not in name):
+        return False
+    words = name.split()
     counted = [word for word in words if any(ch.isalnum() for ch in word)]  # "Australia / New Zealand 2 - AU02" is 5 words
-    if not words or name.strip().lower() in AFFECTED_PLACEHOLDERS or len(counted) > AFFECTED_MAX_WORDS:
+    if name.lower() in AFFECTED_PLACEHOLDERS or len(counted) > AFFECTED_MAX_WORDS:
         return False
-    if any(word.lower().strip("._&()/+-") in AFFECTED_ORDER_WORDS for word in words):
+    tokens = _affected_words(name)
+    if any(token in AFFECTED_ORDER_WORDS for token in tokens):
         return False
-    return not (" " in name and name == name.upper())  # a shouted phrase is no component name (a hostile name reads as an order)
+    if len(tokens) > 1 and tokens[0] in AFFECTED_ORDER_VERBS and tokens[1] in AFFECTED_ORDER_OBJECTS:
+        return False
+    for clause in re.split(_AFFECTED_CLAUSE, name)[1:]:  # each clause after a comma or a long dash is read as its own start
+        words = _affected_words(clause)
+        while words and words[0] in AFFECTED_CLAUSE_LINKS:  # "API, then delete it"
+            words = words[1:]
+        if words and words[0] in AFFECTED_ORDER_VERBS:
+            return False
+    return not (" " in name and name == name.upper() and len(counted) > AFFECTED_CAPS_MAX_WORDS)  # a shouted phrase (a hostile name reads as an order)
 
 
 def with_affected_names(sentence: str, affected) -> str:
