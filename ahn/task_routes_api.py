@@ -323,7 +323,7 @@ def row_for(record, lang: str, per_site: dict) -> dict:
         "outcome": label("outcome", record.outcome, lang), "basis": label("basis", record.basis, lang), "period": record.period,
         "count": per_site.get(record.site_host, 0), "source": label("source_kind", record.source_kind, lang),
         "official_url": record.official_url, "source_url": record.source_url, "verified_at": record.verified_at,
-        "sensitive": record.sensitive,
+        "condition_text": record.condition_text, "sensitive": record.sensitive,
     }
 
 

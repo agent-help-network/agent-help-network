@@ -369,6 +369,7 @@ TASK_ROUTE_FIELDS = {
     "official_url": Phrase("a link to the site's own page", "그 사이트 자체 페이지 링크"),
     "source_url": Phrase("the page it was read from", "읽은 페이지"),
     "verified_at": Phrase("the date it was read", "읽은 날짜"),
+    "condition_text": Phrase("a short quotation of a condition in the site's own words", "사이트가 직접 쓴 표현 그대로의 짧은 조건 문구 인용"),
     "summary_line": Phrase("one summary sentence built from fixed words", "정해진 말로 만든 요약 한 문장"),
     "routes": Exempt("the list of records described above"),
     "counts": Phrase("counts by source kind", "출처 종류별 개수"),
