@@ -215,5 +215,8 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
     "ulta.com": [
         _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.ulta.com/guestservices/all",
                source_url="https://www.ulta.com/guestservices/all", verified_at="2026-11-15"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_identity",
+               official_url="https://www.ulta.com/guestservices/all", source_url="https://www.ulta.com/guestservices/all",
+               verified_at="2026-11-15"),
     ],
 }
