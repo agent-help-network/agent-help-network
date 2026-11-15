@@ -531,6 +531,15 @@ def test_task_route_tool_tells_a_switched_off_service_from_a_network_error(route
     assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == NO_ANSWER
 
 
+def test_task_route_tool_names_a_bad_kind_and_lists_the_allowed_values(monkeypatch):
+    found = ahn_client.task_routes("example.com", "Refund")
+    assert found.reason == "invalid_task_kind"
+    assert ahn_tools.format_task_routes(found) == ahn_tools.INVALID_TASK_KIND
+    assert "refund_request" in ahn_tools.INVALID_TASK_KIND and "allowed values" in ahn_tools.INVALID_TASK_KIND
+    assert ahn_tools.format_task_routes(ahn_client.task_routes("localhost")) == NOT_LOOKED_UP
+    assert tuple(ahn_tools.TASK_KINDS) == tuple(ahn_client._task_routes.TASK_KINDS)
+
+
 def test_task_route_tool_sends_nothing_for_a_private_host_or_a_bad_task_kind():
     tool = ahn_tools.AHNTaskRouteTool()
     assert tool.invoke({"hostname": "10.0.0.5"}) == NOT_LOOKED_UP

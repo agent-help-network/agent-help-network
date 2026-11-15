@@ -196,6 +196,9 @@ TASK_KINDS = (
     "document_submission",
     "other",
 )
+INVALID_TASK_KIND = (
+    "Nothing was sent: task_kind is not one of the allowed values: " + ", ".join(TASK_KINDS) + ". Use one of them or leave it out."
+)
 NOT_SERVED = (
     "Task routes are not served by this deployment of Agent Help Network. That says nothing about the site. "
     "Nothing else was sent; continue with your own judgment."
@@ -217,7 +220,8 @@ TASK_ROUTES_DESCRIPTION = (
 
 class AHNTaskRouteInput(BaseModel):
     """Arguments of the task-route lookup. Only these leave the machine. ``TASK_KINDS`` is the service's list of task
-    kinds; a test in the main repository checks the two lists are the same."""
+    kinds; it is kept here, not imported, so that an older ahn-client still works. A test in the main repository checks
+    that it equals the service's list and ahn_client's."""
 
     hostname: str = Field(description="The public hostname of the site, for example 'example.com'. Do not include a path or query.")
     task_kind: Optional[Literal[TASK_KINDS]] = Field(  # type: ignore[valid-type]
@@ -229,7 +233,12 @@ def format_task_routes(found: Any) -> str:
     """One summary line, a blank line, then a JSON object of the validated fields ``ahn_client.task_routes`` kept.
     Records, not guarantees: an empty ``routes`` list does not mean there is no route."""
     if not getattr(found, "available", False):
-        return NOT_SERVED if getattr(found, "reason", None) == "not_served" else NO_ANSWER
+        reason = getattr(found, "reason", None)
+        if reason == "not_served":
+            return NOT_SERVED
+        if reason == "invalid_task_kind":
+            return INVALID_TASK_KIND
+        return NOT_LOOKED_UP if reason == "invalid_host" else NO_ANSWER
     data = found.to_dict()
     body = {key: data[key] for key in ("site_host", "available", "records", "routes", "notice") if key in data}
     return f"{found.summary()}\n\n{json.dumps(body, ensure_ascii=True, sort_keys=True)}"

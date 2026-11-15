@@ -22,22 +22,51 @@ from . import _client
 from ._client import MAX_RESPONSE_BYTES, user_agent
 from ._hosts import eligible_host
 
-__all__ = ["TaskRoutes", "task_routes", "task_routes_url"]
+__all__ = ["TASK_KINDS", "TaskRoutes", "task_routes", "task_routes_url"]
 
 API_URL = "https://agenthelpnetwork.com/v1/task-routes"
 DEFAULT_TIMEOUT = 4.0
 MAX_ROUTES = 20
-TASK_KIND = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# The task kinds the service knows (ahn.task_routes.TaskKind). A kind outside the list is not sent. A test in the main
+# repository checks this list against the service's and against langchain-ahn's.
+TASK_KINDS = (
+    "claim_unclaimed_property",
+    "warranty_claim",
+    "warranty_dispute",
+    "refund_request",
+    "return_or_exchange",
+    "cancel_subscription",
+    "account_closure",
+    "account_recovery",
+    "portal_login",
+    "address_or_profile_change",
+    "appointment_booking",
+    "appointment_change_or_cancel",
+    "records_request",
+    "complaint_filing",
+    "billing_dispute",
+    "fee_waiver_or_adjustment",
+    "insurance_claim",
+    "government_benefit_application",
+    "tax_or_government_filing",
+    "id_or_license_renewal",
+    "accommodation_request",
+    "prescription_refill",
+    "document_submission",
+    "other",
+)
 SUMMARY_LINE = re.compile(r"^[ -~]{1,200}$")
 VALUE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 HOST_VALUE = re.compile(r"^[a-z0-9.-]{1,253}$")  # the server accepts a hostname of up to 253 characters
 URL_VALUE = re.compile(r"^https://[^\s?#]{1,192}$")
 DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 NOTICES = ("case_record_not_advice",)
-# Why there is no answer: the deployment answered 404 (task routes switched off), there was no usable answer, or the host is not looked up.
+# Why there is no answer: the host is never looked up, the task kind is not one of TASK_KINDS (neither is sent), the deployment
+# answered 404 (task routes switched off), or there was no usable answer (network, timeout, unreadable).
 REASON_NOT_SERVED = "not_served"
 REASON_NO_ANSWER = "no_answer"
-REASON_NOT_LOOKED_UP = "not_looked_up"
+REASON_INVALID_HOST = "invalid_host"
+REASON_INVALID_TASK_KIND = "invalid_task_kind"
 # The fields of one route as the service sends them. Anything else is dropped.
 ROUTE_VALUE_FIELDS = ("site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                       "entry_point_kind", "route_worked", "basis", "outcome", "duration", "period", "source_kind")
@@ -50,11 +79,11 @@ class TaskRoutes:
 
     site_host: Optional[str]
     available: bool = False
-    reason: Optional[str] = None
     routes: List[Dict[str, Any]] = field(default_factory=list)
     summary_line: Optional[str] = None
     records: int = 0
     notice: Optional[str] = None
+    reason: Optional[str] = None  # last, so that a positional call keeps its meaning
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"site_host": self.site_host, "available": self.available, "routes": self.routes, "records": self.records}
@@ -71,6 +100,10 @@ class TaskRoutes:
         if not self.available:
             if self.reason == REASON_NOT_SERVED:
                 return "Task routes are not served by this deployment. That says nothing about the site."
+            if self.reason == REASON_INVALID_HOST:
+                return "Nothing was sent: this is not a public hostname that is looked up."
+            if self.reason == REASON_INVALID_TASK_KIND:
+                return "Nothing was sent: task_kind is not one of the allowed values: " + ", ".join(TASK_KINDS) + "."
             return "No task routes available (no answer). That says nothing about the site."
         return self.summary_line or f"{self.records} task route records. Records, not guarantees; an empty list does not mean there is no route."
 
@@ -157,18 +190,19 @@ def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout
     """The task routes recorded for the site of a hostname or URL, optionally for one ``task_kind``.
 
     Never raises. Returns ``available=False`` and ``routes=[]`` when the host is never looked up (local, private, an address,
-    this service's own, lookups disabled), when ``task_kind`` is not a plain lowercase word, on a 404 (the service does not
+    this service's own, lookups disabled), when ``task_kind`` is not one of ``TASK_KINDS``, on a 404 (the service does not
     serve task routes), a network error, a timeout beyond ``timeout`` seconds, or an answer that does not have the expected
     shape. A route is a dictionary of closed values (``task_kind``, ``obstacle``, ``basis``, ``outcome``, ``source_kind``,
     ``sensitive`` and the like); nothing in it is text from a site. A record is a case record, not advice for the next task, and records are not guarantees: an empty list does not mean there is no route.
-    ``reason`` says why there is no answer: ``not_served`` (404), ``no_answer`` or ``not_looked_up``.
+    ``reason`` says why there is no answer: ``invalid_host`` or ``invalid_task_kind`` (nothing was sent; the kind must be one of
+    ``TASK_KINDS``), ``not_served`` (404) or ``no_answer`` (network, timeout, unreadable).
     """
     try:
         host = eligible_host(host_or_url)
         if host is None:
-            return TaskRoutes(site_host=None, reason=REASON_NOT_LOOKED_UP)
-        if task_kind is not None and not (isinstance(task_kind, str) and TASK_KIND.fullmatch(task_kind)):
-            return TaskRoutes(site_host=host, reason=REASON_NOT_LOOKED_UP)
+            return TaskRoutes(site_host=None, reason=REASON_INVALID_HOST)
+        if task_kind is not None and not (isinstance(task_kind, str) and task_kind in TASK_KINDS):
+            return TaskRoutes(site_host=host, reason=REASON_INVALID_TASK_KIND)
         try:
             wait = float(timeout)
         except (TypeError, ValueError):

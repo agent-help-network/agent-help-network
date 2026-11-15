@@ -110,11 +110,47 @@ def test_other_failures_have_their_own_reason(transport):
     assert ahn.task_routes("example.com").reason == "no_answer"
     transport(b"not json")
     assert ahn.task_routes("example.com").reason == "no_answer"
-    assert ahn.task_routes("10.0.0.5").reason == "not_looked_up"
+    assert ahn.task_routes("10.0.0.5").reason == "invalid_host"
     transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 500, "Err", {}, io.BytesIO(b"{}")))
     assert ahn.task_routes("example.com").reason == "no_answer"
     transport()
     assert ahn.task_routes("example.com").reason is None
+
+
+def test_reason_is_the_last_field_so_positional_calls_keep_their_meaning():
+    import dataclasses
+
+    names = [item.name for item in dataclasses.fields(_task_routes.TaskRoutes)]
+    assert names == ["site_host", "available", "routes", "summary_line", "records", "notice", "reason"]
+    built = _task_routes.TaskRoutes("example.com", True, [ROUTE], "line", 1, "case_record_not_advice")
+    assert built.routes == [ROUTE] and built.summary_line == "line" and built.records == 1 and built.reason is None
+    assert _task_routes.TaskRoutes("example.com").reason is None
+
+
+def test_reason_names_follow_the_cause(transport):
+    transport()
+    for value in ["localhost", "10.0.0.5", None]:
+        found = ahn.task_routes(value)
+        assert found.reason == "invalid_host" and found.available is False and found.site_host is None
+    assert "not a public hostname" in ahn.task_routes("localhost").summary()
+    found = ahn.task_routes("example.com", "Refund")
+    assert found.reason == "invalid_task_kind" and found.available is False and found.site_host == "example.com"
+    assert "refund_request" in found.summary() and "allowed values" in found.summary()
+    assert ahn.task_routes("localhost", "Refund").reason == "invalid_host"  # the host is checked first
+    assert "not_looked_up" not in repr(_task_routes.__dict__)
+
+
+@pytest.mark.parametrize("kind", ["Refund", "refund request", "../x", "a" * 65, "x&site_host=evil.com", 5, "", "refund_requests", "unknown_kind"])
+def test_a_kind_outside_the_closed_list_sends_nothing_and_says_why(kind):
+    found = ahn.task_routes("example.com", kind)  # the autouse transport fails the test on any request
+    assert found.available is False and found.reason == "invalid_task_kind"
+
+
+def test_every_listed_kind_is_sent(transport):
+    calls = transport()
+    for kind in _task_routes.TASK_KINDS:
+        assert ahn.task_routes("example.com", kind).available is True
+    assert len(calls) == 24 and all("task_kind=" in call[0].full_url for call in calls)
 
 
 def test_a_long_hostname_the_server_accepts_is_kept(transport):
@@ -194,11 +230,6 @@ def test_disabled_and_skipped_hosts_send_nothing(monkeypatch):
     monkeypatch.delenv("AHN_CLIENT_DISABLE")
     monkeypatch.setenv("AHN_CLIENT_SKIP_HOSTS", "example.com")
     assert ahn.task_routes("example.com").available is False
-
-
-@pytest.mark.parametrize("kind", ["Refund", "refund request", "../x", "a" * 65, "x&site_host=evil.com", 5, ""])
-def test_a_bad_task_kind_sends_nothing(kind):
-    assert ahn.task_routes("example.com", kind).available is False
 
 
 def test_user_agent_form_is_unchanged(transport):
