@@ -156,9 +156,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
         _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.peacocktv.com/terms",
                source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
-        _route("refund_request", obstacle="wrong_entry_point", routes=["different_entry_point"],
-               entry_point_kind="partner_or_third_party_portal", official_url="https://www.peacocktv.com/terms",
-               source_url="https://www.peacocktv.com/terms", verified_at="2026-11-14"),
     ],
     "siriusxm.com": [
         _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
@@ -254,5 +251,61 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("refund_request", obstacle="deadline_or_window",
                official_url="https://store.steampowered.com/steam_refunds/",
                source_url="https://store.steampowered.com/steam_refunds/", verified_at="2026-11-15"),
+    ],
+    "usps.com": [
+        _route("insurance_claim", obstacle="deadline_or_window", official_url="https://www.usps.com/help/claims.htm",
+               source_url="https://www.usps.com/help/claims.htm", verified_at="2026-11-15"),
+    ],
+    "doxo.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://www.doxo.com/w/user-support/can-i-cancel-a-payment-for-a-refund-once-the-payment-has-been-remitted-to-a-biller/",
+               source_url="https://www.doxo.com/w/user-support/can-i-cancel-a-payment-for-a-refund-once-the-payment-has-been-remitted-to-a-biller/", verified_at="2026-11-15"),
+    ],
+    "offerup.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://offerup.com/terms",
+               source_url="https://offerup.com/terms", verified_at="2026-11-15"),
+    ],
+    "privacy.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.privacy.com/terms",
+               source_url="https://www.privacy.com/terms", verified_at="2026-11-15"),
+    ],
+    "ramseysolutions.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.ramseysolutions.com/company/policies/terms-of-use",
+               source_url="https://www.ramseysolutions.com/company/policies/terms-of-use", verified_at="2026-11-15"),
+    ],
+    "ilovepdf.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.ilovepdf.com/help/terms",
+               source_url="https://www.ilovepdf.com/help/terms", verified_at="2026-11-15"),
+    ],
+    "dreamhost.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.dreamhost.com/legal/terms-of-service/",
+               source_url="https://www.dreamhost.com/legal/terms-of-service/", verified_at="2026-11-15"),
+    ],
+    "suno.com": [
+        _route("billing_dispute", obstacle="deadline_or_window", official_url="https://suno.com/terms",
+               source_url="https://suno.com/terms", verified_at="2026-11-15"),
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://suno.com/terms",
+               source_url="https://suno.com/terms", verified_at="2026-11-15"),
+    ],
+    "tomtom.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.tomtom.com/en-gb/legal/terms-and-conditions/",
+               source_url="https://www.tomtom.com/en-gb/legal/terms-and-conditions/", verified_at="2026-11-15"),
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"], entry_point_kind="partner_or_third_party_portal", official_url="https://www.tomtom.com/en-gb/legal/terms-and-conditions/",
+               source_url="https://www.tomtom.com/en-gb/legal/terms-and-conditions/", verified_at="2026-11-15"),
+    ],
+    "wise.com": [
+        _route("portal_login", obstacle="verification_step", verification_kind="new_device", official_url="https://wise.com/help/articles/6BKMUwOzYOCO24BANwWVvL/logging-in-from-a-new-device",
+               source_url="https://wise.com/help/articles/6BKMUwOzYOCO24BANwWVvL/logging-in-from-a-new-device", verified_at="2026-11-15"),
+    ],
+    "wordpress.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://wordpress.com/support/refunds/",
+               source_url="https://wordpress.com/support/refunds/", verified_at="2026-11-15"),
+    ],
+    "pcloud.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://www.pcloud.com/terms_and_conditions",
+               source_url="https://www.pcloud.com/terms_and_conditions", verified_at="2026-11-15"),
+    ],
+    "upgrade.com": [
+        _route("account_recovery", obstacle="code_expired", official_url="https://www.upgrade.com/help/account-management-payments/payments-billing/how-do-i-reset-my-password/",
+               source_url="https://www.upgrade.com/help/account-management-payments/payments-billing/how-do-i-reset-my-password/", verified_at="2026-11-15"),
     ],
 }
