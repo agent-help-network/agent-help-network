@@ -82,6 +82,7 @@ def listed(monkeypatch):
 def test_the_shipped_list_is_the_reviewed_set_and_valid():
     assert CURATED_URL_EXCEPTIONS == {
         "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
+        "https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/": "https://www.eventbrite.com/help/en-us/",
     }
     assert curated_exception_problems(CURATED_URL_EXCEPTIONS) == []
     assert task_routes_data.CURATED_URL_EXCEPTIONS is CURATED_URL_EXCEPTIONS
