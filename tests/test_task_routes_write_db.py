@@ -200,6 +200,20 @@ def test_a_report_that_sends_a_server_field_or_any_other_field_is_refused(api, f
     assert rows(settings) == []
 
 
+SELLER_REPORT = {"obstacle": "wrong_entry_point", "entry_point_kind": "seller_or_provider", "routes_tried": ["different_entry_point"],
+                 "route_worked": None}
+
+
+@needs_db
+def test_a_report_with_the_curated_only_entry_point_kind_is_a_422_and_stores_nothing(api):
+    settings, client = api
+    response = post(client, report(**SELLER_REPORT))
+    assert response.status_code == 422 and response.json() == {"error": "invalid_task_route"}
+    assert "seller_or_provider" not in response.text and rows(settings) == []
+    ok = post(client, report(**{**SELLER_REPORT, "entry_point_kind": "regional_site"}))
+    assert ok.status_code == 201, ok.text
+
+
 @needs_db
 @pytest.mark.parametrize("changes", [
     {"basis": "official_doc"}, {"outcome": "not_applicable"}, {"task_kind": "refund_request_with_my_order_123456"},
@@ -504,7 +518,10 @@ def test_operator_add_refuses_an_invalid_record_or_a_tenant(api):
 
     settings, _client = api
     for changes in ({"site_host": "springfield.classlink.com"}, {"official_url": "https://www.example.com/orders/123456789"},
-                    {"basis": "official_doc"}, {"entry_point_kind": None, "verification_kind": "sms_code"}):
+                    {"basis": "official_doc"}, {"entry_point_kind": None, "verification_kind": "sms_code"},
+                    {"entry_point_kind": "seller_or_provider", "routes_tried": "different_entry_point", "route_worked": None},
+                    {"entry_point_kind": "seller_or_provider", "source_kind": "curated_official", "basis": "official_doc",
+                     "outcome": "not_applicable"}):
         with pytest.raises(SystemExit):
             _task_route_command(settings, operator_args(**changes), None)
     assert rows(settings) == []
@@ -522,7 +539,7 @@ CHECKS = {
     "task_routes_verification_kind_values": values(VerificationKind),
     "task_routes_site_requires_values": values(SiteRequires),
     "task_routes_document_kind_values": values(DocumentKind),
-    "task_routes_entry_point_kind_values": values(EntryPointKind),
+    "task_routes_entry_point_kind_values": values(EntryPointKind, drop=("seller_or_provider",)),
     "task_routes_routes_tried_values": values(RouteKind),
     "task_routes_route_worked_values": values(RouteKind, add=("none",)),
     "task_routes_basis_values": values(RouteBasis, drop=("official_doc",)),
@@ -656,6 +673,12 @@ def test_report_task_route_checks_the_report_and_sends_only_the_report_fields():
             asyncio.run(server.call_tool("report_task_route", {"report": bad}))
         assert "invalid_task_route" in str(caught.value) and secret not in str(caught.value)
     assert len(sent) == 1
+    with pytest.raises(ToolError) as caught:  # the curated-only value is refused here before anything is sent
+        asyncio.run(server.call_tool("report_task_route", {"report": report(**SELLER_REPORT)}))
+    assert "invalid_task_route" in str(caught.value) and "seller_or_provider" not in str(caught.value)
+    assert len(sent) == 1
+    values = mcp_task_routes._report_schema()["properties"]["entry_point_kind"]["enum"]
+    assert "seller_or_provider" not in values and "partner_or_third_party_portal" in values
 
 
 def test_the_lookup_answers_from_the_curated_table_when_the_database_cannot_be_read(monkeypatch, caplog):

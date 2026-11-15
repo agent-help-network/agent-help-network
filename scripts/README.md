@@ -121,7 +121,7 @@ Every field takes only these values (the enums in `ahn/task_routes.py` hold the 
 - `verification_kind` (only with `verification_step`): `sms_code`, `email_code`, `app_approval`, `new_device`, `security_question`, `account_locked`, `consent_screen`, `id_document_upload`
 - `site_requires` (only with `site_requires_info_from_person`): `referral_or_prescription`, `prior_approval_record`, `account_holder_step`, `original_document`, `preference_only`
 - `document_kind` (only with `document_missing`, `document_rejected`, `substitute_document_needed`): `proof_of_identity`, `proof_of_address`, `proof_of_ownership`, `proof_of_purchase`, `proof_of_authority`, `business_registration_or_closure`, `sworn_statement`, `approval_or_authorization_letter`, `professional_letter`, `prior_correspondence`, `account_statement`, `official_form`, `other`
-- `entry_point_kind` (only with `wrong_entry_point`): `role_specific_portal`, `regional_site`, `separate_subdomain`, `mobile_app_only`, `partner_or_third_party_portal`
+- `entry_point_kind` (only with `wrong_entry_point`): `role_specific_portal`, `regional_site`, `separate_subdomain`, `mobile_app_only`, `partner_or_third_party_portal`, `seller_or_provider` (curated records only; a report may not send it)
 - `routes_tried` (at most 6, no repeats; `route_worked` is one of them or `none`): `support_chat`, `phone`, `email`, `web_form`, `office_visit`, `mail_or_fax`, `consumer_agency`, `regulator`, `designated_dispute_program`, `official_app`, `different_entry_point`, `escalation_within_site`, `other`
 - `basis`: `official_doc`, `agency_reply`, `outcome_observed`, `own_attempt`
 - `outcome`: `resolved`, `progressed`, `no_progress`, `gave_up`, `not_applicable`

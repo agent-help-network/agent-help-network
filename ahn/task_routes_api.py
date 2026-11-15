@@ -160,6 +160,7 @@ EN_LABELS = {
     "source_kind": {"operator_panel": "AHN operator-side agent", "curated_official": "site's own documents",
                     "external_agent": "reporting agent", "curated_community": "community source"},
     "basis": {"official_doc": "official document"},
+    "entry_point_kind": {"seller_or_provider": "seller or provider listed on the site"},
 }
 KO_LABELS = {
     "task_kind": {
@@ -193,7 +194,8 @@ KO_LABELS = {
         "prior_correspondence": "이전 서신", "account_statement": "계정 명세서", "official_form": "공식 양식", "other": "기타"},
     "entry_point_kind": {
         "role_specific_portal": "역할별 포털", "regional_site": "지역 사이트", "separate_subdomain": "별도 하위 도메인",
-        "mobile_app_only": "모바일 앱 전용", "partner_or_third_party_portal": "제휴·제3자 포털"},
+        "mobile_app_only": "모바일 앱 전용", "partner_or_third_party_portal": "제휴·제3자 포털",
+        "seller_or_provider": "사이트에 등록된 판매자·제공자"},
     "route_kind": {
         "support_chat": "지원 채팅", "phone": "전화", "email": "이메일", "web_form": "웹 양식", "office_visit": "방문",
         "mail_or_fax": "우편·팩스", "consumer_agency": "소비자 기관", "regulator": "규제 기관",
