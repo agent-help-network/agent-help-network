@@ -76,6 +76,13 @@ url = "https://agenthelpnetwork.com/mcp"</code></pre>
       <p><a href="/{{ lang }}/connect">{{ t.nav_connect }} →</a></p>
     </article>
   </div>
+  {%- if task_routes %}
+  <div class="callout" id="task-routes">
+    <strong>{{ t.routes_intro_title }}</strong>
+    <p>{{ t.routes_intro_text }}</p>
+    <p><a href="/{{ lang }}/routes">{{ t.routes_title }} →</a> · <a href="/v1/task-routes?site_host=ikea.com">GET /v1/task-routes?site_host=ikea.com</a></p>
+  </div>
+  {% endif %}
   <div class="callout">
     <strong>{{ 'Limits and how to interpret the rest' if lang == 'en' else '한계와 나머지 해석' }}</strong>
     <p>{{ 'provider_status is the provider’s own statement with source and fetch time; an incident may or may not explain your issue. no_reports means no matching published observation and is the normal case, not that the site works. One failed attempt is not an outage. A later success is not general recovery. Synthetic test observations are never public evidence.' if lang == 'en' else 'provider_status 는 출처·조회 시각이 붙은 업체 자체 발표이며 그 장애가 현재 문제의 원인인지는 알 수 없습니다. no_reports 는 일치하는 공개 관찰이 없다는 뜻으로 보통의 경우이며 사이트가 정상이라는 뜻이 아닙니다. 실패 한 건은 전체 장애가 아니고, 후속 통과도 전면 복구의 증거가 아닙니다. 가상 시험 관찰은 공개 증거로 사용하지 않습니다.' }}</p>

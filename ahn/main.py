@@ -41,6 +41,7 @@ from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
 ROOT = Path(__file__).resolve().parent
 AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").strip()
+AGENT_PROMPT_TASK_ROUTES = (ROOT / "agent_instructions_task_routes.txt").read_text(encoding="utf-8").strip()  # appended to /agent-instructions.txt only while task routes are served
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
 POLICY_UPDATED = date(2026, 11, 7)
@@ -78,13 +79,14 @@ LANG = {
         "limits_title": "Limits", "limits_text": "Reports are observations, not proof of an outage or intentional block. Retention and public publication thresholds will be set before a real pilot.",
         "not_found": "This public incident is unavailable.", "unavailable": "The service is temporarily unavailable.", "try_later": "Please try again later.", "back": "Back to search", "footer": "Local development build · Observations are not root-cause findings",
         "routes_title": "Task route records", "routes_eyebrow": "TASK ROUTES",
-        "routes_intro": "Each record names a site, a kind of customer task, the obstacle, and the route that the site's documents or an agent's work found. Records show what was recorded. They are not guarantees and not advice.",
+        "routes_intro": "Each record lists a site, a kind of customer task, an obstacle, and the route the site's own documents name. They are records, not guarantees or advice, and a missing record does not mean there is no route.",
         "routes_head": "Of {total} record{s}, {parts}.", "routes_part": "{n} from {label}", "routes_head_empty": "No task route records yet. A missing record does not mean there is no route.",
         "routes_empty": "No task route record matches. A missing record does not mean there is no route.",
         "routes_sensitive": "Case record, not advice.", "routes_sensitive_page": "Some lines below are case records, not advice.",
         "routes_f_site": "Site", "routes_f_task": "Task", "routes_f_outcome": "Outcome", "routes_f_source": "Source", "routes_f_all": "All", "routes_f_apply": "Show", "routes_f_reset": "Clear filters",
         "routes_c_site": "Site", "routes_c_task": "Task", "routes_c_obstacle": "Obstacle", "routes_c_worked": "Route that worked", "routes_c_outcome": "Outcome", "routes_c_basis": "Basis", "routes_c_period": "Period", "routes_c_records": "Records for the site", "routes_c_source": "Source",
         "routes_tried": "tried", "routes_none_worked": "none worked", "routes_not_stated": "not stated", "routes_source_page": "source page", "routes_official_page": "official page", "routes_checked": "checked",
+        "routes_intro_title": "Blocked on a site, or not sure how to get a task done?", "routes_intro_text": "The blocked-step lookup shows what a site declares for agents, its official path and its provider's status. Task route records cover some sites only: for a kind of customer task, such as a refund or a cancellation, they list an obstacle and the route the site's own documents name. They are records, not guarantees or advice, and a missing record does not mean there is no route.", "nav_routes": "Task routes",
         "routes_back": "All task route records", "routes_api": "Same data for agents", "routes_showing": "Showing {shown} of {total}.", "routes_newest": "Showing the {shown} newest of {total}.",
     },
     "ko": {
@@ -115,13 +117,14 @@ LANG = {
         "limits_title": "한계", "limits_text": "제보는 관찰일 뿐 전체 장애나 의도적 차단의 증거가 아닙니다. 보존 기간과 공개 문턱은 실제 파일럿 전에 결정합니다.",
         "not_found": "이 공개 사건은 제공되지 않습니다.", "unavailable": "서비스를 일시적으로 사용할 수 없습니다.", "try_later": "잠시 후 다시 시도해 주세요.", "back": "검색으로 돌아가기", "footer": "로컬 개발판 · 관찰은 원인 확정이 아닙니다",
         "routes_title": "태스크 경로 기록", "routes_eyebrow": "태스크 경로",
-        "routes_intro": "기록 하나는 사이트, 고객 업무 종류, 걸림돌, 그리고 사이트 문서나 에이전트의 작업에서 찾은 경로를 적어요. 기록된 사실을 보여 줄 뿐 보장도 조언도 아니에요.",
+        "routes_intro": "기록 하나는 사이트, 고객 업무 종류, 걸림돌, 그리고 사이트 공식 문서에 적힌 경로를 적어요. 기록일 뿐 보장이나 조언이 아니며, 기록이 없다고 해서 경로가 없다는 뜻은 아니에요.",
         "routes_head": "기록 {total}건 중 {parts}.", "routes_part": "{label} {n}건", "routes_head_empty": "아직 태스크 경로 기록이 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
         "routes_empty": "조건에 맞는 태스크 경로 기록이 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
         "routes_sensitive": "사례 기록이며 조언이 아님", "routes_sensitive_page": "아래 일부 줄은 사례 기록이며 조언이 아님.",
         "routes_f_site": "사이트", "routes_f_task": "업무", "routes_f_outcome": "결과", "routes_f_source": "출처", "routes_f_all": "전체", "routes_f_apply": "보기", "routes_f_reset": "걸러 보기 해제",
         "routes_c_site": "사이트", "routes_c_task": "업무", "routes_c_obstacle": "걸림돌", "routes_c_worked": "통한 경로", "routes_c_outcome": "결과", "routes_c_basis": "근거", "routes_c_period": "시기", "routes_c_records": "사이트 기록 수", "routes_c_source": "출처",
         "routes_tried": "시도", "routes_none_worked": "통한 경로 없음", "routes_not_stated": "적혀 있지 않음", "routes_source_page": "근거 문서", "routes_official_page": "공식 안내", "routes_checked": "확인",
+        "routes_intro_title": "사이트에서 막혔거나 처리 방법을 모를 때", "routes_intro_text": "막힘 조회는 사이트가 에이전트에 대해 선언한 정책, 공식 경로, 업체 상태를 보여 줍니다. 태스크 경로 기록은 일부 사이트만 다룹니다. 환불·해지 같은 고객 업무 종류별로 걸림돌과 사이트 공식 문서에 적힌 경로를 적습니다. 기록일 뿐 보장이나 조언이 아니며, 기록이 없다고 해서 경로가 없다는 뜻은 아닙니다.", "nav_routes": "태스크 경로",
         "routes_back": "전체 태스크 경로 기록", "routes_api": "에이전트용 같은 데이터", "routes_showing": "{total}건 중 {shown}건을 보여요.", "routes_newest": "{total}건 중 최신 {shown}건을 보여요.",
     },
 }
@@ -240,6 +243,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         llms_body = llms_body.replace("\n## Pages", "\n" + llms_section(settings.public_board_ahn_check) + "## Pages", 1)
         policy_updated = max(policy_updated, settings.public_board_since or POLICY_UPDATED)
     task_routes_on = settings.task_routes and settings.task_routes_since is not None  # no valid SINCE date: as if the switch were off
+    agent_prompt = AGENT_PROMPT + ("\n\n" + AGENT_PROMPT_TASK_ROUTES if task_routes_on else "")  # the same text for /agent-instructions.txt and the /human starter prompt
     if task_routes_on:  # the policy's "Last updated" date does not stay before the day task routes are served
         policy_updated = max(policy_updated, settings.task_routes_since)
     # D118: task-route reports are taken (and stored records shown) only on top of the read switch, with public reporting on.
@@ -290,7 +294,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
 
         @app.get("/agent-instructions.txt", include_in_schema=False)
         def agent_instructions():
-            return Response(AGENT_PROMPT + "\n", media_type="text/plain; charset=utf-8")
+            return Response(agent_prompt + "\n", media_type="text/plain; charset=utf-8")
 
         @app.get("/llms.txt", include_in_schema=False)
         def llms_txt():
@@ -447,7 +451,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         return "web" if request.headers.get("X-AHN-Channel") == "web" else "rest"
 
     def render(request: Request, lang: str, page: str, status_code: int = 200, **context):
-        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "task_routes": task_routes_on, "task_route_reports": task_route_reports_on, **task_route_policy_numbers, "policy_updated": policy_updated, "agent_prompt": AGENT_PROMPT, **context}, status_code=status_code)
+        return templates.TemplateResponse(request, f"{page}.html", {"lang": lang, "t": lang_text[lang], "page": page, "public_mode": settings.public_mode, "reporting_enabled": settings.reporting_enabled, "operator_name": settings.operator_name, "report_retention_days": settings.report_retention_days, "public_bundle": settings.public_bundle, "public_board": public_board_on, "task_routes": task_routes_on, "task_route_reports": task_route_reports_on, **task_route_policy_numbers, "policy_updated": policy_updated, "agent_prompt": agent_prompt, **context}, status_code=status_code)
 
     @app.get("/health")
     def health():
