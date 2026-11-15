@@ -9,6 +9,10 @@
 </section>
 {% endblock %}
 {% block routes_filters %}
+<form class="routes-filter" method="get" action="/{{ lang }}/routes">
+  {% with site_label=t.routes_find_other %}{% include "routes_site_field.html" %}{% endwith %}
+  <button type="submit">{{ t.routes_f_apply }}</button>
+</form>
 <form class="routes-filter" method="get" action="/{{ lang }}/routes/{{ site_host }}">
   <div><label for="f-task">{{ t.routes_f_task }}</label>
     <select id="f-task" name="task_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_task %}<option value="{{ value }}"{% if picked.task_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
@@ -23,5 +27,5 @@
 {% block routes_foot %}
 <p class="routes-foot"><a href="/{{ lang }}/routes">{{ t.routes_back }}</a>
   <a href="/v1/task-routes?site_host={{ site_host }}"><code>GET /v1/task-routes</code></a> <span>{{ t.routes_api }}</span></p>
-{% if newest_only %}<p class="routes-count">{{ t.routes_newest.format(shown=shown_max, total=total) }}</p>{% endif %}
+{% if newest_only %}<p class="routes-count">{{ t.routes_newest.format(shown=shown_max, total=newest_total) }}</p>{% endif %}
 {% endblock %}

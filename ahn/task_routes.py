@@ -22,13 +22,13 @@ import re
 import unicodedata
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Literal
+from typing import Literal, NamedTuple
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator, model_validator
 
-from .models import StrictModel, _omit_none, normalize_host_input, valid_host
+from .models import RESERVED_TLDS, StrictModel, _omit_none, normalize_host_input, valid_host
 
 LOG = logging.getLogger(__name__)
 
@@ -737,6 +737,56 @@ def parse_query(site_host, task_kind=None) -> tuple[str, TaskKind | None]:
     if not isinstance(value, str) or value not in TaskKind._value2member_map_:
         raise TaskRouteInputError("invalid_task_kind")
     return host, TaskKind(value)
+
+
+SITE_INPUT_MAX = 2000
+_SITE_PORT = re.compile(r":\d{1,5}$")
+_SITE_LABEL = re.compile(r"^[a-z0-9-]{1,63}$")
+
+
+class SiteInput(NamedTuple):
+    """What the search box on the human pages made of what was typed. ``kind`` is "empty" (no site condition), "host" (a public
+    hostname, in ``value``), "label" (one name without a dot, in ``value``) or "invalid" (``value`` is empty: the input is never
+    carried on)."""
+
+    kind: str
+    value: str = ""
+
+
+def site_from_input(raw) -> SiteInput:
+    """The reading of the site box on the task route pages (a screen-only rule: parse_query(), and so REST and MCP, is unchanged).
+    A pasted address is cut down to its hostname: an http(s) scheme, everything from the first "/", "?" or "#", and a port are
+    dropped, and what was dropped is not used anywhere. Another scheme, an account part ("@"), a space or a control character, a
+    name that is not a public hostname and more than SITE_INPUT_MAX characters are "invalid"."""
+    if not isinstance(raw, str):
+        return SiteInput("empty")
+    if len(raw) > SITE_INPUT_MAX:
+        return SiteInput("invalid")
+    text = raw.strip()
+    if not text:
+        return SiteInput("empty")
+    lowered = text.lower()
+    for scheme in ("https://", "http://"):
+        if lowered.startswith(scheme):
+            text = text[len(scheme):]
+            break
+    else:
+        if "://" in text:  # another scheme (ftp://, file://)
+            return SiteInput("invalid")
+    for mark in ("/", "?", "#"):
+        text = text.split(mark, 1)[0]
+    if "@" in text or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in text):
+        return SiteInput("invalid")
+    text = _SITE_PORT.sub("", text).rstrip(".").lower()
+    if not text:
+        return SiteInput("invalid")
+    try:
+        return SiteInput("host", valid_host(text))
+    except ValueError:
+        pass
+    if _SITE_LABEL.fullmatch(text) and text not in RESERVED_TLDS and not text.isdigit() and not text.startswith("-")             and not text.endswith("-"):
+        return SiteInput("label", text)
+    return SiteInput("invalid")
 
 
 # Labels that name a service of the same site, not a tenant: support.example.com answers from example.com. Any other subdomain of a

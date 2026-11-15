@@ -44,7 +44,7 @@ AGENT_PROMPT = (ROOT / "agent_instructions.txt").read_text(encoding="utf-8").str
 AGENT_PROMPT_TASK_ROUTES = (ROOT / "agent_instructions_task_routes.txt").read_text(encoding="utf-8").strip()  # appended to /agent-instructions.txt only while task routes are served
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
-POLICY_UPDATED = date(2026, 11, 7)
+POLICY_UPDATED = date(2026, 11, 15)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -88,6 +88,19 @@ LANG = {
         "routes_tried": "tried", "routes_none_worked": "none worked", "routes_not_stated": "not stated", "routes_source_page": "source page", "routes_official_page": "official page", "routes_checked": "checked",
         "routes_intro_title": "Blocked on a site, or not sure how to get a task done?", "routes_intro_text": "The blocked-step lookup shows what a site declares for agents, its official path and its provider's status. Task route records cover some sites only: for a kind of customer task, such as a refund or a cancellation, they list an obstacle and the route the site's own documents name. They are records, not guarantees or advice, and a missing record does not mean there is no route.", "nav_routes": "Task routes",
         "routes_back": "All task route records", "routes_api": "Same data for agents", "routes_showing": "Showing {shown} of {total}.", "routes_newest": "Showing the {shown} newest of {total}.",
+        "routes_f_site_hint": "Hostname only, such as ikea.com. If you paste a full address, only the hostname is used.",
+        "routes_site_invalid": "That is not a public hostname. Enter a name such as ikea.com.",
+        "routes_site_none": "No task route record for {host} yet. A missing record does not mean there is no route.",
+        "routes_site_none_plain": "No task route record for that site yet. A missing record does not mean there is no route.",
+        "routes_site_profile": "What we do hold for this host (its declared agent policy, official path and provider status) is on its host profile.",
+        "routes_site_profile_link": "Host profile for {host} →",
+        "routes_site_coverage": "Records cover {m} site{s} so far.",
+        "routes_site_several": "More than one site matches. Pick one:",
+        "routes_site_label_none": "No recorded site matches that name. Enter the hostname, such as ikea.com. A missing record does not mean there is no route.",
+        "routes_empty_kind": "No record for this task on this site yet; {total} record{s} for other tasks. A missing record does not mean there is no route.",
+        "routes_empty_kind_link": "Show every record for this site",
+        "routes_find_other": "Find another site",
+        "routes_narrow": "Narrow by site or task to see the rest.",
     },
     "ko": {
         "brand": "에이전트 도움망", "nav_search": "검색", "nav_connect": "연결 안내", "nav_agents": "에이전트용", "nav_report": "제보", "nav_policy": "개인정보 처리방침", "nav_disclaimer": "이용 안내 및 한계", "nav_terms": "이용약관", "nav_support": "지원", "nav_contribute": "데이터 보태기",
@@ -126,6 +139,19 @@ LANG = {
         "routes_tried": "시도", "routes_none_worked": "통한 경로 없음", "routes_not_stated": "적혀 있지 않음", "routes_source_page": "근거 문서", "routes_official_page": "공식 안내", "routes_checked": "확인",
         "routes_intro_title": "사이트에서 막혔거나 처리 방법을 모를 때", "routes_intro_text": "막힘 조회는 사이트가 에이전트에 대해 선언한 정책, 공식 경로, 업체 상태를 보여 줍니다. 태스크 경로 기록은 일부 사이트만 다룹니다. 환불·해지 같은 고객 업무 종류별로 걸림돌과 사이트 공식 문서에 적힌 경로를 적습니다. 기록일 뿐 보장이나 조언이 아니며, 기록이 없다고 해서 경로가 없다는 뜻은 아닙니다.", "nav_routes": "태스크 경로",
         "routes_back": "전체 태스크 경로 기록", "routes_api": "에이전트용 같은 데이터", "routes_showing": "{total}건 중 {shown}건을 보여요.", "routes_newest": "{total}건 중 최신 {shown}건을 보여요.",
+        "routes_f_site_hint": "ikea.com 같은 호스트명만 입력해요. 주소 전체를 붙여 넣으면 호스트명만 써요.",
+        "routes_site_invalid": "공개 호스트명이 아니에요. ikea.com 같은 이름을 입력해 주세요.",
+        "routes_site_none": "{host} 의 태스크 경로 기록은 아직 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_site_none_plain": "그 사이트의 태스크 경로 기록은 아직 없어요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_site_profile": "이 호스트에 대해 가지고 있는 다른 정보(선언된 에이전트 정책, 공식 경로, 업체 상태)는 호스트 프로필에 있어요.",
+        "routes_site_profile_link": "{host} 호스트 프로필 →",
+        "routes_site_coverage": "지금은 사이트 {m}곳의 기록이 있어요.",
+        "routes_site_several": "여러 사이트가 맞아요. 하나를 골라 주세요:",
+        "routes_site_label_none": "그 이름과 맞는 기록된 사이트가 없어요. ikea.com 같은 호스트명으로 입력해 주세요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_empty_kind": "이 사이트에는 이 업무의 기록이 아직 없고, 다른 업무 기록이 {total}건 있어요. 기록이 없다고 경로가 없는 것은 아니에요.",
+        "routes_empty_kind_link": "이 사이트의 기록 전부 보기",
+        "routes_find_other": "다른 사이트 찾기",
+        "routes_narrow": "사이트나 업무로 좁히면 나머지를 볼 수 있어요.",
     },
 }
 

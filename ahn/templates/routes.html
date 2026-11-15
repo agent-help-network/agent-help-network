@@ -12,8 +12,7 @@
 <section class="container section top-tight agent-content">
   {% block routes_filters %}
   <form class="routes-filter" method="get" action="/{{ lang }}/routes">
-    <div><label for="f-site">{{ t.routes_f_site }}</label>
-      <select id="f-site" name="site"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_site %}<option value="{{ value }}"{% if picked.site == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
+    {% include "routes_site_field.html" %}
     <div><label for="f-task">{{ t.routes_f_task }}</label>
       <select id="f-task" name="task_kind"><option value="">{{ t.routes_f_all }}</option>{% for value, text in opts_task %}<option value="{{ value }}"{% if picked.task_kind == value %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></div>
     <div><label for="f-outcome">{{ t.routes_f_outcome }}</label>
@@ -24,8 +23,19 @@
     {% if picked.site or picked.task_kind or picked.outcome or picked.source_kind %}<a href="/{{ lang }}/routes">{{ t.routes_f_reset }}</a>{% endif %}
   </form>
   {% endblock %}
-  {% if rows %}
-  <p class="routes-count">{{ t.routes_showing.format(shown=shown_count, total=total) }}{% if any_sensitive %} {{ t.routes_sensitive_page }}{% endif %}</p>
+  {% if site_state %}
+  <div class="routes-empty routes-site-state" role="status">
+    {% if site_state == 'invalid' %}<p>{{ t.routes_site_invalid }}</p>
+    {% elif site_state == 'none' %}<p>{{ t.routes_site_none.format(host=site_name) }}</p>
+    {% elif site_state == 'none_plain' %}<p>{{ t.routes_site_none_plain }}</p>
+    {% elif site_state == 'several' %}<p>{{ t.routes_site_several }}</p>
+    <ul class="routes-matches">{% for host in site_matches %}<li><a href="/{{ lang }}/routes/{{ host }}">{{ host }}</a></li>{% endfor %}</ul>
+    {% else %}<p>{{ t.routes_site_label_none }}</p>{% endif %}
+    {% if site_state == 'none' %}<p class="routes-small">{{ t.routes_site_profile }} <a rel="nofollow" href="/{{ lang }}/search?site_host={{ site_name }}">{{ t.routes_site_profile_link.format(host=site_name) }}</a></p>{% endif %}
+    {% if site_state in ('none', 'none_plain', 'label_none') %}<p class="routes-small">{{ t.routes_site_coverage.format(m=site_count, s='' if site_count == 1 else 's') }}</p>{% endif %}
+  </div>
+  {% elif rows %}
+  <p class="routes-count">{{ t.routes_showing.format(shown=shown_count, total=total) }}{% if cut %} {{ t.routes_narrow }}{% endif %}{% if any_sensitive %} {{ t.routes_sensitive_page }}{% endif %}</p>
   <div class="scroll">
   <table class="routes-table">
     <thead><tr>
@@ -54,6 +64,8 @@
     </tbody>
   </table>
   </div>
+  {% elif other_kinds %}
+  <p class="routes-empty">{{ t.routes_empty_kind.format(total=total, s='' if total == 1 else 's') }} <a href="/{{ lang }}/routes/{{ site_host }}">{{ t.routes_empty_kind_link }}</a></p>
   {% else %}
   <p class="routes-empty">{{ t.routes_empty }}</p>
   {% endif %}
@@ -61,4 +73,5 @@
   <p class="routes-foot"><code>GET /v1/task-routes?site_host=</code> <span>{{ t.routes_api }}</span></p>
   {% endblock %}
 </section>
+<script defer src="/static/routes.js?v=1"></script>
 {% endblock %}
