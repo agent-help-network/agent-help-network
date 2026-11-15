@@ -28,6 +28,7 @@ TASK_ROUTE_MAX_AGE_DAYS = 90
 # --task-routes-only reads every index page and checks that it links the exact URL.
 CURATED_URL_EXCEPTIONS: dict[str, str] = {
     "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
+    "https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/": "https://www.eventbrite.com/help/en-us/",
 }
 
 
@@ -210,5 +211,54 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_identity",
                official_url="https://www.ulta.com/guestservices/all", source_url="https://www.ulta.com/guestservices/all",
                verified_at="2026-11-15"),
+    ],
+    "visible.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["support_chat"],
+               official_url="https://www.visible.com/returns-policy",
+               source_url="https://www.visible.com/returns-policy", verified_at="2026-11-15"),
+        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_purchase",
+               official_url="https://www.visible.com/returns-policy",
+               source_url="https://www.visible.com/returns-policy", verified_at="2026-11-15"),
+    ],
+    "boostmobile.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["phone"],
+               official_url="https://help.boostmobile.com/docs/return-policy",
+               source_url="https://help.boostmobile.com/docs/return-policy", verified_at="2026-11-15"),
+        _route("portal_login", obstacle="verification_step", routes=["phone"],
+               official_url="https://help.boostmobile.com/docs/account-security",
+               source_url="https://help.boostmobile.com/docs/account-security", verified_at="2026-11-15"),
+    ],
+    "anker.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form"],
+               official_url="https://www.anker.com/policies/refund-policy",
+               source_url="https://www.anker.com/policies/refund-policy", verified_at="2026-11-15"),
+        _route("warranty_claim", obstacle="document_missing", document_kind="proof_of_purchase",
+               official_url="https://www.anker.com/policies/refund-policy",
+               source_url="https://www.anker.com/policies/refund-policy", verified_at="2026-11-15"),
+    ],
+    "logitech.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", routes=["web_form"],
+               official_url="https://www.logitech.com/en-us/order-faqs",
+               source_url="https://www.logitech.com/en-us/order-faqs", verified_at="2026-11-15"),
+    ],
+    "zappos.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window",
+               official_url="https://www.zappos.com/c/shipping-and-returns",
+               source_url="https://www.zappos.com/c/shipping-and-returns", verified_at="2026-11-15"),
+    ],
+    "expressvpn.com": [
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
+               official_url="https://www.expressvpn.com/support/manage-account/cancel-expressvpn-subscription/",
+               source_url="https://www.expressvpn.com/support/manage-account/cancel-expressvpn-subscription/", verified_at="2026-11-15"),
+    ],
+    "steampowered.com": [
+        _route("refund_request", obstacle="deadline_or_window",
+               official_url="https://store.steampowered.com/steam_refunds/",
+               source_url="https://store.steampowered.com/steam_refunds/", verified_at="2026-11-15"),
+    ],
+    "eventbrite.com": [
+        _route("refund_request", obstacle="wrong_department_or_jurisdiction",
+               official_url="https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/",
+               source_url="https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/", verified_at="2026-11-15"),
     ],
 }
