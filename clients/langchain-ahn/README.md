@@ -85,7 +85,7 @@ Only a request like `GET https://agenthelpnetwork.com/v1/incidents/check?site_ho
 
 ## Task routes (0.2.4)
 
-`AHNTaskRouteTool` is a second tool the model can call to read the task routes the service records for a site (`GET /v1/task-routes`): for a kind of customer task, an obstacle and the route the site's own documents name, as closed values only. Records exist for some sites only.
+`AHNTaskRouteTool` is a second tool the model can call to read the task routes the service records for a site (`GET /v1/task-routes`): for a kind of customer task, an obstacle and a route, as closed values only. At agenthelpnetwork.com that route is the one the site's own documents name, and records exist for some sites only.
 
 ```python
 from langchain_ahn import AHNTaskRouteTool
