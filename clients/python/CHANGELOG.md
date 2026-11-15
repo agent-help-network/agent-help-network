@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `ahn.task_routes` passes on the optional `condition_text` of a route: a condition the site's own page states, quoted as written (1 to 200 characters, one line, curated records only). It is not interpreted; whether it applies to a task is for the caller to decide, with the page at `source_url`. A record without it is unchanged (no key); an invalid value makes the answer unreadable (`no_answer`), like any other invalid field.
+
 ## 0.6.10
 
 - `ahn.task_routes(host_or_url, task_kind=None, *, timeout=4.0)` reads the task routes the service records for a site (`GET /v1/task-routes`): which route past an obstacle worked for which task, as closed values only (`task_kind`, `obstacle`, `basis`, `outcome`, `source_kind`, `sensitive` and the like). It returns a `TaskRoutes` (`available`, `reason`, `routes`, `summary_line`, `records`, `notice`, `summary()`, `to_dict()`); `reason` is None when there is an answer and otherwise `invalid_host` (a host that is never looked up), `invalid_task_kind` (a `task_kind` outside the 24 closed values; nothing is sent), `not_served` (a 404) or `no_answer` (network error, timeout, unreadable answer); `reason` is the last field, so positional construction keeps its meaning. Records, not guarantees: an empty list does not mean there is no route. It never raises: a 404 (a service that does not serve task routes), a network error, a timeout and an unreadable answer give `available=False` and `routes=[]`, and a host that is never looked up (local, private, an address, `AHN_CLIENT_DISABLE=1`) sends nothing. Only the hostname and the optional `task_kind` are sent; the request header has the same form as for `ahn.check`.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -71,6 +72,9 @@ REASON_INVALID_TASK_KIND = "invalid_task_kind"
 ROUTE_VALUE_FIELDS = ("site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                       "entry_point_kind", "route_worked", "basis", "outcome", "duration", "period", "source_kind")
 ROUTE_URL_FIELDS = ("official_url", "source_url")
+# The one free-text value of a record: a curated site condition quoted as the site words it (1 to 200 characters, one line).
+# It is passed on as is, never interpreted here.
+CONDITION_TEXT_MAX = 200
 
 
 @dataclass(frozen=True)
@@ -115,6 +119,12 @@ def task_routes_url(host: str, task_kind: Optional[str] = None) -> str:
     return API_URL + "?" + urllib.parse.urlencode(query)
 
 
+def _condition_text_ok(value: Any) -> bool:
+    if not isinstance(value, str) or not value or len(value) > CONDITION_TEXT_MAX or value != value.strip():
+        return False
+    return not any(unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp") for char in value)
+
+
 def _clean_route(item: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(item, dict):
         return None
@@ -133,6 +143,11 @@ def _clean_route(item: Any) -> Optional[Dict[str, Any]]:
         if not isinstance(value, str) or not URL_VALUE.fullmatch(value):
             return None
         route[name] = value
+    condition = item.get("condition_text")
+    if condition is not None:
+        if not _condition_text_ok(condition):
+            return None
+        route["condition_text"] = condition
     verified = item.get("verified_at")
     if verified is not None:
         if not isinstance(verified, str) or not DATE_VALUE.fullmatch(verified):
