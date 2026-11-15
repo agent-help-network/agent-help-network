@@ -28,7 +28,6 @@ TASK_ROUTE_MAX_AGE_DAYS = 90
 # --task-routes-only reads every index page and checks that it links the exact URL.
 CURATED_URL_EXCEPTIONS: dict[str, str] = {
     "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
-    "https://www.target.com/help/article/000061982": "https://www.target.com/returns",
 }
 
 
@@ -166,13 +165,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                entry_point_kind="partner_or_third_party_portal",
                official_url="https://www.siriusxm.com/help/manage-or-cancel-service",
                source_url="https://www.siriusxm.com/help/manage-or-cancel-service", verified_at="2026-11-14"),
-    ],
-    "target.com": [
-        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.target.com/returns",
-               source_url="https://www.target.com/returns", verified_at="2026-11-14"),
-        _route("return_or_exchange", obstacle="document_missing", document_kind="proof_of_purchase",
-               official_url="https://www.target.com/help/article/000061982",
-               source_url="https://www.target.com/help/article/000061982", verified_at="2026-11-14"),
     ],
     "ourpetpolicy.com": [
         _route("accommodation_request", obstacle="document_missing", document_kind="professional_letter",
