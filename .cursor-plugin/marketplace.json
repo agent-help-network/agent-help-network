@@ -1,0 +1,16 @@
+{
+  "name": "agent-help-network-marketplace",
+  "owner": {
+    "name": "Agent Help Network"
+  },
+  "metadata": {
+    "description": "Agent Help Network plugins for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "agent-help-network",
+      "source": "./plugins/cursor/agent-help-network",
+      "description": "For a blocked or failing web step (403, login wall, CAPTCHA, 5xx, timeout), the site's declared agent policy, its official developer path, provider status and one recommended next action."
+    }
+  ]
+}
