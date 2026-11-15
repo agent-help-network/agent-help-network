@@ -315,14 +315,22 @@ def _words(table: dict[str, dict[str, str]], key: Any, lang: str) -> str | None:
     return entry[lang] if entry else None
 
 
-def _sent_is_status_host(inputs: Inputs, sent_check: dict | None) -> bool:
-    """D116: the host as sent (answered from its apex) is a dedicated status host (D114's test) of the status page its own lookup names."""
+def _status_sources(answer: dict | None) -> tuple[Any, ...]:
+    """The status page addresses a lookup answer names: its provider's, its official page's and its next_action's."""
+    answer = answer or {}
+    return ((answer.get("provider_status") or {}).get("source_url"), (answer.get("official_status_page") or {}).get("source_url"),
+            (answer.get("next_action") or {}).get("status_url"))
+
+
+def _sent_is_status_host(inputs: Inputs, sent_check: dict | None, check: dict | None = None) -> bool:
+    """D116: the host as sent (answered from its apex) is a dedicated status host (D114's test) of a status page that its own lookup names,
+    or that the root domain's lookup (``check``) names. The second covers a status page several mapped sites share (D70 leaves such a page
+    host out of its own mapping, so the lookup of that host names no status page)."""
     if not (sent_check and inputs.lookup_host and (sent_check.get("next_action") or {}).get("do")):
         return False
     from .response_guide import _status_host_is_site
 
-    sources = ((sent_check.get("provider_status") or {}).get("source_url"), (sent_check.get("official_status_page") or {}).get("source_url"),
-               sent_check["next_action"].get("status_url"))
+    sources = _status_sources(sent_check) + _status_sources(check)
     return any(isinstance(source, str) and source and _status_host_is_site(source, inputs.lookup_host) for source in sources)
 
 
@@ -338,7 +346,7 @@ class _Ctx:
         # D116: when the host as sent is itself a dedicated status host, the server block is that host's own lookup answer (recommendation,
         # next_action, summary_line), so it says what the lookup of the same host says. ``sent_host`` is then the host the handoff names.
         self.sent_host: str | None = None
-        if _sent_is_status_host(inputs, sent_check):
+        if _sent_is_status_host(inputs, sent_check, check):
             self.sent_host = inputs.lookup_host
             self.server_check = {**check, **{key: sent_check[key] for key in ("recommendation", "next_action", "summary_line") if sent_check.get(key) is not None}}
         self.summary_in_english = False  # D110: a Korean answer's server.summary_line stayed the lookup's English sentence
@@ -356,6 +364,7 @@ class _Ctx:
         urls = {d.get("url") for d in self.docs}
         self.doc_events = [e for e in doc_events if e.get("url") in urls and self._in_window(e.get("changed_at"))]
         self.next_action = self.server_check.get("next_action") or {}
+        self.layer_next_action = check.get("next_action") or {}  # D116: what the layers (where_to_look) read, the root domain's
         self.do = self.next_action.get("do")
         self.action = _get(self.server_check, "recommendation", "action")
         stop, message = inputs.stop_point, inputs.screen_message
@@ -767,7 +776,14 @@ def _task_rows(ctx: _Ctx) -> list[dict]:
     if terms and ctx.r3 and _url(terms.get("url")) and isinstance(terms.get("quote"), str):
         rows.append(_row(ctx, "L4", "background", "S-L4-TERMS", _fill("S-L4-TERMS", lang, LAYER_TEXT_MAX, url=terms["url"], quote=terms["quote"]),
                          _source("site_terms", terms["url"])))
-    if ctx.r3 and _official_url(ctx) and not _is_customer_path(ctx, _official_url(ctx)):
+    # D116: the layers are the root domain's (``check``), also when the lookup block is the status host's own answer.
+    sent_next_action, ctx.next_action = ctx.next_action, ctx.layer_next_action
+    try:
+        official = _official_url(ctx)
+        on_customer_path = _is_customer_path(ctx, official)
+    finally:
+        ctx.next_action = sent_next_action
+    if ctx.r3 and official and not on_customer_path:
         rows.append(_row(ctx, "L4", "background", "S-L4-OFFICIAL-PATH-ACCOUNT", X.TEMPLATES["S-L4-OFFICIAL-PATH-ACCOUNT"][lang]))
     return [r for r in rows if r]
 
