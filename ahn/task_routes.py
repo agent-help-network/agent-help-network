@@ -373,6 +373,8 @@ PRIVATE_SUFFIXES = frozenset({
     "gitlab.io", "herokuapp.com", "blogspot.com", "web.app", "firebaseapp.com", "workers.dev", "fly.dev", "onrender.com",
     "cloudfront.net", "azurewebsites.net", "azurestaticapps.net", "appspot.com", "glitch.me", "ngrok-free.app",
     "trycloudflare.com",
+    "myshopify.com", "wixsite.com", "run.app", "cloudfunctions.net", "azureedge.net", "cloudapp.net", "r2.dev", "deno.dev",
+    "replit.app", "webflow.io", "notion.site", "ngrok.io", "ngrok.app", "surge.sh", "ddns.net",
 })
 
 # Two-label public suffixes that ahn.service.PUBLIC_SUFFIXES_2 does not list (that set serves the lookup verdict and stays as it
@@ -400,7 +402,10 @@ EXTRA_PUBLIC_SUFFIXES_2 = frozenset({
     "com.ua", "org.ua", "gov.ua", "edu.ua", "net.ua", "com.eg", "com.sa", "com.ng", "com.pk", "com.bd", "com.co", "com.pe", "com.uy",
     "com.cy", "co.ke", "co.ug", "co.tz",
     # Names under which many unrelated parties register (CentralNic and similar)
-    "co.com", "uk.com", "us.com", "eu.com",
+    "co.com", "uk.com", "us.com", "eu.com", "br.com", "cn.com", "de.com", "ru.com", "sa.com", "za.com", "jpn.com", "gb.net", "uk.net",
+    "eu.org", "us.org",
+    # Austria, Italy, Colombia and Canada's federal level
+    "co.at", "or.at", "gv.at", "gov.it", "gov.co", "org.co", "edu.co", "gc.ca",
 })
 
 
@@ -669,7 +674,7 @@ def government_suffix(host: str) -> bool:
     """True when the host's suffix is reserved for government bodies (a reading of the code table, no database). Display only."""
     from .gov_registry import _suffix_rule_for
 
-    return _suffix_rule_for(host) is not None
+    return government_site(host) is not None or _suffix_rule_for(host) is not None
 
 
 def server_route(site_host: str, entry: dict) -> TaskRoute:

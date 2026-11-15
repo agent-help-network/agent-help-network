@@ -294,3 +294,38 @@ def test_the_policy_says_an_operator_can_withdraw_a_public_report():
     for lang in ("en", "ko"):  # with the write switch off the page does not mention task-route reports at all
         off = policy_page(lang, task_route_reports=False, task_route_reports_since=None)
         assert "withdraw a public task-route report" not in off and "공개된 태스크 경로 제보도" not in off
+
+
+# --- Follow-up: more suffixes, and a listed government site is read as government ---------------------------------------------
+
+MORE_REFUSED = [
+    "myshopify.com", "wixsite.com", "run.app", "cloudfunctions.net", "azureedge.net", "cloudapp.net", "r2.dev", "deno.dev",
+    "replit.app", "webflow.io", "notion.site", "ngrok.io", "ngrok.app", "surge.sh", "ddns.net",
+    "co.at", "or.at", "gv.at", "gov.it", "gov.co", "org.co", "edu.co", "gc.ca", "br.com", "cn.com", "de.com", "ru.com", "sa.com",
+    "za.com", "jpn.com", "gb.net", "uk.net", "eu.org", "us.org",
+]
+
+
+@pytest.mark.parametrize("host", MORE_REFUSED)
+def test_the_further_suffixes_are_no_site_and_nothing_below_them_climbs_to_them(host):
+    assert task_routes.suffix_name(host) and task_routes.suffix_name(f"www.{host}")
+    assert task_routes.route_host(host) is None and task_routes.route_host(f"shop.{host}") is None
+    assert task_routes.key_candidates(f"shop.{host}") == [f"shop.{host}"]
+
+
+@needs_db
+@pytest.mark.parametrize("host", MORE_REFUSED)
+def test_a_report_under_a_further_suffix_is_refused(api, host):
+    settings, client = api
+    response = post(client, report(site_host=host))
+    assert response.status_code == 422 and response.json() == {"error": "site_host_not_accepted"}
+    assert rows(settings) == []
+
+
+def test_a_listed_government_site_is_read_as_government_and_its_claim_is_a_case_record():
+    from ahn.task_routes import government_suffix, is_sensitive
+
+    listed = "unclaimedproperty.nj.gov"
+    assert government_suffix(listed) and government_suffix(f"www.{listed}")
+    assert is_sensitive("claim_unclaimed_property", government_host=government_suffix(listed)) is True
+    assert not government_suffix("example.com")
