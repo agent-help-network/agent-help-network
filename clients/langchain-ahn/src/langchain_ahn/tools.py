@@ -208,13 +208,13 @@ NO_TASK_ROUTES = (
     "Nothing was sent; continue with your own judgment."
 )
 TASK_ROUTES_DESCRIPTION = (
-    "Read the task routes Agent Help Network records for a public website: which route past an obstacle was tried or "
-    "worked for which kind of task, as fixed values only. Call it once when you start a multi-step customer task "
-    "(a refund, a cancellation, a billing question and the like) or when your way forward is blocked, not before every "
-    "step. Optionally pass task_kind to narrow it. Read-only. Only the hostname and task_kind are sent, never a URL "
-    "path, query or content. Records, not guarantees: a record is a case record, not advice for your next task, and an "
-    "empty list does not mean there is no route. It never explains how to get around a site's controls. If the "
-    "service has no answer it says so."
+    "Read the task routes Agent Help Network records for a public website: for a kind of customer task, an obstacle "
+    "and the route the site's own documents name, as fixed values only. Records exist for some sites only. Call it "
+    "once when you start a multi-step customer task (a refund, a cancellation, a billing question and the like) or "
+    "when your way forward is blocked, not before every step. Optionally pass task_kind to narrow it. Read-only. Only "
+    "the hostname and task_kind are sent, never a URL path, query or content. Records, not guarantees or advice (a "
+    "record marked sensitive is a case record), and an empty list does not mean there is no route. It never explains "
+    "how to get around a site's controls. If the service has no answer it says so."
 )
 
 

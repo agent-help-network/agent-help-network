@@ -733,7 +733,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 ## 업무 경로(Task routes: `GET /v1/task-routes`, MCP `find_task_route`, D117)
 
-`GET /v1/task-routes`(JSON)와 MCP 도구 `find_task_route` 는 공개 호스트명에 기록된 업무 경로를 돌려줘요. 고객 업무 종류(환불, 해지, 예약 등)마다 흔한 걸림돌과, 사이트 자신의 문서가 말하는 경로예요(D117). 조회와 별개의 정보 층이에요. 답은 기록의 목록일 뿐 보장도 조언도 아니고, 목록이 비어 있다고 경로가 없다는 뜻도 아니에요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, 조회는 이 표를 읽지 않아요. 기술적 막힘(403·CAPTCHA·장애)은 `check_incident` 가 답하는 영역이고, `obstacle` 값 `technical_block` 은 기록이 그런 것임을 표시할 뿐이에요.
+`GET /v1/task-routes`(JSON)와 MCP 도구 `find_task_route` 는 공개 호스트명에 기록된 업무 경로를 돌려줘요. 고객 업무 종류(환불, 해지, 예약 등)마다 걸림돌과, 사이트 자신의 문서가 말하는 경로예요(D117). 조회와 별개의 정보 층이에요. 답은 기록의 목록일 뿐 보장도 조언도 아니고, 목록이 비어 있다고 경로가 없다는 뜻도 아니에요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, 조회는 이 표를 읽지 않아요. 기술적 막힘(403·CAPTCHA·장애)은 `check_incident` 가 답하는 영역이고, `obstacle` 값 `technical_block` 은 기록이 그런 것임을 표시할 뿐이에요.
 
 답은 서비스 코드 안의 큐레이션 표에서 읽고, 제보 스위치(`AHN_TASK_ROUTE_REPORTS`, 아래 "경로 제보")까지 켜져 있을 때만 서비스 데이터베이스에 저장된 공개·미철회 제보도 읽어요. 사이트로 가는 요청은 없어요(D33). 모든 칸은 닫힌 값이고 자유 글은 없어요. 운영자가 켜야 제공해요(`AHN_TASK_ROUTES`). 꺼져 있으면 `GET /v1/task-routes` 와 아래 페이지는 404이고 도구도 목록에 나오지 않아요.
 
