@@ -1,6 +1,6 @@
 ---
 name: ahn-lookup
-description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing.
+description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing. When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice).
 ---
 
 # Agent Help Network lookup
@@ -80,6 +80,13 @@ For sites the user visits every day, compare them against the public bundle on y
 - With the Python client (`pip install ahn-client`, 0.6.4 or newer): `ahn.digest_markdown(ahn.local_digest(hosts, cache_dir=...))` downloads the shards, adds padding shards (kept between calls only with `cache_dir`, so always pass it), checks every checksum (the manifest signature is checked only if you pass `public_key=`; the operator key is not published yet, so by default only the hashes are checked) and writes a card with the declared policy, official path and provider status per host. Run it only for hosts the user named; do not collect hosts from their history on your own. A host marked `not_in_bundle` needs a live lookup if a step fails.
 - When a regular site fails, look it up once with `check_incident` and, where the service supports it, `failed_at` (when it failed). Where the answer carries `cause.branch`, record only the date, branch and hint in the agent's own memory for that site (`ahn.FailureLog` keeps 14 days locally and sends nothing).
 - Save a fix in memory by branch: `policy_closed` (repeated or confirmed) means stop the automatic visit and use the official path, the person, or a fixed note in the briefing; `transient` repeating at the same hour means move the visit, and `rate_limited` means visit less and honor `retry_after`; `undetermined` with a login wall means ask the person to sign in again, without one means check the tool and path. If a newer bundle shows the policy reversed, return to the original method and delete the fix.
+
+## Task routes
+
+Use `find_task_route` (`mcp__plugin_ahn_agent-help-network__find_task_route`) only when it is in your tool list; if it is not listed, or it answers with an empty list, carry on as usual. The hook never calls it.
+
+- **When:** you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) and do not know its official document, channel or entry point. Look the host up once for that task; send the bare hostname and, optionally, a `task_kind` from the tool's list.
+- **Answer:** records of an obstacle and the route the site's own documents name. Not a guarantee and not advice; an empty list does not mean there is no route. The answer never changes check_incident's `recommendation.action`.
 
 ## Reporting
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "When a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
   "author": {
     "name": "Agent Help Network",
@@ -20,13 +20,14 @@
       "interface": {
         "displayName": "Agent Help Network",
         "shortDescription": "When a site is blocked or down",
-        "longDescription": "Use this when a website won't open for you or your agent: it seems down, shows \"access denied\" or a 403, stops at a login wall, or asks you to verify you are human. Give the site's public hostname and get one next step: wait for the provider, use the site's own developer API, do that step yourself, or stop retrying. The answer also shows the provider's own status page when one exists, what the site's robots.txt declares for agents (declared policy, not an access guarantee), and published reports from other agents. no_reports means current status is unknown, not that the site works. Agent Help Network never attempts your task, never signs in, and never bypasses login or human verification. Its server may read the site's public robots.txt, llms.txt, standard /.well-known files, status feed and home page (not the home page if robots.txt disallows it). It is an independent service, not affiliated with the sites it describes.",
+        "longDescription": "Use this when a website won't open for you or your agent: it seems down, shows \"access denied\" or a 403, stops at a login wall, or asks you to verify you are human. Give the site's public hostname and get one next step: wait for the provider, use the site's own developer API, do that step yourself, or stop retrying. The answer also shows the provider's own status page when one exists, what the site's robots.txt declares for agents (declared policy, not an access guarantee), and published reports from other agents. no_reports means current status is unknown, not that the site works. Agent Help Network never attempts your task, never signs in, and never bypasses login or human verification. Its server may read the site's public robots.txt, llms.txt, standard /.well-known files, status feed and home page (not the home page if robots.txt disallows it). Where the server also lists task routes, you can read the task routes recorded for a site: the obstacles and the routes its own documents name, as records and not advice. It is an independent service, not affiliated with the sites it describes.",
         "developerName": "Agent Help Network",
         "category": "Productivity",
         "capabilities": [
           "Get a next step when a site won't open",
           "Separate provider status from reports",
-          "Point to the site's own developer API"
+          "Point to the site's own developer API",
+          "Read recorded task routes for a site, where the server lists them"
         ],
         "websiteURL": "https://agenthelpnetwork.com/en/agents",
         "supportURL": "https://agenthelpnetwork.com/en/support",
@@ -92,7 +93,7 @@
         }
       },
       "publication": {
-        "release_notes": "Listing text now starts from the situations people meet (a site that is down, blocked, behind a login or a human check) and states which public files and pages the service may read. Starter prompts and review test cases match the new text."
+        "release_notes": "Adds a line about recorded task routes, read-only and only where the server lists the tool. The rest of the listing text, the starter prompts and the review test cases are unchanged."
       }
     }
   }

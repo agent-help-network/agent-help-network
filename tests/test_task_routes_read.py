@@ -494,18 +494,39 @@ def test_switch_on_adds_only_find_task_route_and_the_snapshot_matches():
     assert advertised.get("additionalProperties") is True  # opened like every other output schema
 
 
-def test_the_server_instructions_do_not_change_with_the_switch():
-    code = "from ahn.mcp_adapter import mcp; print(mcp.instructions)"
+def test_the_server_instructions_change_only_by_the_appended_sentence_when_the_switch_is_on():
+    from ahn.mcp_task_routes import INSTRUCTIONS_ADDENDUM
+
+    code = "from ahn.mcp_adapter import mcp; print(mcp.instructions, end='')"
     outputs = []
     for flag in (None, "1"):
         env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1"}
         env.pop("AHN_TASK_ROUTES", None)
+        env.pop("AHN_TASK_ROUTES_SINCE", None)
         if flag:
             env["AHN_TASK_ROUTES"] = flag
+            env["AHN_TASK_ROUTES_SINCE"] = SINCE.isoformat()
         done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
         assert done.returncode == 0, done.stderr
-        outputs.append(done.stdout)
-    assert outputs[0] == outputs[1] and "find_task_route" not in outputs[0]
+        outputs.append(done.stdout.replace("\r\n", "\n"))
+    off, on_ = outputs
+    assert "find_task_route" not in off and off.endswith("Declared policy is not an access guarantee.")
+    assert on_ == off + " " + INSTRUCTIONS_ADDENDUM
+
+
+OFF_INSTRUCTIONS_SHA256 = "c382104efcf546491620df3b04b87f32ab2d185ecfcf56623c3c679a7d466553"  # sha256 of the server instructions as main had them before task routes were added to them
+
+
+def test_the_server_instructions_with_the_switch_off_are_pinned():
+    import hashlib
+
+    env = {**os.environ, "AHN_PUBLIC_MODE": "1", "AHN_REPORTING_ENABLED": "1"}
+    env.pop("AHN_TASK_ROUTES", None)
+    env.pop("AHN_TASK_ROUTES_SINCE", None)
+    done = subprocess.run([sys.executable, "-c", "from ahn.mcp_adapter import mcp; print(mcp.instructions, end='')"], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert hashlib.sha256(done.stdout.encode("utf-8")).hexdigest() == OFF_INSTRUCTIONS_SHA256
 
 
 # --- The verdict is untouched -----------------------------------------------------------------------------------------------

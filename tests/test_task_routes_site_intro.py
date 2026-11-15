@@ -139,7 +139,7 @@ OFF_SETTINGS = {
 }
 OFF_PAGES = ["", "human", "agents", "connect", "search", "policy", "disclaimer", "terms", "support", "contribute", "platforms", "why", "report"]
 # Templates that gained one block each with the site intro. policy.html has its own, older flag-gated sentences; they are not cut.
-BLOCKS_PER_TEMPLATE = {"base.html": 1, "home.html": 1, "human.html": 1, "agents.html": 1}
+BLOCKS_PER_TEMPLATE = {"base.html": 1, "home.html": 1, "human.html": 1, "agents.html": 1, "connect.html": 1}
 OPEN = re.compile(r"(\s*)\{%(-?)\s*if\s+task_routes\s*(-?)%\}")
 TAG = re.compile(r"\{%(-?)\s*(\w+)[^%]*?(-?)%\}")
 OPENERS = {"if", "for", "block", "macro", "call", "filter", "with"}
@@ -151,6 +151,7 @@ SHAPES = {
     "home.html": re.compile(r"\{% if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
     "human.html": re.compile(r"\{% if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
     "agents.html": re.compile(r"[ ]{2}\{%- if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+[ ]{2}\{% endif %\}\n"),
+    "connect.html": re.compile(r"\{%- if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
 }
 
 
@@ -240,7 +241,7 @@ def test_blocks_are_counted_shaped_and_self_contained():
             assert SHAPES[name].fullmatch(lines), f"{name}: the block is not in the expected line shape:\n{lines}"
             assert unbalanced_html(block["body"]) == [], f"{name}: the block's HTML does not stand on its own"
         total += len(blocks)
-    assert total == 4
+    assert total == 5
     for name in env.list_templates():  # nothing else may start using the flag outside the cut blocks without being counted here
         if name not in BLOCKS_PER_TEMPLATE and name != "policy.html":
             assert "task_routes" not in env.loader.get_source(env, name)[0], name
