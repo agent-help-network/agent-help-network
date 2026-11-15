@@ -3837,7 +3837,8 @@
       "regional_site",
       "separate_subdomain",
       "mobile_app_only",
-      "partner_or_third_party_portal"
+      "partner_or_third_party_portal",
+      "seller_or_provider"
      ],
      "title": "EntryPointKind",
      "type": "string"

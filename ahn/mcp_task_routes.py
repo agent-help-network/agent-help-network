@@ -108,7 +108,7 @@ def _report_schema() -> dict:
         "site_host": {"type": "string", "description": REPORT_SITE_HOST_DESCRIPTION},
         "task_kind": _enum_schema(TaskKind), "obstacle": _enum_schema(TaskObstacle),
         "verification_kind": _enum_schema(VerificationKind), "site_requires": _enum_schema(SiteRequires),
-        "document_kind": _enum_schema(DocumentKind), "entry_point_kind": _enum_schema(EntryPointKind),
+        "document_kind": _enum_schema(DocumentKind), "entry_point_kind": _enum_schema(EntryPointKind, drop=("seller_or_provider",)),
         "routes_tried": {"type": "array", "items": _enum_schema(RouteKind), "maxItems": TASK_ROUTE_MAX_TRIED, "uniqueItems": True},
         "route_worked": {"type": "string", "enum": [item.value for item in RouteKind] + ["none"]},
         "basis": _enum_schema(RouteBasis, drop=("official_doc",)), "outcome": _enum_schema(RouteOutcome, drop=("not_applicable",)),
