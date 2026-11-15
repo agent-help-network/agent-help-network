@@ -28,7 +28,6 @@ TASK_ROUTE_MAX_AGE_DAYS = 90
 # --task-routes-only reads every index page and checks that it links the exact URL.
 CURATED_URL_EXCEPTIONS: dict[str, str] = {
     "https://www.samsung.com/us/support/troubleshoot/TSG10001565/": "https://www.samsung.com/us/support/contact/",
-    "https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/": "https://www.eventbrite.com/help/en-us/",
 }
 
 
@@ -255,10 +254,5 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("refund_request", obstacle="deadline_or_window",
                official_url="https://store.steampowered.com/steam_refunds/",
                source_url="https://store.steampowered.com/steam_refunds/", verified_at="2026-11-15"),
-    ],
-    "eventbrite.com": [
-        _route("refund_request", obstacle="wrong_department_or_jurisdiction",
-               official_url="https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/",
-               source_url="https://www.eventbrite.com/help/en-us/articles/721549/can-i-get-a-refund/", verified_at="2026-11-15"),
     ],
 }
