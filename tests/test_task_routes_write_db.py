@@ -440,7 +440,7 @@ def test_prune_analytics_keeps_eight_days_of_intake_counters(db):
         run(db, "INSERT INTO task_route_intake_daily (day,site_host,task_kind,reports) VALUES (CURRENT_DATE - %s,'example.com','',1)",
             (back,))
     prune_analytics(TEST_URL, 0)
-    days = sorted((date.today() - row["day"]).days for row in rows(db, "SELECT day FROM task_route_intake_daily"))
+    days = sorted(row["d"] for row in rows(db, "SELECT CURRENT_DATE - day AS d FROM task_route_intake_daily"))  # all in DB (UTC) dates
     assert days == [0, 7]
 
 
