@@ -277,3 +277,29 @@ def test_host_limit_matches_the_server_model():
     longest = ("a" * 60 + ".") * 3 + "b" * 60 + ".com"
     assert len(longest) <= 253 and valid_host(longest) == longest and _task_routes.HOST_VALUE.fullmatch(longest)
     assert not _task_routes.HOST_VALUE.fullmatch("a" * 254)
+
+
+def test_condition_text_passes_through_and_its_absence_changes_nothing(transport):
+    text = "Only unopened items, within 30 days – see the page"
+    transport({**ANSWER, "routes": [{**ROUTE, "condition_text": text}]})
+    found = ahn.task_routes("example.com")
+    assert found.available and found.routes == [{**ROUTE, "condition_text": text}]
+    assert found.to_dict()["routes"][0]["condition_text"] == text
+    transport()
+    plain = ahn.task_routes("example.com")
+    assert plain.routes == [ROUTE] and "condition_text" not in plain.routes[0]
+    assert json.dumps(plain.to_dict(), sort_keys=True) == json.dumps(
+        {"site_host": "example.com", "available": True, "routes": [ROUTE], "records": 1, "summary_line": ANSWER["summary_line"]},
+        sort_keys=True)
+
+
+@pytest.mark.parametrize("bad", ["", " leading", "trailing ", "two\nlines", "tab\there", "a​b", "a b", "a b", "a\rb", "a\x85b", "   ", "x" * 201, 5, ["a"], True])
+def test_an_invalid_condition_text_makes_the_answer_unreadable(transport, bad):
+    transport({**ANSWER, "routes": [{**ROUTE, "condition_text": bad}]})
+    found = ahn.task_routes("example.com")
+    assert found.available is False and found.reason == "no_answer"
+
+
+def test_a_condition_text_of_200_characters_is_kept(transport):
+    transport({**ANSWER, "routes": [{**ROUTE, "condition_text": "x" * 200}]})
+    assert ahn.task_routes("example.com").routes[0]["condition_text"] == "x" * 200

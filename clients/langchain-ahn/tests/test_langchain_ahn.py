@@ -563,3 +563,14 @@ def test_task_route_tool_is_exported_and_the_dependency_floor_is_unchanged():
     assert langchain_ahn.AHNTaskRouteTool is ahn_tools.AHNTaskRouteTool and "AHNTaskRouteTool" in langchain_ahn.__all__
     pyproject = (ROOT / "clients" / "langchain-ahn" / "pyproject.toml").read_text(encoding="utf-8")
     assert '"ahn-client>=0.6.8,<0.7"' in pyproject
+
+
+def test_task_route_tool_passes_condition_text_through_and_leaves_plain_answers_alone(routes_transport):
+    text = "Only unopened items – within 30 days"
+    routes_transport({**ROUTES_ANSWER, "routes": [{**ROUTES_ANSWER["routes"][0], "condition_text": text}]})
+    out = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
+    assert json.loads(out.partition("\n\n")[2])["routes"][0]["condition_text"] == text
+    routes_transport()
+    plain = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
+    assert "condition_text" not in plain
+    assert "condition_text" in ahn_tools.TASK_ROUTES_DESCRIPTION and "source_url" in ahn_tools.TASK_ROUTES_DESCRIPTION

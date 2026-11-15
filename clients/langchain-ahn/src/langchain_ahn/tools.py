@@ -213,7 +213,9 @@ TASK_ROUTES_DESCRIPTION = (
     "once when you start a multi-step customer task (a refund, a cancellation, a billing question and the like) or "
     "when your way forward is blocked, not before every step. Optionally pass task_kind to narrow it. Read-only. Only "
     "the hostname and task_kind are sent, never a URL path, query or content. Records, not guarantees or advice (a "
-    "record marked sensitive is a case record), and an empty list does not mean there is no route. It never explains "
+    "record marked sensitive is a case record), and an empty list does not mean there is no route. A record may carry "
+    "condition_text, a condition the site's own page states, quoted as written: it is not our judgement, so decide yourself "
+    "whether it applies to your task, with the page at source_url. It never explains "
     "how to get around a site's controls. If the service has no answer it says so."
 )
 
