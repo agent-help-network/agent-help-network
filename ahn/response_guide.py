@@ -618,13 +618,31 @@ def _status_mode(recommendation: dict, row: str, do: str, status_url: str | None
 AFFECTED_ROWS = frozenset({"W1", "W3", "W4", "W6"})
 AFFECTED_PREFIX = "Affected: "
 _AFFECTED_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._&()/+-]{0,39}")
+# A stored name that says "no name" is not a component: "Affected: None." would read as "nothing is affected".
+AFFECTED_PLACEHOLDERS = frozenset({"none", "null", "nil", "n/a", "na", "n.a.", "unknown", "undefined", "tbd", "empty", "-"})
+# A name is a short label. One with more words than this, or with one of these words, reads as a sentence addressed to the reader (a hostile
+# or broken feed), not as a component, and is left out. Matched on whole words, case-insensitively.
+AFFECTED_MAX_WORDS = 6
+AFFECTED_ORDER_WORDS = frozenset({"ignore", "disregard", "forget", "override", "previous", "instruction", "instructions", "prompt", "you", "your",
+                                  "must", "should", "please", "assistant"})
+
+
+def affected_name_ok(name) -> bool:
+    """D116: whether a stored provider_status.affected entry is shown as a component name in a wait sentence."""
+    if not (isinstance(name, str) and _AFFECTED_NAME.fullmatch(name) and ". " not in name and "  " not in name):
+        return False
+    words = name.strip().split()
+    if not words or name.strip().lower() in AFFECTED_PLACEHOLDERS or len(words) > AFFECTED_MAX_WORDS:
+        return False
+    if any(word.lower().strip("._&()/+-") in AFFECTED_ORDER_WORDS for word in words):
+        return False
+    return not (" " in name and name == name.upper())  # a shouted phrase is no component name (a hostile name reads as an order)
 
 
 def with_affected_names(sentence: str, affected) -> str:
     names: list[str] = []
     for name in affected if isinstance(affected, (list, tuple)) else ():
-        if (isinstance(name, str) and _AFFECTED_NAME.fullmatch(name) and ". " not in name and "  " not in name and name not in names
-                and not (" " in name and name == name.upper())):  # a shouted phrase is no component name (a hostile name reads as an order)
+        if affected_name_ok(name) and name.strip() not in names:
             names.append(name.strip())
     while names:
         candidate = f"{sentence} {AFFECTED_PREFIX}{', '.join(names)}."

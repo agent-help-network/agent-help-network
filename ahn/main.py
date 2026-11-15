@@ -34,7 +34,7 @@ from .service import PUBLIC_AGGREGATE_TLDS, PUBLIC_SUFFIXES_2, ServiceError, che
 from .settings import Settings, task_route_reports_served
 from .static_assets import OffloadingStaticFiles
 from .traffic import attribute_request, client_type, daily_client_digest, is_operator_address
-from .triage import CHECK_TEXT_KO, CHECKS_KO, accepted_vendor
+from .triage import CHECK_TEXT_KO_PAGE, CHECKS_KO_PAGE, accepted_vendor
 from .why_models import WhyResponse
 from .tool_metrics import is_mcp_metric_request, provider_signal_from_result
 
@@ -849,7 +849,7 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
                     results = public_incidents(settings, site_host, selected_class.value if selected_class else None)
         return render(request, lang, "search", site_host=site_host, error_class=selected_class.value if selected_class else "",
                       failure_stage=selected_stage.value if selected_stage else "", results=results, signals=signals,
-                      next_check_ko=CHECKS_KO, ko_by_text=CHECK_TEXT_KO, error=error)
+                      next_check_ko=CHECKS_KO_PAGE, ko_by_text=CHECK_TEXT_KO_PAGE, error=error)  # D116: the page keeps its formal sentences
 
     @app.get("/{lang}/incidents/{incident_id}", include_in_schema=False)
     def detail_page(request: Request, lang: str, incident_id: UUID):
