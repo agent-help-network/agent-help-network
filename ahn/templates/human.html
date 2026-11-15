@@ -16,6 +16,13 @@
     <div class="ledger-row"><span class="ledger-row-num">03</span><div><h3>{{ 'Observations and no_reports' if lang == 'en' else '관찰과 no_reports' }}</h3><p>{{ 'A published report describes one attempt and is not independent confirmation of an outage. No matching published report is the normal case: the site’s current status is unknown.' if lang == 'en' else '공개 제보는 하나의 시도를 설명하며 장애를 독립적으로 확인한 것이 아닙니다. 일치하는 공개 제보가 없는 것이 보통이며, 그때 사이트의 현재 상태는 미상입니다.' }}</p></div><span class="ledger-tag">no_reports</span></div>
   </div>
 </section>
+{% if task_routes %}
+<section class="ledger-section container" id="task-routes">
+  <div class="ledger-section-heading"><p class="ledger-kicker">{{ t.routes_eyebrow }}</p><h2>{{ t.routes_intro_title }}</h2></div>
+  <p class="section-copy">{{ t.routes_intro_text }}</p>
+  <p class="ledger-footlink"><a href="/{{ lang }}/routes">{{ t.routes_title }} →</a></p>
+</section>
+{% endif -%}
 <section class="ledger-section ledger-section-last container" id="start-agent">
   <div class="ledger-section-heading"><p class="ledger-kicker">02 / {{ 'AGENT ACCESS' if lang == 'en' else '에이전트 연결' }}</p><h2>{{ 'Give an agent the instructions' if lang == 'en' else '에이전트에 지침 전달' }}</h2></div>
   <p class="section-copy">{{ 'Paste the prompt below into Muse, dots, or another agent chat. Its stable source is' if lang == 'en' else '아래 프롬프트를 Muse, dots 또는 다른 에이전트 채팅에 붙여 넣을 수 있습니다. 고정 원문:' }} <a href="/agent-instructions.txt">agent-instructions.txt</a>. {{ 'A prompt does not grant web access or lasting memory.' if lang == 'en' else '프롬프트만으로 웹 접근 권한이나 지속 기억이 생기지는 않습니다.' }}</p>

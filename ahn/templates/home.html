@@ -89,6 +89,12 @@ pip install "ahn-client[langchain]"   # or [crewai], [openai-agents], [claude-ag
   <p class="home-sub">{{ 'Send agent_vendor so the answer reads your own robots.txt token. Reason codes and edge cases:' if en else '자신의 robots.txt 토큰으로 판정하려면 agent_vendor 를 보내십시오. 판정 이유 코드와 예외 사례:' }} <a href="/{{ lang }}/agents">{{ 'agent instructions →' if en else '에이전트 지침 →' }}</a></p>
 </section>
 
+{% if task_routes %}
+<section class="ledger-section container" id="task-routes" aria-labelledby="task-routes-h">
+  <div class="home-head"><h2 id="task-routes-h">{{ t.routes_intro_title }}</h2><p>{{ t.routes_intro_text }}</p></div>
+  <p class="home-sub"><a href="/{{ lang }}/routes">{{ t.routes_title }} →</a></p>
+</section>
+{% endif -%}
 <section class="ledger-section ledger-section-last container" aria-labelledby="ledger-sources">
   <div class="home-head"><h2 id="ledger-sources">{{ 'Where each answer comes from' if en else '응답의 출처' }}</h2></div>
   <div class="home-layers">
