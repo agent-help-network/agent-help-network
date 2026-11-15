@@ -396,6 +396,22 @@ def test_task_route_fields_and_inputs_are_covered_by_the_policy_while_they_are_o
     assert_phrases("task route inputs", {lang: section(lang, "02", task_routes=True) for lang in LANGS}, TASK_ROUTE_INPUTS)
 
 
+TASK_ROUTE_SITE_BOX = {
+    "site_box": Phrase("The search box on the task route pages takes a public hostname in the same way; if a full address is pasted, "
+                       "only the hostname is used and the rest is discarded, and nothing typed there is stored or counted.",
+                       "태스크 경로 화면의 사이트 입력칸도 같은 방식으로 공개 호스트명을 받습니다. 주소 전체를 붙여 넣으면 호스트명만 쓰고 "
+                       "나머지는 버리며, 입력한 내용은 저장하거나 세지 않습니다."),
+}
+
+
+def test_the_site_box_of_the_task_route_pages_is_described_while_they_are_on():
+    # The box reads a typed name on the screen only: what is discarded is never stored, counted or logged (the request log keeps
+    # the route template alone; see test_task_routes_pages).
+    assert_phrases("task route site box", {lang: section(lang, "02", task_routes=True) for lang in LANGS}, TASK_ROUTE_SITE_BOX)
+    for lang in LANGS:
+        assert "search box on the task route pages" not in section(lang, "02") and "사이트 입력칸" not in section(lang, "02")
+
+
 @pytest.mark.parametrize("number", ["02", "03", "05"])
 def test_the_task_routes_switch_adds_one_paragraph_to_a_section_and_changes_nothing_else(number):
     import difflib

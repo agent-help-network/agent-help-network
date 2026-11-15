@@ -17,6 +17,9 @@ answer never repeats what was sent. With the switch on, answers and pages also c
 from __future__ import annotations
 
 import logging
+import threading
+from datetime import datetime, timezone
+from time import monotonic
 from urllib.parse import urlencode
 
 from uuid import UUID
@@ -28,7 +31,8 @@ from pydantic import ValidationError
 
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
                           SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRouteInputError, VerificationKind, is_current,
-                          lookup, parse_query, server_route, site_records, stored_route, suffix_name)
+                          lookup, parse_query, registrable, route_host, server_route, site_from_input, site_records, stored_route,
+                          suffix_name)
 
 LOG = logging.getLogger(__name__)
 
@@ -139,7 +143,9 @@ def add_write_routes(app, settings) -> None:
 # Same flag as the API. The pages read the in-code table through task_routes.lookup / server_route and, while the write switch is
 # served (D118), the published stored records: they never call check() or reach a site, and they show the server-decided values
 # (sensitive, source_kind, period) as the server computed them.
-PAGE_ROWS_MAX = 500
+PAGE_ROWS_MAX = 100
+ROUTES_DATALIST_MAX = 300  # the host suggestions of the site box are listed only while the table holds at most this many sites
+RECORDS_TTL = 60  # seconds the curated records are kept between requests
 SOURCE_ORDER = (RouteSourceKind.operator_panel, RouteSourceKind.curated_official, RouteSourceKind.external_agent,
                 RouteSourceKind.curated_community)
 SOURCE_PHRASE = {
@@ -214,22 +220,43 @@ def label(group: str, value, lang: str) -> str:
     return EN_LABELS.get(group, {}).get(value, str(value).replace("_", " "))
 
 
-def current_records(settings=None) -> list:
-    """Every current record of the curated table and, while the write switch is served, every published stored record, newest
-    period first. Reads the table at call time; a malformed entry is skipped. If the database cannot be read, the curated
-    records alone (a warning is logged)."""
-    from . import task_routes_data
-    from .settings import task_route_reports_served
+_curated_cache: dict = {"table": None, "day": None, "at": 0.0, "records": []}
+_curated_lock = threading.Lock()
 
+
+def curated_records() -> list:
+    """Every current record of the curated table (a malformed entry is skipped). The answer is kept for RECORDS_TTL seconds, so
+    a page request does not validate the whole table again; the cache is tied to the table object and to the day (a record
+    expires by its date), so a table that is swapped, as the tests do, is read at once. Stored records are never cached."""
+    from . import task_routes_data
+
+    table = task_routes_data.TASK_ROUTES_CURATED
+    today = datetime.now(timezone.utc).date()
+    with _curated_lock:
+        cache = _curated_cache
+        if cache["table"] is table and cache["day"] == today and monotonic() - cache["at"] < RECORDS_TTL:
+            return list(cache["records"])
     records = []
-    for host, entries in task_routes_data.TASK_ROUTES_CURATED.items():
+    for host, entries in table.items():
         for item in entries:
-            if not is_current(item):
+            if not is_current(item, today):
                 continue
             try:
                 records.append(server_route(host, item))
             except ValueError:
                 LOG.warning("task_route_entry_invalid")
+    with _curated_lock:
+        _curated_cache.update(table=table, day=today, at=monotonic(), records=records)
+    return list(records)
+
+
+def current_records(settings=None) -> list:
+    """Every current record of the curated table and, while the write switch is served, every published stored record, newest
+    period first. A malformed entry is skipped. If the database cannot be read, the curated records alone (a warning is
+    logged)."""
+    from .settings import task_route_reports_served
+
+    records = curated_records()
     if settings is not None and task_route_reports_served(settings):
         from .task_route_intake import all_published_rows
 
@@ -310,9 +337,10 @@ def page_context(records: list, shown: list, lang: str, lang_text: dict) -> dict
     for record in records:
         per_site[record.site_host] = per_site.get(record.site_host, 0) + 1
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
+    cut = len(shown) > PAGE_ROWS_MAX
     shown = shown[:PAGE_ROWS_MAX]
     return {
-        "rows": [row_for(record, lang, per_site) for record in shown], "total": len(records), "shown_count": len(shown),
+        "rows": [row_for(record, lang, per_site) for record in shown], "total": len(records), "shown_count": len(shown), "cut": cut,
         "headline": headline(lang, lang_text, len(records), by_source), "any_sensitive": any(record.sensitive for record in shown),
         "opts_task": choices("task_kind", lang), "opts_outcome": choices("outcome", lang), "opts_source": choices("source_kind", lang),
     }
@@ -322,16 +350,45 @@ def add_pages(app, settings, render, lang_text) -> None:
     """Register the two human pages. Both answer 404 for an unknown language."""
     from .service import ServiceError
 
+    def site_headers(response):
+        """An answer to a typed site is never kept or indexed: the address carries what a person typed."""
+        response.headers["X-Robots-Tag"] = "noindex"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/{lang}/routes", include_in_schema=False)
     def routes_page(request: Request, lang: str):
         if lang not in lang_text:
             raise ServiceError("not_found", 404)
         records = current_records(settings)
         hosts = sorted({record.site_host for record in records})
-        picked = read_filters(request.query_params, hosts)
-        context = page_context(records, [record for record in records if keep(record, picked)], lang, lang_text)
-        return render(request, lang, "routes", picked=picked, lang_query=urlencode([(n, picked[n]) for n in FILTERS if picked[n]]),
-                      opts_site=[(host, host) for host in hosts], **context)
+        site_options = hosts if len(hosts) <= ROUTES_DATALIST_MAX else []
+        picked = read_filters(request.query_params, [])  # the site box is read below, not as a closed value
+        values = request.query_params.getlist("site")
+        typed = site_from_input(values[0] if values else "")
+        others = urlencode([(n, picked[n]) for n in FILTERS if n != "site" and picked[n]])
+        state, name, matches = "", "", []
+        if typed.kind == "invalid":
+            state = "invalid"
+        elif typed.kind == "label":
+            matches = [host for host in hosts if registrable(host).split(".")[0] == typed.value]
+            if len(matches) == 1:
+                return site_headers(RedirectResponse(f"/{lang}/routes/{matches[0]}" + (f"?{others}" if others else ""), status_code=302))
+            state = "several" if matches else "label_none"
+        elif typed.kind == "host":
+            key, _rows = site_records(typed.value, settings)
+            if key is not None:
+                return site_headers(RedirectResponse(f"/{lang}/routes/{key}" + (f"?{others}" if others else ""), status_code=302))
+            name = route_host(typed.value) or ""
+            state = "none" if name else "none_plain"
+            if name and values[0].strip() != name and route_host(name) == name:  # a pasted address: send the hostname alone, so no path or query stays in the address bar
+                return site_headers(RedirectResponse(f"/{lang}/routes?" + urlencode([("site", name)] + ([(n, picked[n]) for n in FILTERS if n != "site" and picked[n]])), status_code=302))
+            picked["site"] = name
+        context = page_context(records, [] if state else [record for record in records if keep(record, picked)], lang, lang_text)
+        response = render(request, lang, "routes", picked=picked, lang_query=urlencode([(n, picked[n]) for n in FILTERS if picked[n]]),
+                          site_options=site_options, site_shown=name, site_state=state, site_name=name, site_matches=matches,
+                          site_count=len(hosts), **context)
+        return site_headers(response) if typed.kind != "empty" else response
 
     @app.get("/{lang}/routes/{host}", include_in_schema=False)
     def routes_host_page(request: Request, lang: str, host: str):
@@ -351,13 +408,20 @@ def add_pages(app, settings, render, lang_text) -> None:
         query = urlencode([(name, picked[name]) for name in FILTERS if picked[name]])
         if host != key:  # www., upper case, a trailing dot, support.: one address per site
             return RedirectResponse(f"/{lang}/routes/{key}" + (f"?{query}" if query else ""), status_code=301)
-        answer = lookup(key, settings=settings)
+        whole = lookup(key, settings=settings)
+        # With a task chosen the records of that task are asked for, so a task past the newest TASK_ROUTES_MAX of the site is found
+        # too; the counts above the table stay those of the whole site.
+        answer = lookup(key, TaskKind(picked["task_kind"]), settings=settings) if picked["task_kind"] else whole
         # lookup() shows at most TASK_ROUTES_MAX records; the counts cover all of them.
         shown = [record for record in answer.routes if keep(record, picked)]
         context = page_context(answer.routes, shown, lang, lang_text)
-        context["total"] = answer.counts.records
+        context["total"] = whole.counts.records
         for row in context["rows"]:
-            row["count"] = answer.counts.records  # the site's whole count, not only the shown ones
-        context["headline"] = headline(lang, lang_text, answer.counts.records, answer.counts.by_source_kind)
-        return render(request, lang, "routes_host", site_host=key, picked=picked, lang_query=query, opts_site=[],
-                      newest_only=answer.counts.records > len(answer.routes), shown_max=len(answer.routes), **context)
+            row["count"] = whole.counts.records  # the site's whole count, not only the shown ones
+        context["headline"] = headline(lang, lang_text, whole.counts.records, whole.counts.by_source_kind)
+        hosts = sorted({record.site_host for record in curated_records()})  # suggestions only: no database read for them here
+        return render(request, lang, "routes_host", site_host=key, picked=picked, lang_query=query,
+                      site_options=hosts if len(hosts) <= ROUTES_DATALIST_MAX else [], site_shown="", site_state="",
+                      other_kinds=bool(picked["task_kind"]) and answer.counts.records == 0 and whole.counts.records > 0,
+                      newest_only=answer.counts.records > len(answer.routes), shown_max=len(answer.routes),
+                      newest_total=answer.counts.records, **context)

@@ -1,0 +1,4 @@
+<div><label for="f-site">{{ site_label or t.routes_f_site }}</label>
+  <input id="f-site" name="site" type="text" inputmode="url" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="example.com" maxlength="2000"{% if site_options %} list="route-sites"{% endif %}{% if site_shown %} value="{{ site_shown }}"{% endif %}>
+  <span class="routes-small">{{ t.routes_f_site_hint }}</span></div>
+{% if site_options %}<datalist id="route-sites">{% for host in site_options %}<option value="{{ host }}">{% endfor %}</datalist>{% endif %}

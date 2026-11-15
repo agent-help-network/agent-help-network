@@ -236,6 +236,8 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .routes-filter div{min-width:0}
 .routes-filter label{display:block;font-size:12px;font-weight:750;color:var(--muted);margin:0 0 6px}
 .routes-filter select{max-width:240px}
+.routes-filter input[type=text]{width:240px;max-width:100%;border:1px solid #cbd8e1;border-radius:8px;background:#fff;padding:10px 12px;color:var(--ink);font:inherit}
+.routes-filter .routes-small{max-width:300px}
 .routes-filter button{border:0;background:var(--blue);color:#fff;padding:11px 18px;border-radius:8px;font-weight:750;cursor:pointer}
 .routes-filter a{color:var(--blue);font-weight:700;font-size:14px;padding:11px 4px}
 .routes-count{font-size:14px;color:var(--muted);margin:0 0 10px}
@@ -247,5 +249,7 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .routes-sensitive{display:block;font-size:12px;font-weight:750;color:#8a4b00;margin-top:5px}
 .routes-links a+a{margin-left:10px}
 .routes-empty{background:#fff;border:1px dashed #bbcbd7;border-radius:13px;padding:34px;text-align:center;color:var(--muted)}
+.routes-site-state p{margin:0 0 8px}.routes-site-state .routes-small a,.routes-matches a{color:var(--blue);font-weight:700}
+.routes-matches{list-style:none;margin:0 0 8px;padding:0}
 .routes-foot{display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:18px;font-size:14px}
 .routes-foot a{color:var(--blue);font-weight:700}
