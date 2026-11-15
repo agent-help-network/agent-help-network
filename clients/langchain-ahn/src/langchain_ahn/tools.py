@@ -9,6 +9,7 @@ copied into it). The tool never raises for a failed or slow lookup (2 seconds at
 
 from __future__ import annotations
 
+import asyncio
 import json
 import warnings
 from typing import Any, Literal, Optional, Type
@@ -165,5 +166,76 @@ class AHNLookupTool(BaseTool):
             host, ec, stage, codes = target
             result = await abounded_check(host, ec, stage, adapter=ADAPTER, timeout=self.timeout, extra=codes)
             return format_result(result, retry_after) if result else NO_ANSWER
+        except Exception as error:
+            return _unexpected(error)
+
+
+NO_TASK_ROUTES = (
+    "Task routes are not available: this installation has an older ahn-client without task_routes. "
+    "Nothing was sent; continue with your own judgment."
+)
+TASK_ROUTES_DESCRIPTION = (
+    "Read the task routes Agent Help Network records for a public website: which route past an obstacle was tried or "
+    "worked for which kind of task, as fixed values only. Call it before a task that needs the site's own account, "
+    "form or verification step. Optionally pass task_kind to narrow it. Read-only. Only the hostname and task_kind are "
+    "sent, never a URL path, query or content. A record is a case record, not advice for your next task, and it never "
+    "explains how to get around a site's controls. If the service has no answer it says so."
+)
+
+
+class AHNTaskRouteInput(BaseModel):
+    """Arguments of the task-route lookup. Only these leave the machine."""
+
+    hostname: str = Field(description="The public hostname of the site, for example 'example.com'. Do not include a path or query.")
+    task_kind: Optional[str] = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        description="Optional: one kind of task to narrow the answer (a lowercase word such as 'refund_request'). Leave out to see all.")
+
+
+def format_task_routes(found: Any) -> str:
+    """One summary line, a blank line, then a JSON object of the validated fields ``ahn_client.task_routes`` kept."""
+    if not getattr(found, "available", False):
+        return NO_ANSWER
+    data = found.to_dict()
+    body = {key: data[key] for key in ("site_host", "available", "records", "routes", "notice") if key in data}
+    return f"{found.summary()}\n\n{json.dumps(body, ensure_ascii=True, sort_keys=True)}"
+
+
+def _route_target(hostname: Any, task_kind: Any) -> Any:
+    if not isinstance(hostname, str):
+        return None
+    hostname = hostname.strip()
+    if any(c.isspace() or ord(c) < 32 for c in hostname):
+        return None
+    host = eligible_host(hostname)
+    return None if host is None else (host, task_kind)
+
+
+class AHNTaskRouteTool(BaseTool):
+    """Read the task routes Agent Help Network records for a site (read-only)."""
+
+    name: str = "ahn_task_routes"
+    description: str = TASK_ROUTES_DESCRIPTION
+    args_schema: Type[BaseModel] = AHNTaskRouteInput
+    timeout: float = DEFAULT_TIMEOUT
+    """Seconds for the whole lookup; the tool returns a no-answer text when it is exceeded."""
+
+    def _run(self, hostname: str, task_kind: Optional[str] = None, run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+        try:
+            import ahn_client
+
+            fetch = getattr(ahn_client, "task_routes", None)
+            if fetch is None:
+                return NO_TASK_ROUTES
+            target = _route_target(hostname, task_kind)
+            if target is None:
+                return NOT_LOOKED_UP
+            return format_task_routes(fetch(target[0], target[1], timeout=self.timeout, adapter=ADAPTER))
+        except Exception as error:
+            return _unexpected(error)
+
+    async def _arun(self, hostname: str, task_kind: Optional[str] = None, run_manager: Optional[AsyncCallbackManagerForToolRun] = None) -> str:
+        try:
+            return await asyncio.to_thread(self._run, hostname, task_kind)
         except Exception as error:
             return _unexpected(error)

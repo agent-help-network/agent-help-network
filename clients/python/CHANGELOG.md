@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10
+
+- `ahn.task_routes(host_or_url, task_kind=None, *, timeout=4.0)` reads the task routes the service records for a site (`GET /v1/task-routes`): which route past an obstacle worked for which task, as closed values only (`task_kind`, `obstacle`, `basis`, `outcome`, `source_kind`, `sensitive` and the like). It returns a `TaskRoutes` (`available`, `routes`, `summary_line`, `records`, `notice`, `summary()`, `to_dict()`). It never raises: a 404 (a service that does not serve task routes), a network error, a timeout and an unreadable answer give `available=False` and `routes=[]`, and a host that is never looked up (local, private, an address, `AHN_CLIENT_DISABLE=1`) sends nothing. Only the hostname and the optional `task_kind` are sent; the request header has the same form as for `ahn.check`.
+
 ## 0.6.9
 
 - `NextAction` keeps the optional `status_url_covers` (`"api"` when `status_url` is a status page that covers only the provider's API, not the whole site; None otherwise, and from an older service). `provider_status.note` and `official_paths.consumer.paths[].topic` arrive in the raw dictionaries as the service sends them.
