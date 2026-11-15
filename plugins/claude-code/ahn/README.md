@@ -58,7 +58,7 @@ The skill's "Regular sites" section tells the agent how to check the sites a use
 
 ## Task routes (from 0.3.18)
 
-The skill's "Task routes" section tells the agent to use the MCP tool `find_task_route` only when the server lists it, when a customer task of several steps (for example a refund, a cancellation or a document submission) starts on a site and the agent does not know its official document, channel or entry point; it looks the site up once for that task. The answer is a list of records of obstacles and the routes a site's own documents name: records, not a guarantee and not advice, and an empty list does not mean there is no route. If the tool is not listed, or the answer is empty, the agent carries on as usual. It does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged: it still acts only after a failed web step and never calls `find_task_route`.
+The skill's "Task routes" section tells the agent to use the MCP tool `find_task_route` only when the server lists it, when a customer task of several steps (for example a refund, a cancellation or a document submission) starts on a site and the agent does not know its official document, channel or entry point; it looks the site up once for that task. The answer is a list of records of obstacles and the routes a site's own documents name: records, not a guarantee and not advice, and an empty list does not mean there is no route. If the tool is not listed, or the answer is empty, the agent carries on as usual. `find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged: it still acts only after a failed web step and never calls `find_task_route`.
 
 ## Install
 

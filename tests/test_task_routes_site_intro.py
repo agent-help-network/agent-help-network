@@ -148,10 +148,10 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 # The exact lines of each block as #239 wrote them (a `-` more or less changes the whitespace of the flag-off page).
 SHAPES = {
     "base.html": re.compile(r"[ ]{8}<a href=\"/\{\{ lang \}\}/why\" [^\n]*</a>\{% if task_routes %\}\n[ ]{8}<a href=\"/\{\{ lang \}\}/routes\" [^\n]*</a>\{% endif %\}\n"),
-    "home.html": re.compile(r"\{% if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
-    "human.html": re.compile(r"\{% if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
-    "agents.html": re.compile(r"[ ]{2}\{%- if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+[ ]{2}\{% endif %\}\n"),
-    "connect.html": re.compile(r"\{%- if task_routes %\}\n(?:(?!\{%)[^\n]*\n)+\{% endif -%\}\n"),
+    "home.html": re.compile(r"\{% if task_routes %\}\n(?:(?![ ]*\{%-?\s*(?:end)?if\s+task_routes)[^\n]*\n)+\{% endif -%\}\n"),
+    "human.html": re.compile(r"\{% if task_routes %\}\n(?:(?![ ]*\{%-?\s*(?:end)?if\s+task_routes)[^\n]*\n)+\{% endif -%\}\n"),
+    "agents.html": re.compile(r"[ ]{2}\{%- if task_routes %\}\n(?:(?![ ]*\{%-?\s*(?:end)?if\s+task_routes)[^\n]*\n)+[ ]{2}\{% endif %\}\n"),
+    "connect.html": re.compile(r"\{%- if task_routes %\}\n(?:(?![ ]*\{%-?\s*(?:end)?if\s+task_routes)[^\n]*\n)+\{% endif -%\}\n"),
 }
 
 
@@ -223,6 +223,22 @@ def unbalanced_html(body: str) -> list[str]:
     return parser.problems + [f"<{t}> is never closed" for t in parser.stack]
 
 
+# The balance check removes Jinja tags before parsing, so tags an expression emits (`{{ x|safe }}`) would go unseen.
+EXPRESSION_MARKUP = re.compile(r"\|\s*safe\b|\bMarkup\s*\(|\|\s*(?:forceescape|striptags)\b|\{%-?\s*autoescape\b")
+
+
+def markup_from_expressions(body: str) -> list[str]:
+    """Output in the block that can produce HTML tags the balance check cannot see."""
+    return [m.group(0) for m in EXPRESSION_MARKUP.finditer(body)]
+
+
+def test_expression_markup_detection():
+    assert markup_from_expressions("<p>{{ t.k }}</p>") == []
+    assert markup_from_expressions("<p>{{ '<div>'|safe }}</p>") != []
+    assert markup_from_expressions("<p>{{ x | safe }}</p>") != []
+    assert markup_from_expressions("{{ Markup('<b>') }}") != []
+
+
 def _template_env():
     from ahn.main import templates
     return templates.env
@@ -240,6 +256,7 @@ def test_blocks_are_counted_shaped_and_self_contained():
             lines = block_lines(source, block)
             assert SHAPES[name].fullmatch(lines), f"{name}: the block is not in the expected line shape:\n{lines}"
             assert unbalanced_html(block["body"]) == [], f"{name}: the block's HTML does not stand on its own"
+            assert markup_from_expressions(block["body"]) == [], f"{name}: the block builds markup from an expression"
         total += len(blocks)
     assert total == 5
     for name in env.list_templates():  # nothing else may start using the flag outside the cut blocks without being counted here
