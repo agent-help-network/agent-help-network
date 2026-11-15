@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,8 @@ def test_a_report_is_kept_under_the_expected_key(host):
 
 
 @pytest.mark.parametrize("host", ZONE_NAMES)
-def test_a_zone_name_reads_its_own_name_only(host):
+def test_a_zone_name_reads_its_own_name_only(host, monkeypatch):
+    monkeypatch.setattr(task_routes_data, "TASK_ROUTES_CURATED", {})  # the case table is about the key rules, not the curated rows
     key = WRITE[host]
     assert task_routes.key_candidates(host) == [key]
     assert not task_routes.tenant_host(host) and task_routes.government_suffix(host)
@@ -105,18 +107,37 @@ def test_without_the_zones_main_behavior_comes_back(monkeypatch):
 
 
 def test_no_curated_answer_changes_because_of_the_zones(monkeypatch):
-    # No curated key is inside a zone, so a zone changes none of its answers. (The byte-level comparison over every curated host
-    # is in test_task_routes_hardening, which empties the same constants.)
+    # A curated key outside a zone is unchanged by the zones. A curated key inside a zone is kept under its own exact name.
+    # (The byte-level comparison over every curated host is in test_task_routes_hardening, which empties the same constants.)
     def view(host):
         return (task_routes.route_host(host), task_routes.tenant_host(host),
                 *(task_routes.key_candidates(name) for name in (host, f"www.{host}", f"support.{host}", f"springfield.{host}")))
 
-    hosts = sorted(task_routes_data.TASK_ROUTES_CURATED)
-    assert hosts and not [host for host in hosts if task_routes.government_zone(host)]
+    zoned_keys = sorted(host for host in task_routes_data.TASK_ROUTES_CURATED if task_routes.government_zone(host))
+    assert all(task_routes.route_host(host) == host and not task_routes.tenant_host(host) for host in zoned_keys), zoned_keys
+    hosts = sorted(host for host in task_routes_data.TASK_ROUTES_CURATED if host not in zoned_keys)
+    assert hosts
     before = {host: view(host) for host in hosts}
     monkeypatch.setattr(task_routes, "GOVERNMENT_ZONES", frozenset())
     monkeypatch.setattr(task_routes, "GOVERNMENT_STATE_ZONES", frozenset())
     assert {host: view(host) for host in hosts} == before
+
+
+def test_a_curated_government_key_answers_for_its_own_name_only():
+    zoned = sorted(host for host in task_routes_data.TASK_ROUTES_CURATED if task_routes.government_zone(host))
+    assert zoned
+    for key in zoned:
+        count = len(task_routes_data.TASK_ROUTES_CURATED[key])
+        for name in (key, f"www.{key}"):
+            answer = task_routes.lookup(name, today=date(2026, 11, 16))
+            assert len(answer.routes) == count, name
+            assert all(route.sensitive is True for route in answer.routes), name
+            assert answer.notice == "case_record_not_advice", name
+        for prefix in ("support.", "help.", "springfield.", "www.support.", "a.b."):
+            name = prefix + key
+            assert task_routes.lookup(name, today=date(2026, 11, 16)).routes == [], name
+            assert task_routes.table_key(name) is None, name
+            assert task_routes.table_key(name, frozenset({key})) is None, name
 
 
 def test_an_apex_that_is_not_a_site_answers_like_its_www_name():

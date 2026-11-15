@@ -704,10 +704,12 @@ def _old_key_candidates(host: str) -> list[str]:
     return [".".join(labels[index:]) for index in range(len(labels) - 1)]
 
 
-def test_every_curated_answer_is_byte_identical_to_the_walk_before_the_suffix_floor(monkeypatch):
+def test_every_curated_answer_is_byte_identical_to_the_walk_before_the_suffix_floor(unlimited, monkeypatch):
     # The read path shares key_candidates with the write path; the floor at the registrable domain must not change any curated answer.
+    # Curated government hosts are kept under their exact name (D122), so their sub-names answer differently by design.
+    curated = [host for host in task_routes_data.TASK_ROUTES_CURATED if not task_routes.government_zone(host)]
     hosts = set()
-    for host in task_routes_data.TASK_ROUTES_CURATED:
+    for host in curated:
         hosts |= {host, f"www.{host}", f"support.{host}", f"help.www.{host}", f"springfield.{host}"}
         labels = host.split(".")
         hosts |= {".".join(labels[index:]) for index in range(len(labels) - 1)}  # each parent, down to a suffix such as co.uk
@@ -727,7 +729,7 @@ def test_every_curated_answer_is_byte_identical_to_the_walk_before_the_suffix_fl
     with monkeypatch.context() as patch:
         patch.setattr(task_routes, "key_candidates", _old_key_candidates)
         old = answers()
-    assert len(hosts) >= 5 * len(task_routes_data.TASK_ROUTES_CURATED)
+    assert len(hosts) >= 5 * len(curated)
     assert [host for host in sorted(hosts) if new[host] != old[host]] == []
 
 

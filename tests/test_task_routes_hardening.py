@@ -119,8 +119,10 @@ def test_a_stored_row_under_a_new_suffix_name_is_never_read_into_a_sites_answer(
 def test_every_curated_answer_is_byte_identical_with_and_without_the_new_suffixes_and_government_list(unlimited, monkeypatch):
     # registrable, key_candidates and tenant_host are shared by the read path: the larger sets must change no curated answer.
     # (The per-client request limiter is off here: hundreds of requests from one client would otherwise be refused unevenly.)
+    # Curated government hosts are kept under their exact name (D122), so their sub-names answer differently by design.
+    curated = [host for host in task_routes_data.TASK_ROUTES_CURATED if not task_routes.government_zone(host)]
     hosts = set()
-    for host in task_routes_data.TASK_ROUTES_CURATED:
+    for host in curated:
         hosts |= {host, f"www.{host}", f"support.{host}", f"help.www.{host}", f"springfield.{host}"}
         labels = host.split(".")
         hosts |= {".".join(labels[index:]) for index in range(len(labels) - 1)}
@@ -146,7 +148,7 @@ def test_every_curated_answer_is_byte_identical_with_and_without_the_new_suffixe
         patch.setattr(task_routes, "GOVERNMENT_ZONES", frozenset())
         patch.setattr(task_routes, "GOVERNMENT_STATE_ZONES", frozenset())
         old = answers()
-    assert len(hosts) >= 5 * len(task_routes_data.TASK_ROUTES_CURATED)
+    assert len(hosts) >= 5 * len(curated)
     assert [host for host in sorted(hosts) if new[host] != old[host]] == []
 
 
