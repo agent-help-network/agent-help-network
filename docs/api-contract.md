@@ -729,7 +729,7 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 `GET /v1/task-routes`(JSON)와 MCP 도구 `find_task_route` 는 공개 호스트명에 기록된 업무 경로를 돌려줘요. 고객 업무 종류(환불, 해지, 예약 등)마다 흔한 걸림돌과, 사이트 자신의 문서가 말하는 경로예요(D117). 조회와 별개의 정보 층이에요. 답은 기록의 목록일 뿐 보장도 조언도 아니고, 목록이 비어 있다고 경로가 없다는 뜻도 아니에요. 조회의 `recommendation`·`next_checks`·`next_action`·`summary_line` 은 이 표와 무관하게 그대로이고, 조회는 이 표를 읽지 않아요. 기술적 막힘(403·CAPTCHA·장애)은 `check_incident` 가 답하는 영역이고, `obstacle` 값 `technical_block` 은 기록이 그런 것임을 표시할 뿐이에요.
 
-답은 서비스 코드 안의 큐레이션 표에서 읽어요. 데이터베이스도, 사이트로 가는 요청도 없어요(D33). 모든 칸은 닫힌 값이고 자유 글은 없어요. 운영자가 켜야 제공해요(`AHN_TASK_ROUTES`). 꺼져 있으면 `GET /v1/task-routes` 와 아래 페이지는 404이고 도구도 목록에 나오지 않아요.
+답은 서비스 코드 안의 큐레이션 표에서 읽고, 제보 스위치(`AHN_TASK_ROUTE_REPORTS`, 아래 "경로 제보")까지 켜져 있을 때만 서비스 데이터베이스에 저장된 공개·미철회 제보도 읽어요. 사이트로 가는 요청은 없어요(D33). 모든 칸은 닫힌 값이고 자유 글은 없어요. 운영자가 켜야 제공해요(`AHN_TASK_ROUTES`). 꺼져 있으면 `GET /v1/task-routes` 와 아래 페이지는 404이고 도구도 목록에 나오지 않아요.
 
 매개변수.
 
@@ -751,12 +751,22 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 - `official_url`·`source_url` 은 쿼리·프래그먼트가 없는 https 링크(스키마 패턴 `^https://[^\s?#]+$`)이고 사이트 자신의 도메인이어야 해요. 사이트 자신의 문서에서 온 기록이나 운영자 기록만 링크를 가져요(D117 규칙 4). D120 이 이런 주소의 경로 규칙에 검토를 거친 정확한 URL 예외 하나를 더해요. 다른 필드에는 링크가 없어요.
 - `sensitive` 는 서버가 정하고 출처에서 베끼지 않으며, 기록을 보여 주는 방식만 바꿔요. 일반 경로보다 사례 기록으로 읽는 편이 맞을 때 `true` 예요. `task_kind` 가 `accommodation_request`·`prescription_refill`·`insurance_claim`·`government_benefit_application`·`warranty_dispute`·`billing_dispute`·`complaint_filing`·`records_request` 인 경우, `site_requires` 가 `referral_or_prescription` 인 경우, `document_kind` 가 `professional_letter`·`sworn_statement` 인 경우, `portal_login` 이 `entry_point_kind` `role_specific_portal` 과 함께 있는 경우, 정부 전용 접미사 아래이거나 공개 정부 도메인 목록에 있는 호스트인 경우예요.
 
-어느 사이트로 답하나. 호스트는 표에 있는 자기 항목으로 답하고, 없으면 가장 가까운 상위 도메인으로 답해요(`www.example.com` 과 `shop.example.com` 은 모두 `example.com` 을 찾음). 최상위 라벨 하나만으로는 답하지 않아요. 덧붙은 라벨이 모두 같은 사이트의 서비스 이름(`www`·`support`·`help`·`care`·`shop`·`store`·`m`·`mobile`·`en`·`us`)이면 상위 도메인으로 답해요. 그 밖의 하위 도메인 중 이름 자체가 집계에 적합한 공개 루트 호스트가 아닌 것(계정·학군·소규모 업체 하위 도메인)은 빈 답이고, 상위 도메인의 기록을 주지 않아요.
+어느 사이트로 답하나. 호스트는 표에 있는 자기 항목으로 답하고, 없으면 가장 가까운 상위 도메인으로 답해요(`www.example.com` 과 `shop.example.com` 은 모두 `example.com` 을 찾음). 최상위 라벨 하나만으로는 답하지 않아요. 덧붙은 라벨이 모두 같은 사이트의 서비스 이름(`www`·`support`·`help`·`care`·`shop`·`store`·`m`·`mobile`·`en`·`us`)이면 상위 도메인으로 답해요. 그 밖의 하위 도메인 중 이름 자체가 집계에 적합한 공개 루트 호스트가 아닌 것(계정·학군·소규모 업체 하위 도메인)은 빈 답이고, 상위 도메인의 기록을 주지 않아요. 두 규칙이 더 좁혀요. 두 라벨 공공 접미사(`co.uk`·`sch.uk`·`ca.us`)나 공유 호스팅 접미사(`github.io`·`herokuapp.com`)는 사이트가 아니고, 그 아래 저장된 제보는 다른 사이트의 답에 섞이지 않아요. 정부 상위 도메인 바로 아래에 있는 일부 정부 사이트는 코드에 목록이 있어요(지금은 `unclaimedproperty.nj.gov`). 그 이름과 그 `www.` 형태는 정확히 그 이름으로만 답하고, 상위 도메인에서 가져오지 않으며 상위 도메인의 다른 하위 도메인에도 쓰지 않아요.
 
 MCP `find_task_route(site_host, task_kind?)` 는 읽기 전용(`readOnlyHint`·`idempotentHint`, 열린 세계 아님)이고 같은 인자 둘을 받아요. REST 와 똑같이 읽고 거절하며 오류 코드도 같은 둘이에요. 결과의 첫 텍스트 블록은 답의 `summary_line`, 둘째는 JSON 으로 된 답이고 링크는 여기에만 나와요. `structuredContent` 는 REST 답과 같아요.
 
+경로 제보(D118, 기본 꺼짐). `AHN_TASK_ROUTES` 와 `AHN_TASK_ROUTE_REPORTS`(각각 시작일 포함)가 모두 켜져 있고, 서비스가 공개 모드이며 제보가 켜져 있어야 해요. 하나라도 꺼져 있으면 `POST /v1/task-routes` 와 `DELETE /v1/task-routes/{route_id}` 는 `404 {"error":"not_found"}` 이고 MCP 도구 `report_task_route` 는 목록에 나오지 않아요. 쓰기 답에는 `Cache-Control: no-store` 가 붙어요.
+
+- `POST /v1/task-routes`, `Content-Type: application/json`(다른 형식은 `415 json_required`, JSON 이 아닌 본문은 `400 invalid_request`). 본문은 기록 하나의 닫힌 값이에요. `site_host`·`task_kind`·`obstacle`·`basis`·`outcome` 은 필수이고, `routes_tried[]`·`route_worked`·`duration`·세부 칸(각각 설명하는 걸림돌 아래에서만)·`idempotency_key`(재시도를 안전하게 하는 UUID)는 선택이에요. 목록은 위와 같되 `basis` 의 `official_doc` 과 `outcome` 의 `not_applicable` 은 큐레이션 기록용이라 거절해요. 글, 링크, 사람, 계정, 사건 번호를 담는 칸은 없어요. 그 밖의 칸, 서버가 정하는 값(`source_kind`·`period`·`sensitive`·`review_state`), 규칙이 거절하는 값이나 조합은 `422 invalid_task_route` 이고, 어떤 오류도 보낸 내용을 되풀이하지 않아요.
+- `site_host` 는 조회와 똑같이 읽어요. 제보는 사이트의 루트 도메인 아래에 저장돼요(`www.example.com` 과 `example.com` 은 한 사이트). 계정·테넌트 하위 도메인, 공공 접미사(`co.uk`·`sch.uk`·`ca.us`), 공유 호스팅 접미사(`github.io`·`herokuapp.com`), 그 앞에 `www.` 가 붙은 이름은 `422 site_host_not_accepted` 이고, 목록에 있는 정부 사이트 이름(위 참고)을 뺀 모든 하위 도메인도 같아요.
+- 성공은 `201` 과 `{"route_id", "review_state", "withdrawal_token"}` 이고 `review_state` 는 `pending` 으로 시작해요. 같은 `idempotency_key` 와 같은 본문은 같은 접수증을 주는 `200` 재전송이고, 본문이 바뀌면 `409 idempotency_conflict` 예요. `withdrawal_token` 은 보관하세요.
+- 그 밖의 오류는 코드만 줘요. `429 report_rate_limited`(클라이언트당 분당 3건 제한은 `Retry-After: 60`, REST 와 MCP 모두 같고 IPv6 클라이언트는 /64 단위, IPv4 는 주소 단위로 세요. 하루 상한, 전체 100건·사이트당 5건·사이트와 업무 종류당 3건은 `Retry-After: 3600`), `503 reporting_paused`(접수 중지), `503 real_submissions_not_enabled`.
+- 제보는 검토를 거쳐 공개하기 전까지 비공개예요. 대기 중이거나 보류된 제보는 어떤 답과 페이지에도 나오지 않아요. 공개되고 철회되지 않은 제보는 `GET /v1/task-routes`·`find_task_route`·페이지의 답에 더해지며 `source_kind` 는 `external_agent`, `period` 와 `sensitive` 는 서버가 정한 값이고 링크는 없어요.
+- `DELETE /v1/task-routes/{route_id}` 에 `X-Withdrawal-Token` 헤더를 보내면 `200 {"withdrawn": true}` 로 답하고 제보가 모든 읽기에서 빠져요. 접수가 중지된 동안에도 돼요. 모든 실패(잘못된 id, 잘못된 토큰, 없는 제보, 쓰기 경로 꺼짐)는 똑같은 `404 {"error":"not_found"}` 예요. `GET /v1/task-routes` 답은 최대 5분 캐시되므로 철회는 몇 분 안에 모든 답에 반영돼요. 운영자도 공개된 제보를 철회할 수 있어요.
+- MCP `report_task_route(report)` 는 쓰기 도구(읽기 전용 아님, 파괴적 아님, 멱등 아님, 열린 세계)이고 위 스위치가 모두 켜져 있을 때만 있어요. `report` 는 REST 본문과 같은 객체이고 같은 모델로 검사해요. 거절은 오류 코드 `invalid_task_route` 하나뿐이에요. 같은 클라이언트별 제한을 거치고 같은 접수증(`route_id`·`review_state`·`withdrawal_token`)을 `structuredContent` 로도 돌려줘요.
+
 - 사람용 페이지 `/en/routes`·`/ko/routes` 는 현재 기록 전부를 최신 기간순으로 보여 주고, 표 위의 문장이 출처별 개수를 세요. 필터는 `site`·`task_kind`·`outcome`·`source_kind` 이고, 목록에 없는 값은 무시하며 되풀이하지 않아요. `/en/routes/{host}`·`/ko/routes/{host}` 는 사이트 하나를 보여 줘요. 표의 키가 아닌 호스트는 키로 `301` 이동하고, 항목이 없는 호스트나 테넌트 하위 도메인은 그냥 404 예요. 모르는 언어도 404 예요. 두 페이지는 같은 표를 읽고 서버가 정한 값을 서버가 계산한 그대로 보여 줘요.
-- 읽는 것: 코드 안의 표뿐이에요. `feedback_token` 은 주지 않아요.
+- 읽는 것: 코드 안의 표, 그리고 제보 스위치가 켜져 있을 때만 그 사이트의 공개된 저장 제보예요. `feedback_token` 은 주지 않아요.
 - 참고용이며 보장이 아니에요. 기록은 사이트 자신의 문서가 읽은 날에 말한 것일 뿐이에요. 사이트의 현재 규칙과 사용자의 지시가 먼저이고, 기록이 없다는 것은 아무것도 증명하지 않아요.
 
 ## 다음 계약: 질문·경험 네트워크

@@ -368,16 +368,54 @@ ROUTE_LINE_NOTICE = "Case record, not advice."
 
 # Shared hosting suffixes: a.github.io and b.github.io are different owners. scripts/verify_official_paths.py uses this
 # same set and registrable(), so curation checks and these rules agree on who owns a domain.
-PRIVATE_SUFFIXES = frozenset({"github.io", "gitbook.io", "readthedocs.io", "netlify.app", "vercel.app", "pages.dev"})
+PRIVATE_SUFFIXES = frozenset({
+    "github.io", "gitbook.io", "readthedocs.io", "netlify.app", "vercel.app", "pages.dev",
+    "gitlab.io", "herokuapp.com", "blogspot.com", "web.app", "firebaseapp.com", "workers.dev", "fly.dev", "onrender.com",
+    "cloudfront.net", "azurewebsites.net", "azurestaticapps.net", "appspot.com", "glitch.me", "ngrok-free.app",
+    "trycloudflare.com",
+})
+
+# Two-label public suffixes that ahn.service.PUBLIC_SUFFIXES_2 does not list (that set serves the lookup verdict and stays as it
+# is). Here they only decide who owns a name: a report under one of them is refused (route_host), and no stored row under one is
+# read into a site's answer (registrable, key_candidates). A fixed list in code: no public suffix list is downloaded or bundled.
+_US_STATES = ("ak al ar az ca co ct dc de fl ga hi ia id il in ks ky la ma md me mi mn mo ms mt nc nd ne nh nj nm nv ny oh ok or pa "
+              "ri sc sd tn tx ut va vt wa wi wv wy as gu mp pr vi").split()
+_CANADIAN_PROVINCES = "ab bc mb nb nl ns nt nu on pe qc sk yk".split()
+EXTRA_PUBLIC_SUFFIXES_2 = frozenset({
+    # United Kingdom (co, org, ac, gov, me and police are in PUBLIC_SUFFIXES_2)
+    "sch.uk", "ltd.uk", "plc.uk", "net.uk",
+    # United States (<state>.us) and Canada (<province>.ca)
+    *(f"{label}.us" for label in _US_STATES), *(f"{label}.ca" for label in _CANADIAN_PROVINCES),
+    # Singapore, Germany, France and other countries with a common second level
+    "gov.sg", "edu.sg", "net.sg", "org.sg", "per.sg", "com.de", "com.fr", "asso.fr", "gouv.fr", "nom.fr",
+    "asn.au", "id.au", "ac.nz", "govt.nz", "net.nz", "school.nz", "geek.nz",
+    "ad.jp", "ed.jp", "gr.jp", "lg.jp", "es.kr", "hs.kr", "ms.kr", "sc.kr", "re.kr", "pe.kr", "kg.kr",
+    "edu.cn", "ac.cn", "org.tw", "net.tw", "edu.tw", "gov.tw", "idv.tw", "org.hk", "net.hk", "edu.hk", "gov.hk", "idv.hk",
+    "ac.in", "edu.in", "res.in", "firm.in", "gen.in", "ind.in", "nic.in", "net.br", "edu.br", "mil.br",
+    "org.mx", "gob.mx", "edu.mx", "net.mx", "gob.ar", "org.ar", "net.ar", "edu.ar", "gov.ar", "org.za", "gov.za", "ac.za", "net.za",
+    "org.il", "ac.il", "gov.il", "net.il", "muni.il", "k12.il", "org.tr", "net.tr", "gov.tr", "edu.tr", "k12.tr",
+    "or.id", "go.id", "ac.id", "web.id", "sch.id", "org.my", "gov.my", "edu.my", "net.my", "or.th", "go.th", "ac.th", "in.th",
+    "org.vn", "gov.vn", "edu.vn", "net.vn", "org.ph", "gov.ph", "edu.ph", "net.ph", "org.pl", "net.pl", "gov.pl", "edu.pl",
+    "org.es", "nom.es", "gob.es", "edu.es", "org.pt", "gov.pt", "edu.pt", "com.ru", "org.ru", "net.ru",
+    "com.ua", "org.ua", "gov.ua", "edu.ua", "net.ua", "com.eg", "com.sa", "com.ng", "com.pk", "com.bd", "com.co", "com.pe", "com.uy",
+    "com.cy", "co.ke", "co.ug", "co.tz",
+    # Names under which many unrelated parties register (CentralNic and similar)
+    "co.com", "uk.com", "us.com", "eu.com",
+})
+
+
+def in_suffixes(name: str) -> bool:
+    """True when ``name`` is a two-label public suffix (co.uk, sch.uk, ca.us) or a shared hosting suffix (github.io, herokuapp.com)."""
+    from .service import PUBLIC_SUFFIXES_2
+
+    return name in PUBLIC_SUFFIXES_2 or name in EXTRA_PUBLIC_SUFFIXES_2 or name in PRIVATE_SUFFIXES
 
 
 def registrable(host: str) -> str:
     """The registrable domain of a host: the last two labels, or three under a two-label public suffix (co.uk) or a shared
     hosting suffix (github.io)."""
-    from .service import PUBLIC_SUFFIXES_2
-
     labels = host.lower().rstrip(".").split(".")
-    if len(labels) >= 3 and (".".join(labels[-2:]) in PUBLIC_SUFFIXES_2 or ".".join(labels[-2:]) in PRIVATE_SUFFIXES):
+    if len(labels) >= 3 and in_suffixes(".".join(labels[-2:])):
         return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 
@@ -388,20 +426,33 @@ def route_host(site_host: str) -> str | None:
     from .service import aggregate_eligible_host, policy_host
 
     host = policy_host(valid_host(site_host))
+    listed = government_site(host)
+    if listed is not None:  # a listed government site kept under its own full name, never under a parent
+        return listed
     if suffix_name(host):  # co.uk, github.io or www.co.uk names no one site
         return None
     return host if aggregate_eligible_host(host) else None
 
 
-def suffix_name(host: str) -> bool:
-    """True for a two-label public suffix (co.uk, gov.uk), a shared hosting suffix (github.io) or "www." in front of one
-    (www.co.uk). Such a name is not one site: nothing is kept under it (route_host) and stored rows under it are never read."""
-    from .service import PUBLIC_SUFFIXES_2
+# Government sites that live one level below a government apex (a state's own site for one service) and are the site people
+# actually use. A listed name is kept under exactly that name, as if it were an apex: not under the parent (nj.gov), and no other
+# subdomain of the parent gains anything from it. Each entry must end in ".gov". Add a name only after checking that the parent
+# is on the official list of .gov domains and that the parent's own pages link to the name. Its "www." alias is the same site.
+GOVERNMENT_SITE_HOSTS = frozenset({"unclaimedproperty.nj.gov"})
 
+
+def government_site(host: str) -> str | None:
+    """The listed government site name (GOVERNMENT_SITE_HOSTS) that ``host`` is, or that it is the ``www.`` alias of; else None.
+    Only that one alias: any other subdomain of a listed name, and any parent of it, is not the site."""
+    name = host[4:] if host.startswith("www.") else host
+    return name if name in GOVERNMENT_SITE_HOSTS else None
+
+
+def suffix_name(host: str) -> bool:
+    """True for a two-label public suffix (co.uk, gov.uk, sch.uk), a shared hosting suffix (github.io) or "www." in front of one
+    (www.co.uk). Such a name is not one site: nothing is kept under it (route_host) and stored rows under it are never read."""
     labels = host.split(".")
-    rest = ".".join(labels[1:])
-    return host in PUBLIC_SUFFIXES_2 or host in PRIVATE_SUFFIXES or (labels[0] == "www" and (rest in PUBLIC_SUFFIXES_2
-                                                                                           or rest in PRIVATE_SUFFIXES))
+    return in_suffixes(host) or (labels[0] == "www" and in_suffixes(".".join(labels[1:])))
 
 
 # The one exception to the link rule (D120): a curated entry may carry a reviewed page whose path has a long identifier (a retail
@@ -693,7 +744,7 @@ def tenant_host(host: str) -> bool:
     from .service import aggregate_eligible_host, policy_host
 
     host = policy_host(host)
-    if aggregate_eligible_host(host):
+    if aggregate_eligible_host(host) or government_site(host) is not None:
         return False
     labels = host.split(".")
     apex = registrable(host)
@@ -703,7 +754,11 @@ def tenant_host(host: str) -> bool:
 
 def key_candidates(host: str) -> list[str]:
     """The names that may answer for ``host``, nearest first: the host itself, then each parent down to its registrable domain
-    (registrable), never above it: bbc.co.uk never climbs to co.uk, a.github.io never to github.io."""
+    (registrable), never above it: bbc.co.uk never climbs to co.uk, a.github.io never to github.io. A listed government site
+    (GOVERNMENT_SITE_HOSTS, with its www. alias) answers for its own name alone."""
+    listed = government_site(host)
+    if listed is not None:
+        return [listed]
     labels = host.split(".")
     floor = len(registrable(host).split("."))
     return [".".join(labels[index:]) for index in range(max(1, len(labels) - floor + 1))]

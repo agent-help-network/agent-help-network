@@ -77,7 +77,7 @@ def add_write_routes(app, settings) -> None:
     from .task_route_intake import submit_task_route, withdraw_task_route
     from .tool_metrics import is_mcp_metric_request
 
-    from .lookup_signals import ORIGIN_HEADER, clean_address
+    from .lookup_signals import ORIGIN_HEADER, clean_address, limiter_network
 
     def internal_hop(request: Request) -> bool:
         return bool(request.client and request.client.host in {"127.0.0.1", "::1"}
@@ -85,12 +85,15 @@ def add_write_routes(app, settings) -> None:
 
     class ReportLimiter(RequestLimiter):
         """The per-client report limit for both ways in. On the MCP adapter's loopback hop the client is the address the adapter
-        passes on (ORIGIN_HEADER, honoured only on that authenticated hop); without one, every such report shares one slot set."""
+        passes on (ORIGIN_HEADER, honoured only on that authenticated hop); without one, every such report shares one slot set.
+        An IPv6 client counts by its /64, as source_digest does, so one subscriber cannot take a fresh slot set per address;
+        an IPv4 client counts by its address."""
 
         def client_key(self, request: Request) -> str:
             if internal_hop(request):
-                return "mcp:" + (clean_address(request.headers.get(ORIGIN_HEADER, "")) or "unknown")
-            return RequestLimiter.client_key(request)
+                origin = clean_address(request.headers.get(ORIGIN_HEADER, ""))
+                return "mcp:" + (limiter_network(origin) if origin else "unknown")
+            return limiter_network(RequestLimiter.client_key(request))
 
     # Its own limiter, as tight as the observation one: a few reports a minute per client, over REST and over MCP alike.
     limiter = ReportLimiter(per_client=3, total=20)
