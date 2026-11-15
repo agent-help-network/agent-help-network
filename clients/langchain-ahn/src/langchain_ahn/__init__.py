@@ -15,6 +15,9 @@ Two ways to use it:
     from langchain_ahn import AHNLookupTool
 
     agent = create_agent(model, tools=[fetch_page, AHNLookupTool()])
+
+    # 3. A tool that reads the task routes recorded for a site (0.2.4; needs ahn-client 0.6.10 or newer).
+    from langchain_ahn import AHNTaskRouteTool
 """
 
 from ahn_client.langchain import (
@@ -23,12 +26,14 @@ from ahn_client.langchain import (
     handle_tool_call,
 )
 
-from .tools import AHNLookupInput, AHNLookupTool, format_result
+from .tools import AHNLookupInput, AHNLookupTool, AHNTaskRouteInput, AHNTaskRouteTool, format_result
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 __all__ = [
     "AHNLookupInput",
     "AHNLookupTool",
+    "AHNTaskRouteInput",
+    "AHNTaskRouteTool",
     "ahandle_tool_call",
     "ahn_tool_failure_middleware",
     "format_result",

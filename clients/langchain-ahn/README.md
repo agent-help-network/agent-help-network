@@ -83,6 +83,19 @@ Only a request like `GET https://agenthelpnetwork.com/v1/incidents/check?site_ho
 - No prompts, model output or tool arguments other than the hostname.
 - Nothing is sent for private-looking names (local, address-literal or single-label names, by their spelling; there is no DNS check on your side), for a hostname that contains whitespace or control characters, for `agenthelpnetwork.com` itself, for hosts in `AHN_CLIENT_SKIP_HOSTS` (comma separated), or at all when `AHN_CLIENT_DISABLE=1`.
 
+## Task routes (0.2.4)
+
+`AHNTaskRouteTool` is a second tool the model can call to read the task routes the service records for a site (`GET /v1/task-routes`): which route past an obstacle was tried or worked for which task, as closed values only.
+
+```python
+from langchain_ahn import AHNTaskRouteTool
+
+tool = AHNTaskRouteTool()
+print(tool.invoke({"hostname": "example.com", "task_kind": "refund_request"}))
+```
+
+The input is `hostname` and, optionally, one `task_kind`. The output is one summary line, a blank line, then a small JSON object (`site_host`, `available`, `records`, `routes`, `notice`). A record is a case record, not advice for the next task. Only the hostname and the `task_kind` are sent. A service that does not serve task routes, a network error and a slow lookup (2 seconds at most) give a plain "no answer" text, never an exception. With an older `ahn-client` that has no `task_routes` (before 0.6.10) the tool says it is not available; the dependency range of this package is unchanged. `AHNLookupTool` is unchanged.
+
 ## What the service does with a hostname
 
 The model chooses the `hostname` of `AHNLookupTool`, so it can name a host the service has not seen. When it first sees a host, the Agent Help Network **server** resolves the name through DNS and reads that site's `robots.txt` and `llms.txt` (in the background, never from your machine). If your environment restricts which hostnames may leave it, treat the tool's input as outbound data and filter it (for example with `AHN_CLIENT_SKIP_HOSTS`).

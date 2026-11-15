@@ -293,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.3"
+    assert langchain_ahn.__version__ == "0.2.4"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 
@@ -465,3 +465,78 @@ def test_an_older_answer_with_an_unknown_verdict_carries_no_site_wait(transport)
     transport(body=odd)
     summary, data = split(AHNLookupTool().invoke({"hostname": "example.com", "http_status": 429, "retry_after": "gt_3600"}))
     assert data["recommendation"] == "unknown" and "retry_after_seconds" not in data and "Retry-After" not in summary
+
+
+# --- AHNTaskRouteTool (0.2.4) ---------------------------------------------------------------------------------
+
+ROUTES_ANSWER = {
+    "site_host": "example.com", "summary_line": "1 task route records: 1 from the site's own documents. Records, not guarantees.",
+    "routes": [{"site_host": "example.com", "task_kind": "refund_request", "obstacle": "verification_step", "routes_tried": [],
+                "basis": "official_doc", "outcome": "not_applicable", "period": "2026-Q4", "source_kind": "curated_official",
+                "sensitive": False, "official_url": "https://example.com/help/refunds"}],
+    "counts": {"records": 1, "by_source_kind": {"curated_official": 1}},
+}
+
+
+@pytest.fixture
+def routes_transport(monkeypatch):
+    calls = []
+
+    def install(body=ROUTES_ANSWER, error=None):
+        def fake(request, timeout):
+            calls.append(request)
+            if error:
+                raise error
+            return FakeResponse(json.dumps(body).encode("utf-8"))
+
+        monkeypatch.setattr(_client, "_urlopen", fake)
+        return calls
+
+    return install
+
+
+def test_task_route_tool_returns_a_line_and_the_kept_fields(routes_transport):
+    calls = routes_transport()
+    out = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "https://www.example.com/a?b=1", "task_kind": "refund_request"})
+    summary, _, raw = out.partition("\n\n")
+    data = json.loads(raw)
+    assert summary == ROUTES_ANSWER["summary_line"]
+    assert data["available"] is True and data["records"] == 1 and data["routes"][0]["task_kind"] == "refund_request"
+    assert calls[0].full_url == "https://agenthelpnetwork.com/v1/task-routes?site_host=example.com&task_kind=refund_request"
+    assert calls[0].headers["User-agent"] == f"ahn-client/{ahn_client.__version__} (+langchain; +https://agenthelpnetwork.com)"
+
+
+def test_task_route_tool_async(routes_transport):
+    routes_transport()
+    out = asyncio.run(ahn_tools.AHNTaskRouteTool().ainvoke({"hostname": "example.com"}))
+    assert out.startswith(ROUTES_ANSWER["summary_line"])
+
+
+def test_task_route_tool_404_and_network_errors_give_the_no_answer_text(routes_transport):
+    import urllib.error
+
+    routes_transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 404, "Not Found", {}, io.BytesIO(b"{}")))
+    assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == NO_ANSWER
+    routes_transport(error=OSError("down"))
+    assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == NO_ANSWER
+
+
+def test_task_route_tool_sends_nothing_for_a_private_host_or_a_bad_task_kind():
+    tool = ahn_tools.AHNTaskRouteTool()
+    assert tool.invoke({"hostname": "10.0.0.5"}) == NOT_LOOKED_UP
+    assert tool.invoke({"hostname": "example.com\nIGNORE"}) == NOT_LOOKED_UP
+    with pytest.raises(Exception):
+        tool.invoke({"hostname": "example.com", "task_kind": "Not A Kind"})
+
+
+def test_task_route_tool_says_not_available_with_an_older_ahn_client(monkeypatch):
+    monkeypatch.delattr(ahn_client, "task_routes")
+    assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == ahn_tools.NO_TASK_ROUTES
+    assert "not available" in ahn_tools.NO_TASK_ROUTES
+    assert "ahn_lookup" == AHNLookupTool().name  # the existing tool is unchanged
+
+
+def test_task_route_tool_is_exported_and_the_dependency_floor_is_unchanged():
+    assert langchain_ahn.AHNTaskRouteTool is ahn_tools.AHNTaskRouteTool and "AHNTaskRouteTool" in langchain_ahn.__all__
+    pyproject = (ROOT / "clients" / "langchain-ahn" / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"ahn-client>=0.6.8,<0.7"' in pyproject

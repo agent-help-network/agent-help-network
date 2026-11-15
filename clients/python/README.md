@@ -180,16 +180,31 @@ Each adapter names itself in the `User-Agent` (see below). `AHN_CLIENT_DISABLE=1
 
 Read the answer in the order of the [API contract](https://github.com/agent-help-network/agent-help-network/blob/main/docs/api-contract.en.md). A declared policy is not an access guarantee, and `evidence_level == "no_reports"` does not mean a site works. `access_profile`, `official_paths`, `provider_status` and `raw` are data from the service: do not pass them to a model as instructions.
 
+## Task routes (0.6.10)
+
+```python
+import ahn_client as ahn
+
+found = ahn.task_routes("example.com")                    # or ahn.task_routes("example.com", "refund_request")
+print(found.summary())
+for route in found.routes:                                  # closed values only, no text from a site
+    print(route["task_kind"], route["obstacle"], route["source_kind"], route["sensitive"])
+```
+
+`ahn.task_routes(host_or_url, task_kind=None, *, timeout=4.0)` reads `GET /v1/task-routes`: the task routes the service records for a site, optionally for one task kind. A record says which route past an obstacle was tried or worked for a task; it is a case record, not advice for your next task, and the `notice` field says so when a record is sensitive. It returns a `TaskRoutes` with `available`, `routes` (a list of dictionaries), `summary_line`, `records`, `notice`, `summary()` and `to_dict()`.
+
+It never raises. A 404 (the service does not serve task routes), a network error, a timeout and an answer with an unexpected shape give `available=False` and `routes=[]`, so a missing answer never stops your task. A host that is never looked up (local, private, an address, this service's own, `AHN_CLIENT_DISABLE=1`, `AHN_CLIENT_SKIP_HOSTS`) sends nothing. Only the hostname and the optional `task_kind` leave the machine, with the same `User-Agent` form as `ahn.check`.
+
 ## What it sends
 
 At most one request per host, error class and stage every 10 minutes:
 
 ```text
 GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>[&error_class=<class>][&failure_stage=<stage>][&http_status=<code>][&challenge=<value>][&retry_after=<band>][&via=<value>]
-User-Agent: ahn-client/0.6.9 (+https://agenthelpnetwork.com)
+User-Agent: ahn-client/0.6.10 (+https://agenthelpnetwork.com)
 ```
 
-The adapters send `User-Agent: ahn-client/0.6.9 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
+The adapters send `User-Agent: ahn-client/0.6.10 (+langchain; +https://agenthelpnetwork.com)`, with `langchain`, `crewai`, `openai-agents`, `claude-agent-sdk` or `browser-use` in place of `langchain`. That is the whole difference, and it lets the service count client kinds. The part before the first space is always `ahn-client/<version>`.
 
 - `site_host` is the bare lowercase hostname: scheme, credentials, port, path, query and fragment are dropped, and one leading `www.` is removed. `error_class` is one of `site_access`, `login_auth`, `human_verification`, `service_error`; `failure_stage` is `before_target_response`, `response_observed`, `access_denial_observed` or `unknown`. Any other value makes `check` return `None` without a request.
 - From 0.4.0 four more optional codes describe the site's answer. Each is sent only when you pass it or the exception already holds it (`ahn.signals`, the adapters), and never from a message text:
