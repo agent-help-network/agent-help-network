@@ -80,7 +80,7 @@ def test_connect_page_paragraph_follows_the_switch():
         on_ = page(lang, True)
         assert "find_task_route" in on_ and "/v1/task-routes?site_host=ikea.com" in on_
     assert "records, not a guarantee and not advice" in page("en", True)
-    assert "It does not change what check_incident recommends." in page("en", True)
+    assert "find_task_route does not change what check_incident recommends." in page("en", True)
     assert "check_incident 의 권고도 바꾸지 않습니다." in page("ko", True)
 
 
@@ -93,7 +93,7 @@ def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     assert "If the server also lists `find_task_route`, call it once for that task when you start a customer task" in cursor and "If it is not listed, carry on as usual" in cursor
     assert "does not change when to call `check_incident` or what `check_incident` recommends" in install
     assert "does not change when to call `check_incident` or what `check_incident` recommends" in cursor
-    assert "It does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged" in read(PLUGIN / "README.md")
+    assert "`find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged" in read(PLUGIN / "README.md")
     skill = read(PLUGIN / "skills" / "ahn-lookup" / "SKILL.md")
     assert "When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice)." in skill
     assert "The answer never changes check_incident's `recommendation.action`." in skill
