@@ -52,4 +52,4 @@ If `find_task_route` is listed, call it once for that task when you start a cust
 - `check_incident` is read-only and sends only the hostname and fixed codes. It creates no report and changes nothing.
 - `rate_last_lookup` is optional and sends a short report: after a lookup that returned a `feedback_token` and a retry, say once whether it worked. It sends the one-time token and the outcome, no hostname.
 - `report_observation` is optional and sends a report to private review; it is not published at once. Use it only with the user's explicit approval, never automatically.
-- If the operator turns on task routes, the server also lists the read-only `find_task_route`; it is not served otherwise.
+- `find_task_route` is read-only and is listed at agenthelpnetwork.com. A server you run yourself lists it only when the operator turns on task routes (`AHN_TASK_ROUTES=1` with `AHN_TASK_ROUTES_SINCE`); it is not served otherwise. It cannot submit anything.
