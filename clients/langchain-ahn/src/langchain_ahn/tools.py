@@ -170,32 +170,66 @@ class AHNLookupTool(BaseTool):
             return _unexpected(error)
 
 
+TASK_KINDS = (
+    "claim_unclaimed_property",
+    "warranty_claim",
+    "warranty_dispute",
+    "refund_request",
+    "return_or_exchange",
+    "cancel_subscription",
+    "account_closure",
+    "account_recovery",
+    "portal_login",
+    "address_or_profile_change",
+    "appointment_booking",
+    "appointment_change_or_cancel",
+    "records_request",
+    "complaint_filing",
+    "billing_dispute",
+    "fee_waiver_or_adjustment",
+    "insurance_claim",
+    "government_benefit_application",
+    "tax_or_government_filing",
+    "id_or_license_renewal",
+    "accommodation_request",
+    "prescription_refill",
+    "document_submission",
+    "other",
+)
+NOT_SERVED = (
+    "Task routes are not served by this deployment of Agent Help Network. That says nothing about the site. "
+    "Nothing else was sent; continue with your own judgment."
+)
 NO_TASK_ROUTES = (
     "Task routes are not available: this installation has an older ahn-client without task_routes. "
     "Nothing was sent; continue with your own judgment."
 )
 TASK_ROUTES_DESCRIPTION = (
     "Read the task routes Agent Help Network records for a public website: which route past an obstacle was tried or "
-    "worked for which kind of task, as fixed values only. Call it before a task that needs the site's own account, "
-    "form or verification step. Optionally pass task_kind to narrow it. Read-only. Only the hostname and task_kind are "
-    "sent, never a URL path, query or content. A record is a case record, not advice for your next task, and it never "
-    "explains how to get around a site's controls. If the service has no answer it says so."
+    "worked for which kind of task, as fixed values only. Call it once when you start a multi-step customer task "
+    "(a refund, a cancellation, a billing question and the like) or when your way forward is blocked, not before every "
+    "step. Optionally pass task_kind to narrow it. Read-only. Only the hostname and task_kind are sent, never a URL "
+    "path, query or content. Records, not guarantees: a record is a case record, not advice for your next task, and an "
+    "empty list does not mean there is no route. It never explains how to get around a site's controls. If the "
+    "service has no answer it says so."
 )
 
 
 class AHNTaskRouteInput(BaseModel):
-    """Arguments of the task-route lookup. Only these leave the machine."""
+    """Arguments of the task-route lookup. Only these leave the machine. ``TASK_KINDS`` is the service's list of task
+    kinds; a test in the main repository checks the two lists are the same."""
 
     hostname: str = Field(description="The public hostname of the site, for example 'example.com'. Do not include a path or query.")
-    task_kind: Optional[str] = Field(
-        default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$",
-        description="Optional: one kind of task to narrow the answer (a lowercase word such as 'refund_request'). Leave out to see all.")
+    task_kind: Optional[Literal[TASK_KINDS]] = Field(  # type: ignore[valid-type]
+        default=None,
+        description="Optional: one kind of task to narrow the answer. Leave out to see all kinds.")
 
 
 def format_task_routes(found: Any) -> str:
-    """One summary line, a blank line, then a JSON object of the validated fields ``ahn_client.task_routes`` kept."""
+    """One summary line, a blank line, then a JSON object of the validated fields ``ahn_client.task_routes`` kept.
+    Records, not guarantees: an empty ``routes`` list does not mean there is no route."""
     if not getattr(found, "available", False):
-        return NO_ANSWER
+        return NOT_SERVED if getattr(found, "reason", None) == "not_served" else NO_ANSWER
     data = found.to_dict()
     body = {key: data[key] for key in ("site_host", "available", "records", "routes", "notice") if key in data}
     return f"{found.summary()}\n\n{json.dumps(body, ensure_ascii=True, sort_keys=True)}"
@@ -212,7 +246,7 @@ def _route_target(hostname: Any, task_kind: Any) -> Any:
 
 
 class AHNTaskRouteTool(BaseTool):
-    """Read the task routes Agent Help Network records for a site (read-only)."""
+    """Read the task routes Agent Help Network records for a site (read-only). Records, not guarantees; an empty list does not mean there is no route."""
 
     name: str = "ahn_task_routes"
     description: str = TASK_ROUTES_DESCRIPTION

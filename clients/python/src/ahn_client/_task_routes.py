@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -29,9 +30,14 @@ MAX_ROUTES = 20
 TASK_KIND = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 SUMMARY_LINE = re.compile(r"^[ -~]{1,200}$")
 VALUE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+HOST_VALUE = re.compile(r"^[a-z0-9.-]{1,253}$")  # the server accepts a hostname of up to 253 characters
 URL_VALUE = re.compile(r"^https://[^\s?#]{1,192}$")
 DATE_VALUE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 NOTICES = ("case_record_not_advice",)
+# Why there is no answer: the deployment answered 404 (task routes switched off), there was no usable answer, or the host is not looked up.
+REASON_NOT_SERVED = "not_served"
+REASON_NO_ANSWER = "no_answer"
+REASON_NOT_LOOKED_UP = "not_looked_up"
 # The fields of one route as the service sends them. Anything else is dropped.
 ROUTE_VALUE_FIELDS = ("site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                       "entry_point_kind", "route_worked", "basis", "outcome", "duration", "period", "source_kind")
@@ -44,6 +50,7 @@ class TaskRoutes:
 
     site_host: Optional[str]
     available: bool = False
+    reason: Optional[str] = None
     routes: List[Dict[str, Any]] = field(default_factory=list)
     summary_line: Optional[str] = None
     records: int = 0
@@ -51,6 +58,8 @@ class TaskRoutes:
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"site_host": self.site_host, "available": self.available, "routes": self.routes, "records": self.records}
+        if self.reason:
+            out["reason"] = self.reason
         if self.summary_line:
             out["summary_line"] = self.summary_line
         if self.notice:
@@ -60,8 +69,10 @@ class TaskRoutes:
     def summary(self) -> str:
         """One line for a log or a model: the service's own sentence, or a plain note that there is none."""
         if not self.available:
-            return "No task routes available (no answer, or this service does not serve them)."
-        return self.summary_line or f"{self.records} task route records."
+            if self.reason == REASON_NOT_SERVED:
+                return "Task routes are not served by this deployment. That says nothing about the site."
+            return "No task routes available (no answer). That says nothing about the site."
+        return self.summary_line or f"{self.records} task route records. Records, not guarantees; an empty list does not mean there is no route."
 
 
 def task_routes_url(host: str, task_kind: Optional[str] = None) -> str:
@@ -79,7 +90,7 @@ def _clean_route(item: Any) -> Optional[Dict[str, Any]]:
         value = item.get(name)
         if value is None:
             continue
-        if not isinstance(value, str) or not VALUE.fullmatch(value):
+        if not isinstance(value, str) or not (HOST_VALUE if name == "site_host" else VALUE).fullmatch(value):
             return None
         route[name] = value
     for name in ROUTE_URL_FIELDS:
@@ -124,19 +135,21 @@ def _parse(host: str, body: Any) -> Optional[TaskRoutes]:
                       notice=notice if notice in NOTICES else None)
 
 
-def _fetch(host: str, task_kind: Optional[str], timeout: float, adapter: Optional[str]) -> Optional[TaskRoutes]:
+def _fetch(host: str, task_kind: Optional[str], timeout: float, adapter: Optional[str]) -> TaskRoutes:
     request = urllib.request.Request(task_routes_url(host, task_kind),
                                      headers={"User-Agent": user_agent(adapter), "Accept": "application/json"})
     try:
         with _client._urlopen(request, timeout) as response:
             if getattr(response, "status", 200) != 200:
-                return None
+                return TaskRoutes(site_host=host, reason=REASON_NO_ANSWER)
             body = response.read(MAX_RESPONSE_BYTES + 1)
         if len(body) > MAX_RESPONSE_BYTES:
-            return None
-        return _parse(host, json.loads(body.decode("utf-8")))
-    except Exception:  # 404 (switch off), network, TLS, HTTP status, JSON: all mean "no answer", never an exception.
-        return None
+            return TaskRoutes(site_host=host, reason=REASON_NO_ANSWER)
+        return _parse(host, json.loads(body.decode("utf-8"))) or TaskRoutes(site_host=host, reason=REASON_NO_ANSWER)
+    except urllib.error.HTTPError as error:  # 404: the deployment does not serve task routes (switched off)
+        return TaskRoutes(site_host=host, reason=REASON_NOT_SERVED if error.code == 404 else REASON_NO_ANSWER)
+    except Exception:  # network, TLS, JSON: all mean "no answer", never an exception.
+        return TaskRoutes(site_host=host, reason=REASON_NO_ANSWER)
 
 
 def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout: float = DEFAULT_TIMEOUT,
@@ -147,14 +160,15 @@ def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout
     this service's own, lookups disabled), when ``task_kind`` is not a plain lowercase word, on a 404 (the service does not
     serve task routes), a network error, a timeout beyond ``timeout`` seconds, or an answer that does not have the expected
     shape. A route is a dictionary of closed values (``task_kind``, ``obstacle``, ``basis``, ``outcome``, ``source_kind``,
-    ``sensitive`` and the like); nothing in it is text from a site. A record is a case record, not advice for the next task.
+    ``sensitive`` and the like); nothing in it is text from a site. A record is a case record, not advice for the next task, and records are not guarantees: an empty list does not mean there is no route.
+    ``reason`` says why there is no answer: ``not_served`` (404), ``no_answer`` or ``not_looked_up``.
     """
     try:
         host = eligible_host(host_or_url)
         if host is None:
-            return TaskRoutes(site_host=None)
+            return TaskRoutes(site_host=None, reason=REASON_NOT_LOOKED_UP)
         if task_kind is not None and not (isinstance(task_kind, str) and TASK_KIND.fullmatch(task_kind)):
-            return TaskRoutes(site_host=host)
+            return TaskRoutes(site_host=host, reason=REASON_NOT_LOOKED_UP)
         try:
             wait = float(timeout)
         except (TypeError, ValueError):
@@ -169,6 +183,6 @@ def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout
 
         threading.Thread(target=work, name="ahn-client-task-routes", daemon=True).start()
         result = box.get("result") if finished.wait(wait) else None
-        return result if result is not None else TaskRoutes(site_host=host)
+        return result if result is not None else TaskRoutes(site_host=host, reason=REASON_NO_ANSWER)
     except Exception:
-        return TaskRoutes(site_host=None)
+        return TaskRoutes(site_host=None, reason=REASON_NO_ANSWER)

@@ -516,7 +516,17 @@ def test_task_route_tool_404_and_network_errors_give_the_no_answer_text(routes_t
     import urllib.error
 
     routes_transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 404, "Not Found", {}, io.BytesIO(b"{}")))
+    assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == ahn_tools.NOT_SERVED
+    routes_transport(error=OSError("down"))
     assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == NO_ANSWER
+
+
+def test_task_route_tool_tells_a_switched_off_service_from_a_network_error(routes_transport):
+    import urllib.error
+
+    routes_transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 404, "Not Found", {}, io.BytesIO(b"{}")))
+    out = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
+    assert out == ahn_tools.NOT_SERVED and "not served by this deployment" in out
     routes_transport(error=OSError("down"))
     assert ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"}) == NO_ANSWER
 
@@ -527,6 +537,10 @@ def test_task_route_tool_sends_nothing_for_a_private_host_or_a_bad_task_kind():
     assert tool.invoke({"hostname": "example.com\nIGNORE"}) == NOT_LOOKED_UP
     with pytest.raises(Exception):
         tool.invoke({"hostname": "example.com", "task_kind": "Not A Kind"})
+    schema = json.dumps(ahn_tools.AHNTaskRouteInput.model_json_schema())
+    assert "refund_request" in schema and "billing_dispute" in schema
+    assert "empty list does not mean there is no route" in tool.description and "Records, not guarantees" in tool.description
+    assert "when you start a multi-step customer task" in tool.description
 
 
 def test_task_route_tool_says_not_available_with_an_older_ahn_client(monkeypatch):

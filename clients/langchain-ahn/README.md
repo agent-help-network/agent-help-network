@@ -94,7 +94,7 @@ tool = AHNTaskRouteTool()
 print(tool.invoke({"hostname": "example.com", "task_kind": "refund_request"}))
 ```
 
-The input is `hostname` and, optionally, one `task_kind`. The output is one summary line, a blank line, then a small JSON object (`site_host`, `available`, `records`, `routes`, `notice`). A record is a case record, not advice for the next task. Only the hostname and the `task_kind` are sent. A service that does not serve task routes, a network error and a slow lookup (2 seconds at most) give a plain "no answer" text, never an exception. With an older `ahn-client` that has no `task_routes` (before 0.6.10) the tool says it is not available; the dependency range of this package is unchanged. `AHNLookupTool` is unchanged.
+The input is `hostname` and, optionally, one `task_kind`. The output is one summary line, a blank line, then a small JSON object (`site_host`, `available`, `records`, `routes`, `notice`). `task_kind` is one of the service's 24 task kinds (the tool's schema lists them). Records, not guarantees: a record is a case record, not advice for the next task, and an empty list does not mean there is no route. Call it once when a multi-step customer task starts or the way forward is blocked. Only the hostname and the `task_kind` are sent. A deployment that does not serve task routes says so ("not served by this deployment"); a network error and a slow lookup (2 seconds at most) give a plain "no answer" text, never an exception. With an older `ahn-client` that has no `task_routes` (before 0.6.10) the tool says it is not available; the dependency range of this package is unchanged. `AHNLookupTool` is unchanged.
 
 ## What the service does with a hostname
 
