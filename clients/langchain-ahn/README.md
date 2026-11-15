@@ -85,7 +85,7 @@ Only a request like `GET https://agenthelpnetwork.com/v1/incidents/check?site_ho
 
 ## Task routes (0.2.4)
 
-`AHNTaskRouteTool` is a second tool the model can call to read the task routes the service records for a site (`GET /v1/task-routes`): which route past an obstacle was tried or worked for which task, as closed values only.
+`AHNTaskRouteTool` is a second tool the model can call to read the task routes the service records for a site (`GET /v1/task-routes`): for a kind of customer task, an obstacle and the route the site's own documents name, as closed values only. Records exist for some sites only.
 
 ```python
 from langchain_ahn import AHNTaskRouteTool
@@ -94,7 +94,7 @@ tool = AHNTaskRouteTool()
 print(tool.invoke({"hostname": "example.com", "task_kind": "refund_request"}))
 ```
 
-The input is `hostname` and, optionally, one `task_kind`. The output is one summary line, a blank line, then a small JSON object (`site_host`, `available`, `records`, `routes`, `notice`). `task_kind` is one of the service's 24 task kinds (the tool's schema lists them). Records, not guarantees: a record is a case record, not advice for the next task, and an empty list does not mean there is no route. Call it once when a multi-step customer task starts or the way forward is blocked. Only the hostname and the `task_kind` are sent. A deployment that does not serve task routes says so ("not served by this deployment"); a network error and a slow lookup (2 seconds at most) give a plain "no answer" text, never an exception. With an older `ahn-client` that has no `task_routes` (before 0.6.10) the tool says it is not available; the dependency range of this package is unchanged. `AHNLookupTool` is unchanged.
+The input is `hostname` and, optionally, one `task_kind`. The output is one summary line, a blank line, then a small JSON object (`site_host`, `available`, `records`, `routes`, `notice`). `task_kind` is one of the service's 24 task kinds (the tool's schema lists them). Records, not guarantees or advice (a record marked sensitive is shown as a case record), and an empty list does not mean there is no route. Call it once when a multi-step customer task starts or the way forward is blocked. Only the hostname and the `task_kind` are sent. A deployment that does not serve task routes says so ("not served by this deployment"); a network error and a slow lookup (2 seconds at most) give a plain "no answer" text, never an exception. With an older `ahn-client` that has no `task_routes` (before 0.6.10) the tool says it is not available; the dependency range of this package is unchanged. `AHNLookupTool` is unchanged.
 
 ## What the service does with a hostname
 
