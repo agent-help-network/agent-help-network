@@ -57,7 +57,7 @@
       <td>{{ row.period }}</td>
       <td>{{ row.count }}</td>
       <td>{{ row.source }}
-        {% if row.verified_at %}<span class="routes-small">{{ t.routes_checked }} {{ row.verified_at }}</span>{% endif %}
+        {% if row.verified_at %}<span class="routes-small">{{ t.routes_checked }} {{ row.verified_at }}</span>{% endif %}{% if row.condition_text %}<span class="routes-small routes-condition">{{ t.routes_condition }}: &ldquo;{{ row.condition_text }}&rdquo;</span>{% endif %}
         <span class="routes-small routes-links">{% if row.source_url %}<a href="{{ row.source_url }}" rel="nofollow noopener">{{ t.routes_source_page }}</a>{% endif %}{% if row.official_url and row.official_url != row.source_url %}<a href="{{ row.official_url }}" rel="nofollow noopener">{{ t.routes_official_page }}</a>{% endif %}</span></td>
     </tr>
     {% endfor %}

@@ -30,7 +30,9 @@ SITE_HOST_DESCRIPTION = ("The public hostname of the site whose task routes you 
 TASK_KIND_DESCRIPTION = ("Optional: one kind of customer task to look up, from the list. Leave it out to get the records for every "
                          "task kind of the site.")
 DESCRIPTION = ("Look up recorded task routes for a public hostname: for a kind of customer task (a refund, a cancellation, a booking "
-               "and so on), an obstacle and the routes the site's own documents name. Call it when you start a task of "
+               "and so on), an obstacle and the routes the site's own documents name. A record may carry condition_text, a condition the "
+               "site's page states, quoted as written: it is not our judgement, so decide yourself whether it applies to your task, with "
+               "the page at source_url. Call it when you start a task of "
                "several steps on a site and do not know which document, channel or entry point it needs. The answer is a list of "
                "records, not a guarantee and not advice; an empty list does not mean there is no route. Sends only the hostname "
                "and an optional task kind, and changes nothing. Read summary_line first.")

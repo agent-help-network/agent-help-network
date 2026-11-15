@@ -191,7 +191,7 @@ def test_a_tenant_or_account_subdomain_is_refused(api, host):
 @pytest.mark.parametrize("field, value", [
     ("source_kind", "operator_panel"), ("source_kind", "external_agent"), ("period", "2026-Q4"), ("sensitive", False),
     ("review_state", "published"), ("official_url", "https://www.example.com/help"), ("source_url", "https://www.example.com/h"),
-    ("verified_at", "2026-11-01"), ("note", "free text here"), ("received_at", "2026-11-01T00:00:00Z"),
+    ("verified_at", "2026-11-01"), ("condition_text", "Returns within 30 days"), ("note", "free text here"), ("received_at", "2026-11-01T00:00:00Z"),
 ])
 def test_a_report_that_sends_a_server_field_or_any_other_field_is_refused(api, field, value):
     settings, client = api
@@ -668,6 +668,7 @@ def test_report_task_route_checks_the_report_and_sends_only_the_report_fields():
     assert (method, path, write) == ("POST", "/v1/task-routes", True) and payload == body
     secret = "my order 123456789"
     for bad in ({**body, "source_kind": "external_agent"}, {**body, "official_url": "https://www.example.com/x"},
+                {**body, "condition_text": "Returns within 30 days"},
                 {**body, "task_kind": secret}, {**body, "note": secret}, secret):
         with pytest.raises(ToolError) as caught:
             asyncio.run(server.call_tool("report_task_route", {"report": bad}))

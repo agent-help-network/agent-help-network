@@ -3976,6 +3976,21 @@
       "basis": {
        "$ref": "#/$defs/RouteBasis"
       },
+      "condition_text": {
+       "anyOf": [
+        {
+         "maxLength": 200,
+         "minLength": 1,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "description": "A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and not classified: whether it applies to your task is for you to decide, with the page at source_url.",
+       "title": "Condition Text"
+      },
       "document_kind": {
        "anyOf": [
         {

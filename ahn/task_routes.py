@@ -205,6 +205,9 @@ TASK_ROUTE_CURATED_ONLY = (RouteSourceKind.curated_official, RouteBasis.official
 TASK_ROUTE_CURATED_ONLY_ENTRY_POINT = EntryPointKind.seller_or_provider
 # Which sources may carry a link. A public report never does (a path can name a person or a case); curation and operators may.
 TASK_ROUTE_URL_SOURCES = frozenset({RouteSourceKind.curated_official, RouteSourceKind.operator_panel})
+# The one free-text value of a record: a short quotation of the condition a site's own page states, kept for curated entries only
+# (a report has no such field). Never classified or interpreted here; whether it applies to a task is for the agent to judge.
+TASK_ROUTE_CONDITION_TEXT_MAX = 200
 # Reporting period: "quarter" (YYYY-Qn) or "month" (YYYY-MM). The server sets it; a coarser period makes a rare combination
 # harder to tie to one person. Changing the unit is this one constant.
 TASK_ROUTE_PERIOD_UNIT: Literal["quarter", "month"] = "quarter"
@@ -277,6 +280,18 @@ class TaskRoute(_TaskRouteFields):
     official_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
     source_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
     verified_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", exclude_if=_omit_none)
+    condition_text: str | None = Field(
+        default=None, min_length=1, max_length=TASK_ROUTE_CONDITION_TEXT_MAX, exclude_if=_omit_none,
+        description="A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and "
+                    "not classified: whether it applies to your task is for you to decide, with the page at source_url.")
+
+    @field_validator("condition_text")
+    @classmethod
+    def condition_text_shape(cls, value):
+        problem = condition_text_problem(value) if value is not None else None
+        if problem:
+            raise ValueError(f"invalid_task_route: condition_text {problem}")
+        return value
 
     @field_validator("verified_at")
     @classmethod
@@ -302,6 +317,8 @@ class TaskRoute(_TaskRouteFields):
             raise ValueError("invalid_task_route: basis official_doc and outcome not_applicable belong to curated_official only")
         if not curated and self.entry_point_kind == TASK_ROUTE_CURATED_ONLY_ENTRY_POINT:
             raise ValueError("invalid_task_route: this entry_point_kind belongs to curated_official only")
+        if self.condition_text is not None and not curated:
+            raise ValueError("invalid_task_route: condition_text belongs to curated_official only")
         if self.official_url is not None:
             if self.source_kind not in TASK_ROUTE_URL_SOURCES:
                 raise ValueError("invalid_task_route: this source does not carry a link")
@@ -535,6 +552,20 @@ def _listed_exceptions():
     from .task_routes_data import CURATED_URL_EXCEPTIONS
 
     return CURATED_URL_EXCEPTIONS
+
+
+def condition_text_problem(value) -> str | None:
+    """Why ``value`` may not be a record's condition_text, or None: a string of 1 to 200 characters with no space at either end
+    and no line break or other control character inside (a quotation, not a block of text)."""
+    if not isinstance(value, str):
+        return "must be a string"
+    if not value or value != value.strip():
+        return "must be 1 to %d characters with no space at either end" % TASK_ROUTE_CONDITION_TEXT_MAX
+    if len(value) > TASK_ROUTE_CONDITION_TEXT_MAX:
+        return "is longer than %d characters" % TASK_ROUTE_CONDITION_TEXT_MAX
+    if any(unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp") for char in value):
+        return "must be one line without control characters"
+    return None
 
 
 def official_url_problem(site_host: str, url, *, curated: bool = False) -> str | None:

@@ -96,12 +96,18 @@ A task route records, for a site and a kind of customer task, the obstacle an ag
 documents name for it (a cancellation taken by phone only, a claim that needs a particular form, a separate portal for one
 group of users). Add a record with `_route(...)` in `ahn/task_routes_data.py` only when the site's own page states it
 outright; a hint is left out. Read pages exactly as for consumer paths above (robots.txt first, curation user agent, the site's
-own links, nothing built by hand, no phone numbers or quoted text). Keys are apex hosts; `source_url` is the page that states
+own links, nothing built by hand, no phone numbers or quoted text, with one exception: `condition_text`). Keys are apex hosts; `source_url` is the page that states
 the route and `official_url`, when there is one, is the page the route starts from, linked from `source_url`. Both `official_url` and
 `source_url` must be plain https pages on the key's own registrable domain (a shared host such as `github.io` counts per
 site), at most 200 characters; a URL with a query, fragment, userinfo, port, six or more digits in a row, an e-mail address or
 a UUID-shaped segment is refused for either field. `verified_at` must be a real calendar date. `verified_at` is the
 day you read the page; records older than 90 days are left out of answers until re-verified.
+
+`condition_text` (optional, D124): a condition or caveat that the page at `source_url` states, copied as the page words it (a
+phrase or one sentence, 1 to 200 characters, one line; `_route()` trims spaces at either end and fails at import otherwise). Copy it
+only from a page you read; do not paraphrase, merge or sort conditions into classes, and leave it out when the page states no
+condition. It never replaces `routes_tried`, `obstacle` or any closed value: the answer shows it next to `source_url`, and the
+agent decides whether it applies to its task.
 
 One reviewed exception (D120): `CURATED_URL_EXCEPTIONS` in `ahn/task_routes_data.py` maps an exact URL to the same site's
 public index page that links it. A curated_official record may carry such a URL as `official_url` or `source_url` although its
