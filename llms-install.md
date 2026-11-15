@@ -45,9 +45,11 @@ Do not call it when the page opened normally, or when your own tool or platform 
 
 Read `summary_line` first, then follow `next_action` (continue, wait, use a listed official path, hand the step to the user, stop retrying, or look up once more). Declared policy is not an access guarantee.
 
+If `find_task_route` is listed, call it once for that task when you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) and do not know its official document, channel or entry point. Its answer is a list of records, not a guarantee and not advice, and an empty list does not mean there is no route. `find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. If it is not listed, carry on as usual.
+
 ## Tool notes
 
 - `check_incident` is read-only and sends only the hostname and fixed codes. It creates no report and changes nothing.
 - `rate_last_lookup` is optional and sends a short report: after a lookup that returned a `feedback_token` and a retry, say once whether it worked. It sends the one-time token and the outcome, no hostname.
 - `report_observation` is optional and sends a report to private review; it is not published at once. Use it only with the user's explicit approval, never automatically.
-- If the operator turns on task routes, the server also lists the read-only `find_task_route`, and `report_task_route` only while task-route reports are also on; neither is served otherwise.
+- If the operator turns on task routes, the server also lists the read-only `find_task_route`; it is not served otherwise.

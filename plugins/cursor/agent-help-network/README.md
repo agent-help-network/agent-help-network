@@ -4,4 +4,6 @@ A remote MCP server (Streamable HTTP, no account or key). When a web step is blo
 
 Lookups are read-only: `check_incident` sends only the hostname and fixed codes, never a URL path, query, credentials or conversation text. Two optional tools send a short report: `rate_last_lookup` (the one-time feedback token and whether the retry worked) and `report_observation` (goes to private review, not published at once; use it only with the user's explicit approval).
 
+If the server also lists `find_task_route`, call it once for that task when you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) and do not know its official document, channel or entry point. It returns recorded task routes for the hostname: records, not a guarantee and not advice, and an empty list does not mean there is no route. `find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. If it is not listed, carry on as usual.
+
 Source: https://github.com/agent-help-network/agent-help-network (Apache-2.0). Independent project, not affiliated with any AI provider or site it describes.

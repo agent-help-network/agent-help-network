@@ -19,6 +19,12 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from .task_routes import TaskKind, TaskRouteInputError, TaskRoutesResponse, lookup, parse_query
 
+# Appended to the server instructions by ahn.mcp_adapter only while the read switch is on (AHN_TASK_ROUTES); with it off the
+# instructions are the text they always were.
+INSTRUCTIONS_ADDENDUM = ("When you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) "
+                         "and do not know its official document, channel or entry point, call find_task_route once for that task with the public hostname "
+                         "(task_kind is optional). Its answer is a list of records, not a guarantee and not advice; an empty list does not mean there is "
+                         "no route. The answer does not change when to call check_incident or what check_incident recommends.")
 SITE_HOST_DESCRIPTION = ("The public hostname of the site whose task routes you want, lowercase, for example example.com. "
                          "Only the host: no scheme, URL path, query, port or credentials.")
 TASK_KIND_DESCRIPTION = ("Optional: one kind of customer task to look up, from the list. Leave it out to get the records for every "

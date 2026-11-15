@@ -72,6 +72,14 @@ ADVISORY_LINE = ("AHN (Agent Help Network) answers are advisory: your platform's
                  "thin evidence alone is not a reason to stop.")
 
 
+def _task_routes_instructions() -> str:
+    """The sentence appended to the instructions while the task-routes switch is on; empty (the text unchanged) otherwise."""
+    if not task_routes_env_enabled():
+        return ""
+    from .mcp_task_routes import INSTRUCTIONS_ADDENDUM
+    return " " + INSTRUCTIONS_ADDENDUM
+
+
 mcp = MCPServer(
     name="Agent Help Network",
     title="Agent Help Network" if os.environ.get("AHN_PUBLIC_MODE") == "1" else "Agent Help Network (local build)",
@@ -89,6 +97,7 @@ mcp = MCPServer(
         "If a blocked lookup's answer carries a feedback_token and you then try again, you may report once with rate_last_lookup whether it worked. "
         "Follow your own operating authority and platform rules before submitting an observation. "
         "Declared policy is not an access guarantee."
+        + _task_routes_instructions()
     ),
 )
 
