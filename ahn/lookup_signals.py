@@ -199,12 +199,31 @@ def clean_address(value: str) -> str | None:
         return None
 
 
+def source_network(address: str) -> str:
+    """The address as one source is counted: an IPv6 address becomes its /64 (one subscriber usually holds a whole /64), an IPv4
+    address stays as it is. Raises ValueError for text that is not an IP address."""
+    ip = ipaddress.ip_address(address)
+    if ip.version == 6:
+        return ipaddress.ip_network((ip, 64), strict=False).network_address.compressed
+    return address
+
+
+def limiter_network(value: str) -> str:
+    """``value`` as a rate-limit key: the same /64 grouping as source_network, with an IPv4-mapped IPv6 address read as the IPv4
+    address it carries. Text that is not an IP address (a proxy's host name, "unknown") is returned unchanged."""
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return value
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped.compressed
+    return source_network(ip.compressed)
+
+
 def source_digest(pepper: str, day, host: str, address: str) -> str:
     """Keyed digest specific to one host and one UTC day: the same address gives a different value for another
     host or another day, so it cannot be followed across either. An IPv6 address is reduced to its /64 first. 64 hex characters."""
-    ip = ipaddress.ip_address(address)
-    if ip.version == 6:  # one subscriber usually holds a whole /64: count it as one source
-        address = ipaddress.ip_network((ip, 64), strict=False).network_address.compressed
+    address = source_network(address)
     message = f"src-v1|{day.isoformat()}|{host}|{address}".encode("utf-8")
     return hmac.new(pepper.encode("utf-8"), message, sha256).hexdigest()
 
