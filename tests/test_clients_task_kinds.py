@@ -4,11 +4,14 @@ from its source text here; the main repository's test run does not need langchai
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
-from ahn.task_routes import TaskKind
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "clients" / "python" / "src"))
+
+from ahn.task_routes import TaskKind  # noqa: E402
+from ahn_client import _task_routes  # noqa: E402
 TOOLS = ROOT / "clients" / "langchain-ahn" / "src" / "langchain_ahn" / "tools.py"
 
 
@@ -24,6 +27,12 @@ def test_langchain_task_kinds_equal_the_server_enum():
     kinds = listed_kinds()
     assert len(kinds) == len(set(kinds)) == 24
     assert set(kinds) == {kind.value for kind in TaskKind}
+
+
+def test_ahn_client_task_kinds_equal_the_server_enum_and_the_langchain_list():
+    client = _task_routes.TASK_KINDS
+    assert len(client) == len(set(client)) == 24
+    assert set(client) == {kind.value for kind in TaskKind} == set(listed_kinds())
 
 
 def test_langchain_package_does_not_import_ahn():
