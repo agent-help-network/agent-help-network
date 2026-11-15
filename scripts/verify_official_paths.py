@@ -543,6 +543,10 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
         return problems
     if route.get("source_kind") != "curated_official":
         add("source_kind", "a curated record is curated_official (use _route())")
+    if route.get("entry_point_kind") == "seller_or_provider":
+        tried = route.get("routes_tried") or []
+        if "different_entry_point" not in tried or not set(tried) <= {"different_entry_point", "escalation_within_site"}:
+            add("routes_tried", "seller_or_provider needs different_entry_point and allows only escalation_within_site besides")
     verified, source = route.get("verified_at"), route.get("source_url")
     if not isinstance(verified, str) or not isinstance(source, str):
         add("*", "a curated record needs source_url and verified_at (use _route())")

@@ -130,6 +130,7 @@ class EntryPointKind(str, Enum):
     separate_subdomain = "separate_subdomain"
     mobile_app_only = "mobile_app_only"
     partner_or_third_party_portal = "partner_or_third_party_portal"
+    seller_or_provider = "seller_or_provider"  # curated entries only
 
 
 class RouteKind(str, Enum):
@@ -200,6 +201,8 @@ TASK_ROUTE_RULES.update({
 TASK_ROUTE_NO_OBSTACLE_OUTCOMES = frozenset({RouteOutcome.resolved, RouteOutcome.progressed})
 # Values only a curated entry from the site's own documents carries; a curated entry carries all three.
 TASK_ROUTE_CURATED_ONLY = (RouteSourceKind.curated_official, RouteBasis.official_doc, RouteOutcome.not_applicable)
+# A value no report may send: the database check does not list it, so only the curated table in code can hold it.
+TASK_ROUTE_CURATED_ONLY_ENTRY_POINT = EntryPointKind.seller_or_provider
 # Which sources may carry a link. A public report never does (a path can name a person or a case); curation and operators may.
 TASK_ROUTE_URL_SOURCES = frozenset({RouteSourceKind.curated_official, RouteSourceKind.operator_panel})
 # Reporting period: "quarter" (YYYY-Qn) or "month" (YYYY-MM). The server sets it; a coarser period makes a rare combination
@@ -297,6 +300,8 @@ class TaskRoute(_TaskRouteFields):
         curated = self.source_kind == RouteSourceKind.curated_official
         if curated != (self.basis == RouteBasis.official_doc) or curated != (self.outcome == RouteOutcome.not_applicable):
             raise ValueError("invalid_task_route: basis official_doc and outcome not_applicable belong to curated_official only")
+        if not curated and self.entry_point_kind == TASK_ROUTE_CURATED_ONLY_ENTRY_POINT:
+            raise ValueError("invalid_task_route: this entry_point_kind belongs to curated_official only")
         if self.official_url is not None:
             if self.source_kind not in TASK_ROUTE_URL_SOURCES:
                 raise ValueError("invalid_task_route: this source does not carry a link")
@@ -340,6 +345,8 @@ class TaskRouteIn(_TaskRouteFields):
     def public_values(self):
         if self.basis == RouteBasis.official_doc or self.outcome == RouteOutcome.not_applicable:
             raise ValueError("invalid_task_route: basis official_doc and outcome not_applicable belong to curated entries")
+        if self.entry_point_kind == TASK_ROUTE_CURATED_ONLY_ENTRY_POINT:
+            raise ValueError("invalid_task_route: this entry_point_kind belongs to curated entries")
         return self
 
 

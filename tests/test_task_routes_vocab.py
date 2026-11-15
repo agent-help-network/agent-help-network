@@ -85,7 +85,7 @@ def test_every_value_is_a_short_lowercase_code():
 
 def test_list_sizes_are_the_agreed_contract():
     assert len(TaskKind) == 24 and len(TaskObstacle) == 18 and len(VerificationKind) == 8 and len(SiteRequires) == 5
-    assert len(DocumentKind) == 13 and len(EntryPointKind) == 5 and len(RouteKind) == 13 and len(RouteBasis) == 4
+    assert len(DocumentKind) == 13 and len(EntryPointKind) == 6 and len(RouteKind) == 13 and len(RouteBasis) == 4
     assert len(RouteOutcome) == 5 and len(TASK_ROUTE_ENUMS["duration"]) == 3 and len(RouteSourceKind) == 4
     assert TASK_ROUTE_MAX_TRIED == 6
     assert "attorney" not in {kind.value for kind in RouteKind}  # a route that would describe the person's situation
@@ -162,12 +162,13 @@ def test_combination_rule_accepts_or_rejects_every_combination():
         problem = task_route_combination_problem(fields)
         assert (problem is None) == _expected(obstacle, field, outcome, state), (obstacle, field, outcome, state, problem)
         count += 1
-    assert count == 18 * (1 + 8 + 5 + 13 + 5) * 5 * 4
+    assert count == 18 * (1 + 8 + 5 + 13 + 6) * 5 * 4
 
 
 def test_public_input_model_follows_the_rule_over_the_whole_space():
     for obstacle, field, outcome, state, fields in _space():
-        expected = _expected(obstacle, field, outcome, state) and outcome != "not_applicable"
+        expected = (_expected(obstacle, field, outcome, state) and outcome != "not_applicable"
+                    and fields.get("entry_point_kind") != "seller_or_provider")  # curated records only
         body = public(**{**fields, "route_worked": fields["route_worked"]})
         try:
             TaskRouteIn.model_validate(body)
@@ -543,3 +544,47 @@ def test_task_routes_module_reads_no_database_or_network():
     for name in ("psycopg", "httpx", "connect(", "get_settings", "requests"):
         assert name not in source
     assert task_routes.__doc__
+
+
+SELLER = {"obstacle": "wrong_entry_point", "entry_point_kind": "seller_or_provider", "routes_tried": ["different_entry_point"],
+          "route_worked": None}
+
+
+def test_public_input_rejects_the_curated_only_entry_point_kind():
+    for changes in (SELLER, {**SELLER, "routes_tried": ["different_entry_point", "escalation_within_site"]}):
+        with pytest.raises(ValidationError) as caught:
+            TaskRouteIn.model_validate(public(**changes))
+        assert "entry_point_kind" in str(caught.value)
+    TaskRouteIn.model_validate(public(**{**SELLER, "entry_point_kind": "partner_or_third_party_portal"}))  # the other values stay open
+
+
+def test_only_a_curated_record_may_carry_seller_or_provider():
+    record = dict(site_host="example.com", task_kind="refund_request", obstacle="wrong_entry_point", entry_point_kind="seller_or_provider",
+                  routes_tried=["different_entry_point"], period="2026-Q4", sensitive=False)
+    curated = dict(record, source_kind="curated_official", basis="official_doc", outcome="not_applicable",
+                   source_url="https://www.example.com/help/refunds", verified_at="2026-11-01")
+    assert TaskRoute.model_validate(curated).entry_point_kind == EntryPointKind.seller_or_provider
+    for kind in ("operator_panel", "external_agent", "curated_community"):
+        with pytest.raises(ValidationError) as caught:
+            TaskRoute.model_validate(dict(record, source_kind=kind, basis="own_attempt", outcome="resolved"))
+        assert "curated_official only" in str(caught.value)
+
+
+def _curated_seller(routes):
+    return _route("refund_request", obstacle="wrong_entry_point", routes=routes, entry_point_kind="seller_or_provider",
+                  source_url="https://www.example.com/help/refunds", verified_at="2026-11-01")
+
+
+@pytest.mark.parametrize("routes, ok", [(("different_entry_point",), True), (("different_entry_point", "escalation_within_site"), True),
+                                         (("escalation_within_site", "different_entry_point"), True), ((), False),
+                                         (("escalation_within_site",), False), (("different_entry_point", "phone"), False)])
+def test_the_table_check_wants_different_entry_point_and_allows_only_escalation_besides(routes, ok):
+    problems = VERIFIER.task_route_problems("example.com", _curated_seller(routes))
+    assert (not [p for p in problems if "routes_tried" in p]) == ok, problems
+
+
+def test_no_curated_record_uses_seller_or_provider_yet_and_the_answers_keep_the_old_values():
+    from ahn import task_routes_data
+
+    kinds = {record.get("entry_point_kind") for records in task_routes_data.TASK_ROUTES_CURATED.values() for record in records}
+    assert "seller_or_provider" not in kinds
