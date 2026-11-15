@@ -101,7 +101,33 @@ def test_404_is_no_answer_without_an_exception(transport):
     transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 404, "Not Found", {}, io.BytesIO(b"{}")))
     found = ahn.task_routes("example.com")
     assert found.available is False and found.routes == []
-    assert "No task routes available" in found.summary()
+    assert found.reason == "not_served" and "not served by this deployment" in found.summary()
+    assert found.to_dict()["reason"] == "not_served"
+
+
+def test_other_failures_have_their_own_reason(transport):
+    transport(error=OSError("down"))
+    assert ahn.task_routes("example.com").reason == "no_answer"
+    transport(b"not json")
+    assert ahn.task_routes("example.com").reason == "no_answer"
+    assert ahn.task_routes("10.0.0.5").reason == "not_looked_up"
+    transport(error=urllib.error.HTTPError("https://agenthelpnetwork.com/v1/task-routes", 500, "Err", {}, io.BytesIO(b"{}")))
+    assert ahn.task_routes("example.com").reason == "no_answer"
+    transport()
+    assert ahn.task_routes("example.com").reason is None
+
+
+def test_a_long_hostname_the_server_accepts_is_kept(transport):
+    host = "a" * 60 + "." + "b" * 60 + "." + "c" * 60 + ".example.com"  # 192 characters
+    transport({**ANSWER, "routes": [{**ROUTE, "site_host": host}]})
+    assert ahn.task_routes("example.com").routes[0]["site_host"] == host
+    transport({**ANSWER, "routes": [{**ROUTE, "site_host": "A.example.com"}]})
+    assert ahn.task_routes("example.com").available is False
+
+
+def test_empty_summary_says_records_not_guarantees(transport):
+    transport({**EMPTY, "summary_line": "bad\nline"})
+    assert "not guarantees" in ahn.task_routes("example.com").summary()
 
 
 @pytest.mark.parametrize("error", [OSError("down"), TimeoutError("slow"), urllib.error.URLError("dns"), ValueError("x")])
@@ -144,7 +170,7 @@ def test_unknown_fields_and_a_free_text_summary_are_dropped(transport):
                "routes": [{**ROUTE, "note": "free text from a site"}]})
     found = ahn.task_routes("example.com")
     assert found.available and found.summary_line is None and "note" not in found.routes[0]
-    assert found.summary() == "1 task route records."
+    assert found.summary().startswith("1 task route records.") and "not guarantees" in found.summary()
 
 
 def test_the_sensitive_notice_is_kept_only_when_known(transport):
@@ -190,18 +216,33 @@ def test_the_package_exports_task_routes():
 
 
 def test_the_service_answer_is_read_whole():
-    """The shape the service sends (ahn.task_routes.lookup) is kept field for field."""
+    """The shape the service sends (ahn.task_routes.lookup) is kept field for field. The date is fixed to the newest
+    verification in the table, so every entry is current and the test never skips as the entries age."""
     pytest.importorskip("pydantic")
     sys.path.insert(0, str(ROOT))
+    from datetime import date
+
     from ahn import task_routes_data
     from ahn.task_routes import lookup
 
-    host = next((key for key in task_routes_data.TASK_ROUTES_CURATED if lookup(key).routes), None)
-    if host is None:
-        pytest.skip("no current curated record")
-    sent = lookup(host).model_dump(mode="json")
+    table = task_routes_data.TASK_ROUTES_CURATED
+    dated = [date.fromisoformat(entry["verified_at"]) for entries in table.values() for entry in entries if entry.get("verified_at")]
+    assert dated, "the curated table is empty"
+    today = max(dated)
+    host = next(key for key in table if lookup(key, today=today).routes)
+    sent = lookup(host, today=today).model_dump(mode="json")
     parsed = _task_routes._parse(host, sent)
     assert parsed is not None and parsed.available
     assert len(parsed.routes) == len(sent["routes"]) and parsed.records == sent["counts"]["records"]
     for kept, original in zip(parsed.routes, sent["routes"]):
-        assert kept == {key: value for key, value in original.items()}
+        assert kept == dict(original)
+
+
+def test_host_limit_matches_the_server_model():
+    pytest.importorskip("pydantic")
+    sys.path.insert(0, str(ROOT))
+    from ahn.models import valid_host
+
+    longest = ("a" * 60 + ".") * 3 + "b" * 60 + ".com"
+    assert len(longest) <= 253 and valid_host(longest) == longest and _task_routes.HOST_VALUE.fullmatch(longest)
+    assert not _task_routes.HOST_VALUE.fullmatch("a" * 254)
