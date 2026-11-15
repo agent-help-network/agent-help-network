@@ -308,4 +308,94 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("account_recovery", obstacle="code_expired", official_url="https://www.upgrade.com/help/account-management-payments/payments-billing/how-do-i-reset-my-password/",
                source_url="https://www.upgrade.com/help/account-management-payments/payments-billing/how-do-i-reset-my-password/", verified_at="2026-11-15"),
     ],
+    "bitwarden.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://bitwarden.com/help/cancel-a-subscription/",
+               source_url="https://bitwarden.com/help/cancel-a-subscription/", verified_at="2026-11-15"),
+    ],
+    "cursor.com": [
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"], entry_point_kind="partner_or_third_party_portal", official_url="https://cursor.com/help/account-and-billing/cancel",
+               source_url="https://cursor.com/help/account-and-billing/cancel", verified_at="2026-11-15"),
+    ],
+    "brain.fm": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.brain.fm/terms",
+               source_url="https://www.brain.fm/terms", verified_at="2026-11-15"),
+        _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"], entry_point_kind="partner_or_third_party_portal", official_url="https://www.brain.fm/terms",
+               source_url="https://www.brain.fm/terms", verified_at="2026-11-15"),
+    ],
+    "functionofbeauty.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://functionofbeauty.com/pages/faq",
+               source_url="https://functionofbeauty.com/pages/faq", verified_at="2026-11-15"),
+    ],
+    "huel.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://huel.com/pages/terms-and-conditions",
+               source_url="https://huel.com/pages/terms-and-conditions", verified_at="2026-11-15"),
+    ],
+    "incogni.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://incogni.com/legal/terms-of-service",
+               source_url="https://incogni.com/legal/terms-of-service", verified_at="2026-11-15"),
+    ],
+    "todoist.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://www.todoist.com/terms-of-service",
+               source_url="https://www.todoist.com/terms-of-service", verified_at="2026-11-15"),
+    ],
+    "straighttalk.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.straighttalk.com/support/terms-conditions",
+               source_url="https://www.straighttalk.com/support/terms-conditions", verified_at="2026-11-15"),
+        _route("return_or_exchange", obstacle="wrong_entry_point", routes=["different_entry_point"], entry_point_kind="partner_or_third_party_portal", official_url="https://www.straighttalk.com/support/terms-conditions",
+               source_url="https://www.straighttalk.com/support/terms-conditions", verified_at="2026-11-15"),
+    ],
+    "tracfone.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://www.tracfone.com/return-policy",
+               source_url="https://www.tracfone.com/return-policy", verified_at="2026-11-15"),
+    ],
+    "tricare.mil": [
+        _route("insurance_claim", obstacle="deadline_or_window", official_url="https://tricare.mil/PatientResources/Claims",
+               source_url="https://tricare.mil/PatientResources/Claims", verified_at="2026-11-15"),
+    ],
+    "brilliant.org": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://brilliant.org/terms-of-use/",
+               source_url="https://brilliant.org/terms-of-use/", verified_at="2026-11-15"),
+    ],
+    "alltrails.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://www.alltrails.com/terms",
+               source_url="https://www.alltrails.com/terms", verified_at="2026-11-15"),
+    ],
+    "busuu.com": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://www.busuu.com/en/terms",
+               source_url="https://www.busuu.com/en/terms", verified_at="2026-11-15"),
+    ],
+    "walmart.com": [
+        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://corporate.walmart.com/policies",
+               source_url="https://corporate.walmart.com/policies", verified_at="2026-11-15"),
+    ],
+    "mealpal.com": [
+        _route("cancel_subscription", obstacle="deadline_or_window", official_url="https://mealpal.com/terms-and-conditions/",
+               source_url="https://mealpal.com/terms-and-conditions/", verified_at="2026-11-15"),
+    ],
+    "interactivebrokers.com": [
+        _route("account_recovery", obstacle="wrong_channel", routes=["phone"], official_url="https://www.interactivebrokers.com/en/support/customer-service.php",
+               source_url="https://www.interactivebrokers.com/en/support/customer-service.php", verified_at="2026-11-15"),
+    ],
+    "eeoc.gov": [
+        _route("complaint_filing", obstacle="deadline_or_window", official_url="https://www.eeoc.gov/time-limits-filing-charge",
+               source_url="https://www.eeoc.gov/time-limits-filing-charge", verified_at="2026-11-15"),
+        _route("complaint_filing", obstacle="wrong_channel", routes=["web_form", "office_visit", "mail_or_fax"], official_url="https://www.eeoc.gov/how-file-charge-employment-discrimination",
+               source_url="https://www.eeoc.gov/how-file-charge-employment-discrimination", verified_at="2026-11-15"),
+    ],
+    "healthcare.gov": [
+        _route("document_submission", obstacle="wrong_channel", routes=["web_form", "mail_or_fax"], official_url="https://www.healthcare.gov/tips-and-troubleshooting/uploading-documents/",
+               source_url="https://www.healthcare.gov/tips-and-troubleshooting/uploading-documents/", verified_at="2026-11-15"),
+    ],
+    "irs.gov": [
+        _route("refund_request", obstacle="deadline_or_window", official_url="https://www.irs.gov/refunds/about-refunds",
+               source_url="https://www.irs.gov/refunds/about-refunds", verified_at="2026-11-15"),
+    ],
+    "helpwithmybank.gov": [
+        _route("complaint_filing", obstacle="wrong_department_or_jurisdiction", routes=["regulator"], official_url="https://helpwithmybank.gov/file-a-complaint/index-file-a-complaint.html",
+               source_url="https://helpwithmybank.gov/file-a-complaint/index-file-a-complaint.html", verified_at="2026-11-15"),
+    ],
+    "pnc.com": [
+        _route("account_recovery", obstacle="verification_step", verification_kind="account_locked", official_url="https://www.pnc.com/en/customer-service/forgot-username-or-password.html",
+               source_url="https://www.pnc.com/en/customer-service/forgot-username-or-password.html", verified_at="2026-11-15"),
+    ],
 }
