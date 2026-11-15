@@ -47,6 +47,7 @@ WRITE = {
     "lausd.k12.ca.us": None, "ci.austin.tx.us": None, "co.travis.tx.us": None, "school.k12.ca.us": None,
     # Never a site: a bare suffix, a state label, too deep, punycode, a doubled www, a lookalike
     "gov.uk": None, "nj.us": None, "a.b.c.d.irs.gov": None, "a.b.c.d.state.nj.us": None, "xn--abc.gov": None,
+    "www.www.irs.gov": None, "www.www.dmv.ca.gov": None,
     "irs.gov.example.com": None, "mil.example.com": None,
 }
 ZONE_FREE = {"usps.com", "tools.usps.com", "canada.ca", "www.canada.ca", "cityofchicago.org", "mil.example.com", "irs.gov.example.com"}
@@ -70,7 +71,7 @@ def test_a_zone_name_reads_its_own_name_only(host):
 
 
 @pytest.mark.parametrize("host", ["tools.usps.com", "lausd.k12.ca.us", "ci.austin.tx.us", "co.travis.tx.us", "a.b.c.d.irs.gov",
-                                  "xn--abc.gov", "irs.gov.example.com", "mil.example.com"])
+                                  "xn--abc.gov", "irs.gov.example.com", "mil.example.com", "www.support.help.shop.m.irs.gov"])
 def test_a_refused_name_gets_the_empty_answer_and_climbs_to_no_parent(host):
     assert task_routes.tenant_host(host)
     assert task_routes.table_key(host, frozenset({"irs.gov", "usps.com", "example.com", "k12.ca.us", "austin.tx.us"})) is None
@@ -119,8 +120,10 @@ def test_no_curated_answer_changes_because_of_the_zones(monkeypatch):
 
 
 def test_an_apex_that_is_not_a_site_answers_like_its_www_name():
-    for host in ("co.travis.tx.us", "lausd.k12.ca.us"):
+    # Names whose registrable domain is not an eligible site: on main the apex was empty and www.<apex> climbed to it.
+    for host in ("austin.tx.us", "example.co.at", "co.travis.tx.us", "lausd.k12.ca.us"):
         assert task_routes.tenant_host(host) and task_routes.tenant_host(f"www.{host}"), host
+        assert task_routes.table_key(f"www.{host}", frozenset({host})) is None, host
 
 
 @needs_db
