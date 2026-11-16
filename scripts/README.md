@@ -115,8 +115,8 @@ Rules for choosing `condition_text` (a curation guide, not a filter):
 2. A `fee_required` record quotes the sentence that states the fee. If the page gives an amount or a rate, pick the sentence that holds it; if the page names no amount, leave it as it is.
 3. When one task has two conditions, write two records (the existing practice) and put the record whose sentence supports the obstacle value first.
 4. Prefer a whole sentence that fits in 200 characters; never cut in the middle of a list.
-5. When the page names the channel (web form, phone, mail and so on), record it in `routes_tried`/`routes`.
-6. These rules are never a reason to drop a record. A record is rejected only for the four existing reasons: the quotation is not on the page, a guess, terms that forbid AI use, or a breach of the reading etiquette above.
+5. When the page names the channel (web form, phone, mail and so on), record it in `routes_tried`.
+6. These rules are never a reason to drop a record. A record is rejected only for the four existing reasons: the quotation is not on the page, a guess, terms that name AI (or AI agents) and forbid their use, or a breach of the reading etiquette above.
 
 `python -I scripts/verify_official_paths.py --task-routes-only` prints these rules' leftovers after the table check under "advisories (not failures)": deadline records with no condition_text, deadline records whose condition_text states no amount of time, fee records with no condition_text, and condition_text ending in a comma, an opening bracket, a colon or a semicolon. The advisories never change the exit code.
 

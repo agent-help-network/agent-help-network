@@ -1089,32 +1089,42 @@ def unused_exceptions(keys, exceptions=None) -> list[str]:
 
 _NUMBER_WORDS = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|sixty|ninety|"
                  "hundred|a|an|several|few")
-_TIME_UNIT = r"(?:business\s+days?|calendar\s+days?|working\s+days?|days?|hours?|weeks?|months?|years?)"
+_TIME_UNIT = r"(?:business\s+days?|calendar\s+days?|working\s+days?|days?|hours?|hrs?|weeks?|months?|years?)"
 _TIME_QUANTITY = re.compile(
-    rf"(?<![\w(])(?:\d+(?:-\d+)?|(?:{_NUMBER_WORDS})(?:\s*\(\d+\))?)(?:\s*-\s*|\s+){_TIME_UNIT}\b", re.IGNORECASE)
+    rf"(?<![\w(])(?:\d+(?:-\d+)?|(?:{_NUMBER_WORDS})(?:\s*\(\d+\))?|\(\d+\))(?:\s*-\s*|\s*)(?:(?:consecutive|full)\s+)?{_TIME_UNIT}\b",
+    re.IGNORECASE)
 _OPEN_END = (",", "(", ":", ";")
+
+
+def _advisory_line(host: str, number: int, route: dict, text: str) -> str:
+    shown = text if len(text) <= 40 else text[:40].rstrip() + "..."
+    return f'{host} #{number} {route.get("task_kind")} {route.get("obstacle")} "{shown or "-"}"'
 
 
 def task_routes_curation_advisories(table: dict) -> dict[str, list[str]]:
     """Curation hints for task-route records; they never fail a check and never drop a record (scripts only, not runtime).
 
-    Returns four lists of "host task_kind obstacle" lines: deadline_no_text (deadline_or_window with no condition_text),
-    deadline_no_time (condition_text states no amount of time; a bare number such as "(2)" or "100%" is not one),
+    Returns four lists of lines `host #N task_kind obstacle "first 40 characters of condition_text"` (N counts the records
+    of that key from 1; the text is "-" when there is none): deadline_no_text (deadline_or_window with no condition_text),
+    deadline_no_time (condition_text states no amount of time; a bare number such as "(2)" or "100%" is not one; the line ends
+    with "(another record for this task states a time)" when another record of the same host and task_kind does),
     fee_no_text (fee_required with no condition_text) and open_ended (condition_text ends in a comma, an opening
     bracket, a colon or a semicolon, trailing spaces ignored)."""
     out: dict[str, list[str]] = {"deadline_no_text": [], "deadline_no_time": [], "fee_no_text": [], "open_ended": []}
     for host, routes in table.items():
-        for route in routes if isinstance(routes, list) else []:
-            if not isinstance(route, dict):
-                continue
-            label = f"{host} {route.get('task_kind')} {route.get('obstacle')}"
+        records = [r for r in routes if isinstance(r, dict)] if isinstance(routes, list) else []
+        timed_kinds = {r.get("task_kind") for r in records
+                       if isinstance(r.get("condition_text"), str) and _TIME_QUANTITY.search(r["condition_text"])}
+        for number, route in enumerate(records, 1):
             text = route.get("condition_text")
             text = text.strip() if isinstance(text, str) else ""
+            label = _advisory_line(host, number, route, text)
             if route.get("obstacle") == "deadline_or_window":
                 if not text:
                     out["deadline_no_text"].append(label)
                 elif not _TIME_QUANTITY.search(text):
-                    out["deadline_no_time"].append(label)
+                    note = " (another record for this task states a time)" if route.get("task_kind") in timed_kinds else ""
+                    out["deadline_no_time"].append(label + note)
             if route.get("obstacle") == "fee_required" and not text:
                 out["fee_no_text"].append(label)
             if text.endswith(_OPEN_END):
