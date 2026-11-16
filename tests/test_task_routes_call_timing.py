@@ -25,22 +25,29 @@ def flat(path: str) -> str:
 
 def test_the_tool_description_opens_with_the_call_timing():
     first = DESCRIPTION.split(". ", 1)[0]
-    assert first.startswith("Call this once when you start a customer task")
+    assert first.startswith("Call this once per task when you start a customer task")
     assert "return" in first and "warranty" in first and "even when nothing is blocked" in first
     assert "do not know" not in DESCRIPTION  # a "when you do not know the route" condition lets an agent skip the call
 
 
 def test_the_server_instructions_addendum_carries_the_same_clause():
     assert CALL_TIMING in INSTRUCTIONS_ADDENDUM and CALL_TIMING in DESCRIPTION
+    assert INSTRUCTIONS_ADDENDUM.startswith("Call find_task_route once per task ")
     assert "do not know its official document" not in INSTRUCTIONS_ADDENDUM
 
 
 def test_every_static_surface_carries_the_same_clause():
     for path in ("ahn/agent_instructions_task_routes.txt", "ahn/llms.txt", "llms-install.md",
-                 "plugins/cursor/agent-help-network/README.md", "ahn/templates/connect.html"):
+                 "plugins/cursor/agent-help-network/README.md", "ahn/templates/connect.html",
+                 "plugins/claude-code/ahn/skills/ahn-lookup/SKILL.md", "plugins/claude-code/ahn/README.md"):
         assert CALL_TIMING in flat(path), path
     assert "when you start a customer task" in flat("ahn/agent_instructions_task_routes.txt")
-    assert "고객 업무(반품·환불·해지·보증 청구 등)를 시작할 때" in flat("ahn/templates/connect.html")
+    assert "고객 업무(반품·교환·환불·해지·보증 청구·계정 복구·서류 제출 등)를 시작할 때" in flat("ahn/templates/connect.html")
+    for path in ("ahn/agent_instructions_task_routes.txt", "ahn/llms.txt", "llms-install.md", "plugins/cursor/agent-help-network/README.md",
+                 "ahn/templates/connect.html", "plugins/claude-code/ahn/README.md"):
+        assert "once per task" in flat(path), path
+    for path in ("plugins/claude-code/ahn/skills/ahn-lookup/SKILL.md", "plugins/claude-code/ahn/README.md"):
+        assert "do not know its official document" not in flat(path) and "does not know its official document" not in flat(path), path
 
 
 def test_the_call_timing_promises_nothing_about_the_answer():

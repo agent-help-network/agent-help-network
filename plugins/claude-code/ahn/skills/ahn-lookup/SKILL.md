@@ -85,7 +85,7 @@ For sites the user visits every day, compare them against the public bundle on y
 
 Use `find_task_route` (`mcp__plugin_ahn_agent-help-network__find_task_route`) only when it is in your tool list; if it is not listed, or it answers with an empty list, carry on as usual. The hook never calls it.
 
-- **When:** you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) and do not know its official document, channel or entry point. Look the host up once for that task; send the bare hostname and, optionally, a `task_kind` from the tool's list.
+- **When:** call it once per task when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, a document submission), before you open its help pages, even when nothing is blocked. Look the host up once for that task; send the bare hostname and, optionally, a `task_kind` from the tool's list.
 - **Answer:** records of an obstacle and the route the site's own documents name. Not a guarantee and not advice; an empty list does not mean there is no route. The answer never changes check_incident's `recommendation.action`.
 
 ## Reporting
