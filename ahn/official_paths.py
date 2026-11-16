@@ -1846,12 +1846,6 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "openapi_url": "https://raw.githubusercontent.com/ngrok/ngrok-openapi/refs/heads/main/ngrok.yaml",
         "verified_at": "2026-10-21",
     },
-    "claude.ai": {
-        "auth": [{"method": "api_key", "source_url": "https://platform.claude.com/docs/en/api/overview"}],
-        "key_signup_url": "https://platform.claude.com/docs/en/get-started",
-        "rate_limits_url": "https://platform.claude.com/docs/en/api/rate-limits",
-        "verified_at": "2026-11-16",
-    },
     "trello.com": {
         "auth": [{"method": "api_key", "source_url": _TRELLO_AUTH},
                  {"method": "oauth2", "source_url": "https://developer.atlassian.com/cloud/trello/guides/rest-api/oauth-2-getting-started/"}],
@@ -1866,7 +1860,8 @@ OFFICIAL_ACCESS: dict[str, dict] = {
 }
 # Separate hosts of the same publisher and API share one bundle.
 for _alias, _primary in {"chatgpt.com": "openai.com", "notion.com": "notion.so", "twitter.com": "x.com",
-                         "wikimedia.org": "wikipedia.org", "stackoverflow.com": "stackexchange.com"}.items():
+                         "wikimedia.org": "wikipedia.org", "stackoverflow.com": "stackexchange.com",
+                         "claude.ai": "anthropic.com"}.items():
     OFFICIAL_ACCESS[_alias] = OFFICIAL_ACCESS[_primary]
 
 
