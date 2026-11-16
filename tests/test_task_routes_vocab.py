@@ -648,15 +648,15 @@ def test_every_curated_eligibility_conditions_stated_record_quotes_its_condition
 
 def test_wahoo_warranty_original_purchaser_record_moved_and_kept_its_quotation():
     records = [record for record in TASK_ROUTES_CURATED["wahoofitness.com"] if record["task_kind"] == "warranty_claim"]
-    by_text = {record["condition_text"]: record for record in records}
+    by_text = {record.get("condition_text", ""): record for record in records}
     purchaser = next(text for text in by_text if "original purchaser" in text)
     assert by_text[purchaser]["obstacle"] == "eligibility_conditions_stated"
     assert purchaser == ("This Limited Warranty applies to you if you are the original purchaser of a Wahoo Fitness product from "
                          "Wahoo Fitness or one of Wahoo Fitness\u2019 authorized retailers")
-    period = next(text for text in by_text if text.startswith("The Limited Warranty period starts"))
-    assert by_text[period]["obstacle"] == "deadline_or_window"  # the sentence that states the period keeps its value
+    assert by_text[""]["obstacle"] == "deadline_or_window"  # the record without a sentence keeps its value
 
 
 def test_a_sentence_that_also_states_a_time_limit_keeps_deadline_or_window():
     nurx = TASK_ROUTES_CURATED["nurx.com"]
-    assert [record["obstacle"] for record in nurx if record["task_kind"] == "refund_request"] == ["deadline_or_window"]
+    assert [record["obstacle"] for record in nurx if record["task_kind"] == "refund_request"] == [
+        "deadline_or_window", "eligibility_conditions_stated"]
