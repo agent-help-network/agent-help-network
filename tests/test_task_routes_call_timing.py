@@ -93,3 +93,20 @@ def test_the_openapi_document_lists_only_the_read_path_and_only_while_the_switch
     assert set(paths["/v1/task-routes"]) == {"get"}  # no POST, no DELETE
     assert not [path for path in paths if path.startswith("/v1/task-routes/") or path.endswith("/routes") or "/routes/" in path]
     assert "/v1/task-routes" not in openapi(False)["paths"]
+
+
+def test_the_openapi_document_marks_site_host_required_and_has_no_422():
+    operation = openapi(True)["paths"]["/v1/task-routes"]["get"]
+    params = {p["name"]: p for p in operation["parameters"]}
+    assert params["site_host"]["required"] is True and "default" not in params["site_host"]["schema"]
+    assert not params["task_kind"].get("required")
+    assert set(operation["responses"]) == {"200", "400"}  # this path never answers 422
+    assert openapi(True) == openapi(True)  # repeated builds give the same document
+
+
+def test_a_missing_site_host_is_still_a_400_at_runtime_although_the_document_says_required():
+    from fastapi.testclient import TestClient
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=True,
+                        task_routes_since=date(2026, 11, 1))
+    response = TestClient(create_app(settings)).get("/v1/task-routes")
+    assert response.status_code == 400 and response.json() == {"error": "invalid_site_host"}

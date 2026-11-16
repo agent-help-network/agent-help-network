@@ -74,6 +74,7 @@ def add_routes(app, settings, render=None, lang_text=None) -> None:
         answer = lookup(host, kind, settings=settings)
         return JSONResponse(answer.model_dump(mode="json"), headers=headers)
 
+    document_task_routes_query(app)
     if task_route_reports_served(settings):
         add_write_routes(app, settings)
     else:  # the write paths do not exist: 404, as with the read switch off (not 405 because GET shares the path)
@@ -86,6 +87,26 @@ def add_routes(app, settings, render=None, lang_text=None) -> None:
             raise ServiceError("not_found", 404)
     if render is not None and lang_text is not None:
         add_pages(app, settings, render, lang_text)
+
+
+def document_task_routes_query(app) -> None:
+    """Make the OpenAPI document match the contract for GET /v1/task-routes, without touching runtime behaviour: site_host is
+    listed as required (a missing value is still answered 400 invalid_site_host by the handler, which is why the parameter itself has a
+    default), and the 422 FastAPI adds for every route with parameters is dropped, since this path never answers 422."""
+    build = app.openapi
+
+    def openapi():
+        schema = build()
+        operation = schema.get("paths", {}).get(PATH, {}).get("get")
+        if operation is not None:
+            for parameter in operation.get("parameters", []):
+                if parameter.get("name") == "site_host" and parameter.get("in") == "query":
+                    parameter["required"] = True
+                    parameter.get("schema", {}).pop("default", None)
+            operation.get("responses", {}).pop("422", None)
+        return schema
+
+    app.openapi = openapi
 
 
 def add_write_routes(app, settings) -> None:
@@ -170,7 +191,7 @@ SOURCE_PHRASE = {
 }
 # English words are the value with underscores replaced, except where listed here; Korean words are listed for every closed value.
 EN_LABELS = {
-    "outcome": {"not_applicable": "not applicable (document record)"},
+    "outcome": {"not_applicable": "no result (not tried)"},
     "source_kind": {"operator_panel": "AHN operator-side agent", "curated_official": "site's own documents",
                     "external_agent": "reporting agent", "curated_community": "community source"},
     "basis": {"official_doc": "official document"},
@@ -217,7 +238,7 @@ KO_LABELS = {
         "designated_dispute_program": "지정 분쟁 프로그램", "official_app": "공식 앱", "different_entry_point": "다른 진입점",
         "escalation_within_site": "사이트 내 상위 단계", "other": "기타"},
     "outcome": {"resolved": "해결", "progressed": "진전", "no_progress": "진전 없음", "gave_up": "포기",
-                "not_applicable": "해당 없음(문서 기록)"},
+                "not_applicable": "결과 기록 없음(시도 안 함)"},
     "basis": {"official_doc": "공식 문서", "agency_reply": "기관 회신", "outcome_observed": "결과 관찰", "own_attempt": "직접 시도"},
     "source_kind": {"operator_panel": "운영 측 에이전트", "curated_official": "공식 문서", "external_agent": "외부 에이전트",
                     "curated_community": "커뮤니티 자료"},
