@@ -240,3 +240,46 @@ def test_the_table_has_a_key_with_two_conditions_and_every_text_of_the_table_is_
                 pairs.setdefault((host, record["task_kind"], record["obstacle"], record["source_url"]), []).append(record["condition_text"])
     assert pairs and any(len(texts) == 2 and texts[0] != texts[1] for texts in pairs.values())
     assert _verifier().task_routes_table_problems(TASK_ROUTES_CURATED) == []
+
+
+def plain(verified_at: str | None = None) -> dict:
+    return _route("return_or_exchange", obstacle="eligibility_unclear", routes=(), worked=None, source_url=SOURCE,
+                  verified_at=verified_at or days_ago(3))
+
+
+def test_a_record_with_a_quoted_condition_comes_first_within_its_period_and_nothing_else_moves(monkeypatch):
+    # same period and verified_at: only the new key part separates them; the plain record would have come first by obstacle order
+    with_text, without = curated(condition_text=TEXT), plain()
+    table(monkeypatch, {HOST: [without, with_text]})
+    order = [item.get("condition_text") for item in client().get("/v1/task-routes", params={"site_host": HOST}).json()["routes"]]
+    assert order == [TEXT, None]
+    table(monkeypatch, {HOST: [with_text, without]})
+    order = [item.get("condition_text") for item in client().get("/v1/task-routes", params={"site_host": HOST}).json()["routes"]]
+    assert order == [TEXT, None]
+
+
+def test_the_summary_line_counts_the_quoted_conditions_and_leaves_the_clause_out_for_none(monkeypatch):
+    table(monkeypatch, {HOST: [curated(condition_text=FIRST), curated(condition_text=SECOND), plain()]})
+    body = client().get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert body["summary_line"] == ("3 task route records: 3 from the site's own documents. 2 with a quoted condition. "
+                                    "By task: return_or_exchange 3. Records, not guarantees.")
+    assert body["counts"] == {"records": 3, "by_source_kind": {"curated_official": 3}}
+    table(monkeypatch, {HOST: [plain(), curated(condition_text=FIRST)]})
+    filtered = client().get("/v1/task-routes", params={"site_host": HOST, "task_kind": "return_or_exchange"}).json()
+    assert filtered["summary_line"] == ("2 task route records for return or exchange: 2 from the site's own documents. "
+                                        "1 with a quoted condition. Records, not guarantees.")
+    table(monkeypatch, {HOST: [plain(), plain(days_ago(5))]})
+    none = client().get("/v1/task-routes", params={"site_host": HOST}).json()["summary_line"]
+    assert "quoted condition" not in none and none.startswith("2 task route records: 2 from the site's own documents.")
+
+
+def test_the_summary_line_clause_fits_the_limit_and_the_count_helper_reads_the_same_test_as_the_sort():
+    from ahn.task_routes import ROUTE_LINE_NOTICE, SUMMARY_MAX, RouteSourceKind, condition_text_count, summary_line
+
+    worst = {kind: 99 for kind in RouteSourceKind}
+    line = summary_line(30, {RouteSourceKind.curated_official: 30}, None, True, {"a_kind": 20, "b_kind": 10}, 12)
+    assert len(line) <= SUMMARY_MAX and " 12 with a quoted condition. By task: a_kind 20, b_kind 10." in line
+    line = summary_line(500, worst, None, True, {"a_kind": 20, "b_kind": 20}, 500)  # the existing guard still bounds the worst case
+    assert len(line) <= SUMMARY_MAX and line.endswith("Records, not guarantees. " + ROUTE_LINE_NOTICE)
+    records = [TaskRoute.model_validate({"site_host": HOST, "sensitive": False, **record}) for record in (curated(condition_text=TEXT), plain())]
+    assert condition_text_count(records) == 1
