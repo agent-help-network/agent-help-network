@@ -908,7 +908,7 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                official_url="https://www.tp-link.com/us/support/replacement-warranty/",
                source_url="https://www.tp-link.com/us/support/replacement-warranty/", verified_at="2026-11-15",
                condition_text="Products with no valid proof of purchase and where a serial number cannot be determined may have warranty services denied."),
-        _route("warranty_claim", obstacle="deadline_or_window", routes=["web_form", "phone"],
+        _route("warranty_claim", obstacle="eligibility_conditions_stated", routes=["web_form", "phone"],
                official_url="https://www.tp-link.com/us/support/replacement-warranty/",
                source_url="https://www.tp-link.com/us/support/replacement-warranty/", verified_at="2026-11-15",
                condition_text="Coverage under this limited warranty begins from the date the original purchase is delivered and is only applicable to the original purchaser of the product."),
