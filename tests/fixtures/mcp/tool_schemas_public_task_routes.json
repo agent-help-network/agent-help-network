@@ -3955,6 +3955,7 @@
       "wrong_channel",
       "wrong_department_or_jurisdiction",
       "eligibility_unclear",
+      "eligibility_conditions_stated",
       "verification_step",
       "code_expired",
       "deadline_or_window",
