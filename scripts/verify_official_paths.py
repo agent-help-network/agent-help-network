@@ -24,6 +24,7 @@ Exit code 1 when any URL is not ok, a quote or endpoint is not found, or a rule 
     python scripts/verify_official_paths.py --access-only --hosts stripe.com   # one access bundle
     python scripts/verify_official_paths.py --consumer-only                    # consumer paths (D61)
     python scripts/verify_official_paths.py --task-routes-only                 # curated task routes (D117)
+    python scripts/verify_official_paths.py --task-routes-only --help-pages    # help/policy pages may be robots-disallowed
 
 Consumer paths (CONSUMER_PATHS, D61) are the sites' own help pages, store listings and entry links, so --consumer-only
 reads each hostname's robots.txt before its first request there (redirect targets included) and requests nothing it
@@ -804,13 +805,77 @@ class Fetcher:
         return row, (body if result == "ok" else b"")
 
 
+# --help-pages (task routes): the read scope of curation. This list is the canonical one; the curation fetch tool follows it.
+HELP_KEYWORDS = {"help", "support", "faq", "faqs", "terms", "policy", "policies", "legal", "returns", "return", "refund",
+                 "refunds", "shipping", "delivery", "cancel", "cancellation", "cancellations", "contact", "warranty",
+                 "warranties", "claim", "claims"}
+HELP_KEYWORD_PHRASES = ("customer-service", "customer-care")
+# a government agency's own pages on how to apply, file or submit (only on a government host)
+GOV_KEYWORDS = {"apply", "application", "applications", "file", "files", "filing", "filings", "submit", "submission",
+                "submissions", "submitting", "upload", "uploading"}
+# product, search, cart, account and user-content pages (matched on words cut with the same function as the keywords)
+HELP_EXCLUDE = {"product", "products", "item", "items", "search", "cart", "checkout", "account", "login", "signin",
+                "user", "profile", "review", "reviews", "community", "forum", "dp", "gp", "itm", "listing", "listings",
+                "ip", "questions", "answers", "discussions", "threads", "topic", "topics", "comments"}
+HELP_EXCLUDE_SEGMENTS = {"p", "s", "u", "r", "t"}
+HELP_EXCLUDE_PREFIXES = ("my-", "user")
+HELP_EXCLUDE_HOST_LABELS = {"community", "forum", "forums", "discuss"}
+HELP_QUERY_KEYS = {"s", "k", "keyword", "keywords", "term", "q", "query", "search"}
+# country codes whose governments use gov/gouv/go/govt second-level names (io and similar are not on the list)
+GOV_CCTLDS = {"uk", "au", "nz", "ca", "in", "sg", "za", "jp", "kr", "br", "fr", "ie", "hk", "ph", "my", "th", "id", "tw",
+              "cn", "il", "ng", "ke", "mx", "ar", "co", "cl", "pe"}
+
+
+def government_host(host: str) -> bool:
+    """A government host: .gov or .mil, or gov/gouv/go/govt directly under a listed country code with at least one more
+    label in front (service.gov.uk, xx.go.jp; not gov.uk alone, foo.gov.io or go.to)."""
+    labels = (host or "").lower().rstrip(".").split(".")
+    if len(labels) < 2:
+        return False
+    if labels[-1] in {"gov", "mil"}:
+        return True
+    return len(labels) >= 3 and labels[-1] in GOV_CCTLDS and labels[-2] in {"gov", "gouv", "go", "govt"}
+
+
+def _words(text: str | None) -> str:
+    return "-".join(t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t)
+
+
+def _has_help_keyword(text: str | None, host: str = "") -> bool:
+    norm = _words(text)
+    words = set(norm.split("-"))
+    return bool(words & HELP_KEYWORDS) or any(f"-{ph}-" in f"-{norm}-" for ph in HELP_KEYWORD_PHRASES)         or (government_host(host) and bool(words & GOV_KEYWORDS))
+
+
+def help_scope(path_query: str, link_text: str | None = None, host: str = "") -> bool:
+    """--help-pages: is this a customer-help or policy page (a keyword in the path, or in the wording of the link that led
+    here; on a government host also an apply/file/submit page) and NOT a product, search, cart, account or user-content
+    page? Pure function, no network."""
+    path, _, query = path_query.partition("?")
+    path = unquote(path).lower()
+    if (host or "").lower().split(".")[0] in HELP_EXCLUDE_HOST_LABELS:
+        return False
+    if {k.lower() for k, _ in parse_qsl(query, keep_blank_values=True)} & HELP_QUERY_KEYS:
+        return False
+    segs = [x for x in path.split("/") if x]
+    if set(_words(path).split("-")) & HELP_EXCLUDE or any(_words(x) in HELP_EXCLUDE_SEGMENTS for x in segs)             or any(x.startswith(HELP_EXCLUDE_PREFIXES) for x in segs):
+        return False
+    return _has_help_keyword(path, host) or _has_help_keyword(link_text, host)
+
+
+def url_in_help_scope(url: str) -> bool:
+    parts = urlsplit(url)
+    return help_scope(parts.path + (f"?{parts.query}" if parts.query else ""), None, (parts.hostname or "").lower())
+
+
 class ConsumerCheck:
     """Live check of consumer paths (D61) through a Fetcher (or a test double with the same _get, public_host and
     requests). Etiquette: robots.txt of every hostname before its first page (redirect targets too); a refused or
     unreachable robots.txt, or the first refused page or challenge, stops that hostname for the rest of the run."""
 
-    def __init__(self, fetcher, out=print) -> None:
-        self.fetcher, self.out = fetcher, out
+    def __init__(self, fetcher, out=print, help_pages: bool = False) -> None:
+        self.fetcher, self.out, self.help_pages = fetcher, out, help_pages
+        self.help_robots: dict[str, str] = {}  # url -> host: a robots-disallowed page read because it is in the help scope
         self.robots: dict[str, RobotFileParser | str] = {}
         self.stopped: dict[str, str] = {}
         self.pages: dict[str, tuple[dict, bytes]] = {}
@@ -851,7 +916,12 @@ class ConsumerCheck:
         if isinstance(rule, str):
             self.stopped[name] = rule
             return rule
-        return None if rule.can_fetch(USER_AGENT, url) else "robots_disallowed"
+        if rule.can_fetch(USER_AGENT, url):
+            return None
+        if self.help_pages and url_in_help_scope(url):
+            self.help_robots[url] = name  # counted as help_pages_robots, not a failure
+            return None
+        return "robots_disallowed"
 
     def fetch(self, url: str, allowed: set[str]) -> tuple[dict, bytes]:
         current, hops, retried, status, title, body = url, 0, False, None, "", b""
@@ -998,7 +1068,7 @@ def unused_exceptions(keys, exceptions=None) -> list[str]:
             if isinstance(url, str) and url not in used and registrable(urlsplit(url).hostname or "") in sites]
 
 
-def check_task_routes(hosts: set[str] | None) -> int:
+def check_task_routes(hosts: set[str] | None, help_pages: bool = False) -> int:
     """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
     source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
     keys = [host for host in TASK_ROUTES_CURATED if not hosts or host in hosts]
@@ -1007,10 +1077,12 @@ def check_task_routes(hosts: set[str] | None) -> int:
     problems += [f"exceptions: {line}" for line in unused_exceptions(keys)]
     pages = task_route_check_pages(keys)
     fetcher = Fetcher()
-    checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True))
+    checker = ConsumerCheck(fetcher, out=lambda line: print(line, flush=True), help_pages=help_pages)
     failures = checker.run(pages, list(pages)) if not problems else []
     for line in problems + failures:
         print(f"task_routes: {line}")
+    for url, name in sorted(checker.help_robots.items()):
+        print(f"help_pages_robots: {name} {url}")
     for host in keys:
         for route in TASK_ROUTES_CURATED[host]:
             if isinstance(route, dict) and route.get("verified_at") and not task_route_is_current(route):
@@ -1019,7 +1091,7 @@ def check_task_routes(hosts: set[str] | None) -> int:
     for name, reason in sorted(checker.stopped.items()):
         print(f"stopped: {name} {reason}")
     print(f"\ntask route hosts: {len(keys)}; pages: {len(checker.pages)}; failures: {len(failures)}; "
-          f"rule problems: {len(problems)}; requests: {fetcher.requests}")
+          f"help_pages_robots: {len(checker.help_robots)}; rule problems: {len(problems)}; requests: {fetcher.requests}")
     return 1 if problems or failures else 0
 
 
@@ -1031,13 +1103,18 @@ def main() -> int:
                         help="check only consumer paths (D61): robots.txt first, then each page, and store links on the source page")
     parser.add_argument("--task-routes-only", action="store_true",
                         help="check only curated task routes (D117): rules first, then robots.txt, each source page and its link")
+    parser.add_argument("--help-pages", action="store_true",
+                        help="with --task-routes-only: a robots-disallowed page in the help/policy scope is read and counted as "
+                             "help_pages_robots instead of failing; out-of-scope pages still fail")
     parser.add_argument("--json", type=Path, help="write per-URL and per-host results to this file")
     args = parser.parse_args()
     hosts = {h.strip() for h in args.hosts.split(",") if h.strip()} if args.hosts else None
+    if args.help_pages and not args.task_routes_only:
+        parser.error("--help-pages applies to --task-routes-only")
     if args.consumer_only:
         return check_consumer(hosts)
     if args.task_routes_only:
-        return check_task_routes(hosts)
+        return check_task_routes(hosts, args.help_pages)
     access_hosts = [host for host in OFFICIAL_ACCESS if not hosts or host in hosts]
     problems = [line for host in access_hosts for line in access_problems(host, OFFICIAL_ACCESS[host])]
     problems += [f"{host}: access bundle for a host that is not in OFFICIAL_PATHS" for host in access_hosts if host not in OFFICIAL_PATHS]

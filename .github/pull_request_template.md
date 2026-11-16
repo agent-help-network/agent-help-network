@@ -21,5 +21,5 @@ A change to what the service collects, stores, returns or reads from other hosts
 
 ## Data and safety
 
-- [ ] Reads of third-party hosts stay within robots.txt / llms.txt / curated documentation and status pages; no probing, no stepping around a refusal.
+- [ ] Reads of third-party hosts stay within robots.txt / llms.txt / curated documentation and status pages; no probing, no stepping around a refusal (the read scope of task-route curation is in `scripts/README.md`).
 - [ ] Observed facts and inferred causes stay separate in responses and copy.

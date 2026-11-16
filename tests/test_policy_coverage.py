@@ -1590,3 +1590,44 @@ def test_request_log_fields_and_limits_in_the_policy_match_the_code():
                             "Render 의 로그 보존 조건에 따라 Render 에 남으며 우리 데이터베이스에는 들어오지 않습니다"),
     }
     assert_phrases("request log", {lang: policy_text(lang) for lang in LANGS}, wanted)
+
+
+TASK_ROUTE_CURATION = {
+    "scope": Phrase("read only from public help and policy pages (help, support, FAQ, terms, and returns, refund, shipping, cancellation and warranty policies, claims pages, and a government agency's own pages on how to apply, file or submit)",
+                    "공개된 도움말·정책 페이지(도움말, 고객지원, FAQ, 이용약관, 반품·환불·배송·취소·보증 정책, 청구(claims) 페이지, 정부 기관이 직접 공개한 신청·제출 안내 페이지)에서만 읽습니다"),
+    "robots": Phrase("For those pages only, the reader may request a path that the site's robots.txt disallows",
+                     "이 페이지에 한해서는 사이트의 robots.txt 가 막은 경로도 요청할 수 있습니다"),
+    "agent": Phrase("AgentHelpNetwork-curation", "AgentHelpNetwork-curation"),
+    "gap": Phrase("waits at least 3 seconds between requests to a host", "같은 호스트에 요청하는 사이에 3초 이상 간격을 두며"),
+    "stop": Phrase("stops at a block response (401, 403, 429 or a challenge)", "차단 응답(401, 403, 429, 챌린지)이 오면 멈춥니다"),
+    "never": Phrase("never signs in, submits a form or guesses an address", "로그인, 양식 제출, 주소 추측은 하지 않고"),
+    "excluded": Phrase("does not read product, search, cart, account or user-content pages",
+                       "상품·검색·장바구니·계정·이용자 작성 콘텐츠 페이지는 읽지 않습니다"),
+    "removal": Phrase("removed on request", "삭제합니다"),
+}
+
+
+def test_the_curation_read_scope_is_described_while_task_routes_are_on():
+    assert_phrases("task route curation scope", {lang: section(lang, "05", task_routes=True) for lang in LANGS}, TASK_ROUTE_CURATION)
+    for lang in LANGS:
+        assert "AgentHelpNetwork-curation" not in section(lang, "05"), f"the {lang} policy names the curation reader while task routes are off"
+
+
+
+README_SCOPE = {
+    "README.md": ("read only from public help and policy pages (help, support, FAQ, terms, returns, refund, shipping, cancellation and warranty policies, claims pages, and a government agency's own pages on how to apply, file or submit)",
+                  "waits at least 3 seconds between requests to a host", "AgentHelpNetwork-curation", "for those pages only, it may read paths that `robots.txt` disallows"),
+    "README.ko.md": ("공개 도움말·정책 페이지(도움말, 고객지원, FAQ, 이용약관, 반품·환불·배송·취소·보증 정책, 청구(claims) 페이지, 정부 기관이 직접 공개한 신청·제출 안내 페이지)에서만 읽고",
+                     "같은 호스트에 요청하는 사이에 3초 이상 간격을 두고", "AgentHelpNetwork-curation", "`robots.txt` 가 막은 경로도 읽을 수 있으며"),
+    "scripts/README.md": ("help, support, FAQ, terms, and returns, refund, shipping, cancellation and warranty policies, claims pages, and a government agency's own pages on how to apply, file or submit",
+                          "waits at least 3 seconds between requests to a host", "AgentHelpNetwork-curation",
+                          "the reader may request a path that robots.txt disallows", "--task-routes-only --help-pages",
+                          "`help_pages_robots: N`", "that count is not a failure"),
+}
+
+
+def test_readmes_state_the_curation_read_scope_with_the_same_list_and_pacing():
+    for name, phrases in README_SCOPE.items():
+        text = " ".join((Path(__file__).resolve().parents[1] / name).read_text(encoding="utf-8").split())
+        for phrase in phrases:
+            assert phrase in text, f"{name} lost the curation scope wording: {phrase}"

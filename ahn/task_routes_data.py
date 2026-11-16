@@ -6,7 +6,7 @@ here feeds official_paths(), next_action, customer_url or the verdict.
 
 Keys are apex hosts (ahn.task_routes.route_host); values are lists of _route(...) records. Every value is a closed value of
 ahn.task_routes (the one exception is the optional condition_text, a short quotation of a condition the page states), every official_url follows ahn.task_routes.official_url_problem, and source_url is the
-site's own page that states it, read on verified_at with the curation user agent after robots.txt allowed it. An entry is
+site's own page that states it, read on verified_at with the curation user agent from a public help or policy page (scope: scripts/README.md). An entry is
 named only when the page states it outright; a hint is left out.
 
 Checks: python scripts/verify_official_paths.py --task-routes-only. Procedure: scripts/README.md.

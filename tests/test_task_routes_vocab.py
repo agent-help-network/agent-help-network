@@ -528,7 +528,7 @@ def test_checker_reports_duplicates_and_empty_lists():
 
 def test_task_routes_only_flag_is_offered():
     source = (ROOT / "scripts" / "verify_official_paths.py").read_text(encoding="utf-8")
-    assert "--task-routes-only" in source and "check_task_routes(hosts)" in source
+    assert "--task-routes-only" in source and "check_task_routes(hosts, args.help_pages)" in source
 
 
 # --- The verdict does not read this layer --------------------------------------------------------------------------------------
