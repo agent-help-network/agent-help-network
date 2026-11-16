@@ -873,7 +873,7 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("warranty_claim", obstacle="deadline_or_window",
                official_url="https://www.wahoofitness.com/returns-and-warranty",
                source_url="https://www.wahoofitness.com/returns-and-warranty", verified_at="2026-11-15"),
-        _route("warranty_claim", obstacle="deadline_or_window",
+        _route("warranty_claim", obstacle="eligibility_conditions_stated",
                official_url="https://www.wahoofitness.com/returns-and-warranty",
                source_url="https://www.wahoofitness.com/returns-and-warranty", verified_at="2026-11-15",
                condition_text="This Limited Warranty applies to you if you are the original purchaser of a Wahoo Fitness product from Wahoo Fitness or one of Wahoo Fitness’ authorized retailers"),
