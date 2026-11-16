@@ -115,7 +115,7 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "1password.com": {"1password.dev"}, "springer.com": {"springernature.com"}, "nature.com": {"springernature.com"},
     "sciencedirect.com": {"elsevier.com"}, "google-analytics.com": {"google.com"}, "lg.com": {"lge.com"},
     "xiaomi.com": {"mi.com"}, "qq.com": {"tencent.com"}, "wechat.com": {"qq.com"}, "anthropic.com": {"claude.com"},
-    "claude.ai": {"claude.com"}, "deepmind.google": {"google.dev"}, "llama.com": {"meta.ai"},
+    "claude.ai": {"claude.com", "anthropic.com"}, "deepmind.google": {"google.dev"}, "llama.com": {"meta.ai"},
     "moonshot.ai": {"kimi.ai"}, "youtu.be": {"google.com"}, "wa.me": {"facebook.com"}, "t.me": {"telegram.org"},
     "discord.gg": {"discord.com"}, "bit.ly": {"bitly.com"},
     "mychart.com": {"epic.com"},
