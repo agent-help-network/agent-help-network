@@ -48,7 +48,8 @@ def test_skill_uses_the_tool_only_when_listed_and_the_readme_says_so():
 def test_skill_description_asks_for_one_call_per_task_and_the_body_reads_field_notes():
     raw = read(PLUGIN / "skills" / "ahn-lookup" / "SKILL.md")
     description = next(line for line in raw.splitlines() if line.startswith("description:"))
-    assert "call it once per task at the start of a customer task" in description and "even when nothing is blocked" in description
+    assert description.startswith("description: Use once per task at the start of a customer task on a website")
+    assert "when the find_task_route tool is listed" in description and "an empty list does not mean there is no route" in description
     section = flat(raw).split("## Task routes", 1)[1].split("## Reporting", 1)[0]
     assert "`field_notes`" in section
     for word in ("`outcome`", "`period`", "`routes_tried`", "not a deadline", "not a validity window", "only on document records", "an empty list does not mean there are no channels"):
@@ -60,12 +61,16 @@ def test_skill_description_asks_for_one_call_per_task_and_the_body_reads_field_n
 def test_skill_description_opens_with_the_task_start_and_keeps_the_blocked_triggers():
     raw = read(PLUGIN / "skills" / "ahn-lookup" / "SKILL.md")
     description = next(line for line in raw.splitlines() if line.startswith("description:"))[len("description:"):].strip()
-    assert description.startswith("Use at the start of a customer task on a website")
-    assert "refund" in description[:120] and "cancellation" in description[:120] and "document submission" in description[:140]
-    for trigger in ("a 403", "login wall", "CAPTCHA", "5xx", "timeout", "verification step", "is this site down?", "does this site block agents?"):
+    assert len(description) <= 1024  # Agent Skills limit
+    assert description.startswith("Use once per task at the start of a customer task on a website")
+    assert "to get recorded task routes, when the find_task_route tool is listed" in description and "official task routes" not in description
+    for task in ("return or exchange", "refund", "cancellation", "warranty claim", "account recovery", "document submission"):
+        assert task in description[:260], task
+    for trigger in ("403", "login wall", "failed sign-in", "extra verification", "CAPTCHA", "5xx", "timeout", "is this site down?", "does this site block agents?"):
         assert trigger in description, trigger
     section = flat(raw).split("## Task routes", 1)[1].split("## Reporting", 1)[0]
-    assert "GET https://agenthelpnetwork.com/v1/task-routes?site_host=<host>" in section
+    assert "GET https://agenthelpnetwork.com/v1/task-routes?site_host=<host>" in section and "answering 404 when the switch is off" in section
+    assert "not a way around a missing tool" in section and "- Do not poll" in raw
 
 
 def test_the_hook_is_unchanged_and_drops_keys_it_does_not_know():
@@ -118,7 +123,7 @@ def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     assert "does not change when to call `check_incident` or what `check_incident` recommends" in cursor
     assert "`find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged" in read(PLUGIN / "README.md")
     skill = read(PLUGIN / "skills" / "ahn-lookup" / "SKILL.md")
-    assert "When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice)." in skill
+    assert "when the find_task_route tool is listed" in skill.split("---", 2)[1] and "recorded task routes" in skill.split("---", 2)[1]
     assert "The answer never changes check_incident's `recommendation.action`." in skill
     from ahn.mcp_task_routes import CALL_TIMING
     assert "**When:** call it once per task " + CALL_TIMING in " ".join(skill.split()) and "do not know its official document" not in skill
