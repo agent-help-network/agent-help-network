@@ -894,14 +894,29 @@ def kind_counts_text(by_kind: dict, room: int) -> str:
     return ""
 
 
-def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice: bool, by_kind: dict | None = None) -> str:
+def has_condition_text(record) -> bool:
+    """Whether a record quotes the site's condition (a non-empty ``condition_text``): the one test behind the sort order and the
+    summary count (D130)."""
+    return bool(record.condition_text)
+
+
+def condition_text_count(records) -> int:
+    return sum(1 for record in records if has_condition_text(record))
+
+
+def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice: bool, by_kind: dict | None = None,
+                 with_condition: int = 0) -> str:
     """The one sentence of an answer, built only from fixed words, the counts and the task kind's name. ``by_kind`` (task kind value
-    to count, over all matching records) adds a short count per task kind when the answer is not filtered to one kind (D128)."""
+    to count, over all matching records) adds a short count per task kind when the answer is not filtered to one kind (D128).
+    ``with_condition`` (how many of all matching records quote a condition, ``condition_text_count``) adds "N with a quoted condition."
+    after the source counts; with none the clause is left out and the sentence is what it was (D130)."""
     if total == 0:
         return (SUMMARY_NO_RECORDS_FOR_KIND if task_kind is not None else SUMMARY_NO_RECORDS) + " " + NEXT_STEP_NO_RECORDS
     parts = ", ".join(f"{count} {SOURCE_LABELS[kind]}" for kind, count in by_source.items() if count)
     line = f"{total} task route record{'s' if total != 1 else ''}" + (f" for {_words(task_kind)}" if task_kind is not None else "")
     line += f": {parts}."
+    if with_condition:
+        line += f" {with_condition} with a quoted condition."
     tail = ""
     if total > TASK_ROUTES_MAX:
         tail += f" Showing the {TASK_ROUTES_MAX} newest."
@@ -1076,7 +1091,7 @@ def site_records(host: str, settings=None) -> tuple[str | None, list[dict]]:
 def lookup(site_host: str, task_kind=None, today: date | None = None, *, settings=None) -> TaskRoutesResponse:
     """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
     shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
-    task kind, newest period first, at most TASK_ROUTES_MAX records. Reads the in-code table and, with ``settings`` while the write
+    task kind, newest period first (within a period, records that quote a condition first), at most TASK_ROUTES_MAX records. Reads the in-code table and, with ``settings`` while the write
     switch is served (D118), the published, not withdrawn stored records of the same site; no network.
 
     Raises TaskRouteInputError (a ValueError) for a host that is not a public hostname or a task_kind outside TaskKind."""
@@ -1104,7 +1119,7 @@ def lookup(site_host: str, task_kind=None, today: date | None = None, *, setting
             continue
         if kind is None or record.task_kind == kind:
             records.append(record)
-    records.sort(key=lambda r: (r.period, r.verified_at or "", r.task_kind.value, r.obstacle.value), reverse=True)
+    records.sort(key=lambda r: (r.period, has_condition_text(r), r.verified_at or "", r.task_kind.value, r.obstacle.value), reverse=True)
     by_source: dict[RouteSourceKind, int] = {}
     for record in records:
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
@@ -1115,7 +1130,7 @@ def lookup(site_host: str, task_kind=None, today: date | None = None, *, setting
     notice = any(record.sensitive for record in shown)
     return TaskRoutesResponse(
         field_notes=field_notes(shown), site_host=host,
-        summary_line=summary_line(len(records), by_source, kind, notice, by_kind), routes=shown,
+        summary_line=summary_line(len(records), by_source, kind, notice, by_kind, condition_text_count(records)), routes=shown,
         counts=TaskRouteCounts(records=len(records), by_source_kind=by_source),
         notice="case_record_not_advice" if notice else None,
         official_help_url=official_help_url(host, today) if not records else None)

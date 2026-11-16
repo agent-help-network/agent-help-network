@@ -310,7 +310,7 @@ def current_records(settings=None) -> list:
                 records.append(stored_route(row))
             except ValueError:
                 LOG.warning("task_route_row_invalid")
-    records.sort(key=lambda r: (r.period, r.verified_at or "", r.site_host, r.task_kind.value, r.obstacle.value), reverse=True)
+    records.sort(key=lambda r: (r.period, bool(r.condition_text), r.verified_at or "", r.site_host, r.task_kind.value, r.obstacle.value), reverse=True)
     return records
 
 
