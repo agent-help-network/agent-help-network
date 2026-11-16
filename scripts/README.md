@@ -109,6 +109,8 @@ only from a page you read; do not paraphrase, merge or sort conditions into clas
 condition. It never replaces `routes_tried`, `obstacle` or any closed value: the answer shows it next to `source_url`, and the
 agent decides whether it applies to its task.
 
+**What curation reads (task routes).** Curated task-route data is read only from public help and policy pages: help, support, FAQ, terms, and returns, refund, shipping, cancellation and warranty policies, claims pages, and a government agency's own pages on how to apply, file or submit. For those pages only, the reader may request a path that robots.txt disallows. It identifies itself with the user agent `AgentHelpNetwork-curation`, waits at least 3 seconds between requests to a host, and stops at a block response (401, 403, 429, challenge). It never signs in, submits forms or guesses addresses, keeps short quotations with a link, and does not read product, search, cart, account or user-content pages. A site's records are removed on request. This scope applies to task routes only; the consumer-path and status procedures above and below keep reading robots.txt first, and `verify_official_paths.py` still checks robots.txt before every request.
+
 One reviewed exception (D120): `CURATED_URL_EXCEPTIONS` in `ahn/task_routes_data.py` maps an exact URL to the same site's
 public index page that links it. A curated_official record may carry such a URL as `official_url` or `source_url` although its
 path has more than five digits in a row. The URL must equal the key character for character (case, a trailing slash and any
@@ -139,10 +141,10 @@ A curated record is always `basis` `official_doc`, `outcome` `not_applicable` an
 
 ```
 python -m pytest tests/test_task_routes_vocab.py
-python scripts/verify_official_paths.py --task-routes-only --hosts a.com,b.org
+python scripts/verify_official_paths.py --task-routes-only --help-pages --hosts a.com,b.org
 ```
 
-The live run must end with `failures: 0; rule problems: 0`.
+Run it with `--help-pages` (it takes the scope above): a page in that scope that robots.txt disallows is read anyway and counted separately as `help_pages_robots: N` (its host and URL are printed); that count is not a failure. A disallowed page outside the scope still fails. The run must end with `failures: 0; rule problems: 0`.
 
 ## Weekly status-source jobs
 
