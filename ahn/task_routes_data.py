@@ -442,10 +442,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
                source_url="https://www.busuu.com/en/terms", verified_at="2026-11-15",
                condition_text="claim a refund for any reason by notifying us or the app store (as applicable) no later than 14 days after the day on which the contract for the relevant Premium Service was formed"),
     ],
-    "walmart.com": [
-        _route("return_or_exchange", obstacle="deadline_or_window", official_url="https://corporate.walmart.com/policies",
-               source_url="https://corporate.walmart.com/policies", verified_at="2026-11-15"),
-    ],
     "mealpal.com": [
         _route("cancel_subscription", obstacle="deadline_or_window", routes=["email", "web_form"], official_url="https://mealpal.com/terms-and-conditions/",
                source_url="https://mealpal.com/terms-and-conditions/", verified_at="2026-11-15",
