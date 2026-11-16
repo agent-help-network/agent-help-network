@@ -21,19 +21,20 @@ from .task_routes import TaskKind, TaskRouteInputError, TaskRoutesResponse, look
 
 # Appended to the server instructions by ahn.mcp_adapter only while the read switch is on (AHN_TASK_ROUTES); with it off the
 # instructions are the text they always were.
-INSTRUCTIONS_ADDENDUM = ("When you start a customer task of several steps on a site (for example a refund, a cancellation or a document submission) "
-                         "and do not know its official document, channel or entry point, call find_task_route once for that task with the public hostname "
+# The one call-timing clause every surface that tells an agent when to call find_task_route carries (tests keep them in step).
+CALL_TIMING = ("when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, "
+               "a document submission), before you open its help pages, even when nothing is blocked")
+INSTRUCTIONS_ADDENDUM = ("Call find_task_route once " + CALL_TIMING + ", with the public hostname "
                          "(task_kind is optional). Its answer is a list of records, not a guarantee and not advice; an empty list does not mean there is "
                          "no route. The answer does not change when to call check_incident or what check_incident recommends.")
 SITE_HOST_DESCRIPTION = ("The public hostname of the site whose task routes you want, lowercase, for example example.com. "
                          "Only the host: no scheme, URL path, query, port or credentials.")
 TASK_KIND_DESCRIPTION = ("Optional: one kind of customer task to look up, from the list. Leave it out to get the records for every "
                          "task kind of the site.")
-DESCRIPTION = ("Look up recorded task routes for a public hostname: for a kind of customer task (a refund, a cancellation, a booking "
+DESCRIPTION = ("Call this once " + CALL_TIMING + ". Look up recorded task routes for a public hostname: for a kind of customer task (a refund, a cancellation, a booking "
                "and so on), an obstacle and the routes the site's own documents name. A record may carry condition_text, a condition the "
                "site's page states, quoted as written: it is not our judgement, so decide yourself whether it applies to your task, with "
-               "the page at source_url. Call it when you start a task of "
-               "several steps on a site and do not know which document, channel or entry point it needs. The answer is a list of "
+               "the page at source_url. The answer is a list of "
                "records, not a guarantee and not advice; an empty list does not mean there is no route. Sends only the hostname "
                "and an optional task kind, and changes nothing. Read summary_line first.")
 

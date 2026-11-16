@@ -87,10 +87,10 @@ def test_connect_page_paragraph_follows_the_switch():
 def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     install = flat(read(ROOT / "llms-install.md"))
     cursor = flat(read(ROOT / "plugins" / "cursor" / "agent-help-network" / "README.md"))
-    assert "If `find_task_route` is listed, call it once for that task when you start a customer task" in install and "document submission" in install
+    assert "If `find_task_route` is listed, call it once when you start a customer task on a site" in install and "document submission" in install
     assert install.index("Declared policy is not an access guarantee.") < install.index("If `find_task_route` is listed") < install.index("## Tool notes")
     assert "Blocked, or not sure" not in read(ROOT / "ahn" / "mcp_task_routes.py") and "If it is not listed, carry on as usual" in install
-    assert "If the server also lists `find_task_route`, call it once for that task when you start a customer task" in cursor and "If it is not listed, carry on as usual" in cursor
+    assert "If the server also lists `find_task_route`, call it once when you start a customer task on a site" in cursor and "If it is not listed, carry on as usual" in cursor
     assert "does not change when to call `check_incident` or what `check_incident` recommends" in install
     assert "does not change when to call `check_incident` or what `check_incident` recommends" in cursor
     assert "`find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged" in read(PLUGIN / "README.md")
@@ -99,7 +99,7 @@ def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     assert "The answer never changes check_incident's `recommendation.action`." in skill
     from ahn.mcp_task_routes import INSTRUCTIONS_ADDENDUM
     assert INSTRUCTIONS_ADDENDUM.endswith("The answer does not change when to call check_incident or what check_incident recommends.")
-    assert "call find_task_route once for that task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
+    assert "Call find_task_route once when you start a customer task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
     connectors = [ROOT / "llms-install.md", CHATGPT, ROOT / ".claude-plugin" / "marketplace.json",
                   PLUGIN / ".claude-plugin" / "plugin.json", PLUGIN / "README.md", PLUGIN / "skills" / "ahn-lookup" / "SKILL.md",
                   ROOT / "plugins" / "cursor" / "agent-help-network" / "README.md", ROOT / "ahn" / "templates" / "connect.html"]
