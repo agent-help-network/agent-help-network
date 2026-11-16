@@ -968,6 +968,8 @@ _YT = "https://developers.google.com/youtube/"
 _NOTION_AUTH = "https://developers.notion.com/guides/get-started/authorization"
 _X_AUTH = "https://docs.x.com/fundamentals/authentication/overview"
 
+_TRELLO_AUTH = "https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
+
 OFFICIAL_ACCESS: dict[str, dict] = {
     "github.com": {
         "auth": [
@@ -1843,6 +1845,23 @@ OFFICIAL_ACCESS: dict[str, dict] = {
         "rate_limits_url": "https://ngrok.com/docs/api/",
         "openapi_url": "https://raw.githubusercontent.com/ngrok/ngrok-openapi/refs/heads/main/ngrok.yaml",
         "verified_at": "2026-10-21",
+    },
+    "claude.ai": {
+        "auth": [{"method": "api_key", "source_url": "https://platform.claude.com/docs/en/api/overview"}],
+        "key_signup_url": "https://platform.claude.com/docs/en/get-started",
+        "rate_limits_url": "https://platform.claude.com/docs/en/api/rate-limits",
+        "verified_at": "2026-11-16",
+    },
+    "trello.com": {
+        "auth": [{"method": "api_key", "source_url": _TRELLO_AUTH},
+                 {"method": "oauth2", "source_url": "https://developer.atlassian.com/cloud/trello/guides/rest-api/oauth-2-getting-started/"}],
+        "key_signup_url": _TRELLO_AUTH,
+        "rate_limits_url": "https://developer.atlassian.com/cloud/trello/guides/rest-api/rate-limits/",
+        "verified_at": "2026-11-16",
+    },
+    "wordpress.org": {
+        "auth": [{"method": "api_key", "source_url": "https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/"}],
+        "verified_at": "2026-11-16",
     },
 }
 # Separate hosts of the same publisher and API share one bundle.
