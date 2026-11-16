@@ -195,7 +195,10 @@ def test_labels_that_the_header_already_says_are_not_repeated_in_the_cells(on, m
         assert "Records for the site" not in tbody
     en = on.get("/en/routes").text.split("<tbody>", 1)[1]
     assert ">no result (not tried)</td>" in en and ">n/a</td>" not in en and "not applicable" not in en  # the filter keeps the full label
-    assert "not applicable (document record)" in on.get("/en/routes").text.split("<tbody>", 1)[0]
+    en_head = on.get("/en/routes").text.split("<tbody>", 1)[0]
+    ko_head = on.get("/ko/routes").text.split("<tbody>", 1)[0]
+    assert "no result (not tried)" in en_head and "not applicable" not in en_head and "(document record)" not in en_head  # the filter label matches the cell
+    assert "결과 기록 없음(시도 안 함)" in ko_head and "해당 없음" not in ko_head and "(문서 기록)" not in ko_head
 
 
 def test_the_list_page_groups_rows_by_site_and_the_site_page_does_not(on, monkeypatch):
