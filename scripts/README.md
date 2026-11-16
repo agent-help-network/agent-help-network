@@ -109,6 +109,17 @@ only from a page you read; do not paraphrase, merge or sort conditions into clas
 condition. It never replaces `routes_tried`, `obstacle` or any closed value: the answer shows it next to `source_url`, and the
 agent decides whether it applies to its task.
 
+Rules for choosing `condition_text` (a curation guide, not a filter):
+
+1. A `deadline_or_window` record quotes the sentence that states the time limit or period. If the page gives a number of days, hours or years, pick the sentence that holds it.
+2. A `fee_required` record quotes the sentence that states the fee. If the page gives an amount or a rate, pick the sentence that holds it; if the page names no amount, leave it as it is.
+3. When one task has two conditions, write two records (the existing practice) and put the record whose sentence supports the obstacle value first.
+4. Prefer a whole sentence that fits in 200 characters; never cut in the middle of a list.
+5. When the page names the channel (web form, phone, mail and so on), record it in `routes_tried`/`routes`.
+6. These rules are never a reason to drop a record. A record is rejected only for the four existing reasons: the quotation is not on the page, a guess, terms that forbid AI use, or a breach of the reading etiquette above.
+
+`python -I scripts/verify_official_paths.py --task-routes-only` prints these rules' leftovers after the table check under "advisories (not failures)": deadline records with no condition_text, deadline records whose condition_text states no amount of time, fee records with no condition_text, and condition_text ending in a comma, an opening bracket, a colon or a semicolon. The advisories never change the exit code.
+
 **What curation reads (task routes).** Curated task-route data is read only from public help and policy pages: help, support, FAQ, terms, and returns, refund, shipping, cancellation and warranty policies, claims pages, and a government agency's own pages on how to apply, file or submit. For those pages only, the reader may request a path that robots.txt disallows. It identifies itself with the user agent `AgentHelpNetwork-curation`, waits at least 3 seconds between requests to a host, and stops at a block response (401, 403, 429, challenge). It never signs in, submits forms or guesses addresses, keeps short quotations with a link, and does not read product, search, cart, account or user-content pages. A site's records are removed on request. This scope applies to task routes only; the consumer-path and status procedures above and below keep reading robots.txt first, and `verify_official_paths.py` still checks robots.txt before every request.
 
 One reviewed exception (D120): `CURATED_URL_EXCEPTIONS` in `ahn/task_routes_data.py` maps an exact URL to the same site's
