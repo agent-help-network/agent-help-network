@@ -44,13 +44,13 @@ What is never sent: URL paths or queries, page content, error text, conversation
 
 | File | Purpose |
 | :- | :- |
-| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.18 |
+| `.claude-plugin/plugin.json` | Manifest: plugin `ahn`, version 0.3.19 |
 | `.claude-plugin/icon.png` | Listing icon (512 x 512 PNG, same design as the site icon) |
 | `hooks/hooks.json` | Runs the lookup after failed web tools (see [Triggers](#triggers)) |
 | `hooks/run-hook.sh` | Finds Python 3.7 or newer (`py -3` first on Windows, `python3` first elsewhere) and runs the hook; prints nothing and exits 0 without one |
 | `hooks/ahn_lookup.py` | The hook. Python 3.7+ standard library only |
 | `.mcp.json` | Remote MCP server `agent-help-network` at `https://agenthelpnetwork.com/mcp` (streamable HTTP, no auth). It provides the read-only `check_incident` tool and the `report_observation` write tool; use the latter only with the user's explicit approval, never automatically |
-| `skills/ahn-lookup/SKILL.md` | When to look a host up by hand, how to read every field of the answer, (from 0.3.13) how to remember regular sites, and (from 0.3.18) when to use `find_task_route` |
+| `skills/ahn-lookup/SKILL.md` | When to look a host up by hand, how to read every field of the answer, (from 0.3.13) how to remember regular sites, (from 0.3.18) when to use `find_task_route`, and (from 0.3.19) how to read its `field_notes` |
 
 ## Regular sites (from 0.3.13)
 
@@ -58,7 +58,7 @@ The skill's "Regular sites" section tells the agent how to check the sites a use
 
 ## Task routes (from 0.3.18)
 
-The skill's "Task routes" section tells the agent to use the MCP tool `find_task_route` only when the server lists it, once per task, when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, a document submission), before you open its help pages, even when nothing is blocked; it looks the site up once for that task. The answer is a list of records of obstacles and the routes a site's own documents name: records, not a guarantee and not advice, and an empty list does not mean there is no route. If the tool is not listed, or the answer is empty, the agent carries on as usual. `find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged: it still acts only after a failed web step and never calls `find_task_route`.
+The skill's "Task routes" section tells the agent to use the MCP tool `find_task_route` only when the server lists it, once per task, at this moment: "when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, a document submission), before you open its help pages, even when nothing is blocked". From 0.3.19 the skill also says how to read the answer's `field_notes`: the server adds a fixed sentence for `outcome`, `period` and `routes_tried` (`routes_tried` lists only the channels that record copied from the document). The answer is a list of records of obstacles and the routes a site's own documents name: records, not a guarantee and not advice, and an empty list does not mean there is no route. If the tool is not listed, or the answer is empty, the agent carries on as usual. `find_task_route` does not change when to call `check_incident` or what `check_incident` recommends. The hook is unchanged: it still acts only after a failed web step and never calls `find_task_route`.
 
 ## Install
 

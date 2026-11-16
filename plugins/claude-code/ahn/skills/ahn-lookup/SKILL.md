@@ -1,6 +1,6 @@
 ---
 name: ahn-lookup
-description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing. When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice).
+description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing. When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice). When find_task_route is listed, call it once per task at the start of a customer task (a return or exchange, a refund, a cancellation, a warranty claim) even when nothing is blocked.
 ---
 
 # Agent Help Network lookup
@@ -87,6 +87,7 @@ Use `find_task_route` (`mcp__plugin_ahn_agent-help-network__find_task_route`) on
 
 - **When:** call it once per task when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, a document submission), before you open its help pages, even when nothing is blocked. Look the host up once for that task; send the bare hostname and, optionally, a `task_kind` from the tool's list.
 - **Answer:** records of an obstacle and the route the site's own documents name. Not a guarantee and not advice; an empty list does not mean there is no route. The answer never changes check_incident's `recommendation.action`.
+- **`field_notes`:** fixed sentences. `outcome`: `not_applicable` marks a record taken from a document, not that the task does not apply. `period`: when it was read or reported, not a deadline. `routes_tried`: only the channels this record copied from the document.
 
 ## Reporting
 
