@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.11
+
+- `ahn.task_routes` passes on `field_notes`: the service's fixed sentences that say what `outcome`, `period` and `routes_tried` mean in the answer (for a document record, `routes_tried` lists only the channels that record copied from the document, and `period` is not a deadline). `TaskRoutes.field_notes` is a dictionary, or None when the answer has none; `to_dict()` includes it only when present. Only the keys `outcome`, `period` and `routes_tried` are kept, and a value must be one line of printable ASCII of at most 400 characters; a key or value that fails is dropped and the rest of the answer is kept.
 
 - `ahn.task_routes` passes on the optional `condition_text` of a route: a condition the site's own page states, quoted as written (1 to 200 characters, one line, curated records only). It is not interpreted; whether it applies to a task is for the caller to decide, with the page at `source_url`. A record without it is unchanged (no key); an invalid value makes the answer unreadable (`no_answer`), like any other invalid field.
 

@@ -293,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.4"
+    assert langchain_ahn.__version__ == "0.2.5"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 
@@ -549,7 +549,8 @@ def test_task_route_tool_sends_nothing_for_a_private_host_or_a_bad_task_kind():
     schema = json.dumps(ahn_tools.AHNTaskRouteInput.model_json_schema())
     assert "refund_request" in schema and "billing_dispute" in schema
     assert "empty list does not mean there is no route" in tool.description and "Records, not guarantees" in tool.description
-    assert "when you start a multi-step customer task" in tool.description
+    assert "when you start a customer task on a site" in tool.description and "even when nothing is blocked" in tool.description
+    assert "way forward is blocked" not in tool.description and "field_notes" in tool.description
 
 
 def test_task_route_tool_says_not_available_with_an_older_ahn_client(monkeypatch):
@@ -559,10 +560,10 @@ def test_task_route_tool_says_not_available_with_an_older_ahn_client(monkeypatch
     assert "ahn_lookup" == AHNLookupTool().name  # the existing tool is unchanged
 
 
-def test_task_route_tool_is_exported_and_the_dependency_floor_is_unchanged():
+def test_task_route_tool_is_exported_and_the_dependency_floor_is_raised():
     assert langchain_ahn.AHNTaskRouteTool is ahn_tools.AHNTaskRouteTool and "AHNTaskRouteTool" in langchain_ahn.__all__
     pyproject = (ROOT / "clients" / "langchain-ahn" / "pyproject.toml").read_text(encoding="utf-8")
-    assert '"ahn-client>=0.6.8,<0.7"' in pyproject
+    assert '"ahn-client>=0.6.11,<0.7"' in pyproject
 
 
 def test_task_route_tool_passes_condition_text_through_and_leaves_plain_answers_alone(routes_transport):
@@ -574,3 +575,12 @@ def test_task_route_tool_passes_condition_text_through_and_leaves_plain_answers_
     plain = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
     assert "condition_text" not in plain
     assert "condition_text" in ahn_tools.TASK_ROUTES_DESCRIPTION and "source_url" in ahn_tools.TASK_ROUTES_DESCRIPTION
+
+
+def test_task_route_tool_passes_field_notes_through_and_drops_a_bad_entry(routes_transport):
+    notes = {"outcome": "not_applicable marks a record taken from a document.", "period": "Not a deadline."}
+    routes_transport({**ROUTES_ANSWER, "field_notes": {**notes, "extra": "x", "routes_tried": "caf\u00e9"}})
+    out = ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
+    assert json.loads(out.partition("\n\n")[2])["field_notes"] == notes
+    routes_transport()
+    assert "field_notes" not in ahn_tools.AHNTaskRouteTool().invoke({"hostname": "example.com"})
