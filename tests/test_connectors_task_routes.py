@@ -30,7 +30,7 @@ def flat(text: str) -> str:
 def test_claude_code_manifest_and_marketplace_carry_the_same_task_routes_phrase():
     manifest = json.loads(read(PLUGIN / ".claude-plugin" / "plugin.json"))
     entry = json.loads(read(ROOT / ".claude-plugin" / "marketplace.json"))["plugins"][0]
-    assert manifest["version"] == entry["version"] == "0.3.20"
+    assert manifest["version"] == entry["version"] == "0.3.21"
     phrase = "If the bundled server lists find_task_route, it can also return recorded task routes for a site (records, not advice)."
     assert phrase in manifest["description"] and phrase in entry["description"]
 
@@ -55,6 +55,17 @@ def test_skill_description_asks_for_one_call_per_task_and_the_body_reads_field_n
         assert word in section, word
     readme = flat(read(PLUGIN / "README.md"))
     assert "once per task, once for that task" not in readme and "once per task, when you start" not in readme
+
+
+def test_skill_description_opens_with_the_task_start_and_keeps_the_blocked_triggers():
+    raw = read(PLUGIN / "skills" / "ahn-lookup" / "SKILL.md")
+    description = next(line for line in raw.splitlines() if line.startswith("description:"))[len("description:"):].strip()
+    assert description.startswith("Use at the start of a customer task on a website")
+    assert "refund" in description[:120] and "cancellation" in description[:120] and "document submission" in description[:140]
+    for trigger in ("a 403", "login wall", "CAPTCHA", "5xx", "timeout", "verification step", "is this site down?", "does this site block agents?"):
+        assert trigger in description, trigger
+    section = flat(raw).split("## Task routes", 1)[1].split("## Reporting", 1)[0]
+    assert "GET https://agenthelpnetwork.com/v1/task-routes?site_host=<host>" in section
 
 
 def test_the_hook_is_unchanged_and_drops_keys_it_does_not_know():
