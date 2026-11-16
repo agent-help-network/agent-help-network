@@ -637,9 +637,24 @@ def test_route_refuses_eligibility_conditions_stated_without_condition_text():
     assert VERIFIER.task_route_problems("example.com", item, today=TODAY) == []
 
 
-def test_no_curated_record_uses_eligibility_conditions_stated_yet_and_the_answers_keep_the_old_values():
-    obstacles = {record["obstacle"] for records in TASK_ROUTES_CURATED.values() for record in records}
-    assert "eligibility_conditions_stated" not in obstacles
+def test_every_curated_eligibility_conditions_stated_record_quotes_its_condition():
+    found = [(host, record) for host, records in TASK_ROUTES_CURATED.items() for record in records
+             if record["obstacle"] == "eligibility_conditions_stated"]
+    assert found  # the value is in use, so the check below is not empty
+    for host, record in found:
+        assert record.get("condition_text") and record.get("source_url"), host
+        assert not {"verification_kind", "site_requires", "document_kind", "entry_point_kind"} & set(record), host
+
+
+def test_wahoo_warranty_original_purchaser_record_moved_and_kept_its_quotation():
+    records = [record for record in TASK_ROUTES_CURATED["wahoofitness.com"] if record["task_kind"] == "warranty_claim"]
+    by_text = {record["condition_text"]: record for record in records}
+    purchaser = next(text for text in by_text if "original purchaser" in text)
+    assert by_text[purchaser]["obstacle"] == "eligibility_conditions_stated"
+    assert purchaser == ("This Limited Warranty applies to you if you are the original purchaser of a Wahoo Fitness product from "
+                         "Wahoo Fitness or one of Wahoo Fitness\u2019 authorized retailers")
+    period = next(text for text in by_text if text.startswith("The Limited Warranty period starts"))
+    assert by_text[period]["obstacle"] == "deadline_or_window"  # the sentence that states the period keeps its value
 
 
 def test_a_sentence_that_also_states_a_time_limit_keeps_deadline_or_window():
