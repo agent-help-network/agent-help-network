@@ -248,6 +248,7 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .routes-small{display:block;font-size:12px;color:var(--muted);margin-top:3px}
 .routes-sensitive{display:block;font-size:12px;font-weight:750;color:#8a4b00;margin-top:5px}
 .routes-links a+a{margin-left:10px}
+.routes-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .routes-empty{background:#fff;border:1px dashed #bbcbd7;border-radius:13px;padding:34px;text-align:center;color:var(--muted)}
 .routes-site-state p{margin:0 0 8px}.routes-site-state .routes-small a,.routes-matches a{color:var(--blue);font-weight:700}
 .routes-matches{list-style:none;margin:0 0 8px;padding:0}

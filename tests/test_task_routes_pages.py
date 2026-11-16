@@ -22,7 +22,7 @@ from ahn import main as ahn_main
 from ahn import task_routes_api, task_routes_data
 from ahn.main import LANG, create_app
 from ahn.settings import Settings
-from ahn.task_routes import RouteSourceKind, TaskKind
+from ahn.task_routes import RouteSourceKind, TaskKind, TaskRoute
 from ahn.task_routes_data import _route
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +111,55 @@ def test_en_and_ko_pages_say_the_same_things(on, monkeypatch):
         assert HOST in body and OTHER in body
     assert "cancel subscription" in en.text and "구독 해지" in ko.text and "구독 해지" not in en.text
     assert "wrong channel" in en.text and "잘못된 창구" in ko.text
-    assert "Route that worked" in en.text and "통한 경로" in ko.text
+    assert ">Route</th>" in en.text and ">경로</th>" in ko.text
+
+
+def plain(response) -> str:
+    """What a tool that strips the tags sees: no CSS, so a span that is only a block on screen adds no break."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", response.text)).split())
+
+
+def separated(monkeypatch):
+    table(monkeypatch, {HOST: [
+        entry("account_recovery", obstacle="verification_step", verification_kind="security_question", routes=("web_form",), worked=None,
+              condition_text="Requests must be made within 30 days."),
+        entry("refund_request", obstacle="wrong_channel", routes=(), worked=None)]})
+
+
+def test_the_plain_text_of_a_row_keeps_values_apart_en_and_ko(on, monkeypatch):
+    separated(monkeypatch)
+    for lang in ("en", "ko"):
+        for path in (f"/{lang}/routes", f"/{lang}/routes/{HOST}"):
+            body = on.get(path)
+            assert body.status_code == 200
+            flat = plain(body)
+            if lang == "en":
+                assert "verification step (security question)" in flat
+            assert "verification stepsecurity" not in flat and "verification step security" not in flat
+            assert not re.search(r"\d{4}-\d{2}-\d{2}\S", flat)  # nothing is glued to the checked date
+            assert re.search(r"\d{4}-\d{2}-\d{2} \S", flat)
+            assert "source pageofficial page" not in flat and "근거 문서공식 안내" not in flat
+
+
+def test_the_plain_text_gap_is_not_visible_on_screen():
+    css = (ROOT / "ahn/static/site.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.routes-sr\{([^}]*)\}", css).group(1)
+    assert "position:absolute" in rule and "clip:rect(0 0 0 0)" in rule  # takes no room, shows nothing
+    page = (ROOT / "ahn/templates/routes.html").read_text(encoding="utf-8")
+    assert page.count("routes-sr") == 3
+
+
+def test_a_document_record_does_not_say_not_stated_and_a_report_keeps_its_label(on, monkeypatch):
+    separated(monkeypatch)
+    en, ko = plain(on.get("/en/routes")), plain(on.get("/ko/routes"))
+    assert "not stated" not in en and "적혀 있지 않음" not in ko
+    assert "named in the document: web form" in en and "문서에 적힌 창구:" in ko
+    assert "no channel recorded" in en and "기록된 창구 없음" in ko
+    assert " tried:" not in en
+    reported = task_routes_api.row_for(
+        TaskRoute(site_host=HOST, task_kind="cancel_subscription", obstacle="wrong_channel", routes_tried=["phone"], basis="own_attempt",
+                  outcome="gave_up", period="2026-Q4", source_kind="external_agent", sensitive=False), "en", {})
+    assert reported["document"] is False and reported["worked"] is None  # the template keeps "not stated" and "tried" for these
 
 
 def test_the_headline_is_computed_from_the_counts():
