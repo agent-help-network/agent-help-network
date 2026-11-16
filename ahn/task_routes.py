@@ -253,10 +253,16 @@ class _TaskRouteFields(StrictModel):
     site_requires: SiteRequires | None = Field(default=None, exclude_if=_omit_none)
     document_kind: DocumentKind | None = Field(default=None, exclude_if=_omit_none)
     entry_point_kind: EntryPointKind | None = Field(default=None, exclude_if=_omit_none)
-    routes_tried: list[RouteKind] = Field(default_factory=list, max_length=TASK_ROUTE_MAX_TRIED)
+    routes_tried: list[RouteKind] = Field(
+        default_factory=list, max_length=TASK_ROUTE_MAX_TRIED,
+        description="The routes tried (a reported case) or, on a document record, the channels this record copied from the document, "
+                    "which may not be every channel the document names. An empty list means this record lists none, not that the "
+                    "document or the site has none.")
     route_worked: RouteKind | Literal["none"] | None = Field(default=None, exclude_if=_omit_none)
     basis: RouteBasis
-    outcome: RouteOutcome
+    outcome: RouteOutcome = Field(
+        description="How the case ended. not_applicable marks a record taken from a document: it names a route or a condition and "
+                    "nobody's result is recorded. It does not mean the task does not apply.")
     duration: RouteDuration | None = Field(default=None, exclude_if=_omit_none)
 
     @field_validator("site_host")
@@ -274,7 +280,7 @@ class _TaskRouteFields(StrictModel):
 
 class TaskRoute(_TaskRouteFields):
     """One task-route record as an answer carries it. ``sensitive`` and ``period`` are set by the server."""
-    period: str
+    period: str = Field(description=f"The {TASK_ROUTE_PERIOD_UNIT} in which the record was read, reported or recorded. It is not a deadline and not a validity window.")
     source_kind: RouteSourceKind
     sensitive: bool
     official_url: str | None = Field(default=None, max_length=200, pattern=r"^https://[^\s?#]+$", exclude_if=_omit_none)
@@ -283,7 +289,8 @@ class TaskRoute(_TaskRouteFields):
     condition_text: str | None = Field(
         default=None, min_length=1, max_length=TASK_ROUTE_CONDITION_TEXT_MAX, exclude_if=_omit_none,
         description="A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and "
-                    "not classified: whether it applies to your task is for you to decide, with the page at source_url.")
+                    "not classified: whether it applies to your task is for you to decide, with the page at source_url. It may state a "
+                    "condition other than the obstacle.")
 
     @field_validator("condition_text")
     @classmethod
@@ -339,7 +346,32 @@ class TaskRouteCounts(StrictModel):
     by_source_kind: dict[RouteSourceKind, int] = Field(default_factory=dict)
 
 
+FIELD_NOTE_OUTCOME = ("not_applicable marks a record taken from a document: it names a route or a condition and nobody's result is "
+                      "recorded. It does not mean the task does not apply.")
+FIELD_NOTE_PERIOD = f"The {TASK_ROUTE_PERIOD_UNIT} in which the record was read, reported or recorded. It is not a deadline and not a validity window."
+FIELD_NOTE_ROUTES_TRIED = ("For a document record, the channels this record copied from the document; they may not be every channel the "
+                           "document names. An empty list means this record lists none, not that the document or the site has none.")
+
+
+def field_notes(shown: list[TaskRoute]) -> dict[str, str] | None:
+    """The fixed sentences that say what outcome, period and routes_tried mean for the records shown, or None for no record.
+    A key appears only when a shown record makes it matter: outcome for a document record (not_applicable), routes_tried for a
+    document record, period for any record. The words are fixed and say nothing about a site."""
+    if not shown:
+        return None
+    notes: dict[str, str] = {}
+    if any(record.outcome == RouteOutcome.not_applicable for record in shown):
+        notes["outcome"] = FIELD_NOTE_OUTCOME
+    notes["period"] = FIELD_NOTE_PERIOD
+    if any(record.source_kind == RouteSourceKind.curated_official for record in shown):
+        notes["routes_tried"] = FIELD_NOTE_ROUTES_TRIED
+    return notes
+
+
 class TaskRoutesResponse(StrictModel):
+    field_notes: dict[str, str] | None = Field(
+        default=None, exclude_if=_omit_none,
+        description="Fixed sentences on what outcome, period and routes_tried mean in these records. Left out when there is no record.")
     site_host: str
     summary_line: str = Field(min_length=1, max_length=200, pattern=r"^[ -~]+$")
     routes: list[TaskRoute] = Field(default_factory=list, max_length=20)
@@ -1012,6 +1044,6 @@ def lookup(site_host: str, task_kind=None, today: date | None = None, *, setting
     shown = records[:TASK_ROUTES_MAX]
     notice = any(record.sensitive for record in shown)
     return TaskRoutesResponse(
-        site_host=host, summary_line=summary_line(len(records), by_source, kind, notice), routes=shown,
+        field_notes=field_notes(shown), site_host=host, summary_line=summary_line(len(records), by_source, kind, notice), routes=shown,
         counts=TaskRouteCounts(records=len(records), by_source_kind=by_source),
         notice="case_record_not_advice" if notice else None)

@@ -376,6 +376,8 @@ TASK_ROUTE_FIELDS = {
     "records": Exempt("the number of records, a count of the list above"),
     "by_source_kind": Phrase("counts by source kind", "출처 종류별 개수"),
     "notice": Exempt("the fixed code case_record_not_advice, set when a record is marked as a case record"),
+    "field_notes": Exempt("fixed English sentences that say what outcome, period and routes_tried mean (D126); no site, record or "
+                          "visitor data enters them and nothing is stored"),
 }
 TASK_ROUTE_INPUTS = {
     "site_host": Phrase("a public hostname (site_host)", "공개 호스트명(site_host)"),

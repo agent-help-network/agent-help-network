@@ -352,14 +352,17 @@ def test_every_string_in_an_answer_is_an_enum_value_a_host_an_https_url_a_period
     body = on.get("/v1/task-routes", params={"site_host": "www." + HOST}).json()
     allowed_hosts = {HOST, "www." + HOST}
     assert body["routes"]
-    for text in _strings({key: value for key, value in body.items() if key != "summary_line"}):
+    from ahn.task_routes import FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED
+
+    assert set(body["field_notes"].values()) <= {FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED}  # fixed sentences only
+    for text in _strings({key: value for key, value in body.items() if key not in ("summary_line", "field_notes")}):
         assert (text in ENUM_VALUES or text in allowed_hosts or re.fullmatch(r"https://[^\s?#]+", text)
                 or re.fullmatch(r"\d{4}-Q[1-4]", text) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", text)), text
     for route in body["routes"]:
         assert set(route) <= {"site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                               "entry_point_kind", "routes_tried", "route_worked", "basis", "outcome", "duration", "period",
                               "source_kind", "sensitive", "official_url", "source_url", "verified_at"}
-    assert set(body) <= {"site_host", "summary_line", "routes", "counts", "notice"}
+    assert set(body) <= {"field_notes", "site_host", "summary_line", "routes", "counts", "notice"}
     assert not re.search(r"https?://|www\.", body["summary_line"])
 
 

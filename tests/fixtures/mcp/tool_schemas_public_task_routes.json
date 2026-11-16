@@ -3988,7 +3988,7 @@
         }
        ],
        "default": null,
-       "description": "A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and not classified: whether it applies to your task is for you to decide, with the page at source_url.",
+       "description": "A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and not classified: whether it applies to your task is for you to decide, with the page at source_url. It may state a condition other than the obstacle.",
        "title": "Condition Text"
       },
       "document_kind": {
@@ -4042,9 +4042,11 @@
        "title": "Official Url"
       },
       "outcome": {
-       "$ref": "#/$defs/RouteOutcome"
+       "$ref": "#/$defs/RouteOutcome",
+       "description": "How the case ended. not_applicable marks a record taken from a document: it names a route or a condition and nobody's result is recorded. It does not mean the task does not apply."
       },
       "period": {
+       "description": "The quarter in which the record was read, reported or recorded. It is not a deadline and not a validity window.",
        "title": "Period",
        "type": "string"
       },
@@ -4065,6 +4067,7 @@
        "title": "Route Worked"
       },
       "routes_tried": {
+       "description": "The routes tried (a reported case) or, on a document record, the channels this record copied from the document, which may not be every channel the document names. An empty list means this record lists none, not that the document or the site has none.",
        "items": {
         "$ref": "#/$defs/RouteKind"
        },
@@ -4193,6 +4196,22 @@
    "properties": {
     "counts": {
      "$ref": "#/$defs/TaskRouteCounts"
+    },
+    "field_notes": {
+     "anyOf": [
+      {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Fixed sentences on what outcome, period and routes_tried mean in these records. Left out when there is no record.",
+     "title": "Field Notes"
     },
     "notice": {
      "anyOf": [
