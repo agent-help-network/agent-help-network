@@ -111,7 +111,7 @@ def test_en_and_ko_pages_say_the_same_things(on, monkeypatch):
         assert HOST in body and OTHER in body
     assert "cancel subscription" in en.text and "구독 해지" in ko.text and "구독 해지" not in en.text
     assert "wrong channel" in en.text and "잘못된 창구" in ko.text
-    assert ">Route</th>" in en.text and ">경로</th>" in ko.text
+    assert ">Route worked, or document record</th>" in en.text and ">통한 경로, 또는 문서 기록</th>" in ko.text
 
 
 def plain(response) -> str:
@@ -145,6 +145,7 @@ def test_the_plain_text_gap_is_not_visible_on_screen():
     css = (ROOT / "ahn/static/site.css").read_text(encoding="utf-8")
     rule = re.search(r"\.routes-sr\{([^}]*)\}", css).group(1)
     assert "position:absolute" in rule and "clip:rect(0 0 0 0)" in rule  # takes no room, shows nothing
+    assert ".routes-links .routes-sr+a{margin-left:10px}" in css.replace("a+a,", "")  # the hidden gap sits between the two links, so the visible gap follows it
     page = (ROOT / "ahn/templates/routes.html").read_text(encoding="utf-8")
     assert page.count("routes-sr") == 3
 
@@ -153,13 +154,68 @@ def test_a_document_record_does_not_say_not_stated_and_a_report_keeps_its_label(
     separated(monkeypatch)
     en, ko = plain(on.get("/en/routes")), plain(on.get("/ko/routes"))
     assert "not stated" not in en and "적혀 있지 않음" not in ko
-    assert "named in the document: web form" in en and "문서에 적힌 창구:" in ko
-    assert "no channel recorded" in en and "기록된 창구 없음" in ko
+    assert "document record: web form" in en and "문서 기록: " in ko
+    assert "document record, no channel listed" in en and "문서 기록, 적힌 창구 없음" in ko
+    assert "named in the document" not in en and "no channel recorded" not in en
     assert " tried:" not in en
     reported = task_routes_api.row_for(
         TaskRoute(site_host=HOST, task_kind="cancel_subscription", obstacle="wrong_channel", routes_tried=["phone"], basis="own_attempt",
                   outcome="gave_up", period="2026-Q4", source_kind="external_agent", sensitive=False), "en", {})
     assert reported["document"] is False and reported["worked"] is None  # the template keeps "not stated" and "tried" for these
+
+
+def text_of_line(fragment: str) -> str:
+    return html.unescape(fragment)
+
+
+def test_the_condition_has_its_own_line_under_the_row_and_not_in_the_source_cell(on, monkeypatch):
+    separated(monkeypatch)
+    for lang, label, note in (("en", "In the site's words:", "not our judgement"), ("ko", "사이트의 말:", "우리 판단이 아니에요")):
+        body = on.get(f"/{lang}/routes").text
+        assert body.count('<tr class="routes-condition">') == 1  # only the record that has a condition gets the line
+        line = re.search(r'<tr class="routes-condition">.*?</tr>', body, flags=re.S).group(0)
+        assert "colspan=\"7\"" in line and label in text_of_line(line) and "&ldquo;Requests must be made within 30 days.&rdquo;" in line
+        assert note in text_of(on.get(f"/{lang}/routes"))  # said once above the table, not in every line
+        assert body.count(note) == 1
+        cells = re.findall(r"<td>.*?</td>", body, flags=re.S)
+        assert cells and not any("Requests must be made" in cell for cell in cells)  # the quote is not in any cell of the row
+    table(monkeypatch, {HOST: [entry()]})
+    assert 'class="routes-condition"' not in on.get("/en/routes").text and "not our judgement" not in on.get("/en/routes").text  # no condition, no line and no note
+
+
+def test_labels_that_the_header_already_says_are_not_repeated_in_the_cells(on, monkeypatch):
+    separated(monkeypatch)
+    for lang in ("en", "ko"):
+        body = on.get(f"/{lang}/routes").text
+        heads = re.findall(r'<th scope="col">(.*?)</th>', body)
+        assert len(heads) == 7 and "Site" not in heads and "사이트" not in heads  # the site is the group heading
+        tbody = body.split("<tbody>", 1)[1]
+        assert "(document record)" not in tbody and "(문서 기록)" not in tbody  # the Outcome cell of a document record says n/a once
+        assert "checked" not in tbody and "확인</span>" not in tbody  # the date sits under the Source, checked column
+        assert "Records for the site" not in tbody
+    en = on.get("/en/routes").text.split("<tbody>", 1)[1]
+    assert ">n/a</td>" in en and "not applicable" not in en  # the filter keeps the full label
+    assert "not applicable (document record)" in on.get("/en/routes").text.split("<tbody>", 1)[0]
+
+
+def test_the_list_page_groups_rows_by_site_and_the_site_page_does_not(on, monkeypatch):
+    three(monkeypatch)
+    for lang, word in (("en", "records for this site"), ("ko", "이 사이트 기록 2건")):
+        body = on.get(f"/{lang}/routes").text
+        assert body.count('<tr class="routes-group">') == body.count("<tbody>") == 2
+        assert f'<a href="/{lang}/routes/{HOST}">{HOST}</a>' in body and (word in body or "1 record for this site" in body)
+        assert 'class="routes-group"' not in on.get(f"/{lang}/routes/{HOST}").text
+    assert "2 records for this site" in on.get("/en/routes").text and "1 record for this site" in on.get("/en/routes").text
+
+
+def test_a_document_record_is_not_shown_as_a_route_that_worked(on, monkeypatch):
+    separated(monkeypatch)
+    en = plain(on.get("/en/routes"))
+    assert "document record: web form" in en and "worked: " not in en
+    assert "document record: web form" in plain(on.get(f"/en/routes/{HOST}"))
+    assert "n/a" in en and "has no outcome (n/a) because nobody tried the route" in en
+    row = task_routes_api.row_for(task_routes_api.curated_records()[0], "en", {})
+    assert {"worked", "tried", "outcome", "document"} <= set(row)  # the data keys are unchanged: only the words on the screen moved
 
 
 def test_the_headline_is_computed_from_the_counts():
@@ -188,8 +244,9 @@ def test_rows_are_newest_first_with_no_hit_count_order(on, monkeypatch):
         HOST: [entry("cancel_subscription", verified=80), entry("refund_request", obstacle="eligibility_unclear", routes=(), worked=None, verified=2)],
         OTHER: [entry("return_or_exchange", obstacle="deadline_or_window", routes=("web_form",), worked=None, verified=40, host=OTHER)],
     })
-    body = on.get("/en/routes").text
-    order = [body.index(word) for word in ("refund request", "return or exchange", "cancel subscription")]
+    body = on.get("/en/routes").text.split("<tbody>", 1)[1]
+    # Newest first, and the rows of a site stay together under its heading: the site of the newest record comes first.
+    order = [body.index(word) for word in ("refund request", "cancel subscription", "return or exchange")]
     assert order == sorted(order)
     for forbidden in ("most viewed", "views", "lookups"):
         assert forbidden not in body.lower()
