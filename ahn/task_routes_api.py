@@ -177,6 +177,7 @@ KO_LABELS = {
         "document_missing": "서류 없음", "document_rejected": "서류 반려", "substitute_document_needed": "대체 서류 필요",
         "form_unclear": "양식이 불분명", "wrong_entry_point": "잘못된 진입점", "wrong_channel": "잘못된 창구",
         "wrong_department_or_jurisdiction": "담당 부서·관할 불일치", "eligibility_unclear": "자격이 불분명",
+        "eligibility_conditions_stated": "자격·적용 대상 조건 명시",
         "verification_step": "인증 단계", "code_expired": "코드 만료", "deadline_or_window": "기한·신청 기간",
         "fee_required": "수수료 필요", "waiting_reply": "답변 대기", "no_reply": "답변 없음", "request_denied": "요청 거절",
         "site_requires_info_from_person": "사람이 제공할 정보 필요", "technical_block": "기술적 막힘", "none": "걸림돌 없음"},

@@ -214,6 +214,19 @@ def test_a_report_with_the_curated_only_entry_point_kind_is_a_422_and_stores_not
     assert ok.status_code == 201, ok.text
 
 
+STATED_REPORT = {"obstacle": "eligibility_conditions_stated", "routes_tried": [], "route_worked": None, "outcome": "no_progress"}
+
+
+@needs_db
+def test_a_report_with_the_curated_only_obstacle_is_a_422_and_stores_nothing(api):
+    settings, client = api
+    response = post(client, report(**STATED_REPORT))
+    assert response.status_code == 422 and response.json() == {"error": "invalid_task_route"}
+    assert "eligibility_conditions_stated" not in response.text and rows(settings) == []
+    ok = post(client, report(**{**STATED_REPORT, "obstacle": "eligibility_unclear"}))
+    assert ok.status_code == 201, ok.text
+
+
 @needs_db
 @pytest.mark.parametrize("changes", [
     {"basis": "official_doc"}, {"outcome": "not_applicable"}, {"task_kind": "refund_request_with_my_order_123456"},
@@ -521,7 +534,8 @@ def test_operator_add_refuses_an_invalid_record_or_a_tenant(api):
                     {"basis": "official_doc"}, {"entry_point_kind": None, "verification_kind": "sms_code"},
                     {"entry_point_kind": "seller_or_provider", "routes_tried": "different_entry_point", "route_worked": None},
                     {"entry_point_kind": "seller_or_provider", "source_kind": "curated_official", "basis": "official_doc",
-                     "outcome": "not_applicable"}):
+                     "outcome": "not_applicable"},
+                    {"obstacle": "eligibility_conditions_stated", "entry_point_kind": None}):
         with pytest.raises(SystemExit):
             _task_route_command(settings, operator_args(**changes), None)
     assert rows(settings) == []
@@ -535,7 +549,7 @@ def values(enum, *, drop=(), add=()):
 
 CHECKS = {
     "task_routes_task_kind_values": values(TaskKind),
-    "task_routes_obstacle_values": values(TaskObstacle),
+    "task_routes_obstacle_values": values(TaskObstacle, drop=("eligibility_conditions_stated",)),
     "task_routes_verification_kind_values": values(VerificationKind),
     "task_routes_site_requires_values": values(SiteRequires),
     "task_routes_document_kind_values": values(DocumentKind),
@@ -680,6 +694,12 @@ def test_report_task_route_checks_the_report_and_sends_only_the_report_fields():
     assert len(sent) == 1
     values = mcp_task_routes._report_schema()["properties"]["entry_point_kind"]["enum"]
     assert "seller_or_provider" not in values and "partner_or_third_party_portal" in values
+    with pytest.raises(ToolError) as caught:  # the curated-only obstacle too
+        asyncio.run(server.call_tool("report_task_route", {"report": report(**STATED_REPORT)}))
+    assert "invalid_task_route" in str(caught.value) and "eligibility_conditions_stated" not in str(caught.value)
+    assert len(sent) == 1
+    obstacles = mcp_task_routes._report_schema()["properties"]["obstacle"]["enum"]
+    assert "eligibility_conditions_stated" not in obstacles and "eligibility_unclear" in obstacles
 
 
 def test_the_lookup_answers_from_the_curated_table_when_the_database_cannot_be_read(monkeypatch, caplog):

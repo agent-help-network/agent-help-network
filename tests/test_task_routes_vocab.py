@@ -84,7 +84,7 @@ def test_every_value_is_a_short_lowercase_code():
 
 
 def test_list_sizes_are_the_agreed_contract():
-    assert len(TaskKind) == 24 and len(TaskObstacle) == 18 and len(VerificationKind) == 8 and len(SiteRequires) == 5
+    assert len(TaskKind) == 24 and len(TaskObstacle) == 19 and len(VerificationKind) == 8 and len(SiteRequires) == 5
     assert len(DocumentKind) == 13 and len(EntryPointKind) == 6 and len(RouteKind) == 13 and len(RouteBasis) == 4
     assert len(RouteOutcome) == 5 and len(TASK_ROUTE_ENUMS["duration"]) == 3 and len(RouteSourceKind) == 4
     assert TASK_ROUTE_MAX_TRIED == 6
@@ -162,13 +162,14 @@ def test_combination_rule_accepts_or_rejects_every_combination():
         problem = task_route_combination_problem(fields)
         assert (problem is None) == _expected(obstacle, field, outcome, state), (obstacle, field, outcome, state, problem)
         count += 1
-    assert count == 18 * (1 + 8 + 5 + 13 + 6) * 5 * 4
+    assert count == 19 * (1 + 8 + 5 + 13 + 6) * 5 * 4
 
 
 def test_public_input_model_follows_the_rule_over_the_whole_space():
     for obstacle, field, outcome, state, fields in _space():
         expected = (_expected(obstacle, field, outcome, state) and outcome != "not_applicable"
-                    and fields.get("entry_point_kind") != "seller_or_provider")  # curated records only
+                    and fields.get("entry_point_kind") != "seller_or_provider"  # curated records only
+                    and obstacle != "eligibility_conditions_stated")
         body = public(**{**fields, "route_worked": fields["route_worked"]})
         try:
             TaskRouteIn.model_validate(body)
@@ -588,3 +589,59 @@ def test_no_curated_record_uses_seller_or_provider_yet_and_the_answers_keep_the_
 
     kinds = {record.get("entry_point_kind") for records in task_routes_data.TASK_ROUTES_CURATED.values() for record in records}
     assert "seller_or_provider" not in kinds
+
+
+# --- D127: the curated-only obstacle eligibility_conditions_stated ---------------------------------------------------------
+
+STATED = "This warranty applies only to the original purchaser who bought the product from us or an authorized retailer."
+
+
+def test_public_input_rejects_the_curated_only_obstacle():
+    with pytest.raises(ValidationError) as caught:
+        TaskRouteIn.model_validate(public(obstacle="eligibility_conditions_stated", routes_tried=[], route_worked=None,
+                                          outcome="no_progress"))
+    assert "obstacle" in str(caught.value)
+    TaskRouteIn.model_validate(public(obstacle="eligibility_unclear", routes_tried=[], route_worked=None, outcome="no_progress"))
+
+
+def test_only_a_curated_record_with_condition_text_may_carry_eligibility_conditions_stated():
+    record = dict(site_host="example.com", task_kind="warranty_claim", obstacle="eligibility_conditions_stated", period="2026-Q4",
+                  sensitive=False)
+    curated = dict(record, source_kind="curated_official", basis="official_doc", outcome="not_applicable",
+                   source_url="https://www.example.com/help/warranty", verified_at="2026-11-01")
+    accepted = TaskRoute.model_validate(dict(curated, condition_text=STATED))
+    assert accepted.obstacle == TaskObstacle.eligibility_conditions_stated and accepted.condition_text == STATED
+    with pytest.raises(ValidationError) as caught:
+        TaskRoute.model_validate(curated)
+    assert "needs the condition_text" in str(caught.value)
+    for kind in ("operator_panel", "external_agent", "curated_community"):
+        with pytest.raises(ValidationError) as caught:
+            TaskRoute.model_validate(dict(record, source_kind=kind, basis="own_attempt", outcome="resolved"))
+        assert "curated_official only" in str(caught.value)
+
+
+def test_the_curated_only_obstacle_takes_no_finer_field():
+    assert TASK_ROUTE_RULES[TaskObstacle.eligibility_conditions_stated] == frozenset()
+    for field, enum in DETAIL_ENUMS.items():
+        problem = task_route_combination_problem({"obstacle": "eligibility_conditions_stated", "outcome": "not_applicable",
+                                                  field: next(iter(enum)).value})
+        assert problem is not None
+
+
+def test_route_refuses_eligibility_conditions_stated_without_condition_text():
+    with pytest.raises(ValueError, match="needs condition_text"):
+        _route("warranty_claim", obstacle="eligibility_conditions_stated", source_url="https://www.example.com/help/warranty",
+               verified_at="2026-11-01")
+    item = _route("warranty_claim", obstacle="eligibility_conditions_stated", source_url="https://www.example.com/help/warranty",
+                  verified_at="2026-11-01", condition_text=STATED)
+    assert VERIFIER.task_route_problems("example.com", item, today=TODAY) == []
+
+
+def test_no_curated_record_uses_eligibility_conditions_stated_yet_and_the_answers_keep_the_old_values():
+    obstacles = {record["obstacle"] for records in TASK_ROUTES_CURATED.values() for record in records}
+    assert "eligibility_conditions_stated" not in obstacles
+
+
+def test_a_sentence_that_also_states_a_time_limit_keeps_deadline_or_window():
+    nurx = TASK_ROUTES_CURATED["nurx.com"]
+    assert [record["obstacle"] for record in nurx if record["task_kind"] == "refund_request"] == ["deadline_or_window"]

@@ -42,6 +42,8 @@ def _route(task_kind: str, *, obstacle: str, source_url: str, verified_at: str, 
         problem = condition_text_problem(condition_text)
         if problem:
             raise ValueError(f"invalid curated task route: condition_text {problem}")
+    if obstacle == "eligibility_conditions_stated" and condition_text is None:
+        raise ValueError("invalid curated task route: eligibility_conditions_stated needs condition_text")
     item = {"task_kind": task_kind, "obstacle": obstacle, "routes_tried": list(routes), "basis": "official_doc",
             "outcome": "not_applicable", "source_kind": "curated_official",
             "period": period_for(date.fromisoformat(verified_at)), "source_url": source_url, "verified_at": verified_at}

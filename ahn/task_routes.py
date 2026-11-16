@@ -75,6 +75,8 @@ class TaskObstacle(str, Enum):
     wrong_channel = "wrong_channel"
     wrong_department_or_jurisdiction = "wrong_department_or_jurisdiction"
     eligibility_unclear = "eligibility_unclear"
+    # Curated entries only: the site's own page states who qualifies or what is covered, quoted in condition_text.
+    eligibility_conditions_stated = "eligibility_conditions_stated"
     verification_step = "verification_step"
     code_expired = "code_expired"
     deadline_or_window = "deadline_or_window"
@@ -203,6 +205,9 @@ TASK_ROUTE_NO_OBSTACLE_OUTCOMES = frozenset({RouteOutcome.resolved, RouteOutcome
 TASK_ROUTE_CURATED_ONLY = (RouteSourceKind.curated_official, RouteBasis.official_doc, RouteOutcome.not_applicable)
 # A value no report may send: the database check does not list it, so only the curated table in code can hold it.
 TASK_ROUTE_CURATED_ONLY_ENTRY_POINT = EntryPointKind.seller_or_provider
+# An obstacle no report may send, for the same reason (D127). A record with it always quotes the condition in condition_text:
+# the value says that the page states who qualifies or what is covered, and the quotation is what the agent checks.
+TASK_ROUTE_CURATED_ONLY_OBSTACLE = TaskObstacle.eligibility_conditions_stated
 # Which sources may carry a link. A public report never does (a path can name a person or a case); curation and operators may.
 TASK_ROUTE_URL_SOURCES = frozenset({RouteSourceKind.curated_official, RouteSourceKind.operator_panel})
 # The one free-text value of a record: a short quotation of the condition a site's own page states, kept for curated entries only
@@ -324,6 +329,11 @@ class TaskRoute(_TaskRouteFields):
             raise ValueError("invalid_task_route: basis official_doc and outcome not_applicable belong to curated_official only")
         if not curated and self.entry_point_kind == TASK_ROUTE_CURATED_ONLY_ENTRY_POINT:
             raise ValueError("invalid_task_route: this entry_point_kind belongs to curated_official only")
+        if self.obstacle == TASK_ROUTE_CURATED_ONLY_OBSTACLE:
+            if not curated:
+                raise ValueError("invalid_task_route: this obstacle belongs to curated_official only")
+            if self.condition_text is None:
+                raise ValueError("invalid_task_route: this obstacle needs the condition_text that states the condition")
         if self.condition_text is not None and not curated:
             raise ValueError("invalid_task_route: condition_text belongs to curated_official only")
         if self.official_url is not None:
@@ -396,6 +406,8 @@ class TaskRouteIn(_TaskRouteFields):
             raise ValueError("invalid_task_route: basis official_doc and outcome not_applicable belong to curated entries")
         if self.entry_point_kind == TASK_ROUTE_CURATED_ONLY_ENTRY_POINT:
             raise ValueError("invalid_task_route: this entry_point_kind belongs to curated entries")
+        if self.obstacle == TASK_ROUTE_CURATED_ONLY_OBSTACLE:
+            raise ValueError("invalid_task_route: this obstacle belongs to curated entries")
         return self
 
 

@@ -109,7 +109,7 @@ def _report_schema() -> dict:
 
     properties = {
         "site_host": {"type": "string", "description": REPORT_SITE_HOST_DESCRIPTION},
-        "task_kind": _enum_schema(TaskKind), "obstacle": _enum_schema(TaskObstacle),
+        "task_kind": _enum_schema(TaskKind), "obstacle": _enum_schema(TaskObstacle, drop=("eligibility_conditions_stated",)),
         "verification_kind": _enum_schema(VerificationKind), "site_requires": _enum_schema(SiteRequires),
         "document_kind": _enum_schema(DocumentKind), "entry_point_kind": _enum_schema(EntryPointKind, drop=("seller_or_provider",)),
         "routes_tried": {"type": "array", "items": _enum_schema(RouteKind), "maxItems": TASK_ROUTE_MAX_TRIED, "uniqueItems": True},
