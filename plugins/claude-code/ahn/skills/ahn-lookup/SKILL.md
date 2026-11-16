@@ -1,6 +1,6 @@
 ---
 name: ahn-lookup
-description: Use once per task at the start of a customer task on a website (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery or a document submission) to get recorded task routes, when the find_task_route tool is listed; and when a web step is blocked or failing (403/access denied, login wall, failed sign-in or extra verification, CAPTCHA, 5xx, timeout) or when asked "is this site down?" or "does this site block agents?". Sends only the hostname (and an optional task kind) and changes nothing. Answers are records, not a guarantee and not advice; an empty list does not mean there is no route.
+description: Use once per task at the start of a customer task on a website (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery or a document submission) to get recorded task routes, when the find_task_route tool is listed; and when a web step is blocked or failing (403/access denied, login wall, failed sign-in or extra verification, CAPTCHA, 5xx, timeout) or when asked "is this site down?" or "does this site block agents?". Sends only the hostname and fixed codes (plus an optional task kind for task routes) and changes nothing. Task-route answers are records, not a guarantee and not advice; an empty list does not mean there is no route.
 ---
 
 # Agent Help Network lookup
