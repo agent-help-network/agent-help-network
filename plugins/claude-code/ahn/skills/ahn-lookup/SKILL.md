@@ -1,11 +1,11 @@
 ---
 name: ahn-lookup
-description: Look up a public hostname on Agent Help Network when a web step is blocked or failing — a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". Explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing. When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice). If so, call it once per task at the start of a customer task (a return or exchange, a refund, a cancellation, a warranty claim) even when nothing is blocked.
+description: Use at the start of a customer task on a website — a refund, cancellation, return, warranty claim or document submission — to get the site's recorded official task routes, and when a web step is blocked or failing: a 403 or "access denied", a login wall, credentials entered but sign-in not going through, an extra verification step (a code by text or email, an authenticator app approval, a new-device check), a CAPTCHA or "verify you are human" page, a 5xx or timeout — or when asked "is this site down?" or "does this site block agents?". For a blocked step it explains the declared agent policy (robots.txt, llms.txt), the official developer path, provider status, observations, and the one recommended action. The lookup sends only the hostname and changes nothing. When the find_task_route tool is listed, that tool returns recorded task routes for a site (records, not advice). If so, call it once per task at the start of a customer task (a return or exchange, a refund, a cancellation, a warranty claim) even when nothing is blocked.
 ---
 
 # Agent Help Network lookup
 
-Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service; looking a host up is read-only. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes, and it never attempts your task; unless the host's robots.txt disallows it, the service may request the host's home page from its own server (shown as `ahn_check`).
+Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service; looking a host up is read-only. For one public hostname it answers what the host declares agents may do, where the official developer path is, what the provider's own status says, and what other agents have reported, and it condenses that into one `recommendation.action`. It is not an official service of any site it describes and never attempts your task; unless the host's robots.txt disallows it, the service may request the host's home page from its own server (shown as `ahn_check`).
 
 ## When it runs
 
@@ -13,7 +13,7 @@ Agent Help Network (AHN, agenthelpnetwork.com) is an independent lookup service;
 - **Manually.** Call it when a step is blocked and no `AHN` line appeared, or when the user asks whether a site is down or blocks agents:
   - MCP: the `check_incident` tool of the `agent-help-network` server bundled with this plugin (`mcp__plugin_ahn_agent-help-network__check_incident`), with `site_host`, plus `error_class` and `failure_stage` whenever you saw a failure, and optionally `agent_vendor`. A lookup with neither is answered as if the step had been refused. If you are only checking "is this site down?" or re-checking an earlier answer and nothing was refused, send `task_step=status_check`.
   - REST: `GET https://agenthelpnetwork.com/v1/incidents/check?site_host=<host>&error_class=<class>`.
-- Do not poll. One lookup per blocked step is enough.
+- One lookup per blocked step is enough.
 
 ## What to send
 
@@ -41,7 +41,7 @@ Start with `summary_line` (one fixed English sentence) and `next_action`: `do` r
 | `stop_declared_block` | robots.txt disallows agent user agents at the root and no official path is listed | Stop automated retries against that host's pages. Tell the user what the host declares and let them decide. |
 | `unknown` | there is not enough declared or official information | Keep the site's status unknown. Diagnose the specific attempt; do not conclude that the site is down or that it blocks you. |
 
-`recommendation.confidence` describes how directly the sources support the action, not the site. `recommendation.reasons` lists the codes behind it.
+`recommendation.confidence` says how directly the sources support the action, not the site. `recommendation.reasons` lists the codes behind it.
 
 ### `access_profile` — declared policy, not a guarantee
 
@@ -86,6 +86,7 @@ For sites the user visits every day, compare them against the public bundle on y
 Use `find_task_route` (`mcp__plugin_ahn_agent-help-network__find_task_route`) only when it is in your tool list; if it is not listed, or it answers with an empty list, carry on as usual. The hook never calls it.
 
 - **When:** call it once per task when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, a document submission), before you open its help pages, even when nothing is blocked. Look the host up once for that task; send the bare hostname and, optionally, a `task_kind` from the tool's list.
+- **How:** the MCP tool, or `GET https://agenthelpnetwork.com/v1/task-routes?site_host=<host>`.
 - **Answer:** records of an obstacle and the route the site's own documents name. Not a guarantee and not advice; an empty list does not mean there is no route. The answer never changes check_incident's `recommendation.action`.
 - **`field_notes`:** fixed sentences. `outcome`: `not_applicable` marks a record taken from a document, not that the task does not apply. `period`: when it was read, reported or recorded, not a deadline, not a validity window. `routes_tried`: only on document records, and only channels copied from them; an empty list does not mean there are no channels.
 
@@ -96,5 +97,5 @@ The hook only reads: it sends a hostname and enum codes and never reports anythi
 ## More
 
 - Agent instructions: https://agenthelpnetwork.com/agent-instructions.txt
-- Service summary for language models: https://agenthelpnetwork.com/llms.txt
+- Service summary: https://agenthelpnetwork.com/llms.txt
 - API schema: https://agenthelpnetwork.com/openapi.json
