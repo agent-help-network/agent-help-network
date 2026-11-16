@@ -60,8 +60,22 @@ class FakeResponse(io.BytesIO):
         self.close()
 
 
+def drain_lookup_workers(limit=8.0):
+    """Wait until no abandoned lookup worker is left running.
+
+    Tests that time a lookup out leave its worker thread behind (blocked until the test sets its ``release`` event). The worker
+    still holds its ``_inflight`` key for a moment after that, and while it does a lookup for the same host, class and stage
+    is refused and gives None. Without this wait the next test fails now and then, whenever the worker thread is scheduled late.
+    """
+    deadline = time.monotonic() + limit
+    while _adapter._inflight and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return not _adapter._inflight
+
+
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch):
+    drain_lookup_workers()
     ahn.clear_cache()
     monkeypatch.delenv("AHN_CLIENT_DISABLE", raising=False)
     monkeypatch.delenv("AHN_CLIENT_SKIP_HOSTS", raising=False)
@@ -71,7 +85,10 @@ def isolated(monkeypatch):
 
     monkeypatch.setattr(_client, "_urlopen", refuse)
     yield
+    # A worker finishing late also writes its answer to the cache, so wait for it before clearing.
+    leaked = not drain_lookup_workers()
     ahn.clear_cache()
+    assert not leaked, "a lookup worker started by this test is still running; the test must release it"
 
 
 @pytest.fixture
@@ -294,6 +311,26 @@ def test_a_slow_lookup_is_abandoned_after_the_timeout(monkeypatch):
     while _adapter._inflight and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not _adapter._inflight
+
+
+def test_an_abandoned_worker_that_finishes_late_does_not_block_the_next_lookup(monkeypatch, transport):
+    # The cause of a flaky failure: the worker of a timed-out lookup still held its key after the test released it, so the
+    # next test's lookup for the same host was refused. The suite waits for such workers between tests (drain_lookup_workers).
+    release = threading.Event()
+
+    def slow(request, timeout):
+        release.wait(5)
+        time.sleep(0.3)  # the worker is scheduled late after being released
+        return FakeResponse(json.dumps(ANSWER).encode("utf-8"))
+
+    monkeypatch.setattr(_client, "_urlopen", slow)
+    assert _adapter.note_for(forbidden(), None, adapter="langchain", timeout=0.1) is None
+    release.set()
+    assert _adapter._inflight  # still running: a lookup now would be refused
+    assert drain_lookup_workers()
+    ahn.clear_cache()
+    transport()
+    assert _adapter.note_for(forbidden(), None, adapter="langchain")
 
 
 def test_repeated_failures_are_answered_from_the_cache(transport):
