@@ -189,3 +189,54 @@ def test_a_page_without_any_text_is_byte_identical_to_the_template_without_the_c
     finally:
         if env.cache is not None:
             env.cache.clear()
+
+
+def _verifier():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("verify_official_paths", ROOT / "scripts" / "verify_official_paths.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+FIRST = "Except for cancelled events, you will not receive a refund for completed purchases."
+SECOND = "A job loss claim must be made at least 72 hours prior to the event start date."
+
+
+def two_conditions() -> list[dict]:
+    """The same (task_kind, obstacle) under one host with two different quoted conditions, one record per condition."""
+    return [curated(condition_text=FIRST), curated(condition_text=SECOND)]
+
+
+def test_one_key_with_two_conditions_is_two_records_the_table_check_accepts():
+    first, second = two_conditions()
+    assert (first["task_kind"], first["obstacle"], first["source_url"]) == (second["task_kind"], second["obstacle"], second["source_url"])
+    assert first != second
+    assert _verifier().task_routes_table_problems({HOST: [first, second]}, today=TODAY) == []
+    assert _verifier().task_routes_table_problems({HOST: [first, dict(first)]}, today=TODAY) == [
+        f"{HOST}: task_routes: the same record is listed twice"]  # a true duplicate is still refused
+
+
+def test_both_records_of_one_key_are_in_the_rest_and_the_mcp_answers(monkeypatch):
+    from mcp.server import MCPServer
+
+    table(monkeypatch, {HOST: two_conditions()})
+    rest = client().get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert sorted(item["condition_text"] for item in rest["routes"]) == sorted([FIRST, SECOND])
+    assert rest["counts"]["records"] == 2
+    server = MCPServer(name="test")
+    mcp_task_routes.register(server)
+    result = asyncio.run(server.call_tool("find_task_route", {"site_host": HOST}))
+    assert sorted(item["condition_text"] for item in result.structured_content["routes"]) == sorted([FIRST, SECOND])
+
+
+def test_the_table_has_a_key_with_two_conditions_and_every_text_of_the_table_is_valid():
+    pairs = {}
+    for host, records in TASK_ROUTES_CURATED.items():
+        for record in records:
+            if "condition_text" in record:
+                assert condition_text_problem(record["condition_text"]) is None
+                task_routes.server_route(host, record)  # the answer model accepts every record
+                pairs.setdefault((host, record["task_kind"], record["obstacle"], record["source_url"]), []).append(record["condition_text"])
+    assert pairs and any(len(texts) == 2 and texts[0] != texts[1] for texts in pairs.values())
+    assert _verifier().task_routes_table_problems(TASK_ROUTES_CURATED) == []
