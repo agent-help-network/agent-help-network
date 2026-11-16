@@ -900,6 +900,12 @@ def has_condition_text(record) -> bool:
     return bool(record.condition_text)
 
 
+def text_first(records: list) -> list:
+    """The records in the order they are shown: within one period, those that quote a condition first, every other part of the
+    order kept (a stable sort). Applied only after the newest records have been picked, so the picking never depends on it (D130)."""
+    return sorted(records, key=lambda r: (r.period, has_condition_text(r)), reverse=True)
+
+
 def condition_text_count(records) -> int:
     return sum(1 for record in records if has_condition_text(record))
 
@@ -1091,7 +1097,7 @@ def site_records(host: str, settings=None) -> tuple[str | None, list[dict]]:
 def lookup(site_host: str, task_kind=None, today: date | None = None, *, settings=None) -> TaskRoutesResponse:
     """The task routes recorded for a site: the apex table entry for the host or its nearest parent (www.example.com and
     shop.example.com both find example.com), current entries only (verified within TASK_ROUTE_MAX_AGE_DAYS), optionally one
-    task kind, newest period first (within a period, records that quote a condition first), at most TASK_ROUTES_MAX records. Reads the in-code table and, with ``settings`` while the write
+    task kind, the newest TASK_ROUTES_MAX records, shown newest period first with, within a period, the records that quote a condition first. Reads the in-code table and, with ``settings`` while the write
     switch is served (D118), the published, not withdrawn stored records of the same site; no network.
 
     Raises TaskRouteInputError (a ValueError) for a host that is not a public hostname or a task_kind outside TaskKind."""
@@ -1119,14 +1125,14 @@ def lookup(site_host: str, task_kind=None, today: date | None = None, *, setting
             continue
         if kind is None or record.task_kind == kind:
             records.append(record)
-    records.sort(key=lambda r: (r.period, has_condition_text(r), r.verified_at or "", r.task_kind.value, r.obstacle.value), reverse=True)
+    records.sort(key=lambda r: (r.period, r.verified_at or "", r.task_kind.value, r.obstacle.value), reverse=True)
     by_source: dict[RouteSourceKind, int] = {}
     for record in records:
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
     by_kind: dict[str, int] = {}
     for record in records:
         by_kind[record.task_kind.value] = by_kind.get(record.task_kind.value, 0) + 1
-    shown = records[:TASK_ROUTES_MAX]
+    shown = text_first(records[:TASK_ROUTES_MAX])  # the newest are picked first; within the pick, quoted conditions come first
     notice = any(record.sensitive for record in shown)
     return TaskRoutesResponse(
         field_notes=field_notes(shown), site_host=host,

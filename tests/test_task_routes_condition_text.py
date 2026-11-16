@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -283,3 +284,52 @@ def test_the_summary_line_clause_fits_the_limit_and_the_count_helper_reads_the_s
     assert len(line) <= SUMMARY_MAX and line.endswith("Records, not guarantees. " + ROUTE_LINE_NOTICE)
     records = [TaskRoute.model_validate({"site_host": HOST, "sensitive": False, **record}) for record in (curated(condition_text=TEXT), plain())]
     assert condition_text_count(records) == 1
+
+
+PERIOD = "2026-Q4"
+
+
+def rec(days: int, text: str | None = None, url: str = SOURCE) -> dict:
+    """One record in a fixed period, so a quarter boundary never changes the order a test expects."""
+    item = _route("return_or_exchange", obstacle="deadline_or_window", routes=("web_form",), source_url=url, verified_at=days_ago(days),
+                  condition_text=text)
+    item["period"] = PERIOD
+    return item
+
+
+def test_within_a_period_the_quoted_condition_comes_first_even_when_its_record_was_verified_earlier(monkeypatch):
+    table(monkeypatch, {HOST: [rec(2), rec(9, TEXT)]})
+    order = [item.get("condition_text") for item in client().get("/v1/task-routes", params={"site_host": HOST}).json()["routes"]]
+    assert order == [TEXT, None]
+
+
+def test_the_twenty_newest_are_picked_first_and_the_summary_counts_all_the_quoted_conditions(monkeypatch):
+    plain_recent = [rec(1 + i % 5, url=f"{SOURCE}/p{i}") for i in range(22)]
+    quoted_old = [rec(30 + i, f"{TEXT} {i}", f"{SOURCE}/q{i}") for i in range(3)]
+    table(monkeypatch, {HOST: quoted_old + plain_recent})
+    body = client().get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert len(body["routes"]) == 20 and not any("condition_text" in item for item in body["routes"])  # the newest 20, none quotes a text
+    assert body["counts"]["records"] == 25 and "Showing the 20 newest." in body["summary_line"]
+    assert "3 with a quoted condition." in body["summary_line"]  # counted over all 25, not the 20 shown
+    # within the pick the quoted ones still come first
+    picked = [rec(1, url=f"{SOURCE}/p{i}") for i in range(19)] + [rec(4, TEXT, f"{SOURCE}/t")]  # the text is the 20th newest
+    table(monkeypatch, {HOST: picked + [rec(6, url=f"{SOURCE}/late{i}") for i in range(3)]})
+    routes = client().get("/v1/task-routes", params={"site_host": HOST}).json()["routes"]
+    assert len(routes) == 20 and routes[0].get("condition_text") == TEXT
+
+
+def test_the_page_lists_the_quoted_condition_first_within_a_period(monkeypatch):
+    table(monkeypatch, {HOST: [rec(1, url=f"{SOURCE}/plain-marker"), rec(9, TEXT, f"{SOURCE}/quoted-marker")]})
+    page = client().get("/en/routes").text
+    assert page.index("quoted-marker") < page.index("plain-marker")
+
+
+def test_the_page_cut_keeps_the_newest_records_not_the_quoted_ones(monkeypatch):
+    plain = {f"plain{i:03d}.example.com": [rec(1 + i % 3, url=f"https://plain{i:03d}.example.com/help")] for i in range(60)}
+    quoted = {f"quoted{i:03d}.example.com": [rec(20, f"{TEXT} {i}", f"https://quoted{i:03d}.example.com/help")] for i in range(45)}
+    table(monkeypatch, {**quoted, **plain})
+    page = client().get("/en/routes").text
+    heads = re.findall(r'<tr class="routes-group"><th scope="rowgroup" colspan="7"><a href="/en/routes/([^"]+)"', page)
+    assert len(heads) == 100
+    assert all(f"plain{i:03d}.example.com" in heads for i in range(60))  # every newer record without a text is still shown
+    assert sum(host.startswith("quoted") for host in heads) == 40  # the cut fell on older quoted ones

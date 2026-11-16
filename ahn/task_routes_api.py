@@ -33,7 +33,7 @@ from .mcp_task_routes import CALL_TIMING, SITE_HOST_DESCRIPTION, TASK_KIND_DESCR
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
                           SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRoutesResponse, TaskRouteInputError, VerificationKind, is_current,
                           lookup, parse_query, registrable, route_host, server_route, site_from_input, site_records, stored_route,
-                          suffix_name)
+                          suffix_name, text_first)
 
 LOG = logging.getLogger(__name__)
 
@@ -310,7 +310,7 @@ def current_records(settings=None) -> list:
                 records.append(stored_route(row))
             except ValueError:
                 LOG.warning("task_route_row_invalid")
-    records.sort(key=lambda r: (r.period, bool(r.condition_text), r.verified_at or "", r.site_host, r.task_kind.value, r.obstacle.value), reverse=True)
+    records.sort(key=lambda r: (r.period, r.verified_at or "", r.site_host, r.task_kind.value, r.obstacle.value), reverse=True)
     return records
 
 
@@ -377,15 +377,16 @@ def page_context(records: list, shown: list, lang: str, lang_text: dict) -> dict
         per_site[record.site_host] = per_site.get(record.site_host, 0) + 1
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
     cut = len(shown) > PAGE_ROWS_MAX
-    shown = shown[:PAGE_ROWS_MAX]
-    rows = [row_for(record, lang, per_site) for record in shown]
-    groups: list[dict] = []  # one block per site, in the order of the site's newest record; rows keep their order inside a block
-    for row in rows:
-        group = next((item for item in groups if item["host"] == row["host"]), None)
-        if group is None:
-            group = {"host": row["host"], "count": row["count"], "rows": []}
-            groups.append(group)
-        group["rows"].append(row)
+    shown = shown[:PAGE_ROWS_MAX]  # the newest are picked first (the order of current_records); only then are quoted conditions moved up
+    by_host: dict[str, list] = {}  # one block per site, in the order of the site's newest record
+    for record in shown:
+        by_host.setdefault(record.site_host, []).append(record)
+    groups: list[dict] = []
+    rows: list[dict] = []
+    for host, picked_records in by_host.items():  # inside a block: newest period first, within a period quoted conditions first (D130)
+        block = [row_for(record, lang, per_site) for record in text_first(picked_records)]
+        groups.append({"host": host, "count": block[0]["count"], "rows": block})
+        rows.extend(block)
     for group in groups:
         group["shown"] = len(group["rows"])  # the heading says the rows below it; "of N" only when a filter or the row limit hid some
     return {
