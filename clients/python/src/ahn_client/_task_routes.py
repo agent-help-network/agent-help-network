@@ -75,6 +75,12 @@ ROUTE_URL_FIELDS = ("official_url", "source_url")
 # The one free-text value of a record: a curated site condition quoted as the site words it (1 to 200 characters, one line).
 # It is passed on as is, never interpreted here.
 CONDITION_TEXT_MAX = 200
+# field_notes: a fixed sentence per key that says what outcome, period and routes_tried mean in this answer. Only these keys are
+# kept; a value is printable ASCII on one line, at most FIELD_NOTE_MAX characters (the longest sentence the service sends today
+# is 211; a test in the main repository checks the cap against ahn.task_routes). A key or value that fails drops only that entry.
+FIELD_NOTE_KEYS = ("outcome", "period", "routes_tried")
+FIELD_NOTE_VALUE = re.compile(r"^[ -~]+$")
+FIELD_NOTE_MAX = 400
 
 
 @dataclass(frozen=True)
@@ -87,7 +93,8 @@ class TaskRoutes:
     summary_line: Optional[str] = None
     records: int = 0
     notice: Optional[str] = None
-    reason: Optional[str] = None  # last, so that a positional call keeps its meaning
+    reason: Optional[str] = None  # keeps its place, so that a positional call keeps its meaning
+    field_notes: Optional[Dict[str, str]] = None  # the service's fixed sentences for outcome, period and routes_tried; None when absent
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"site_host": self.site_host, "available": self.available, "routes": self.routes, "records": self.records}
@@ -97,6 +104,8 @@ class TaskRoutes:
             out["summary_line"] = self.summary_line
         if self.notice:
             out["notice"] = self.notice
+        if self.field_notes:
+            out["field_notes"] = dict(self.field_notes)
         return out
 
     def summary(self) -> str:
@@ -123,6 +132,16 @@ def _condition_text_ok(value: Any) -> bool:
     if not isinstance(value, str) or not value or len(value) > CONDITION_TEXT_MAX or value != value.strip():
         return False
     return not any(unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp") for char in value)
+
+
+def _clean_field_notes(value: Any) -> Optional[Dict[str, str]]:
+    """The entries of ``field_notes`` that are allowed: a known key and a printable-ASCII string of at most FIELD_NOTE_MAX
+    characters. Anything else is dropped one entry at a time; the answer stays valid. None when nothing is left."""
+    if not isinstance(value, dict):
+        return None
+    notes = {key: text for key, text in value.items()
+             if key in FIELD_NOTE_KEYS and isinstance(text, str) and len(text) <= FIELD_NOTE_MAX and FIELD_NOTE_VALUE.fullmatch(text)}
+    return notes or None
 
 
 def _clean_route(item: Any) -> Optional[Dict[str, Any]]:
@@ -180,7 +199,7 @@ def _parse(host: str, body: Any) -> Optional[TaskRoutes]:
         records = len(routes)
     notice = body.get("notice")
     return TaskRoutes(site_host=host, available=True, routes=routes, summary_line=line, records=records,
-                      notice=notice if notice in NOTICES else None)
+                      notice=notice if notice in NOTICES else None, field_notes=_clean_field_notes(body.get("field_notes")))
 
 
 def _fetch(host: str, task_kind: Optional[str], timeout: float, adapter: Optional[str]) -> TaskRoutes:
@@ -208,7 +227,7 @@ def task_routes(host_or_url: object, task_kind: Optional[str] = None, *, timeout
     this service's own, lookups disabled), when ``task_kind`` is not one of ``TASK_KINDS``, on a 404 (the service does not
     serve task routes), a network error, a timeout beyond ``timeout`` seconds, or an answer that does not have the expected
     shape. A route is a dictionary of closed values (``task_kind``, ``obstacle``, ``basis``, ``outcome``, ``source_kind``,
-    ``sensitive`` and the like); nothing in it is text from a site. Records are not guarantees or advice (a record marked sensitive is shown as a case record), and an empty list does not mean there is no route.
+    ``sensitive`` and the like); nothing in it is text from a site. ``field_notes`` (None when absent) holds the service's fixed sentences for ``outcome``, ``period`` and ``routes_tried``; only those keys and printable-ASCII values are kept. Records are not guarantees or advice (a record marked sensitive is shown as a case record), and an empty list does not mean there is no route.
     ``reason`` says why there is no answer: ``invalid_host`` or ``invalid_task_kind`` (nothing was sent; the kind must be one of
     ``TASK_KINDS``), ``not_served`` (404) or ``no_answer`` (network, timeout, unreadable).
     """

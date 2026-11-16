@@ -117,13 +117,13 @@ def test_other_failures_have_their_own_reason(transport):
     assert ahn.task_routes("example.com").reason is None
 
 
-def test_reason_is_the_last_field_so_positional_calls_keep_their_meaning():
+def test_new_fields_are_appended_so_positional_calls_keep_their_meaning():
     import dataclasses
 
     names = [item.name for item in dataclasses.fields(_task_routes.TaskRoutes)]
-    assert names == ["site_host", "available", "routes", "summary_line", "records", "notice", "reason"]
+    assert names == ["site_host", "available", "routes", "summary_line", "records", "notice", "reason", "field_notes"]
     built = _task_routes.TaskRoutes("example.com", True, [ROUTE], "line", 1, "case_record_not_advice")
-    assert built.routes == [ROUTE] and built.summary_line == "line" and built.records == 1 and built.reason is None
+    assert built.routes == [ROUTE] and built.summary_line == "line" and built.records == 1 and built.reason is None and built.field_notes is None
     assert _task_routes.TaskRoutes("example.com").reason is None
 
 
@@ -303,3 +303,53 @@ def test_an_invalid_condition_text_makes_the_answer_unreadable(transport, bad):
 def test_a_condition_text_of_200_characters_is_kept(transport):
     transport({**ANSWER, "routes": [{**ROUTE, "condition_text": "x" * 200}]})
     assert ahn.task_routes("example.com").routes[0]["condition_text"] == "x" * 200
+
+
+NOTES = {
+    "outcome": "not_applicable marks a record taken from a document: it names a route or a condition and nobody's result is recorded.",
+    "period": "The quarter in which the record was read, reported or recorded. It is not a deadline and not a validity window.",
+    "routes_tried": "For a document record, the channels this record copied from the document; they may not be every channel the document names.",
+}
+
+
+def test_field_notes_pass_through_and_absence_is_none(transport):
+    transport({**ANSWER, "field_notes": NOTES})
+    found = ahn.task_routes("example.com")
+    assert found.available and found.field_notes == NOTES
+    assert found.to_dict()["field_notes"] == NOTES
+    transport()
+    plain = ahn.task_routes("example.com")
+    assert plain.field_notes is None and "field_notes" not in plain.to_dict()
+    transport({**ANSWER, "field_notes": {}})
+    assert ahn.task_routes("example.com").field_notes is None
+
+
+def test_an_unknown_field_notes_key_is_dropped_and_the_rest_is_kept(transport):
+    transport({**ANSWER, "field_notes": {**NOTES, "advice": "Always use the phone line.", "Period": "x"}})
+    found = ahn.task_routes("example.com")
+    assert found.available and found.field_notes == NOTES and found.routes == [ROUTE]
+
+
+@pytest.mark.parametrize("bad", ["", "caf\u00e9", "line\none", "tab\there", "a\x00b", "\u202eflip", "x" * 401, 5, ["a"], None, True])
+def test_a_bad_field_note_value_drops_only_that_entry(transport, bad):
+    transport({**ANSWER, "field_notes": {**NOTES, "period": bad}})
+    found = ahn.task_routes("example.com")
+    assert found.available and found.routes == [ROUTE]
+    assert found.field_notes == {k: v for k, v in NOTES.items() if k != "period"}
+
+
+def test_field_notes_that_are_not_an_object_are_ignored(transport):
+    for bad in ("text", ["a"], 3, True):
+        transport({**ANSWER, "field_notes": bad})
+        found = ahn.task_routes("example.com")
+        assert found.available and found.field_notes is None
+
+
+def test_a_field_note_of_the_cap_length_is_kept_and_the_cap_covers_the_service_sentences():
+    from ahn import task_routes as server
+
+    sentences = (server.FIELD_NOTE_OUTCOME, server.FIELD_NOTE_PERIOD, server.FIELD_NOTE_ROUTES_TRIED)
+    assert _task_routes.FIELD_NOTE_MAX >= max(len(s) for s in sentences) + 100
+    assert all(_task_routes.FIELD_NOTE_VALUE.fullmatch(s) for s in sentences)
+    assert set(_task_routes.FIELD_NOTE_KEYS) == {"outcome", "period", "routes_tried"}
+    assert _task_routes._clean_field_notes({"period": "x" * _task_routes.FIELD_NOTE_MAX}) == {"period": "x" * _task_routes.FIELD_NOTE_MAX}
