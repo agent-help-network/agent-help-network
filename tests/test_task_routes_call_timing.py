@@ -8,12 +8,15 @@ keeps them in step. The records stay records: nothing here changes the answer, t
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 os.environ.setdefault("AHN_DATABASE_URL", "postgresql://invalid/unused")
 os.environ.setdefault("AHN_KEY_PEPPER", "x" * 32)
 
 from ahn.mcp_task_routes import CALL_TIMING, DESCRIPTION, INSTRUCTIONS_ADDENDUM
+from ahn.main import create_app
+from ahn.settings import Settings
 from ahn.task_routes import SUMMARY_NO_RECORDS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,3 +67,29 @@ def test_the_kept_sentences_are_unchanged():
     assert SUMMARY_NO_RECORDS == "No task route records for this site. A missing record does not mean there is no route."
     assert "not guarantees and not advice" in flat("ahn/agent_instructions_task_routes.txt")
     assert "records, not guarantees or advice" in flat("ahn/llms.txt")
+
+
+def openapi(task_routes_on: bool) -> dict:
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=task_routes_on,
+                        task_routes_since=date(2026, 11, 1) if task_routes_on else None)
+    return create_app(settings).openapi()
+
+
+def test_the_openapi_document_opens_the_task_route_lookup_with_the_call_timing():
+    operation = openapi(True)["paths"]["/v1/task-routes"]["get"]
+    assert operation["summary"] == "Call this once per task " + CALL_TIMING
+    assert operation["description"].startswith("Call this once per task " + CALL_TIMING + ". ")
+    assert operation["description"].split(". ", 1)[0] == DESCRIPTION.split(". ", 1)[0]
+    assert "do not know" not in operation["description"]
+    assert "records, not a guarantee and not advice; an empty list does not mean there is no route" in operation["description"]
+    params = {p["name"]: p for p in operation["parameters"]}
+    assert set(params) == {"site_host", "task_kind"} and all(p["description"] for p in params.values())
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/TaskRoutesResponse")
+    assert "invalid_site_host" in operation["responses"]["400"]["description"]
+
+
+def test_the_openapi_document_lists_only_the_read_path_and_only_while_the_switch_is_on():
+    paths = openapi(True)["paths"]
+    assert set(paths["/v1/task-routes"]) == {"get"}  # no POST, no DELETE
+    assert not [path for path in paths if path.startswith("/v1/task-routes/") or path.endswith("/routes") or "/routes/" in path]
+    assert "/v1/task-routes" not in openapi(False)["paths"]

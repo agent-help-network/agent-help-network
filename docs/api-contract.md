@@ -737,6 +737,8 @@ MCP `rate_last_lookup(token, outcome, path="unknown")` 은 같은 요청을 보�
 
 답은 서비스 코드 안의 큐레이션 표에서 읽고, 제보 스위치(`AHN_TASK_ROUTE_REPORTS`, 아래 "경로 제보")까지 켜져 있을 때만 서비스 데이터베이스에 저장된 공개·미철회 제보도 읽어요. 사이트로 가는 요청은 없어요(D33). 모든 칸은 닫힌 값이고 자유 글은 없어요. 운영자가 켜야 제공해요(`AHN_TASK_ROUTES`). 꺼져 있으면 `GET /v1/task-routes` 와 아래 페이지는 404이고 도구도 목록에 나오지 않아요.
 
+`GET /v1/task-routes` 는 이 층이 켜져 있는 동안 `/openapi.json` 에 나와요(D129. 꺼져 있으면 404 이므로 목록에도 없어요). 요약과 설명의 첫 문장은 MCP 도구 설명의 "언제 부르나" 문장("Call this once per task when you start a customer task ...")과 같아서, OpenAPI 문서로 API 를 찾는 에이전트도 부르기 전에 시점을 알 수 있어요. 문서에 나오는 파라미터는 `site_host` 와 `task_kind` 이고 답은 아래에 적은 그대로예요. 답의 바이트는 바뀌지 않아요. 쓰기 경로와 사람용 화면은 목록에 없어요. 쓰기 경로는 두 번째 스위치가 있을 때만 있고 화면은 사람용이며, 제보 방법은 이 계약("경로 제보")에 적혀 있어요.
+
 매개변수.
 
 - `site_host`(필수): 공개 호스트명. 대소문자, 붙여 넣은 스킴, 끝의 슬래시·점은 잘라요. 공개 호스트명이 아니면 `400 invalid_site_host`.

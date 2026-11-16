@@ -24,13 +24,14 @@ from urllib.parse import urlencode
 
 from uuid import UUID
 
-from fastapi import Request
+from fastapi import Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import ValidationError
 
+from .mcp_task_routes import CALL_TIMING, SITE_HOST_DESCRIPTION, TASK_KIND_DESCRIPTION
 from .task_routes import (ROUTE_WORKED_NONE, DocumentKind, EntryPointKind, RouteBasis, RouteKind, RouteOutcome, RouteSourceKind,
-                          SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRouteInputError, VerificationKind, is_current,
+                          SiteRequires, TaskKind, TaskObstacle, TaskRouteIn, TaskRoutesResponse, TaskRouteInputError, VerificationKind, is_current,
                           lookup, parse_query, registrable, route_host, server_route, site_from_input, site_records, stored_route,
                           suffix_name)
 
@@ -38,6 +39,11 @@ LOG = logging.getLogger(__name__)
 
 PATH = "/v1/task-routes"
 CACHE_CONTROL = "public, max-age=300"
+OPENAPI_DESCRIPTION = ("Call this once per task " + CALL_TIMING + ". Look up recorded task routes for a public hostname: for a kind of customer task "
+                       "(a refund, a cancellation, a booking and so on), an obstacle and the routes the site's own documents name. The answer is a list "
+                       "of records, not a guarantee and not advice; an empty list does not mean there is no route. Sends only the hostname and an "
+                       "optional task kind, and changes nothing. Read summary_line first. field_notes explains outcome, period and routes_tried. "
+                       "The same lookup is the MCP tool find_task_route.")
 REPORT_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
 
@@ -51,8 +57,16 @@ def add_routes(app, settings, render=None, lang_text=None) -> None:
 
     headers = {"Cache-Control": CACHE_CONTROL, "X-Content-Type-Options": "nosniff"}
 
-    @app.get(PATH, include_in_schema=False)
-    def task_routes(request: Request, site_host: str = "", task_kind: str | None = None):
+    # Only this read path is in the OpenAPI document (D129): it is registered only while this function runs, so with the switch off it is
+    # not listed either. The write paths and the human pages stay out of the schema. The documented answer is the model the body is
+    # built from; the body itself is still the JSONResponse below, so the bytes do not change.
+    @app.get(PATH, summary="Call this once per task " + CALL_TIMING,
+             description=OPENAPI_DESCRIPTION,
+             responses={200: {"model": TaskRoutesResponse, "description": "The recorded task routes for the site: a list of records, not a guarantee and not advice."},
+                        400: {"description": "An error code only: invalid_site_host or invalid_task_kind. The input is never echoed."}})
+    def task_routes(request: Request,
+                    site_host: str = Query("", description=SITE_HOST_DESCRIPTION + " Required: without a valid public hostname the answer is 400 invalid_site_host."),
+                    task_kind: str | None = Query(None, description=TASK_KIND_DESCRIPTION + " Values: " + ", ".join(kind.value for kind in TaskKind) + ".")):
         try:
             host, kind = parse_query(site_host, task_kind)
         except TaskRouteInputError as error:
