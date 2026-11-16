@@ -171,9 +171,9 @@ def test_an_unrelated_host_gets_an_empty_answer_not_an_error(monkeypatch, on):
         body = response.json()
         assert body["routes"] == [] and body["counts"] == {"records": 0, "by_source_kind": {}}
         assert body["site_host"] == host and "notice" not in body
-        assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS
+        assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS + " " + task_routes.NEXT_STEP_NO_RECORDS
     assert on.get("/v1/task-routes", params={"site_host": "other-example.org", "task_kind": "refund_request"}).json()["summary_line"] == \
-        task_routes.SUMMARY_NO_RECORDS_FOR_KIND
+        task_routes.SUMMARY_NO_RECORDS_FOR_KIND + " " + task_routes.NEXT_STEP_NO_RECORDS
 
 
 def test_a_tenant_subdomain_gets_the_empty_answer_and_a_generic_one_gets_the_apex_records(monkeypatch, on):
@@ -184,7 +184,7 @@ def test_a_tenant_subdomain_gets_the_empty_answer_and_a_generic_one_gets_the_ape
     for tenant in ("springfield.classlink.com", "x.springfield.classlink.com", "support.springfield.classlink.com"):
         body = on.get("/v1/task-routes", params={"site_host": tenant}).json()
         assert body["routes"] == [] and body["counts"]["records"] == 0, tenant
-        assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS
+        assert body["summary_line"] == task_routes.SUMMARY_NO_RECORDS + " " + task_routes.NEXT_STEP_NO_RECORDS
     for generic in ("www.classlink.com", "support.classlink.com", "help.classlink.com", "support.help.classlink.com"):
         body = on.get("/v1/task-routes", params={"site_host": generic}).json()
         assert body["routes"] == apex["routes"] and body["counts"] == apex["counts"], generic
@@ -262,7 +262,8 @@ def test_counts_by_source_kind_and_the_summary_line(monkeypatch, on):
     table(monkeypatch, {HOST: [entry(), entry("refund_request", obstacle="eligibility_unclear", routes=(), worked=None)]})
     body = on.get("/v1/task-routes", params={"site_host": HOST}).json()
     assert body["counts"] == {"records": 2, "by_source_kind": {"curated_official": 2}}
-    assert body["summary_line"] == "2 task route records: 2 from the site's own documents. Records, not guarantees."
+    assert body["summary_line"] == ("2 task route records: 2 from the site's own documents. By task: cancel_subscription 1, "
+                                    "refund_request 1. Records, not guarantees.")
     single = on.get("/v1/task-routes", params={"site_host": HOST, "task_kind": "cancel_subscription"}).json()
     assert single["summary_line"] == ("1 task route record for cancel subscription: 1 from the site's own documents. "
                                       "Records, not guarantees.")
@@ -352,9 +353,10 @@ def test_every_string_in_an_answer_is_an_enum_value_a_host_an_https_url_a_period
     body = on.get("/v1/task-routes", params={"site_host": "www." + HOST}).json()
     allowed_hosts = {HOST, "www." + HOST}
     assert body["routes"]
+    from ahn.mcp_task_routes import CALL_TIMING
     from ahn.task_routes import FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED
 
-    assert set(body["field_notes"].values()) <= {FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED}  # fixed sentences only
+    assert set(body["field_notes"].values()) <= {FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED, CALL_TIMING}  # fixed sentences only
     for text in _strings({key: value for key, value in body.items() if key not in ("summary_line", "field_notes")}):
         assert (text in ENUM_VALUES or text in allowed_hosts or re.fullmatch(r"https://[^\s?#]+", text)
                 or re.fullmatch(r"\d{4}-Q[1-4]", text) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", text)), text
@@ -362,7 +364,7 @@ def test_every_string_in_an_answer_is_an_enum_value_a_host_an_https_url_a_period
         assert set(route) <= {"site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                               "entry_point_kind", "routes_tried", "route_worked", "basis", "outcome", "duration", "period",
                               "source_kind", "sensitive", "official_url", "source_url", "verified_at"}
-    assert set(body) <= {"field_notes", "site_host", "summary_line", "routes", "counts", "notice"}
+    assert set(body) <= {"field_notes", "site_host", "summary_line", "routes", "counts", "notice", "official_help_url"}
     assert not re.search(r"https?://|www\.", body["summary_line"])
 
 
@@ -416,7 +418,7 @@ def test_find_task_route_with_no_record_and_with_an_empty_task_kind(monkeypatch)
     server = mcp_with_tool()
     for arguments in ({"site_host": HOST}, {"site_host": HOST, "task_kind": None}):
         result = asyncio.run(server.call_tool("find_task_route", arguments))
-        assert result.content[0].text == task_routes.SUMMARY_NO_RECORDS
+        assert result.content[0].text == task_routes.SUMMARY_NO_RECORDS + " " + task_routes.NEXT_STEP_NO_RECORDS
         assert result.structured_content["routes"] == []
 
 
@@ -538,3 +540,100 @@ def test_the_verdict_modules_do_not_know_task_routes():
     for name in ("service.py", "triage.py", "models.py", "response_guide.py", "cause.py", "official_paths.py"):
         text = (ROOT / "ahn" / name).read_text(encoding="utf-8")
         assert "task_routes" not in text and "task_route" not in text, name
+
+
+# --- Empty answer: the next step and the help page (D128), and the task kind counts ---------------------------------------------
+
+def _consumer(monkeypatch, host, paths, verified=None):
+    from ahn import official_paths
+
+    monkeypatch.setitem(official_paths.CONSUMER_PATHS, host, {"paths": paths, "verified_at": verified or TODAY.isoformat()})
+
+
+def test_an_empty_answer_says_what_to_do_next_and_keeps_the_missing_record_sentence(monkeypatch, on):
+    table(monkeypatch, {})
+    _consumer(monkeypatch, HOST, [{"kind": "official_app", "url": "https://apps.apple.com/us/app/x/id1", "source_url": HELP},
+                                  {"kind": "customer_help", "url": HELP, "source_url": HELP},
+                                  {"kind": "customer_help", "url": PAGE, "source_url": HELP}])
+    body = on.get("/v1/task-routes", params={"site_host": "www." + HOST}).json()
+    assert body["routes"] == [] and list(body["field_notes"]) == ["call_timing"]
+    assert body["summary_line"].startswith(task_routes.SUMMARY_NO_RECORDS)
+    assert "A missing record does not mean there is no route." in body["summary_line"]
+    assert body["summary_line"].endswith("Check the site's official help or customer service page directly.")
+    assert body["official_help_url"] == HELP  # the first customer help page; an app is not a help page
+    other = on.get("/v1/task-routes", params={"site_host": HOST, "task_kind": "refund_request"}).json()
+    assert other["summary_line"].startswith(task_routes.SUMMARY_NO_RECORDS_FOR_KIND) and other["official_help_url"] == HELP
+
+
+def test_the_help_page_is_left_out_when_there_is_none_or_it_is_stale_or_records_exist(monkeypatch, on):
+    table(monkeypatch, {HOST: [entry()], "plain-example.org": []})
+    _consumer(monkeypatch, HOST, [{"kind": "customer_help", "url": HELP, "source_url": HELP}])
+    _consumer(monkeypatch, "app-only-example.org", [{"kind": "official_app", "url": "https://apps.apple.com/us/app/x/id1", "source_url": HELP}])
+    _consumer(monkeypatch, "old-example.org", [{"kind": "customer_help", "url": HELP, "source_url": HELP}], verified=days_ago(200))
+    with_records = on.get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert "official_help_url" not in with_records
+    for host in ("app-only-example.org", "old-example.org", "plain-example.org", "unknown-example.org"):
+        body = on.get("/v1/task-routes", params={"site_host": host}).json()
+        assert "official_help_url" not in body, host
+        assert body["summary_line"].endswith(task_routes.NEXT_STEP_NO_RECORDS), host  # the sentence does not depend on the page
+    # the filter case: records exist, but none of the asked kind
+    kind_only = on.get("/v1/task-routes", params={"site_host": HOST, "task_kind": "refund_request"}).json()
+    assert kind_only["routes"] == [] and kind_only["official_help_url"] == HELP
+
+
+def test_a_tenant_subdomain_is_never_sent_to_the_platforms_help_page(monkeypatch):
+    table(monkeypatch, {})
+    _consumer(monkeypatch, "classlink.com", [{"kind": "customer_help", "url": "https://www.classlink.com/help", "source_url": HELP}])
+    assert task_routes.official_help_url("classlink.com") == "https://www.classlink.com/help"
+    assert task_routes.official_help_url("www.classlink.com") == "https://www.classlink.com/help"
+    assert task_routes.official_help_url("springfield.classlink.com") is None
+
+
+def test_every_curated_help_page_fits_the_field():
+    from ahn.official_paths import CONSUMER_PATHS
+
+    found = 0
+    for host in CONSUMER_PATHS:
+        url = task_routes.official_help_url(host)
+        if url is not None:
+            found += 1
+            answer = task_routes.TaskRoutesResponse(site_host=host, summary_line="x", counts=task_routes.TaskRouteCounts(records=0),
+                                                    official_help_url=url)
+            assert answer.model_dump(mode="json")["official_help_url"] == url
+    assert found > 0
+
+
+def test_an_answer_with_records_counts_them_by_task_kind_and_changes_nothing_else(monkeypatch, on):
+    items = [entry("return_or_exchange", obstacle="wrong_channel"), entry("return_or_exchange", obstacle="eligibility_unclear", routes=(), worked=None),
+             entry("return_or_exchange", obstacle="deadline_or_window", routes=(), worked=None), entry("warranty_claim")]
+    table(monkeypatch, {HOST: items})
+    body = on.get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert body["summary_line"] == ("4 task route records: 4 from the site's own documents. By task: return_or_exchange 3, "
+                                    "warranty_claim 1. Records, not guarantees.")
+    assert body["counts"] == {"records": 4, "by_source_kind": {"curated_official": 4}} and len(body["routes"]) == 4
+    filtered = on.get("/v1/task-routes", params={"site_host": HOST, "task_kind": "return_or_exchange"}).json()
+    assert "By task" not in filtered["summary_line"]  # one kind asked: the counts would repeat the total
+    assert "official_help_url" not in body
+
+
+def test_the_task_kind_counts_are_ordered_fit_the_limit_and_are_left_out_rather_than_cut():
+    kinds = [item.value for item in TaskKind]
+    text = task_routes.kind_counts_text({"b_kind": 2, "a_kind": 2, "c_kind": 5}, 200)
+    assert text == " By task: c_kind 5, a_kind 2, b_kind 2."
+    assert task_routes.kind_counts_text({"a_kind": 1}, 5) == ""
+    cut = task_routes.kind_counts_text({"c_kind": 5, "a_kind": 2, "b_kind": 2}, 30)
+    assert cut == " By task: c_kind 5, +2 more."
+    worst = {kind: 99 for kind in RouteSourceKind}
+    for notice in (False, True):
+        line = summary_line(500, worst, None, notice, {kind: 20 for kind in kinds})
+        assert len(line) <= SUMMARY_MAX and re.fullmatch(r"[ -~]+", line) and line.endswith("Records, not guarantees." + (" " + ROUTE_LINE_NOTICE if notice else ""))
+    line = summary_line(3, {RouteSourceKind.curated_official: 3}, None, False, {kinds[0]: 2, kinds[1]: 1})
+    assert re.fullmatch(r"[ -~]+", line) and len(line) <= SUMMARY_MAX and "By task: " in line
+
+
+def test_the_judgement_and_the_data_are_the_same_with_the_new_lines(monkeypatch, on):
+    # routes, counts and notice are what they were: only summary_line and the empty-answer help page differ.
+    table(monkeypatch, {HOST: [entry(), entry("refund_request", obstacle="eligibility_unclear", routes=(), worked=None)]})
+    body = on.get("/v1/task-routes", params={"site_host": HOST}).json()
+    assert set(body) == {"field_notes", "site_host", "summary_line", "routes", "counts"}
+    assert [route["task_kind"] for route in body["routes"]] == sorted((route["task_kind"] for route in body["routes"]), reverse=True)

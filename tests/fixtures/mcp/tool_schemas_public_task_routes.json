@@ -4211,7 +4211,7 @@
       }
      ],
      "default": null,
-     "description": "Fixed sentences on what outcome, period and routes_tried mean in these records. Left out when there is no record.",
+     "description": "Fixed sentences on what outcome, period and routes_tried mean in these records (those keys are left out when there is no record), and call_timing, when to call this lookup (always present).",
      "title": "Field Notes"
     },
     "notice": {
@@ -4226,6 +4226,21 @@
      ],
      "default": null,
      "title": "Notice"
+    },
+    "official_help_url": {
+     "anyOf": [
+      {
+       "maxLength": 200,
+       "pattern": "^https://[^\\s?#]+$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Only when routes is empty and the site's own help or customer service page is curated: that page, as a place to look yourself. A link to read, not a route and not a statement that the site has none.",
+     "title": "Official Help Url"
     },
     "routes": {
      "items": {
