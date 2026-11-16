@@ -654,6 +654,10 @@ def test_wahoo_warranty_original_purchaser_record_moved_and_kept_its_quotation()
     assert purchaser == ("This Limited Warranty applies to you if you are the original purchaser of a Wahoo Fitness product from "
                          "Wahoo Fitness or one of Wahoo Fitness\u2019 authorized retailers")
     assert by_text[""]["obstacle"] == "deadline_or_window"  # the record without a sentence keeps its value
+    tp_link = [record for record in TASK_ROUTES_CURATED["tp-link.com"]
+               if "only applicable to the original purchaser" in record.get("condition_text", "")]
+    assert len(tp_link) == 1 and tp_link[0]["obstacle"] == "eligibility_conditions_stated"
+    assert tp_link[0]["routes_tried"] == ["web_form", "phone"]  # moving the record keeps its routes
 
 
 def test_a_sentence_that_also_states_a_time_limit_keeps_deadline_or_window():
