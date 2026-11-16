@@ -365,6 +365,8 @@ def page_context(records: list, shown: list, lang: str, lang_text: dict) -> dict
             group = {"host": row["host"], "count": row["count"], "rows": []}
             groups.append(group)
         group["rows"].append(row)
+    for group in groups:
+        group["shown"] = len(group["rows"])  # the heading says the rows below it; "of N" only when a filter or the row limit hid some
     return {
         "rows": rows, "groups": groups, "any_condition": any(row["condition_text"] for row in rows), "any_document": any(row["document"] for row in rows),
         "total": len(records), "shown_count": len(shown), "cut": cut,

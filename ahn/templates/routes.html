@@ -47,7 +47,7 @@
     </tr></thead>
     {% for group in groups %}
     <tbody>
-    {% if group_heads %}<tr class="routes-group"><th scope="colgroup" colspan="7"><a href="/{{ lang }}/routes/{{ group.host }}">{{ group.host }}</a> <span class="routes-group-count">{{ t.routes_group_records.format(n=group.count, s='' if group.count == 1 else 's') }}</span></th></tr>{% endif %}
+    {% if group_heads %}<tr class="routes-group"><th scope="rowgroup" colspan="7"><a href="/{{ lang }}/routes/{{ group.host }}">{{ group.host }}</a> <span class="routes-group-count">{% if group.shown == group.count %}{{ t.routes_group_records.format(n=group.count, s='' if group.count == 1 else 's') }}{% else %}{{ t.routes_group_of.format(k=group.shown, n=group.count) }}{% endif %}</span></th></tr>{% endif %}
     {% for row in group.rows %}
     <tr>
       <td>{{ row.task }}</td>
