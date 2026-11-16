@@ -36,7 +36,7 @@ PUBLIC_AGGREGATE_TLDS = {
     # linktr.ee, deepmind.google, cloud.microsoft, ...). A two-label name under any of these is its registrant's apex;
     # deeper names stay ineligible as everywhere else. Spam-heavy TLDs with no curated host are still left out.
     "int", "so", "social", "markets", "ee", "pro", "one", "mobi", "gl", "ms", "mp", "page",
-    "google", "goog", "microsoft", "apple", "aws",
+    "google", "goog", "microsoft", "apple", "aws", "health",
 }
 # Registrable apexes under two-label public suffixes (bbc.co.uk, naver.co.kr); no full PSL dependency.
 PUBLIC_SUFFIXES_2 = {
