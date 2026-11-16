@@ -375,16 +375,23 @@ def test_keyboard_interrupt_is_not_swallowed(monkeypatch, transport):
         def start(self):
             raise RuntimeError("can not start new thread")
 
-    monkeypatch.setattr(_adapter.threading, "Thread", Interrupting)
+    # Swap the adapter's own view of ``threading`` instead of patching ``threading.Thread`` itself: that class is shared by the whole
+    # process, so a global patch also hijacked every other thread started meanwhile (asyncio, the runner). The in-flight set is also
+    # shared, and a worker left over from an earlier test under load would make ``_spawn`` refuse this host without raising.
+    def fake_threading(thread):
+        return types.SimpleNamespace(Thread=thread, Event=threading.Event, Lock=threading.Lock)
+
+    monkeypatch.setattr(_adapter, "_inflight", set())
+    monkeypatch.setattr(_adapter, "threading", fake_threading(Interrupting))
     with pytest.raises(KeyboardInterrupt):
-        _adapter.bounded_check("example.com", "site_access", None, "langchain")
+        _adapter.bounded_check("interrupt.example", "site_access", None, "langchain")
     assert not _adapter._inflight  # and the lookup is not left marked as running
     with pytest.raises(KeyboardInterrupt):
-        asyncio.run(_adapter.abounded_check("example.com", "site_access", None, "langchain"))
+        asyncio.run(_adapter.abounded_check("interrupt.example", "site_access", None, "langchain"))
     assert not _adapter._inflight
     # An ordinary failure to start a thread is still just "no answer".
-    monkeypatch.setattr(_adapter.threading, "Thread", Failing)
-    assert _adapter.bounded_check("example.com", "site_access", None, "langchain") is None
+    monkeypatch.setattr(_adapter, "threading", fake_threading(Failing))
+    assert _adapter.bounded_check("interrupt.example", "site_access", None, "langchain") is None
     assert not _adapter._inflight
 
 

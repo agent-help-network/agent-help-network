@@ -30,7 +30,7 @@ def flat(text: str) -> str:
 def test_claude_code_manifest_and_marketplace_carry_the_same_task_routes_phrase():
     manifest = json.loads(read(PLUGIN / ".claude-plugin" / "plugin.json"))
     entry = json.loads(read(ROOT / ".claude-plugin" / "marketplace.json"))["plugins"][0]
-    assert manifest["version"] == entry["version"] == "0.3.19"
+    assert manifest["version"] == entry["version"] == "0.3.20"
     phrase = "If the bundled server lists find_task_route, it can also return recorded task routes for a site (records, not advice)."
     assert phrase in manifest["description"] and phrase in entry["description"]
 
@@ -51,7 +51,7 @@ def test_skill_description_asks_for_one_call_per_task_and_the_body_reads_field_n
     assert "call it once per task at the start of a customer task" in description and "even when nothing is blocked" in description
     section = flat(raw).split("## Task routes", 1)[1].split("## Reporting", 1)[0]
     assert "`field_notes`" in section
-    for word in ("`outcome`", "`period`", "`routes_tried`", "not a deadline", "only the channels this record copied from the document"):
+    for word in ("`outcome`", "`period`", "`routes_tried`", "not a deadline", "not a validity window", "only on document records", "an empty list does not mean there are no channels"):
         assert word in section, word
     readme = flat(read(PLUGIN / "README.md"))
     assert "once per task, once for that task" not in readme and "once per task, when you start" not in readme
