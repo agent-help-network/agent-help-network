@@ -401,6 +401,14 @@ def test_task_route_fields_and_inputs_are_covered_by_the_policy_while_they_are_o
     assert_phrases("task route inputs", {lang: section(lang, "02", task_routes=True) for lang in LANGS}, TASK_ROUTE_INPUTS)
 
 
+def test_the_openapi_parameters_of_the_task_route_read_path_are_the_inputs_the_policy_names():
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True, reporting_enabled=True, task_routes=True,
+                        task_routes_since=POLICY_UPDATED)
+    path = create_app(settings).openapi()["paths"]["/v1/task-routes"]
+    assert set(path) == {"get"}
+    assert {p["name"] for p in path["get"]["parameters"]} == set(TASK_ROUTE_INPUTS)  # a new input needs a policy sentence first
+
+
 TASK_ROUTE_SITE_BOX = {
     "site_box": Phrase("The search box on the task route pages takes a public hostname in the same way; if a full address is pasted, "
                        "only the hostname is used and the rest is discarded, and nothing typed there is stored or counted.",

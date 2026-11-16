@@ -891,6 +891,8 @@ Fixed sentences. Every text is chosen from a fixed English or Korean template; b
 
 The answer is read from a curated table kept in the service code and, only while reports are also turned on (`AHN_TASK_ROUTE_REPORTS`, see "Reporting a route" below), from the published, not withdrawn reports stored in the service's database. There is never a request to any site (D33). Every field is a closed value; there is no free text. The layer is served only once the operator turns it on (`AHN_TASK_ROUTES`); while it is off, `GET /v1/task-routes` and the pages below answer 404 and the tool is not listed.
 
+`GET /v1/task-routes` is listed in `/openapi.json` while the layer is on (D129; with the switch off it is not listed, as it answers 404). Its summary and the first sentence of its description are the call-timing sentence of the MCP tool description ("Call this once per task when you start a customer task ..."), so an agent that finds the API through the OpenAPI document learns when to call before it calls. The documented parameters are `site_host` and `task_kind`, and the documented answer is the one described below; the bytes of an answer do not change. The write paths and the human pages are not listed: they exist only under a second switch or are for people, and `POST /v1/task-routes` is described in this contract (see "Reporting a route") for the callers that submit.
+
 Parameters.
 
 - `site_host` (required): a public hostname. Case, a pasted scheme and a trailing slash or dot are cut; anything that is not a public hostname is `400 invalid_site_host`.
