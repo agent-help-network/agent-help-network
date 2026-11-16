@@ -81,7 +81,10 @@ def test_the_new_suffixes_have_two_lowercase_labels_and_leave_every_curated_host
         parts = host.split(".")
         for index in range(len(parts) - 1):  # the host and each parent down to two labels
             assert ".".join(parts[index:]) not in extra, host
-        assert task_routes.route_host(host) == host and task_routes.registrable(host) == host
+        if task_routes.government_site(host) is not None:  # a government site keeps its own host as the key
+            assert task_routes.route_host(host) == host and task_routes.key_candidates(host) == [host]
+        else:
+            assert task_routes.route_host(host) == host and task_routes.registrable(host) == host
         assert not task_routes.suffix_name(host) and not task_routes.suffix_name(f"www.{host}")
 
 
