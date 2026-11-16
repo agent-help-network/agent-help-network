@@ -363,30 +363,46 @@ FIELD_NOTE_ROUTES_TRIED = ("For a document record, the channels this record copi
                            "document names. An empty list means this record lists none, not that the document or the site has none.")
 
 
-def field_notes(shown: list[TaskRoute]) -> dict[str, str] | None:
-    """The fixed sentences that say what outcome, period and routes_tried mean for the records shown, or None for no record.
-    A key appears only when a shown record makes it matter: outcome for a document record (not_applicable), routes_tried for a
-    document record, period for any record. The words are fixed and say nothing about a site."""
-    if not shown:
-        return None
+def call_timing_note() -> str:
+    """The one sentence on when to call this lookup: ahn.mcp_task_routes.CALL_TIMING, the wording the tool description and the server
+    instructions carry, so a caller that only reads the REST answer sees it too (D128). Imported here, not at the top: that module
+    imports this one."""
+    from .mcp_task_routes import CALL_TIMING
+
+    return CALL_TIMING
+
+
+def field_notes(shown: list[TaskRoute]) -> dict[str, str]:
+    """The fixed sentences that say what outcome, period and routes_tried mean for the records shown, and, always, when to call
+    (``call_timing``, D128). A meaning key appears only when a shown record makes it matter: outcome for a document record
+    (not_applicable), routes_tried for a document record, period for any record. With no record only ``call_timing`` is left.
+    The words are fixed and say nothing about a site."""
     notes: dict[str, str] = {}
+    if not shown:
+        return {"call_timing": call_timing_note()}
     if any(record.outcome == RouteOutcome.not_applicable for record in shown):
         notes["outcome"] = FIELD_NOTE_OUTCOME
     notes["period"] = FIELD_NOTE_PERIOD
     if any(record.source_kind == RouteSourceKind.curated_official for record in shown):
         notes["routes_tried"] = FIELD_NOTE_ROUTES_TRIED
+    notes["call_timing"] = call_timing_note()
     return notes
 
 
 class TaskRoutesResponse(StrictModel):
     field_notes: dict[str, str] | None = Field(
         default=None, exclude_if=_omit_none,
-        description="Fixed sentences on what outcome, period and routes_tried mean in these records. Left out when there is no record.")
+        description="Fixed sentences on what outcome, period and routes_tried mean in these records (those keys are left out when there is no record), "
+                    "and call_timing, when to call this lookup (always present).")
     site_host: str
     summary_line: str = Field(min_length=1, max_length=200, pattern=r"^[ -~]+$")
     routes: list[TaskRoute] = Field(default_factory=list, max_length=20)
     counts: TaskRouteCounts
     notice: Literal["case_record_not_advice"] | None = Field(default=None, exclude_if=_omit_none)
+    official_help_url: str | None = Field(
+        default=None, exclude_if=_omit_none, pattern=r"^https://[^\s?#]+$", max_length=200,
+        description="Only when routes is empty and the site's own help or customer service page is curated: that page, as a place to "
+                    "look yourself. A link to read, not a route and not a statement that the site has none.")
 
 
 class TaskRouteIn(_TaskRouteFields):
@@ -812,6 +828,7 @@ SOURCE_LABELS = {
 }
 SUMMARY_NO_RECORDS = "No task route records for this site. A missing record does not mean there is no route."
 SUMMARY_NO_RECORDS_FOR_KIND = "No task route records for this site and task kind. A missing record does not mean there is no route."
+NEXT_STEP_NO_RECORDS = "Check the site's official help or customer service page directly."
 SUMMARY_MAX = 200
 
 
@@ -844,18 +861,56 @@ def server_route(site_host: str, entry: dict) -> TaskRoute:
                      outcome=RouteOutcome.not_applicable, period=period, sensitive=sensitive, **fields)
 
 
-def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice: bool) -> str:
-    """The one sentence of an answer, built only from fixed words, the counts and the task kind's name."""
+def official_help_url(site_host: str, today: date | None = None) -> str | None:
+    """The first curated customer help page of the site's own key (D128), or None: a tenant subdomain, a site with no current
+    consumer entry, or one with no help page (an app or an entry link is not a help page). Read from the in-code table; no network."""
+    from .official_paths import CONSUMER_PATHS, consumer_is_current
+
+    try:
+        key = route_host(site_host)
+    except ValueError:
+        return None
+    consumer = CONSUMER_PATHS.get(key) if key is not None else None
+    if consumer is None or not consumer_is_current(consumer, today):
+        return None
+    for item in consumer.get("paths") or []:
+        url = item.get("url")
+        if item.get("kind") == "customer_help" and isinstance(url, str) and _URL_SHAPE.fullmatch(url) and len(url) <= TASK_ROUTE_URL_MAX:
+            return url
+    return None
+
+
+def kind_counts_text(by_kind: dict, room: int) -> str:
+    """" By task: a 3, b 1." with the most records first (then the name), as many as fit in ``room`` characters; the rest is
+    " +N more". Empty when not even the first fits. The words are task kind values, never a site's."""
+    items = sorted(by_kind.items(), key=lambda item: (-item[1], item[0]))
+    for shown in range(len(items), 0, -1):
+        text = " By task: " + ", ".join(f"{name} {count}" for name, count in items[:shown])
+        if shown < len(items):
+            text += f", +{len(items) - shown} more"
+        text += "."
+        if len(text) <= room:
+            return text
+    return ""
+
+
+def summary_line(total: int, by_source: dict, task_kind: TaskKind | None, notice: bool, by_kind: dict | None = None) -> str:
+    """The one sentence of an answer, built only from fixed words, the counts and the task kind's name. ``by_kind`` (task kind value
+    to count, over all matching records) adds a short count per task kind when the answer is not filtered to one kind (D128)."""
     if total == 0:
-        return SUMMARY_NO_RECORDS_FOR_KIND if task_kind is not None else SUMMARY_NO_RECORDS
+        return (SUMMARY_NO_RECORDS_FOR_KIND if task_kind is not None else SUMMARY_NO_RECORDS) + " " + NEXT_STEP_NO_RECORDS
     parts = ", ".join(f"{count} {SOURCE_LABELS[kind]}" for kind, count in by_source.items() if count)
     line = f"{total} task route record{'s' if total != 1 else ''}" + (f" for {_words(task_kind)}" if task_kind is not None else "")
     line += f": {parts}."
+    tail = ""
     if total > TASK_ROUTES_MAX:
-        line += f" Showing the {TASK_ROUTES_MAX} newest."
-    line += " Records, not guarantees."
+        tail += f" Showing the {TASK_ROUTES_MAX} newest."
+    tail += " Records, not guarantees."
     if notice:
-        line += " " + ROUTE_LINE_NOTICE
+        tail += " " + ROUTE_LINE_NOTICE
+    if by_kind and task_kind is None and total > 1:
+        line += kind_counts_text(by_kind, SUMMARY_MAX - len(line) - len(tail))
+    line += tail
     if len(line) > SUMMARY_MAX:  # cannot happen with the fixed labels at realistic counts; the guard keeps the answer valid
         line = f"{total} task route records. Records, not guarantees." + (" " + ROUTE_LINE_NOTICE if notice else "")
     return line
@@ -1053,9 +1108,14 @@ def lookup(site_host: str, task_kind=None, today: date | None = None, *, setting
     by_source: dict[RouteSourceKind, int] = {}
     for record in records:
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
+    by_kind: dict[str, int] = {}
+    for record in records:
+        by_kind[record.task_kind.value] = by_kind.get(record.task_kind.value, 0) + 1
     shown = records[:TASK_ROUTES_MAX]
     notice = any(record.sensitive for record in shown)
     return TaskRoutesResponse(
-        field_notes=field_notes(shown), site_host=host, summary_line=summary_line(len(records), by_source, kind, notice), routes=shown,
+        field_notes=field_notes(shown), site_host=host,
+        summary_line=summary_line(len(records), by_source, kind, notice, by_kind), routes=shown,
         counts=TaskRouteCounts(records=len(records), by_source_kind=by_source),
-        notice="case_record_not_advice" if notice else None)
+        notice="case_record_not_advice" if notice else None,
+        official_help_url=official_help_url(host, today) if not records else None)

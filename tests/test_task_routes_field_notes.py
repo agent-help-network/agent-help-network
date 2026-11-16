@@ -1,7 +1,7 @@
 """field_notes (D126): fixed sentences at the top of a task route answer that say what outcome, period and routes_tried mean.
 
-No database and no network. The words are fixed, the key set depends only on the records shown, an answer with no record is
-byte-identical to what it was, and no verdict module reads task routes.
+No database and no network. The words are fixed, the key set depends only on the records shown, an answer with no record carries only
+the call_timing note (D128), and no verdict module reads task routes.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from ahn import task_routes
 from ahn.main import create_app
-from ahn.mcp_task_routes import DESCRIPTION, task_route_result
+from ahn.mcp_task_routes import CALL_TIMING, DESCRIPTION, task_route_result
 from ahn.settings import Settings
 from ahn.task_routes import (FIELD_NOTE_OUTCOME, FIELD_NOTE_PERIOD, FIELD_NOTE_ROUTES_TRIED, RouteOutcome, RouteSourceKind,
                              TaskRoutesResponse, field_notes, lookup)
@@ -48,7 +48,8 @@ def client() -> TestClient:
 def test_a_curated_answer_carries_the_three_notes_first():
     answer = lookup(curated_host())
     assert answer.routes and all(r.outcome == RouteOutcome.not_applicable for r in answer.routes)
-    assert answer.field_notes == {"outcome": FIELD_NOTE_OUTCOME, "period": FIELD_NOTE_PERIOD, "routes_tried": FIELD_NOTE_ROUTES_TRIED}
+    assert answer.field_notes == {"outcome": FIELD_NOTE_OUTCOME, "period": FIELD_NOTE_PERIOD, "routes_tried": FIELD_NOTE_ROUTES_TRIED,
+                                  "call_timing": CALL_TIMING}
     assert next(iter(answer.model_dump(mode="json"))) == "field_notes"
     assert FIELD_NOTE_OUTCOME == ("not_applicable marks a record taken from a document: it names a route or a condition and nobody's "
                                   "result is recorded. It does not mean the task does not apply.")
@@ -72,15 +73,26 @@ def test_the_rest_data_and_the_mcp_structured_content_carry_the_same_notes():
     assert json.loads(result.content[1].text)["field_notes"] == body["field_notes"]
 
 
-def test_an_answer_without_a_record_is_unchanged():
+def test_an_answer_without_a_record_carries_only_the_call_timing_note():
     for host in ("no-such-site-for-routes.example.com", "example.org"):
         answer = lookup(host)
-        assert not answer.routes and answer.field_notes is None
-        assert "field_notes" not in answer.model_dump(mode="json")
+        assert not answer.routes and answer.field_notes == {"call_timing": CALL_TIMING}
         body = client().get("/v1/task-routes", params={"site_host": host}).json()
-        assert "field_notes" not in body and list(body)[0] == "site_host"
-        assert "field_notes" not in json.loads(task_route_result(answer).content[1].text)
-    assert field_notes([]) is None
+        assert list(body)[0] == "field_notes" and body["field_notes"] == {"call_timing": CALL_TIMING}
+        result = task_route_result(answer)
+        assert result.structured_content["field_notes"] == {"call_timing": CALL_TIMING}
+        assert json.loads(result.content[1].text)["field_notes"] == {"call_timing": CALL_TIMING}
+        assert result.content[0].text == answer.summary_line and "call_timing" not in answer.summary_line
+    assert field_notes([]) == {"call_timing": CALL_TIMING}
+
+
+def test_call_timing_is_the_one_sentence_the_tool_description_carries_and_is_the_same_for_every_answer():
+    assert CALL_TIMING in DESCRIPTION and re.fullmatch(r"[ -~]+", CALL_TIMING)
+    assert task_routes.call_timing_note() is CALL_TIMING
+    for host in (curated_host(), "no-such-site-for-routes.example.com"):
+        body = client().get("/v1/task-routes", params={"site_host": host}).json()
+        assert body["field_notes"]["call_timing"] == CALL_TIMING
+        assert body["field_notes"].get("call_timing") and list(body["field_notes"])[-1] == "call_timing"
 
 
 def _record(outcome, source_kind):
@@ -90,9 +102,9 @@ def _record(outcome, source_kind):
 
 def test_reported_records_alone_get_only_the_period_note():
     reported = _record(RouteOutcome.resolved, RouteSourceKind.external_agent)
-    assert field_notes([reported]) == {"period": FIELD_NOTE_PERIOD}
+    assert field_notes([reported]) == {"period": FIELD_NOTE_PERIOD, "call_timing": CALL_TIMING}
     mixed = field_notes([reported, _record(RouteOutcome.not_applicable, RouteSourceKind.curated_official)])
-    assert list(mixed) == ["outcome", "period", "routes_tried"]
+    assert list(mixed) == ["outcome", "period", "routes_tried", "call_timing"]
 
 
 def test_summary_line_and_notice_keep_their_words():
@@ -124,6 +136,19 @@ def test_the_contract_and_the_decision_say_it():
     en = (ROOT / "docs" / "api-contract.en.md").read_text(encoding="utf-8")
     ko = (ROOT / "docs" / "api-contract.md").read_text(encoding="utf-8")
     decisions = (ROOT / "docs" / "decisions.md").read_text(encoding="utf-8")
-    assert "`field_notes` (optional, first in the answer" in en and "`field_notes`(선택, 답의 맨 위" in ko
+    assert "`field_notes` (first in the answer, always present since D128)" in en and "`field_notes`(답의 맨 위, D128 부터 항상 있음)" in ko
+    assert "`call_timing`" in en and "`call_timing`" in ko and "`official_help_url`" in en and "`official_help_url`" in ko
+    assert len(re.findall(r"^\| D128 ", decisions, re.M)) == 1
     assert "does not mean the task does not apply" in en and "D126" in decisions
     assert len(re.findall(r"^\| D126 ", decisions, re.M)) == 1
+
+
+def test_the_advertised_output_schema_leaves_room_for_new_notes_and_fields():
+    """A client session keeps the output schema it got from list_tools and checks every later structuredContent against it, so a
+    key a deployed schema does not allow would break it (D128). The answer's top level is open, and field_notes is a map of strings
+    with no fixed keys: call_timing and official_help_url validate against the schema a client cached before they existed."""
+    schema = json.loads((ROOT / "tests" / "fixtures" / "mcp" / "tool_schemas_public_task_routes.json").read_text(encoding="utf-8"))
+    output = schema["find_task_route"]["output_schema"]
+    assert output["additionalProperties"] is True
+    notes = next(item for item in output["properties"]["field_notes"]["anyOf"] if item.get("type") == "object")
+    assert notes == {"additionalProperties": {"type": "string"}, "type": "object"}  # no "properties", no closed key set
