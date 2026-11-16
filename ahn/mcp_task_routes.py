@@ -36,7 +36,7 @@ DESCRIPTION = ("Call this once per task " + CALL_TIMING + ". Look up recorded ta
                "site's page states, quoted as written: it is not our judgement, so decide yourself whether it applies to your task, with "
                "the page at source_url. The answer is a list of "
                "records, not a guarantee and not advice; an empty list does not mean there is no route. Sends only the hostname "
-               "and an optional task kind, and changes nothing. Read summary_line first.")
+               "and an optional task kind, and changes nothing. Read summary_line first. field_notes explains outcome, period and routes_tried.")
 
 
 def _task_kind_schema() -> dict:
