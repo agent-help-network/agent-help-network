@@ -548,6 +548,17 @@ def _exception_path_problem(path: str) -> str | None:
     return None
 
 
+# Listed (site key, URL host) pairs: a curated record keyed by the first host may carry a page on the second host although it is
+# on another registrable domain. The URL host must match exactly (lowercase); the key is the record's own site key. Only curated
+# records use it (official_url_problem curated=True); operator and public entries never do. One line per pair, with the reason.
+CURATED_CROSS_DOMAIN: frozenset[tuple[str, str]] = frozenset({
+    # Thirty Madison, Inc. operates Keeps and Nurx (the terms header reads "Thirty Madison, Inc. d/b/a Keeps, Cove, and Nurx"),
+    # and the keeps.com and nurx.com home pages link its terms at this host, which answers /legals/terms-and-conditions.
+    ("keeps.com", "patient.thirtymadison.com"),
+    ("nurx.com", "patient.thirtymadison.com"),
+})
+
+
 def _listed_exceptions():
     from .task_routes_data import CURATED_URL_EXCEPTIONS
 
@@ -578,11 +589,21 @@ def official_url_problem(site_host: str, url, *, curated: bool = False) -> str |
     ``curated=True`` is for a curated_official entry only: a URL that equals, character for character, a key of
     CURATED_URL_EXCEPTIONS may have a longer number in its path (D120), if the decoded path has at most 15 digits in all, at
     most one run of six or more digits, no UUID-shaped segment, and no case, claim, order, ticket, invoice or account word
-    together with a run of six or more digits. Every other rule still applies, and so does every rule to any other URL."""
-    return _url_problem(site_host, url, _listed_exceptions() if curated else None)
+    together with a run of six or more digits. Every other rule still applies, and so does every rule to any other URL.
+
+    ``curated=True`` also lets a (site key, URL host) pair listed in CURATED_CROSS_DOMAIN point at the operator's document on
+    another registrable domain. The pair is exact, and every other rule still applies to that URL."""
+    return _url_problem(site_host, url, _listed_exceptions() if curated else None, curated)
 
 
-def _url_problem(site_host: str, url, exceptions) -> str | None:
+def _key_of(site_host) -> str | None:
+    try:
+        return route_host(site_host)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _url_problem(site_host: str, url, exceptions, cross_domain: bool = False) -> str | None:
     if not isinstance(url, str):
         return "not a string"
     if len(url) > TASK_ROUTE_URL_MAX:
@@ -628,6 +649,8 @@ def _url_problem(site_host: str, url, exceptions) -> str | None:
     except ValueError:
         return "not a public hostname"
     if registrable(parts.hostname) != registrable(site_host):
+        if cross_domain and (_key_of(site_host), parts.hostname) in CURATED_CROSS_DOMAIN:
+            return None
         return "not on the site's own registrable domain"
     return None
 

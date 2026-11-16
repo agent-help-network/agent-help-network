@@ -63,6 +63,7 @@ from ahn.official_paths import (ACCESS_AUTH_METHODS, ACCESS_MAX_AGE_DAYS, ACCESS
                                 CONSUMER_MAX_PATHS, CONSUMER_PATHS, CONSUMER_STORE_HOSTS, CONSUMER_TOPICS, OFFICIAL_ACCESS, OFFICIAL_PATHS,
                                 access_is_current, consumer_is_current)
 from ahn.service import PUBLIC_SUFFIXES_2  # noqa: E402
+from ahn import task_routes  # noqa: E402
 from ahn.task_routes import (PRIVATE_SUFFIXES, TaskRoute, is_current as task_route_is_current,  # noqa: E402
                              curated_exception_problems, official_url_problem, period_for, registrable, route_host)
 from ahn.task_routes_data import CURATED_URL_EXCEPTIONS, TASK_ROUTES_CURATED  # noqa: E402
@@ -514,6 +515,18 @@ def consumer_problems(host: str, consumer, today: date | None = None) -> list[st
     return problems
 
 
+def _listed_cross_domain(host: str, url: str) -> bool:
+    """The (site key, URL host) pair is listed in ahn.task_routes.CURATED_CROSS_DOMAIN (read at call time, never copied)."""
+    return (host, (urlsplit(url).hostname or "").lower()) in task_routes.CURATED_CROSS_DOMAIN
+
+
+def _task_url_problem(host: str, url) -> str | None:
+    """_url_problem for a task route link, which may also sit on a listed same-operator host of another domain."""
+    if isinstance(url, str) and _listed_cross_domain(host, url):
+        return _url_problem(host, url.replace(urlsplit(url).netloc, host, 1))  # the shape rules, with the host read as the key's
+    return _url_problem(host, url)
+
+
 def task_route_problems(host: str, route, today: date | None = None) -> list[str]:
     """Rule violations in one TASK_ROUTES_CURATED record (D117), without the network: the closed values and their
     combinations (ahn.task_routes.TaskRoute), a curated_official record from _route(), the apex key, a verified_at that is a
@@ -563,14 +576,14 @@ def task_route_problems(host: str, route, today: date | None = None) -> list[str
             add("period", "must be the period of verified_at (use _route())")
     official = route.get("official_url")
     if official is not None:
-        add("official_url", official_url_problem(host, official, curated=route.get("source_kind") == "curated_official") or _url_problem(host, official))
+        add("official_url", official_url_problem(host, official, curated=route.get("source_kind") == "curated_official") or _task_url_problem(host, official))
         if SIGN_IN.search(urlsplit(official).path):
             add("official_url", f"a sign-in page: {official}")
     if len(source) > 200 or not SAFE_CONSUMER_URL.fullmatch(source):
         add("source_url", f"not a plain https URL of at most 200 characters: {source!r}")
     else:
-        add("source_url", _url_problem(host, source))
-        if registrable(urlsplit(source).hostname or "") != registrable(host):
+        add("source_url", _task_url_problem(host, source))
+        if registrable(urlsplit(source).hostname or "") != registrable(host) and not _listed_cross_domain(host, source):
             add("source_url", f"not on the site's own domain: {source}")
         if SIGN_IN.search(urlsplit(source).path):
             add("source_url", f"a sign-in page: {source}")
