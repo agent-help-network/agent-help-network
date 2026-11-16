@@ -111,7 +111,7 @@ def test_en_and_ko_pages_say_the_same_things(on, monkeypatch):
         assert HOST in body and OTHER in body
     assert "cancel subscription" in en.text and "구독 해지" in ko.text and "구독 해지" not in en.text
     assert "wrong channel" in en.text and "잘못된 창구" in ko.text
-    assert ">Route worked, or document record</th>" in en.text and ">통한 경로, 또는 문서 기록</th>" in ko.text
+    assert ">Route worked, or document record</th>" in en.text and ">통한 경로 / 문서 기록</th>" in ko.text
 
 
 def plain(response) -> str:
@@ -170,7 +170,7 @@ def text_of_line(fragment: str) -> str:
 
 def test_the_condition_has_its_own_line_under_the_row_and_not_in_the_source_cell(on, monkeypatch):
     separated(monkeypatch)
-    for lang, label, note in (("en", "In the site's words:", "not our judgement"), ("ko", "사이트의 말:", "우리 판단이 아니에요")):
+    for lang, label, note in (("en", "In the site's words:", "not our judgement"), ("ko", "사이트 원문:", "우리 판단이 아니에요")):
         body = on.get(f"/{lang}/routes").text
         assert body.count('<tr class="routes-condition">') == 1  # only the record that has a condition gets the line
         line = re.search(r'<tr class="routes-condition">.*?</tr>', body, flags=re.S).group(0)
@@ -194,7 +194,7 @@ def test_labels_that_the_header_already_says_are_not_repeated_in_the_cells(on, m
         assert "checked" not in tbody and "확인</span>" not in tbody  # the date sits under the Source, checked column
         assert "Records for the site" not in tbody
     en = on.get("/en/routes").text.split("<tbody>", 1)[1]
-    assert ">n/a</td>" in en and "not applicable" not in en  # the filter keeps the full label
+    assert ">no result (not tried)</td>" in en and ">n/a</td>" not in en and "not applicable" not in en  # the filter keeps the full label
     assert "not applicable (document record)" in on.get("/en/routes").text.split("<tbody>", 1)[0]
 
 
@@ -208,12 +208,23 @@ def test_the_list_page_groups_rows_by_site_and_the_site_page_does_not(on, monkey
     assert "2 records for this site" in on.get("/en/routes").text and "1 record for this site" in on.get("/en/routes").text
 
 
+def test_the_group_heading_counts_the_rows_below_it_and_says_of_n_under_a_filter(on, monkeypatch):
+    table(monkeypatch, {HOST: [entry(), entry("refund_request", routes=("web_form",), worked=None, verified=20),
+                               entry("refund_request", obstacle="eligibility_unclear", routes=("web_form",), worked=None, verified=21)]})
+    en, ko = on.get("/en/routes").text, on.get("/ko/routes").text
+    assert "3 records for this site" in en and "이 사이트 기록 3건<" in ko and " of 3 records" not in en
+    en, ko = on.get("/en/routes?task_kind=refund_request"), on.get("/ko/routes?task_kind=refund_request")
+    assert rows(en) == 2 and "2 of 3 records for this site" in en.text and ">3 records for this site<" not in en.text
+    assert "이 사이트 기록 3건 중 2건" in ko.text
+    assert 'scope="rowgroup"' in en.text and 'scope="colgroup"' not in en.text
+
+
 def test_a_document_record_is_not_shown_as_a_route_that_worked(on, monkeypatch):
     separated(monkeypatch)
     en = plain(on.get("/en/routes"))
     assert "document record: web form" in en and "worked: " not in en
     assert "document record: web form" in plain(on.get(f"/en/routes/{HOST}"))
-    assert "n/a" in en and "has no outcome (n/a) because nobody tried the route" in en
+    assert "no result (not tried)" in en and "has no result (not tried) because nobody tried the route" in en
     row = task_routes_api.row_for(task_routes_api.curated_records()[0], "en", {})
     assert {"worked", "tried", "outcome", "document"} <= set(row)  # the data keys are unchanged: only the words on the screen moved
 
