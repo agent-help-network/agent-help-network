@@ -357,8 +357,17 @@ def page_context(records: list, shown: list, lang: str, lang_text: dict) -> dict
         by_source[record.source_kind] = by_source.get(record.source_kind, 0) + 1
     cut = len(shown) > PAGE_ROWS_MAX
     shown = shown[:PAGE_ROWS_MAX]
+    rows = [row_for(record, lang, per_site) for record in shown]
+    groups: list[dict] = []  # one block per site, in the order of the site's newest record; rows keep their order inside a block
+    for row in rows:
+        group = next((item for item in groups if item["host"] == row["host"]), None)
+        if group is None:
+            group = {"host": row["host"], "count": row["count"], "rows": []}
+            groups.append(group)
+        group["rows"].append(row)
     return {
-        "rows": [row_for(record, lang, per_site) for record in shown], "total": len(records), "shown_count": len(shown), "cut": cut,
+        "rows": rows, "groups": groups, "any_condition": any(row["condition_text"] for row in rows), "any_document": any(row["document"] for row in rows),
+        "total": len(records), "shown_count": len(shown), "cut": cut,
         "headline": headline(lang, lang_text, len(records), by_source), "any_sensitive": any(record.sensitive for record in shown),
         "opts_task": choices("task_kind", lang), "opts_outcome": choices("outcome", lang), "opts_source": choices("source_kind", lang),
     }
@@ -405,7 +414,7 @@ def add_pages(app, settings, render, lang_text) -> None:
         context = page_context(records, [] if state else [record for record in records if keep(record, picked)], lang, lang_text)
         response = render(request, lang, "routes", picked=picked, lang_query=urlencode([(n, picked[n]) for n in FILTERS if picked[n]]),
                           site_options=site_options, site_shown=name, site_state=state, site_name=name, site_matches=matches,
-                          site_count=len(hosts), **context)
+                          site_count=len(hosts), group_heads=True, **context)
         return site_headers(response) if typed.kind != "empty" else response
 
     @app.get("/{lang}/routes/{host}", include_in_schema=False)

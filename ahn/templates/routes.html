@@ -36,33 +36,36 @@
   </div>
   {% elif rows %}
   <p class="routes-count">{{ t.routes_showing.format(shown=shown_count, total=total) }}{% if cut %} {{ t.routes_narrow }}{% endif %}{% if any_sensitive %} {{ t.routes_sensitive_page }}{% endif %}</p>
+  {% if any_document %}<p class="routes-count">{{ t.routes_doc_legend }}</p>{% endif %}
+  {% if any_condition %}<p class="routes-count">{{ t.routes_condition_note }}</p>{% endif %}
   <div class="scroll">
   <table class="routes-table">
     <thead><tr>
-      <th scope="col">{{ t.routes_c_site }}</th><th scope="col">{{ t.routes_c_task }}</th><th scope="col">{{ t.routes_c_obstacle }}</th>
+      <th scope="col">{{ t.routes_c_task }}</th><th scope="col">{{ t.routes_c_obstacle }}</th>
       <th scope="col">{{ t.routes_c_worked }}</th><th scope="col">{{ t.routes_c_outcome }}</th><th scope="col">{{ t.routes_c_basis }}</th>
-      <th scope="col">{{ t.routes_c_period }}</th><th scope="col">{{ t.routes_c_records }}</th><th scope="col">{{ t.routes_c_source }}</th>
+      <th scope="col">{{ t.routes_c_period }}</th><th scope="col">{{ t.routes_c_source }}</th>
     </tr></thead>
+    {% for group in groups %}
     <tbody>
-    {% for row in rows %}
+    {% if group_heads %}<tr class="routes-group"><th scope="colgroup" colspan="7"><a href="/{{ lang }}/routes/{{ group.host }}">{{ group.host }}</a> <span class="routes-group-count">{{ t.routes_group_records.format(n=group.count, s='' if group.count == 1 else 's') }}</span></th></tr>{% endif %}
+    {% for row in group.rows %}
     <tr>
-      <td><a href="/{{ lang }}/routes/{{ row.host }}">{{ row.host }}</a></td>
       <td>{{ row.task }}</td>
       <td>{{ row.obstacle }}{% if row.detail %} <span class="routes-small"><span class="routes-sr">(</span>{{ row.detail }}<span class="routes-sr">)</span></span>{% endif %}
         {% if row.sensitive %}<span class="routes-sensitive">{{ t.routes_sensitive }}</span>{% endif %}</td>
       <td>{% if row.document %}{% if row.tried %}{{ t.routes_doc_named }}: {{ row.tried|join(', ') }}{% else %}{{ t.routes_doc_none }}{% endif %}
         {% elif row.worked is none %}{{ t.routes_not_stated }}{% elif row.worked == 'none' %}{{ t.routes_none_worked }}{% else %}{{ row.worked }}{% endif %}
         {% if row.tried and not row.document %}<span class="routes-small">{{ t.routes_tried }}: {{ row.tried|join(', ') }}</span>{% endif %}</td>
-      <td>{{ row.outcome }}</td>
+      <td>{% if row.document %}{{ t.routes_outcome_na }}{% else %}{{ row.outcome }}{% endif %}</td>
       <td>{{ row.basis }}</td>
       <td>{{ row.period }}</td>
-      <td>{{ row.count }}</td>
       <td>{{ row.source }}
-        {% if row.verified_at %}<span class="routes-small">{{ t.routes_checked }} {{ row.verified_at }}</span>{% endif %} {% if row.condition_text %}<span class="routes-small routes-condition">{{ t.routes_condition }}: &ldquo;{{ row.condition_text }}&rdquo;</span>{% endif %}
+        {% if row.verified_at %}<span class="routes-small">{{ row.verified_at }}</span>{% endif %}
         <span class="routes-small routes-links">{% if row.source_url %}<a href="{{ row.source_url }}" rel="nofollow noopener">{{ t.routes_source_page }}</a>{% endif %}{% if row.source_url and row.official_url and row.official_url != row.source_url %}<span class="routes-sr"> </span>{% endif %}{% if row.official_url and row.official_url != row.source_url %}<a href="{{ row.official_url }}" rel="nofollow noopener">{{ t.routes_official_page }}</a>{% endif %}</span></td>
-    </tr>
+    </tr>{% if row.condition_text %}<tr class="routes-condition"><td colspan="7"><span class="routes-condition-label">{{ t.routes_condition }}</span> &ldquo;{{ row.condition_text }}&rdquo;</td></tr>{% endif %}
     {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
   </div>
   {% elif other_kinds %}
