@@ -160,3 +160,22 @@ def test_the_table_checker_follows_the_list_it_does_not_copy_it(monkeypatch):
     monkeypatch.setattr(task_routes, "CURATED_CROSS_DOMAIN", frozenset({("hims.com", "patient.thirtymadison.com")}))
     assert V.task_routes_table_problems({"hims.com": [route]}, today=today) == []
     assert V.task_routes_table_problems({"keeps.com": [route]}, today=today)
+
+
+def test_the_live_check_reads_a_listed_pair_on_its_own_key_only(monkeypatch):
+    assert V.cross_domain_sites("keeps.com") == {"thirtymadison.com"}
+    assert V.cross_domain_sites("hims.com") == set()
+    seen = {}
+
+    def page(self, url, allowed):
+        seen[url] = set(allowed)
+        return {"url": url, "final_url": url, "status": 200, "title": "", "result": "blocked:403"}, b""
+
+    monkeypatch.setattr(V.ConsumerCheck, "page", page)
+    checker = V.ConsumerCheck(V.Fetcher(), out=lambda line: None)
+    table = {key: {"paths": [{"kind": "help_center", "url": TERMS, "source_url": TERMS}]} for key in ("keeps.com", "hims.com")}
+    checker.run({"keeps.com": table["keeps.com"]}, ["keeps.com"])
+    assert "thirtymadison.com" in seen[TERMS]
+    seen.clear()
+    checker.run({"hims.com": table["hims.com"]}, ["hims.com"])
+    assert "thirtymadison.com" not in seen[TERMS]

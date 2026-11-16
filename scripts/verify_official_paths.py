@@ -520,6 +520,12 @@ def _listed_cross_domain(host: str, url: str) -> bool:
     return (host, (urlsplit(url).hostname or "").lower()) in task_routes.CURATED_CROSS_DOMAIN
 
 
+def cross_domain_sites(host: str) -> set[str]:
+    """Registrable domains a page of ``host`` may also be read on: the hosts listed for it in
+    ahn.task_routes.CURATED_CROSS_DOMAIN (D125), read at call time."""
+    return {registrable(other) for key, other in task_routes.CURATED_CROSS_DOMAIN if key == host}
+
+
 def _task_url_problem(host: str, url) -> str | None:
     """_url_problem for a task route link, which may also sit on a listed same-operator host of another domain."""
     if isinstance(url, str) and _listed_cross_domain(host, url):
@@ -1007,7 +1013,7 @@ class ConsumerCheck:
     def run(self, table: dict[str, dict], keys) -> list[str]:
         failures: list[str] = []
         for host in keys:
-            site = {registrable(host)}
+            site = {registrable(host)} | cross_domain_sites(host)
             for item in table[host]["paths"]:
                 kind, url, source_url = item["kind"], item["url"], item["source_url"]
                 source, source_body = self.page(source_url, site)
