@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import types
 from argparse import Namespace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +60,13 @@ def unlimited(monkeypatch):
     async def allow(_self, _request):
         return True
     monkeypatch.setattr(rate_limit.RequestLimiter, "allow", allow)
+
+
+@pytest.fixture
+def frozen_window(monkeypatch):
+    """Hold the limiter's clock still. It counts in fixed 60-second windows of time.monotonic(); a test that sends four reports and
+    expects the fourth to be refused fails when the window turns over between two of them (about one run in a few hundred)."""
+    monkeypatch.setattr(rate_limit, "time", types.SimpleNamespace(monotonic=lambda: 1_000_000.0))
 
 
 @pytest.fixture
@@ -308,7 +316,7 @@ def test_a_report_host_is_read_as_a_lookup_reads_it(api):
 
 
 @needs_db
-def test_a_report_over_mcp_takes_the_per_client_limit_of_the_address_the_adapter_passes_on(db, monkeypatch):
+def test_a_report_over_mcp_takes_the_per_client_limit_of_the_address_the_adapter_passes_on(db, frozen_window, monkeypatch):
     from ahn.lookup_signals import ORIGIN_HEADER
     from ahn.tool_metrics import mcp_metric_token
 
@@ -326,7 +334,7 @@ def test_a_report_over_mcp_takes_the_per_client_limit_of_the_address_the_adapter
 
 
 @needs_db
-def test_the_per_client_limiter_refuses_the_fourth_report_in_a_minute(db, monkeypatch):
+def test_the_per_client_limiter_refuses_the_fourth_report_in_a_minute(db, frozen_window, monkeypatch):
     monkeypatch.setattr(task_routes_data, "TASK_ROUTES_CURATED", {})
     with TestClient(create_app(db)) as client:
         kinds = ["refund_request", "cancel_subscription", "account_recovery", "portal_login"]
