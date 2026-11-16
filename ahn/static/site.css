@@ -242,7 +242,7 @@ html[lang=ko] .home-deck{word-break:keep-all;line-height:1.7}
 .routes-filter a{color:var(--blue);font-weight:700;font-size:14px;padding:11px 4px}
 .routes-count{font-size:14px;color:var(--muted);margin:0 0 10px}
 .routes-table{border-collapse:collapse;width:100%;min-width:900px;font-size:13.5px;background:#fff;border:1px solid var(--line)}
-.routes-table th,.routes-table td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.routes-table th,.routes-table td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:break-word}
 .routes-table th{color:#5b6f80;font-weight:650;font-size:11px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
 .routes-table td a{color:var(--blue);font-weight:700}
 .routes-small{display:block;font-size:12px;color:var(--muted);margin-top:3px}
