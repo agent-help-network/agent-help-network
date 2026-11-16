@@ -26,6 +26,7 @@ def test_valid_host_accepts_public_names(host):
     ("github.com", True), ("twitch.tv", True), ("bbc.co.uk", True), ("naver.co.kr", True), ("news.ycombinator.com", False),
     ("user123.example.org", False), ("account.bbc.co.uk", False), ("xn--p1ai.com", False), ("example.test", False),
     ("notion.so", True), ("who.int", True), ("mastodon.social", True), ("deepmind.google", True), ("cloud.microsoft", True),
+    ("flo.health", True), ("www.flo.health", False), ("app.flo.health", False),
     ("workspace.notion.so", False), ("docs.deepmind.google", False), ("example.click", False),
 ])
 def test_aggregate_eligibility_is_apex_only(host, eligible):
@@ -316,3 +317,10 @@ def test_wildcard_only_root_block_is_neither_a_declared_block_nor_permission():
     assert recommendation("site_access", None, explicit, None) == {"action": "unknown", "confidence": "low",
                                                                    "reasons": ["robots_blocks_some_agents", "robots_wildcard_disallow"]}
     assert recommendation("site_access", None, explicit, None, vendor_aware=False)["reasons"] == ["robots_blocks_agents"]
+
+
+def test_health_apex_is_a_valid_task_route_key():
+    from ahn.task_routes import route_host
+    assert route_host("flo.health") == "flo.health"
+    assert route_host("www.flo.health") == "flo.health"
+    assert route_host("app.flo.health") is None
