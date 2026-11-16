@@ -1087,6 +1087,51 @@ def unused_exceptions(keys, exceptions=None) -> list[str]:
             if isinstance(url, str) and url not in used and registrable(urlsplit(url).hostname or "") in sites]
 
 
+_NUMBER_WORDS = ("one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|sixty|ninety|"
+                 "hundred|a|an|several|few")
+_TIME_UNIT = r"(?:business\s+days?|calendar\s+days?|working\s+days?|days?|hours?|weeks?|months?|years?)"
+_TIME_QUANTITY = re.compile(
+    rf"(?<![\w(])(?:\d+(?:-\d+)?|(?:{_NUMBER_WORDS})(?:\s*\(\d+\))?)(?:\s*-\s*|\s+){_TIME_UNIT}\b", re.IGNORECASE)
+_OPEN_END = (",", "(", ":", ";")
+
+
+def task_routes_curation_advisories(table: dict) -> dict[str, list[str]]:
+    """Curation hints for task-route records; they never fail a check and never drop a record (scripts only, not runtime).
+
+    Returns four lists of "host task_kind obstacle" lines: deadline_no_text (deadline_or_window with no condition_text),
+    deadline_no_time (condition_text states no amount of time; a bare number such as "(2)" or "100%" is not one),
+    fee_no_text (fee_required with no condition_text) and open_ended (condition_text ends in a comma, an opening
+    bracket, a colon or a semicolon, trailing spaces ignored)."""
+    out: dict[str, list[str]] = {"deadline_no_text": [], "deadline_no_time": [], "fee_no_text": [], "open_ended": []}
+    for host, routes in table.items():
+        for route in routes if isinstance(routes, list) else []:
+            if not isinstance(route, dict):
+                continue
+            label = f"{host} {route.get('task_kind')} {route.get('obstacle')}"
+            text = route.get("condition_text")
+            text = text.strip() if isinstance(text, str) else ""
+            if route.get("obstacle") == "deadline_or_window":
+                if not text:
+                    out["deadline_no_text"].append(label)
+                elif not _TIME_QUANTITY.search(text):
+                    out["deadline_no_time"].append(label)
+            if route.get("obstacle") == "fee_required" and not text:
+                out["fee_no_text"].append(label)
+            if text.endswith(_OPEN_END):
+                out["open_ended"].append(label)
+    return out
+
+
+def print_curation_advisories(table: dict, out=print) -> dict[str, list[str]]:
+    advisories = task_routes_curation_advisories(table)
+    out("advisories (not failures):")
+    for name, lines in advisories.items():
+        out(f"  {name}: {len(lines)}")
+        for line in lines:
+            out(f"    {line}")
+    return advisories
+
+
 def check_task_routes(hosts: set[str] | None, help_pages: bool = False) -> int:
     """Rules and live check of TASK_ROUTES_CURATED (D117) with the same etiquette as --consumer-only: robots.txt first, each
     source_url page read, and each official_url linked from its source_url page and answering 200 at that address."""
@@ -1100,6 +1145,7 @@ def check_task_routes(hosts: set[str] | None, help_pages: bool = False) -> int:
     failures = checker.run(pages, list(pages)) if not problems else []
     for line in problems + failures:
         print(f"task_routes: {line}")
+    print_curation_advisories({host: TASK_ROUTES_CURATED[host] for host in keys}, out=lambda line: print(line, flush=True))
     for url, name in sorted(checker.help_robots.items()):
         print(f"help_pages_robots: {name} {url}")
     for host in keys:
