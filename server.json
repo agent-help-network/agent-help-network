@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.agenthelpnetwork/agent-help-network",
   "title": "Agent Help Network",
-  "description": "Web step blocked? Declared agent policy, official path, status, one next action. Task routes too.",
-  "version": "0.1.4",
+  "description": "Routes for a customer task on a site (refund, return, cancellation), or why a web step is blocked.",
+  "version": "0.1.5",
   "icons": [{"src": "https://agenthelpnetwork.com/static/logo.svg", "mimeType": "image/svg+xml", "sizes": ["any"]}],
   "websiteUrl": "https://agenthelpnetwork.com/en/",
   "repository": {

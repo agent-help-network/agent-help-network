@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
-  "version": "0.1.7",
-  "description": "When a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
+  "version": "0.1.8",
+  "description": "Look up recorded routes for a customer task on a website (refund, return, cancellation, warranty, account recovery, document submission), or, when a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
   "author": {
     "name": "Agent Help Network",
     "url": "https://agenthelpnetwork.com"
