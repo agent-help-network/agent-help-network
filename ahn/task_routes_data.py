@@ -108,8 +108,7 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
         _route("refund_request", obstacle="wrong_entry_point", routes=["different_entry_point"],
                entry_point_kind="partner_or_third_party_portal",
                official_url="https://support.spotify.com/us/article/refund-policy/",
-               source_url="https://support.spotify.com/us/article/refund-policy/", verified_at="2026-11-16",
-               condition_text="Premium payments made through a partner. You can contact them for refund requests (see their details on your account page, under Your plan)."),
+               source_url="https://support.spotify.com/us/article/refund-policy/", verified_at="2026-11-16"),
         _route("account_recovery", obstacle="document_missing", document_kind="proof_of_ownership",
                official_url="https://support.spotify.com/us/article/disabled-accounts/",
                source_url="https://support.spotify.com/us/article/disabled-accounts/", verified_at="2026-11-16",
@@ -322,7 +321,6 @@ TASK_ROUTES_CURATED: dict[str, list[dict]] = {
     ],
     "expressvpn.com": [
         _route("cancel_subscription", obstacle="wrong_entry_point", routes=["different_entry_point"],
-               entry_point_kind="partner_or_third_party_portal",
                official_url="https://www.expressvpn.com/support/manage-account/cancel-expressvpn-subscription/",
                source_url="https://www.expressvpn.com/support/manage-account/cancel-expressvpn-subscription/", verified_at="2026-11-16",
                condition_text="Important: To cancel your subscription, you need to go to the app store or the ExpressVPN website. You cannot cancel your subscription within the ExpressVPN app."),
