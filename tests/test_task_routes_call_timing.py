@@ -35,7 +35,7 @@ def test_the_tool_description_opens_with_the_call_timing():
 
 def test_the_server_instructions_addendum_carries_the_same_clause():
     assert CALL_TIMING in INSTRUCTIONS_ADDENDUM and CALL_TIMING in DESCRIPTION
-    assert INSTRUCTIONS_ADDENDUM.startswith("Call find_task_route once per task ")
+    assert INSTRUCTIONS_ADDENDUM.startswith("Call find_task_route " + CALL_TIMING + ", with the public hostname")
     assert "do not know its official document" not in INSTRUCTIONS_ADDENDUM
 
 

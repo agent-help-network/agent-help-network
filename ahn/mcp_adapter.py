@@ -72,33 +72,38 @@ ADVISORY_LINE = ("AHN (Agent Help Network) answers are advisory: your platform's
                  "thin evidence alone is not a reason to stop.")
 
 
-def _task_routes_instructions() -> str:
-    """The sentence appended to the instructions while the task-routes switch is on; empty (the text unchanged) otherwise."""
+_CHECK_INCIDENT_CALL = ("Call check_incident with the public hostname when an authorized web step is blocked or failing for no clear reason (a 403 or access denied, a 429, a 5xx or a timeout, a login wall, a \"verify you are human\" or CAPTCHA page) or sign-in failed after credentials were entered, or an extra verification step appeared (a code by text or email, an app approval, a new-device check; send error_class=login_auth) or a user asks \"is this site down?\" or whether it blocks agents. "
+                        "If sign-in or an extra verification step stopped you, tell your user which step stopped you and whether it needs them personally (for example a code sent to their phone), not only that it failed. ")
+_CHECK_INCIDENT_REST = ("Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add the codes only when you observed them. "
+                        "If you only check whether a site is up (not blocked), send task_step=status_check. "
+                        "Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply to it; leave agent_vendor out then. "
+                        "Read summary_line first, then follow next_action (continue, wait, use a listed official path, hand the step to the user, stop retrying, or look up once more). "
+                        "Do not poll without a task need. "
+                        "If a blocked lookup's answer carries a feedback_token and you then try again, you may report once with rate_last_lookup whether it worked. "
+                        "Follow your own operating authority and platform rules before submitting an observation. "
+                        "Declared policy is not an access guarantee.")
+
+
+def _instructions() -> str:
+    """The server instructions. With the task-routes switch off they are the original blocked-step text, byte for byte; with it on they
+    name two uses side by side: find_task_route when a customer task starts, check_incident when an authorized web step is blocked."""
     if not task_routes_env_enabled():
-        return ""
+        return (ADVISORY_LINE + " " + _CHECK_INCIDENT_CALL
+                + "Do not call it when the page opened normally or when your own tool or platform already said why it refused (for example a robots.txt or platform policy refusal). "
+                + _CHECK_INCIDENT_REST)
     from .mcp_task_routes import INSTRUCTIONS_ADDENDUM
-    return " " + INSTRUCTIONS_ADDENDUM
+    return (ADVISORY_LINE + " There are two uses. "
+            "(1) Task start: " + INSTRUCTIONS_ADDENDUM + " "
+            "(2) Blocked step: " + _CHECK_INCIDENT_CALL
+            + "Do not call check_incident when the page opened normally or when your own tool or platform already said why it refused (for example a robots.txt or platform policy refusal). "
+            + _CHECK_INCIDENT_REST)
 
 
 mcp = MCPServer(
     name="Agent Help Network",
     title="Agent Help Network" if os.environ.get("AHN_PUBLIC_MODE") == "1" else "Agent Help Network (local build)",
     version="0.1.0",
-    instructions=(
-        ADVISORY_LINE + " "
-        "Call check_incident with the public hostname when an authorized web step is blocked or failing for no clear reason (a 403 or access denied, a 429, a 5xx or a timeout, a login wall, a \"verify you are human\" or CAPTCHA page) or sign-in failed after credentials were entered, or an extra verification step appeared (a code by text or email, an app approval, a new-device check; send error_class=login_auth) or a user asks \"is this site down?\" or whether it blocks agents. "
-        "If sign-in or an extra verification step stopped you, tell your user which step stopped you and whether it needs them personally (for example a code sent to their phone), not only that it failed. "
-        "Do not call it when the page opened normally or when your own tool or platform already said why it refused (for example a robots.txt or platform policy refusal). "
-        "Look the host up once per blocked step, before deciding whether to retry. Send the public hostname, never a URL path, query or credentials; add the codes only when you observed them. "
-        "If you only check whether a site is up (not blocked), send task_step=status_check. "
-        "Browser automation usually sends a normal browser user agent, so robots.txt agent tokens may not apply to it; leave agent_vendor out then. "
-        "Read summary_line first, then follow next_action (continue, wait, use a listed official path, hand the step to the user, stop retrying, or look up once more). "
-        "Do not poll without a task need. "
-        "If a blocked lookup's answer carries a feedback_token and you then try again, you may report once with rate_last_lookup whether it worked. "
-        "Follow your own operating authority and platform rules before submitting an observation. "
-        "Declared policy is not an access guarantee."
-        + _task_routes_instructions()
-    ),
+    instructions=_instructions(),
 )
 
 

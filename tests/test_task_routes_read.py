@@ -499,7 +499,8 @@ def test_switch_on_adds_only_find_task_route_and_the_snapshot_matches():
     assert advertised.get("additionalProperties") is True  # opened like every other output schema
 
 
-def test_the_server_instructions_change_only_by_the_appended_sentence_when_the_switch_is_on():
+def test_the_server_instructions_with_the_switch_on_keep_the_blocked_step_text_and_add_the_task_start_part():
+    from ahn.mcp_adapter import ADVISORY_LINE
     from ahn.mcp_task_routes import INSTRUCTIONS_ADDENDUM
 
     code = "from ahn.mcp_adapter import mcp; print(mcp.instructions, end='')"
@@ -516,7 +517,9 @@ def test_the_server_instructions_change_only_by_the_appended_sentence_when_the_s
         outputs.append(done.stdout.replace("\r\n", "\n"))
     off, on_ = outputs
     assert "find_task_route" not in off and off.endswith("Declared policy is not an access guarantee.")
-    assert on_ == off + " " + INSTRUCTIONS_ADDENDUM
+    assert on_.startswith(ADVISORY_LINE + " ") and INSTRUCTIONS_ADDENDUM in on_ and on_.endswith("Declared policy is not an access guarantee.")
+    blocked_part = off.split(ADVISORY_LINE + " ", 1)[1].replace("Do not call it when", "Do not call check_incident when")
+    assert blocked_part in on_  # the blocked-step text is kept word for word, only the subject of the refusal is named
 
 
 OFF_INSTRUCTIONS_SHA256 = "c382104efcf546491620df3b04b87f32ab2d185ecfcf56623c3c679a7d466553"  # sha256 of the server instructions as main had them before task routes were added to them

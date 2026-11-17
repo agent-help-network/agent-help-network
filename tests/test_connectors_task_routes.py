@@ -30,8 +30,8 @@ def flat(text: str) -> str:
 def test_claude_code_manifest_and_marketplace_carry_the_same_task_routes_phrase():
     manifest = json.loads(read(PLUGIN / ".claude-plugin" / "plugin.json"))
     entry = json.loads(read(ROOT / ".claude-plugin" / "marketplace.json"))["plugins"][0]
-    assert manifest["version"] == entry["version"] == "0.3.21"
-    phrase = "If the bundled server lists find_task_route, it can also return recorded task routes for a site (records, not advice)."
+    assert manifest["version"] == entry["version"] == "0.3.22"
+    phrase = "Look up recorded routes for a customer task on a website (refund, return, cancellation, warranty, account recovery, document submission) when the bundled server lists find_task_route"
     assert phrase in manifest["description"] and phrase in entry["description"]
 
 
@@ -90,7 +90,7 @@ def test_the_hook_is_unchanged_and_drops_keys_it_does_not_know():
 def test_chatgpt_manifest_has_the_line_and_the_next_patch_version():
     manifest = json.loads(read(CHATGPT))
     interface = manifest["extensions"]["com.openai"]["interface"]
-    assert manifest["version"] == "0.1.7"
+    assert manifest["version"] == "0.1.8"
     assert "Read recorded task routes for a site, where the server lists them" in interface["capabilities"]
     assert interface["longDescription"].endswith("It is an independent service, not affiliated with the sites it describes.")
     assert "Where the server also lists task routes" in interface["longDescription"] and "records and not advice" in interface["longDescription"]
@@ -129,7 +129,7 @@ def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     assert "**When:** call it once per task " + CALL_TIMING in " ".join(skill.split()) and "do not know its official document" not in skill
     from ahn.mcp_task_routes import INSTRUCTIONS_ADDENDUM
     assert INSTRUCTIONS_ADDENDUM.endswith("The answer does not change when to call check_incident or what check_incident recommends.")
-    assert "Call find_task_route once per task when you start a customer task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
+    assert "Call find_task_route when you start a customer task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
     connectors = [ROOT / "llms-install.md", CHATGPT, ROOT / ".claude-plugin" / "marketplace.json",
                   PLUGIN / ".claude-plugin" / "plugin.json", PLUGIN / "README.md", PLUGIN / "skills" / "ahn-lookup" / "SKILL.md",
                   ROOT / "plugins" / "cursor" / "agent-help-network" / "README.md", ROOT / "ahn" / "templates" / "connect.html"]
