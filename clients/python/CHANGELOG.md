@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.12
+
+- `ahn.task_routes` accepts a `condition_text` of up to 280 characters (it was 200), as the service now sends it; a longer value still makes the answer unreadable.
+
 ## 0.6.11
 
 - `ahn.task_routes` passes on `field_notes`: the service's fixed sentences that say what `outcome`, `period` and `routes_tried` mean in the answer (for a document record, `routes_tried` lists only the channels that record copied from the document, and `period` is not a deadline). `TaskRoutes.field_notes` is a dictionary, or None when the answer has none; `to_dict()` includes it only when present. Only the keys `outcome`, `period` and `routes_tried` are kept, and a value must be one line of printable ASCII of at most 400 characters; a key or value that fails is dropped and the rest of the answer is kept.

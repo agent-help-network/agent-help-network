@@ -212,7 +212,7 @@ TASK_ROUTE_CURATED_ONLY_OBSTACLE = TaskObstacle.eligibility_conditions_stated
 TASK_ROUTE_URL_SOURCES = frozenset({RouteSourceKind.curated_official, RouteSourceKind.operator_panel})
 # The one free-text value of a record: a short quotation of the condition a site's own page states, kept for curated entries only
 # (a report has no such field). Never classified or interpreted here; whether it applies to a task is for the agent to judge.
-TASK_ROUTE_CONDITION_TEXT_MAX = 200
+TASK_ROUTE_CONDITION_TEXT_MAX = 280
 # Reporting period: "quarter" (YYYY-Qn) or "month" (YYYY-MM). The server sets it; a coarser period makes a rare combination
 # harder to tie to one person. Changing the unit is this one constant.
 TASK_ROUTE_PERIOD_UNIT: Literal["quarter", "month"] = "quarter"
@@ -293,7 +293,7 @@ class TaskRoute(_TaskRouteFields):
     verified_at: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", exclude_if=_omit_none)
     condition_text: str | None = Field(
         default=None, min_length=1, max_length=TASK_ROUTE_CONDITION_TEXT_MAX, exclude_if=_omit_none,
-        description="A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and "
+        description="A condition or caveat quoted as the site's own page words it (at most 280 characters). Not our judgement and "
                     "not classified: whether it applies to your task is for you to decide, with the page at source_url. It may state a "
                     "condition other than the obstacle.")
 
@@ -626,7 +626,7 @@ def _listed_exceptions():
 
 
 def condition_text_problem(value) -> str | None:
-    """Why ``value`` may not be a record's condition_text, or None: a string of 1 to 200 characters with no space at either end
+    """Why ``value`` may not be a record's condition_text, or None: a string of 1 to 280 characters with no space at either end
     and no line break or other control character inside (a quotation, not a block of text)."""
     if not isinstance(value, str):
         return "must be a string"

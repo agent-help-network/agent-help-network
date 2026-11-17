@@ -53,9 +53,9 @@ def test_the_helper_fails_at_once_for_a_bad_text(bad):
         curated(condition_text=bad)
 
 
-def test_the_length_limit_is_200_characters_and_counts_characters():
-    assert condition_text_problem("x" * 200) is None and condition_text_problem("x") is None
-    assert condition_text_problem("x" * 201) and condition_text_problem(" x") and condition_text_problem("x ")
+def test_the_length_limit_is_280_characters_and_counts_characters():
+    assert condition_text_problem("x" * 280) is None and condition_text_problem("x") is None
+    assert condition_text_problem("x" * 281) and condition_text_problem(" x") and condition_text_problem("x ")
     assert condition_text_problem("조건 문구 " * 5 + "끝") is None
 
 
@@ -69,7 +69,7 @@ def test_a_curated_record_carries_and_dumps_the_text_and_omits_it_when_absent():
 
 
 def test_the_model_refuses_a_bad_text_even_when_the_helper_is_bypassed():
-    for bad in ("", " x", "x ", "a\nb", "x" * 201, 5):
+    for bad in ("", " x", "x ", "a\nb", "x" * 281, 5):
         with pytest.raises(ValidationError):
             TaskRoute.model_validate({**model(), "condition_text": bad})
 
@@ -333,3 +333,13 @@ def test_the_page_cut_keeps_the_newest_records_not_the_quoted_ones(monkeypatch):
     assert len(heads) == 100
     assert all(f"plain{i:03d}.example.com" in heads for i in range(60))  # every newer record without a text is still shown
     assert sum(host.startswith("quoted") for host in heads) == 40  # the cut fell on older quoted ones
+
+
+def test_the_limit_constant_is_280_and_the_model_enforces_the_same_edge():
+    assert TASK_ROUTE_CONDITION_TEXT_MAX == 280
+    assert TaskRoute.model_validate(model(condition_text="x" * 280)).condition_text == "x" * 280
+    with pytest.raises(ValueError):
+        TaskRoute.model_validate(model(condition_text="x" * 281))
+    assert curated(condition_text="x" * 280)["condition_text"] == "x" * 280
+    with pytest.raises(ValueError, match="condition_text"):
+        curated(condition_text="x" * 281)

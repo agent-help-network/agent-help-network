@@ -104,7 +104,7 @@ a UUID-shaped segment is refused for either field. `verified_at` must be a real 
 day you read the page; records older than 90 days are left out of answers until re-verified.
 
 `condition_text` (optional, D124): a condition or caveat that the page at `source_url` states, copied as the page words it (a
-phrase or one sentence, 1 to 200 characters, one line; `_route()` trims spaces at either end and fails at import otherwise). Copy it
+phrase or one sentence, 1 to 280 characters, one line; `_route()` trims spaces at either end and fails at import otherwise). Copy it
 only from a page you read; do not paraphrase, merge or sort conditions into classes, and leave it out when the page states no
 condition. It never replaces `routes_tried`, `obstacle` or any closed value: the answer shows it next to `source_url`, and the
 agent decides whether it applies to its task.
@@ -115,9 +115,12 @@ Rules for choosing `condition_text` (a curation guide, not a filter):
 2. A `fee_required` record quotes the sentence that states the fee. If the page gives an amount or a rate, pick the sentence that holds it; if the page names no amount, leave it as it is.
 3. An `eligibility_conditions_stated` record quotes the sentence that states who qualifies or what is covered (the original purchaser only, purchases from the site or its authorized sellers only, some products or plans only, new customers only). Use it when that sentence is the condition and it states no time limit and no fee; a sentence that also states a time limit or a fee stays `deadline_or_window` or `fee_required`. Use `eligibility_unclear` only when the page leaves it open whether a person qualifies (a case-by-case review, no stated rule), and `wrong_entry_point` when the page sends some buyers to another party instead of stating that they are not covered. The record is never written without `condition_text`.
 4. When one task has two conditions, write two records (the existing practice) and put the record whose sentence supports the obstacle value first.
-5. Prefer a whole sentence that fits in 200 characters; never cut in the middle of a list.
+5. Prefer a whole sentence that fits in 280 characters; never cut in the middle of a list (rule 8 allows a cut at the first item boundary).
 6. When the page names the channel (web form, phone, mail and so on), record it in `routes_tried`.
-7. These rules are never a reason to drop a record. A record is rejected only for the four existing reasons: the quotation is not on the page, a guess, terms that name AI (or AI agents) and forbid their use, or a breach of the reading etiquette above.
+7. A quotation starts at the head of a sentence. The one exception is an independent clause after a semicolon or after ", and" that has its own subject, verb, condition and result.
+8. A quotation cut at the first item boundary of a list is allowed when the item marker (for example "(a)") is still in it.
+9. The first `deadline_or_window` record of a site's batch follows rule 1 (it must quote the sentence that states the time limit); from the second on, the record follows D126 (5): its `condition_text` may state a condition other than the obstacle.
+10. These rules are never a reason to drop a record. A record is rejected only for the four existing reasons: the quotation is not on the page, a guess, terms that name AI (or AI agents) and forbid their use, or a breach of the reading etiquette above.
 
 `python -I scripts/verify_official_paths.py --task-routes-only` prints these rules' leftovers after the table check under "advisories (not failures)": deadline records with no condition_text, deadline records whose condition_text states no amount of time, fee records with no condition_text, and condition_text ending in a comma, an opening bracket, a colon or a semicolon. The advisories never change the exit code.
 
