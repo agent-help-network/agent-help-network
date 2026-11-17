@@ -23,6 +23,6 @@ from ._memory import ADVICE, FailureLog
 from ._result import NextAction, Result
 from ._task_routes import TaskRoutes, task_routes
 
-__version__ = "0.6.11"
+__version__ = "0.6.12"
 __all__ = ["check", "classify", "classify_body", "clear_cache", "diagnose", "signals", "local_digest", "digest_markdown", "shard_id", "Digest",
            "FailureLog", "ADVICE", "Result", "NextAction", "task_routes", "TaskRoutes", "__version__"]

@@ -3980,7 +3980,7 @@
       "condition_text": {
        "anyOf": [
         {
-         "maxLength": 200,
+         "maxLength": 280,
          "minLength": 1,
          "type": "string"
         },
@@ -3989,7 +3989,7 @@
         }
        ],
        "default": null,
-       "description": "A condition or caveat quoted as the site's own page words it (at most 200 characters). Not our judgement and not classified: whether it applies to your task is for you to decide, with the page at source_url. It may state a condition other than the obstacle.",
+       "description": "A condition or caveat quoted as the site's own page words it (at most 280 characters). Not our judgement and not classified: whether it applies to your task is for you to decide, with the page at source_url. It may state a condition other than the obstacle.",
        "title": "Condition Text"
       },
       "document_kind": {

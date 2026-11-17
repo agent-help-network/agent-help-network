@@ -293,16 +293,16 @@ def test_condition_text_passes_through_and_its_absence_changes_nothing(transport
         sort_keys=True)
 
 
-@pytest.mark.parametrize("bad", ["", " leading", "trailing ", "two\nlines", "tab\there", "a​b", "a b", "a b", "a\rb", "a\x85b", "   ", "x" * 201, 5, ["a"], True])
+@pytest.mark.parametrize("bad", ["", " leading", "trailing ", "two\nlines", "tab\there", "a​b", "a b", "a b", "a\rb", "a\x85b", "   ", "x" * 281, 5, ["a"], True])
 def test_an_invalid_condition_text_makes_the_answer_unreadable(transport, bad):
     transport({**ANSWER, "routes": [{**ROUTE, "condition_text": bad}]})
     found = ahn.task_routes("example.com")
     assert found.available is False and found.reason == "no_answer"
 
 
-def test_a_condition_text_of_200_characters_is_kept(transport):
-    transport({**ANSWER, "routes": [{**ROUTE, "condition_text": "x" * 200}]})
-    assert ahn.task_routes("example.com").routes[0]["condition_text"] == "x" * 200
+def test_a_condition_text_of_280_characters_is_kept(transport):
+    transport({**ANSWER, "routes": [{**ROUTE, "condition_text": "x" * 280}]})
+    assert ahn.task_routes("example.com").routes[0]["condition_text"] == "x" * 280
 
 
 NOTES = {

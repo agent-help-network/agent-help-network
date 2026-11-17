@@ -72,9 +72,9 @@ REASON_INVALID_TASK_KIND = "invalid_task_kind"
 ROUTE_VALUE_FIELDS = ("site_host", "task_kind", "obstacle", "verification_kind", "site_requires", "document_kind",
                       "entry_point_kind", "route_worked", "basis", "outcome", "duration", "period", "source_kind")
 ROUTE_URL_FIELDS = ("official_url", "source_url")
-# The one free-text value of a record: a curated site condition quoted as the site words it (1 to 200 characters, one line).
+# The one free-text value of a record: a curated site condition quoted as the site words it (1 to 280 characters, one line).
 # It is passed on as is, never interpreted here.
-CONDITION_TEXT_MAX = 200
+CONDITION_TEXT_MAX = 280
 # field_notes: a fixed sentence per key that says what outcome, period and routes_tried mean in this answer. Only these keys are
 # kept; a value is printable ASCII on one line, at most FIELD_NOTE_MAX characters (the longest sentence the service sends today
 # is 211; a test in the main repository checks the cap against ahn.task_routes). A key or value that fails drops only that entry.
