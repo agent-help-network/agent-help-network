@@ -24,8 +24,8 @@ from .task_routes import TaskKind, TaskRouteInputError, TaskRoutesResponse, look
 # The one call-timing clause every surface that tells an agent when to call find_task_route carries (tests keep them in step).
 CALL_TIMING = ("when you start a customer task on a site (a return or exchange, a refund, a cancellation, a warranty claim, an account recovery, "
                "a document submission), before you open its help pages, even when nothing is blocked")
-INSTRUCTIONS_ADDENDUM = ("Call find_task_route " + CALL_TIMING + ", with the public hostname "
-                         "(task_kind is optional). If the task spans several hosts, look up each host once, not repeatedly. "
+INSTRUCTIONS_ADDENDUM = ("Call find_task_route once per task " + CALL_TIMING + ", with the public hostname "
+                         "(task_kind is optional); if the task spans several hosts, look up each host once. "
                          "Its answer is a list of records, not a guarantee and not advice; an empty list does not mean there is "
                          "no route. The answer does not change when to call check_incident or what check_incident recommends.")
 SITE_HOST_DESCRIPTION = ("The public hostname of the site whose task routes you want, lowercase, for example example.com. "

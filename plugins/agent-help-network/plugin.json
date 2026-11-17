@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-help-network",
   "version": "0.1.8",
-  "description": "Look up recorded routes for a customer task on a website (refund, return, cancellation, warranty, account recovery, document submission), or, when a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
+  "description": "Look up recorded routes for a customer task on a website (refund, return, cancellation, warranty, account recovery, document submission; where the server lists the tool), or, when a website is blocked, down, or stuck behind a login or human check, look up its public hostname for one next step, the provider's status, the site's own developer API, its declared agent policy and published reports.",
   "author": {
     "name": "Agent Help Network",
     "url": "https://agenthelpnetwork.com"
@@ -93,7 +93,7 @@
         }
       },
       "publication": {
-        "release_notes": "Adds a line about recorded task routes, read-only and only where the server lists the tool. The rest of the listing text, the starter prompts and the review test cases are unchanged."
+        "release_notes": "The description now opens with recorded routes for a customer task on a website (read-only, only where the server lists the tool) next to the blocked-step lookup. The listing text, the starter prompts and the review test cases are otherwise unchanged."
       }
     }
   }

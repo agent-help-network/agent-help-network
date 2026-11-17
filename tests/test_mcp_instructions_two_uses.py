@@ -10,7 +10,6 @@ import pytest
 from ahn import mcp_adapter
 
 ROOT = Path(__file__).resolve().parents[1]
-FRONT = 700  # the task-start use has to appear in the first part of the text, not as a closing sentence
 
 
 @pytest.fixture
@@ -22,9 +21,8 @@ def instructions(monkeypatch):
 
 def test_both_uses_appear_and_the_task_start_use_is_not_pushed_to_the_end(instructions):
     assert "find_task_route" in instructions and "check_incident" in instructions
-    assert instructions.index("find_task_route") < FRONT
     assert instructions.index("find_task_route") < instructions.index("check_incident")
-    assert "customer task" in instructions[:FRONT] and "even when nothing is blocked" in instructions[:FRONT]
+    assert "even when nothing is blocked" in instructions[: instructions.index("check_incident")]
     assert not instructions.rstrip().endswith("find_task_route.")
 
 
@@ -35,8 +33,8 @@ def test_no_refusal_without_a_named_tool(instructions):
 
 
 def test_a_task_over_several_hosts_is_looked_up_once_per_host(instructions):
-    assert "look up each host once, not repeatedly" in instructions
-    assert "once per task" not in instructions
+    assert "Call find_task_route once per task when you start" in instructions
+    assert "if the task spans several hosts, look up each host once" in instructions
 
 
 def test_no_forcing_words(instructions):

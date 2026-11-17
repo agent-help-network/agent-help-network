@@ -129,7 +129,7 @@ def test_install_documents_name_the_tool_conditionally_and_no_write_path():
     assert "**When:** call it once per task " + CALL_TIMING in " ".join(skill.split()) and "do not know its official document" not in skill
     from ahn.mcp_task_routes import INSTRUCTIONS_ADDENDUM
     assert INSTRUCTIONS_ADDENDUM.endswith("The answer does not change when to call check_incident or what check_incident recommends.")
-    assert "Call find_task_route when you start a customer task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
+    assert "Call find_task_route once per task when you start a customer task" in INSTRUCTIONS_ADDENDUM and "when a web step is blocked" not in INSTRUCTIONS_ADDENDUM
     connectors = [ROOT / "llms-install.md", CHATGPT, ROOT / ".claude-plugin" / "marketplace.json",
                   PLUGIN / ".claude-plugin" / "plugin.json", PLUGIN / "README.md", PLUGIN / "skills" / "ahn-lookup" / "SKILL.md",
                   ROOT / "plugins" / "cursor" / "agent-help-network" / "README.md", ROOT / "ahn" / "templates" / "connect.html"]
