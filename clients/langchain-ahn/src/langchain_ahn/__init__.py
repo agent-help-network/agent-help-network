@@ -16,7 +16,7 @@ Two ways to use it:
 
     agent = create_agent(model, tools=[fetch_page, AHNLookupTool()])
 
-    # 3. A tool that reads the task routes recorded for a site (0.2.4; needs ahn-client 0.6.10 or newer; field_notes from 0.2.5 needs 0.6.11).
+    # 3. A tool that reads the task routes recorded for a site (0.2.4; needs ahn-client 0.6.10 or newer; field_notes from 0.2.5 needs 0.6.11; 0.2.6 needs 0.6.12, which keeps a condition_text of up to 280 characters).
     from langchain_ahn import AHNTaskRouteTool
 """
 
@@ -28,7 +28,7 @@ from ahn_client.langchain import (
 
 from .tools import AHNLookupInput, AHNLookupTool, AHNTaskRouteInput, AHNTaskRouteTool, format_result
 
-__version__ = "0.2.5"
+__version__ = "0.2.6"
 __all__ = [
     "AHNLookupInput",
     "AHNLookupTool",

@@ -293,7 +293,7 @@ def test_original_exception_is_unchanged_by_the_middleware_hook(transport):
 
 
 def test_public_names():
-    assert langchain_ahn.__version__ == "0.2.5"
+    assert langchain_ahn.__version__ == "0.2.6"
     for name in langchain_ahn.__all__:
         assert hasattr(langchain_ahn, name)
 
@@ -563,7 +563,7 @@ def test_task_route_tool_says_not_available_with_an_older_ahn_client(monkeypatch
 def test_task_route_tool_is_exported_and_the_dependency_floor_is_raised():
     assert langchain_ahn.AHNTaskRouteTool is ahn_tools.AHNTaskRouteTool and "AHNTaskRouteTool" in langchain_ahn.__all__
     pyproject = (ROOT / "clients" / "langchain-ahn" / "pyproject.toml").read_text(encoding="utf-8")
-    assert '"ahn-client>=0.6.11,<0.7"' in pyproject
+    assert '"ahn-client>=0.6.12,<0.7"' in pyproject
 
 
 def test_task_route_tool_passes_condition_text_through_and_leaves_plain_answers_alone(routes_transport):

@@ -36,7 +36,7 @@ def _route(task_kind: str, *, obstacle: str, source_url: str, verified_at: str, 
            site_requires: str | None = None, document_kind: str | None = None, entry_point_kind: str | None = None,
            condition_text: str | None = None) -> dict:
     """A curated record: basis official_doc, outcome not_applicable, source curated_official, period from verified_at.
-    ``condition_text`` is a condition the page at source_url states, quoted (1 to 200 characters, one line); a bad value fails here."""
+    ``condition_text`` is a condition the page at source_url states, quoted (1 to 280 characters, one line); a bad value fails here."""
     if condition_text is not None:
         condition_text = condition_text.strip()
         problem = condition_text_problem(condition_text)
