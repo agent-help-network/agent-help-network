@@ -38,6 +38,7 @@ from ahn import background_reads, bundle, gov_registry, platform_metrics
 from ahn.main import POLICY_UPDATED, create_app
 from ahn.models import AttemptFields, CheckObservation, CheckResponse, ObservationIn, OutcomeIn, Receipt
 from ahn.settings import Settings
+from ahn.task_routes import TASK_ROUTE_CONDITION_TEXT_MAX
 
 ROOT = Path(__file__).resolve().parents[1]
 LANGS = ("en", "ko")
@@ -369,7 +370,7 @@ TASK_ROUTE_FIELDS = {
     "official_url": Phrase("a link to the site's own page", "그 사이트 자체 페이지 링크"),
     "source_url": Phrase("the page it was read from", "읽은 페이지"),
     "verified_at": Phrase("the date it was read", "읽은 날짜"),
-    "condition_text": Phrase("a short quotation of a condition in the site's own words", "사이트가 직접 쓴 표현 그대로의 짧은 조건 문구 인용"),
+    "condition_text": Phrase(f"a short quotation of a condition in the site's own words (at most {TASK_ROUTE_CONDITION_TEXT_MAX} characters)", f"사이트가 직접 쓴 표현 그대로의 짧은 조건 문구 인용({TASK_ROUTE_CONDITION_TEXT_MAX}자 이내)"),
     "summary_line": Phrase("one summary sentence built from fixed words", "정해진 말로 만든 요약 한 문장"),
     "routes": Exempt("the list of records described above"),
     "counts": Phrase("counts by source kind", "출처 종류별 개수"),

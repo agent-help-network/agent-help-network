@@ -604,13 +604,8 @@ def test_the_timeout_stays_two_seconds(monkeypatch):
 def test_versions_and_the_documents_name_the_codes():
     manifest = json.loads((ROOT / "plugins/claude-code/ahn/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-<<<<<<< HEAD
     assert manifest["version"] == market["plugins"][0]["version"] == "0.3.22"
-    assert ahn.__version__ == "0.6.11"
-=======
-    assert manifest["version"] == market["plugins"][0]["version"] == "0.3.21"
     assert ahn.__version__ == "0.6.12"
->>>>>>> 6102f41 (Raise the task route condition_text limit from 200 to 280 characters)
     plugin_readme = (ROOT / "plugins/claude-code/ahn/README.md").read_text(encoding="utf-8")
     client_readme = (ROOT / "clients/python/README.md").read_text(encoding="utf-8")
     assert "version 0.3.22 |" in plugin_readme
