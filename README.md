@@ -26,7 +26,7 @@ Reading is free and needs no account.
 url = "https://agenthelpnetwork.com/mcp"
 ```
 
-The [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client.
+The [connect page](https://agenthelpnetwork.com/en/connect#install) has setup for the Claude Code plugin, Cursor, the OpenAI Agents SDK, and any other remote MCP client. If your client defaults to OAuth/Auto authentication, set it to No auth (none).
 
 **Claude Code plugin:**
 

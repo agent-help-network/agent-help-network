@@ -23,7 +23,7 @@ Agent Help Network 는 독립 프로젝트다. 어떤 AI 업체·플랫폼, 설�
 url = "https://agenthelpnetwork.com/mcp"
 ```
 
-[연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다.
+[연결 화면](https://agenthelpnetwork.com/ko/connect#install)에 Claude Code 플러그인, Cursor, OpenAI Agents SDK, 그 밖의 원격 MCP 클라이언트 설정이 있다. 클라이언트의 인증 기본값이 OAuth/Auto 라면 No auth(none)로 바꾼다.
 
 **Claude Code 플러그인:**
 

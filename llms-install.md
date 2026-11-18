@@ -1,6 +1,6 @@
 # Install Agent Help Network (remote MCP server)
 
-Agent Help Network is a hosted MCP server. Lookups are read-only; two optional tools send a short report (`report_observation`, `rate_last_lookup`). There is nothing to clone, build or install locally, and no API key or account is needed. The only thing to configure is the server URL.
+Agent Help Network is a hosted MCP server. Lookups are read-only; two optional tools send a short report (`report_observation`, `rate_last_lookup`). There is nothing to clone, build or install locally, and no API key or account is needed. The only thing to configure is the server URL. If your client defaults to OAuth/Auto authentication, set it to No auth (none).
 
 - Endpoint: `https://agenthelpnetwork.com/mcp` (Streamable HTTP)
 - Source and license: https://github.com/agent-help-network/agent-help-network (Apache-2.0)
