@@ -45,6 +45,7 @@ AGENT_PROMPT_TASK_ROUTES = (ROOT / "agent_instructions_task_routes.txt").read_te
 LLMS_TXT = (ROOT / "llms.txt").read_text(encoding="utf-8").strip()
 # The privacy policy's "Last updated" date; a later AHN_PUBLIC_BUNDLE_SINCE replaces it while the bundle is on.
 POLICY_UPDATED = date(2026, 11, 15)
+REGISTER_HINT = "This MCP server needs no authentication. Set authentication to 'No auth' (none) in your client and reconnect to https://agenthelpnetwork.com/mcp."  # body of the 404 for POST /register (OAuth client registration)
 MCP_REGISTRY_PROOF = (ROOT / "registry_proof").read_text(encoding="ascii").strip()
 OPENAI_APPS_CHALLENGE = (ROOT / "openai_apps_challenge").read_text(encoding="ascii").strip()
 AGENTBOARD_VERIFY_HANDLE = "agenthelpnetworkhelper"  # Agentboard operator-domain check: /.well-known/agentboard-verify/<handle>
@@ -69,7 +70,7 @@ LANG = {
         "install_cc_title": "Claude Code plugin", "install_cc_text": "Adds a lookup that runs after a failed web step, plus the MCP tool. In your shell:", "install_cc_privacy": "When a web step fails, the plugin's hook sends only the hostname and an error code (error class and failure stage). It sends no URL paths, page content, conversation text, or credentials.", "install_cc_docs": "Claude Code plugin marketplaces documentation",
         "install_cursor_title": "Cursor", "install_cursor_text": "Opens Cursor and offers to add the remote MCP server https://agenthelpnetwork.com/mcp. Cursor asks you to confirm before anything is saved.", "install_cursor_button": "Add to Cursor", "install_cursor_docs": "Cursor MCP install links documentation",
         "install_sdk_title": "OpenAI Agents SDK", "install_sdk_text": "Connects the remote MCP server through a hosted MCP tool, limited to the read-only check_incident tool.", "install_sdk_docs": "OpenAI Agents SDK MCP documentation",
-        "install_json_title": "Other MCP clients", "install_json_text": "Any client that supports remote streamable HTTP servers needs only this URL; no account or key. Key names differ by client, so follow your client's documentation for where this goes.", "install_json_docs": "Model Context Protocol documentation",
+        "install_json_title": "Other MCP clients", "install_json_text": "Any client that supports remote streamable HTTP servers needs only this URL; no account or key. Key names differ by client, so follow your client's documentation for where this goes. If your client defaults to OAuth/Auto authentication, set it to No auth (none).", "install_json_docs": "Model Context Protocol documentation",
         "install_demo_title": "See the Claude Code plugin work", "install_demo_caption": "Demo (1 min 18 s, English captions): after a failed web fetch, the plugin's hook looks up only the hostname and adds one line of guidance. The captions are English on every language version.", "install_demo_fallback": "Your browser cannot play this video.", "install_demo_link": "Open the video file",
         "policy_title": "Privacy policy", "policy_intro": "The local build uses synthetic test observations. It is not collecting real public incident reports.",
         "collect_title": "Structured fields only", "collect_text": "The planned report contains a public hostname, general task step, error type, time, attempt actor and environment, and outcome. It does not accept passwords, cookies, names, account or claim numbers, personal URLs, or conversation transcripts.",
@@ -120,7 +121,7 @@ LANG = {
         "install_cc_title": "Claude Code 플러그인", "install_cc_text": "웹 단계가 실패한 뒤 조회를 실행하는 훅과 MCP 도구를 추가합니다. 셸에서 실행합니다.", "install_cc_privacy": "웹 단계가 실패하면 플러그인의 훅은 호스트명과 오류 코드(오류 유형·실패 단계)만 보냅니다. URL 경로, 페이지 내용, 대화 내용, 자격 증명은 보내지 않습니다.", "install_cc_docs": "Claude Code 플러그인 마켓플레이스 문서",
         "install_cursor_title": "Cursor", "install_cursor_text": "Cursor 를 열어 원격 MCP 서버 https://agenthelpnetwork.com/mcp 추가를 제안합니다. 저장하기 전에 Cursor 가 확인을 요청합니다.", "install_cursor_button": "Cursor 에 추가", "install_cursor_docs": "Cursor MCP 설치 링크 문서",
         "install_sdk_title": "OpenAI Agents SDK", "install_sdk_text": "호스티드 MCP 도구로 원격 MCP 서버를 연결하며, 읽기 전용 check_incident 도구만 가져옵니다.", "install_sdk_docs": "OpenAI Agents SDK MCP 문서",
-        "install_json_title": "다른 MCP 클라이언트", "install_json_text": "원격 streamable HTTP 서버를 지원하는 클라이언트라면 이 URL 만 있으면 됩니다. 계정이나 키는 필요 없습니다. 키 이름은 클라이언트마다 다르니 넣을 위치는 해당 클라이언트 문서를 따르세요.", "install_json_docs": "Model Context Protocol 문서",
+        "install_json_title": "다른 MCP 클라이언트", "install_json_text": "원격 streamable HTTP 서버를 지원하는 클라이언트라면 이 URL 만 있으면 됩니다. 계정이나 키는 필요 없습니다. 키 이름은 클라이언트마다 다르니 넣을 위치는 해당 클라이언트 문서를 따르세요. 클라이언트의 인증 기본값이 OAuth/Auto 라면 No auth(none)로 바꾸세요.", "install_json_docs": "Model Context Protocol 문서",
         "install_demo_title": "Claude Code 플러그인 동작 영상", "install_demo_caption": "데모 영상(1분 18초, 영어 자막): 웹 가져오기가 실패한 뒤 플러그인의 훅이 호스트명만 조회해 안내 한 줄을 덧붙입니다. 자막은 모든 언어판에서 영어로만 제공됩니다.", "install_demo_fallback": "이 브라우저에서는 영상을 재생할 수 없습니다.", "install_demo_link": "영상 파일 열기",
         "policy_title": "개인정보 처리방침", "policy_intro": "로컬 개발판은 가상 시험 관찰을 사용하며 실제 공개 사고 제보를 수집하지 않습니다.",
         "collect_title": "구조화된 필드만", "collect_text": "향후 제보에는 공개 호스트명, 일반 작업 단계, 오류 유형, 시각, 시도 주체·환경, 결과만 포함합니다. 비밀번호·쿠키·이름·계정/청구번호·개인 URL·대화 전문은 받지 않습니다.",
@@ -311,6 +312,16 @@ def create_app(settings: Settings | None = None, lifespan=None) -> FastAPI:
         @app.get("/.well-known/openai-apps-challenge", include_in_schema=False)
         def openai_apps_challenge():
             return Response(OPENAI_APPS_CHALLENGE + "\n", media_type="text/plain; charset=utf-8")
+
+        @app.api_route("/register", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], include_in_schema=False)
+        def oauth_register_hint(request: Request):
+            # Some MCP clients default to OAuth and POST a dynamic client registration to /register even though this
+            # server is open. Stay a plain 404 (no OAuth metadata exists, so the server is not signalling protection),
+            # but say in the body what to change. The request body is never read here; every other method keeps the
+            # default 404 answer.
+            if request.method != "POST":
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return Response(REGISTER_HINT, status_code=404, media_type="text/plain; charset=utf-8")
 
         @app.get("/.well-known/agentboard-verify/{handle}", include_in_schema=False)
         def agentboard_verify(handle: str):

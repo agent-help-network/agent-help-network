@@ -482,3 +482,32 @@ def test_diagnose_and_browser_use_example_are_findable_on_the_site(monkeypatch):
         llms = client.get("/llms.txt").text
         assert "ahn.diagnose(response)" in llms and "x-amzn-waf-action" in llms
         assert "summary_line" in llms and "next_action" in llms and example in llms
+
+
+def test_oauth_register_probe_gets_a_readable_404_hint():
+    settings = Settings("postgresql://invalid/unused", "x" * 32, public_mode=True)
+    with TestClient(create_app(settings)) as client:
+        for body in (None, b'{"redirect_uris": ["http://localhost/cb"]}'):
+            response = client.post("/register", content=body, headers={"content-type": "application/json"})
+            assert response.status_code == 404
+            assert response.headers["content-type"].startswith("text/plain")
+            assert "no authentication" in response.text
+            assert "No auth" in response.text
+            assert "\n" not in response.text.strip() and len(response.text) <= 300
+        assert client.post("/register", content=b"x=1").text == response.text  # same answer whatever arrives
+        # No OAuth discovery appears, and other methods keep the default 404.
+        assert client.get("/.well-known/oauth-authorization-server").status_code == 404
+        assert client.get("/.well-known/oauth-protected-resource").status_code == 404
+        for method in ("get", "put", "delete"):
+            other = getattr(client, method)("/register")
+            assert other.status_code == 404
+            assert "No auth" not in other.text
+
+
+def test_docs_tell_oauth_default_clients_to_use_no_auth():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("README.md", "llms-install.md"):
+        assert "set it to No auth (none)" in (root / name).read_text(encoding="utf-8"), name
+    assert "No auth(none)" in (root / "README.ko.md").read_text(encoding="utf-8")
+    page = TestClient(create_app(Settings("postgresql://invalid/unused", "x" * 32, public_mode=True))).get("/en/connect")
+    assert "set it to No auth (none)" in page.text
