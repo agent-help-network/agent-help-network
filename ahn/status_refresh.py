@@ -762,6 +762,7 @@ SOURCES: dict[str, Source] = {
     "replit.com": Source("Replit Status", "https://status.replit.com/", "https://status.replit.com/api/v2/status.json"),
     "coinmarketcap.com": Source("CoinMarketCap API Status", "https://status.coinmarketcap.com/", "https://status.coinmarketcap.com/api/v2/status.json"),
     "foursquare.com": Source("Foursquare Developer Status", "https://status.foursquare.com/", "https://status.foursquare.com/api/v2/status.json"),
+    "desktopcommander.app": Source("Desktop Commander Status", "https://status.desktopcommander.app/", "https://status.desktopcommander.app/api/v2/status.json"),
     "home-assistant.io": Source("Home Assistant Status", "https://status.home-assistant.io/", "https://status.home-assistant.io/api/v2/status.json"),
     "illuminateed.com": Source("Renaissance Learning Status", "https://status.renaissance.com/", "https://status.renaissance.com/api/v2/status.json"),
     "infura.io": Source("Infura Status", "https://status.infura.io/", "https://status.infura.io/api/v2/status.json"),
