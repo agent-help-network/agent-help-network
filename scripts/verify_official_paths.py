@@ -119,6 +119,7 @@ PUBLISHER_DOMAINS: dict[str, set[str]] = {
     "moonshot.ai": {"kimi.ai"}, "youtu.be": {"google.com"}, "wa.me": {"facebook.com"}, "t.me": {"telegram.org"},
     "discord.gg": {"discord.com"}, "bit.ly": {"bitly.com"},
     "mychart.com": {"epic.com"},
+    "openstreetmap.org": {"osmfoundation.org"},  # the OpenStreetMap Foundation runs the service and publishes its API usage policy
     "googleapis.com": {"google.com"},
     "google.de": {"google.com"},
     "google.co.uk": {"google.com"},
